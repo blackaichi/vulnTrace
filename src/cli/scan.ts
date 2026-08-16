@@ -1,0 +1,257 @@
+import { randomUUID } from "node:crypto";
+import { existsSync, statSync } from "node:fs";
+import path from "node:path";
+import { createModuleResolver } from "../code-intelligence/module-resolver.js";
+import { loadTsProject } from "../code-intelligence/ts-project.js";
+import { buildCallGraph } from "../code-intelligence/call-graph.js";
+import { loadConfigFile, parseConfig } from "../config/load.js";
+import type { Config } from "../config/schema.js";
+import {
+  buildDependencyGraph,
+  loadPackageJsonFile,
+  loadPackageLockFile,
+} from "../dependencies/index.js";
+import type { DependencyNode } from "../domain/dependency.js";
+import type { Finding } from "../domain/verdict.js";
+import type { Vulnerability } from "../domain/vulnerability.js";
+import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
+import type { VulnerableSymbolRule } from "../domain/target.js";
+import { discoverEntrypoints } from "../analysis/entrypoints.js";
+import { computeCoverage } from "../analysis/reachability.js";
+import { buildFinding } from "../analysis/verdict.js";
+import { OsvProvider } from "../vulnerabilities/osv-provider.js";
+import { normalizeOsvVulnerability } from "../vulnerabilities/osv-normalizer.js";
+import { matchVulnerabilities } from "../vulnerabilities/version-matching.js";
+import type { VulnerabilityProvider } from "../domain/vulnerability.js";
+import { errorMessage } from "./errors.js";
+import { type CliIo, defaultIo } from "./io.js";
+import {
+  SCHEMA_VERSION,
+  findingToJson,
+  formatScanOutput,
+  validateScanOutput,
+  type ScanOutput,
+} from "./output.js";
+
+export interface RunScanOptions {
+  /** The path exactly as the user typed it (used verbatim for `scan.project` in the JSON output). */
+  readonly projectPathArg: string;
+  readonly configPathOverride?: string;
+  readonly cveFilter?: string;
+  readonly pretty?: boolean;
+  /** Defaults to a real {@link OsvProvider}; overridable for testing without live network access. */
+  readonly provider?: VulnerabilityProvider;
+  readonly io?: CliIo;
+}
+
+/** One {@link DependencyNode} per distinct install location; a scan only needs one check per distinct name+version. */
+function dedupeDependencies(
+  nodes: readonly DependencyNode[],
+): DependencyNode[] {
+  const seen = new Map<string, DependencyNode>();
+  for (const node of nodes) {
+    const key = `${node.name}@${node.version}`;
+    if (!seen.has(key)) {
+      seen.set(key, node);
+    }
+  }
+  return [...seen.values()];
+}
+
+function loadConfig(projectRoot: string, configPathOverride?: string): Config {
+  if (configPathOverride) {
+    return loadConfigFile(path.resolve(configPathOverride));
+  }
+  const defaultPath = path.join(projectRoot, "vulntrace.yml");
+  return existsSync(defaultPath)
+    ? loadConfigFile(defaultPath)
+    : parseConfig({});
+}
+
+function loadRules(
+  projectRoot: string,
+  ruleFiles: readonly string[],
+): VulnerableSymbolRule[] {
+  const rules: VulnerableSymbolRule[] = [];
+  for (const file of ruleFiles) {
+    rules.push(...loadRuleFile(path.resolve(projectRoot, file)));
+  }
+  return rules;
+}
+
+/**
+ * `vulntrace scan <path>` (see docs/SDD.md § 25, § 32's vertical slice).
+ * Runs the full pipeline — dependency graph -> vulnerability provider ->
+ * normalization -> version match -> vulnerable-symbol rule -> call graph ->
+ * reachability -> verdict — and prints the resulting JSON to `io.stdout`.
+ *
+ * Exit codes follow docs/SDD.md § 25:
+ * - `0`: scan completed, no AFFECTED findings;
+ * - `1`: scan completed, at least one AFFECTED finding;
+ * - `2`: configuration/usage error (bad project path, invalid
+ *   `vulntrace.yml`, invalid rules file);
+ * - `3`: analysis failure (missing/malformed package.json or
+ *   package-lock.json, code-intelligence failure, or a generated result
+ *   that fails to validate against schemas/result.schema.json);
+ * - `4`: vulnerability-provider/network failure. Treated as fatal for the
+ *   whole scan (not skipped per-dependency): proceeding without this data
+ *   would mean silently reporting on an incomplete dependency set, which
+ *   risks a scan result being misread as complete when it is not (see
+ *   AGENTS.md: never infer NOT_AFFECTED — nor omit a dependency's findings
+ *   entirely — merely because something failed to resolve).
+ */
+export async function runScanCommand(options: RunScanOptions): Promise<number> {
+  const io = options.io ?? defaultIo;
+  const provider = options.provider ?? new OsvProvider();
+  const projectRoot = path.resolve(options.projectPathArg);
+
+  if (!existsSync(projectRoot) || !statSync(projectRoot).isDirectory()) {
+    io.stderr(
+      `vulntrace: project path does not exist or is not a directory: ${options.projectPathArg}\n`,
+    );
+    return 2;
+  }
+
+  let config: Config;
+  try {
+    config = loadConfig(projectRoot, options.configPathOverride);
+  } catch (error) {
+    io.stderr(`vulntrace: invalid configuration: ${errorMessage(error)}\n`);
+    return 2;
+  }
+
+  let rules: VulnerableSymbolRule[];
+  let rulesById: ReadonlyMap<string, VulnerableSymbolRule>;
+  try {
+    rules = loadRules(projectRoot, config.rules.files);
+    rulesById = indexRulesByVulnerabilityId(rules);
+  } catch (error) {
+    io.stderr(
+      `vulntrace: invalid rules configuration: ${errorMessage(error)}\n`,
+    );
+    return 2;
+  }
+
+  let dependencyNodes: DependencyNode[];
+  try {
+    const packageJson = loadPackageJsonFile(
+      path.join(projectRoot, "package.json"),
+    );
+    const packageLock = loadPackageLockFile(
+      path.join(projectRoot, "package-lock.json"),
+    );
+    dependencyNodes = buildDependencyGraph(packageJson, packageLock);
+  } catch (error) {
+    io.stderr(
+      `vulntrace: failed to read project dependency manifests: ${errorMessage(error)}\n`,
+    );
+    return 3;
+  }
+
+  let entrypointsResult;
+  let graph;
+  let resolver;
+  try {
+    const tsProject = loadTsProject(projectRoot);
+    resolver = createModuleResolver(tsProject);
+    entrypointsResult = await discoverEntrypoints({
+      projectRoot,
+      resolver,
+      configuredEntrypoints: config.analysis.entrypoints,
+    });
+    graph = await buildCallGraph({
+      entryFiles: entrypointsResult.entrypoints.map((entry) => entry.filePath),
+      resolver,
+    });
+  } catch (error) {
+    io.stderr(`vulntrace: analysis failure: ${errorMessage(error)}\n`);
+    return 3;
+  }
+
+  const cveFilter = options.cveFilter;
+  const uniqueDependencies = dedupeDependencies(dependencyNodes);
+  const findings: Finding[] = [];
+
+  for (const dependency of uniqueDependencies) {
+    let rawVulnerabilities;
+    try {
+      rawVulnerabilities = await provider.queryPackage({
+        ecosystem: dependency.ecosystem,
+        name: dependency.name,
+        version: dependency.version,
+      });
+    } catch (error) {
+      io.stderr(
+        `vulntrace: vulnerability provider failure for ${dependency.name}@${dependency.version}: ${errorMessage(error)}\n`,
+      );
+      return 4;
+    }
+
+    const vulnerabilities: Vulnerability[] = [];
+    for (const raw of rawVulnerabilities) {
+      try {
+        vulnerabilities.push(
+          normalizeOsvVulnerability(raw, {
+            ecosystem: dependency.ecosystem,
+            name: dependency.name,
+          }),
+        );
+      } catch (error) {
+        io.stderr(
+          `vulntrace: skipping malformed vulnerability record for ${dependency.name}@${dependency.version}: ${errorMessage(error)}\n`,
+        );
+      }
+    }
+
+    const relevant = cveFilter
+      ? vulnerabilities.filter(
+          (vulnerability) =>
+            vulnerability.id === cveFilter ||
+            vulnerability.aliases.includes(cveFilter),
+        )
+      : vulnerabilities;
+
+    const matches = matchVulnerabilities(dependency.version, relevant);
+
+    for (const match of matches) {
+      const rule = rulesById.get(match.vulnerability.id);
+      const finding = await buildFinding({
+        vulnerability: match.vulnerability,
+        packageName: dependency.name,
+        packageVersion: dependency.version,
+        matchResult: match.result,
+        rule,
+        graph,
+        entrypoints: entrypointsResult.entrypoints,
+        resolver,
+        projectRoot,
+      });
+      if (finding) {
+        findings.push(finding);
+      }
+    }
+  }
+
+  const output: ScanOutput = {
+    schemaVersion: SCHEMA_VERSION,
+    scan: { id: randomUUID(), project: options.projectPathArg },
+    findings: findings.map(findingToJson),
+    coverage: computeCoverage(graph),
+  };
+
+  const issues = validateScanOutput(output);
+  if (issues.length > 0) {
+    io.stderr(
+      `vulntrace: internal error: generated output does not match schemas/result.schema.json:\n` +
+        issues.map((issue) => `  ${issue.path}: ${issue.message}`).join("\n") +
+        "\n",
+    );
+    return 3;
+  }
+
+  io.stdout(
+    formatScanOutput(output, options.pretty ?? config.output.pretty) + "\n",
+  );
+
+  return findings.some((finding) => finding.verdict === "AFFECTED") ? 1 : 0;
+}

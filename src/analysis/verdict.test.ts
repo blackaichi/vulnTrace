@@ -398,6 +398,42 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
   });
 });
 
+describe("buildFinding: UNKNOWN when reachability was never actually checked (regression)", () => {
+  // Discovered while wiring the CLI (TASK-022) to real projects: a project
+  // with no configured/discoverable entrypoints at all produces an empty
+  // `entrypoints` array. Previously this fell through to NOT_AFFECTED —
+  // "confirmed unreachable" — even though no reachability search ever ran,
+  // which is exactly the false-certainty AGENTS.md forbids.
+  it("produces UNKNOWN, not NOT_AFFECTED, when there are no entrypoints to search from", async () => {
+    const libFile = "/node_modules/fixture-lib/index.js";
+    const vulnerableNode = fnNode(
+      "lib#vulnerable@1:1",
+      libFile,
+      "vulnerable",
+      1,
+    );
+
+    const graph: CallGraph = { nodes: [vulnerableNode], edges: [] };
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.reasons).toEqual([
+      "no entrypoints were available to check reachability from",
+    ]);
+  });
+});
+
 describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
   it("produces UNKNOWN, not NOT_AFFECTED, when a dynamic construct blocks the search", async () => {
     const entryFile = "/project/src/index.ts";

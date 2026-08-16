@@ -1,19 +1,14 @@
 #!/usr/bin/env node
 
 /**
- * Bootstrap CLI entrypoint.
- *
- * Command surface (`scan`, `rules validate`, `version`) is implemented in a
- * later task (see docs/SDD.md § 25). This entrypoint only proves the
- * TypeScript -> CLI build pipeline works end to end.
+ * CLI entrypoint (see docs/SDD.md § 25). Command implementations live in
+ * `src/cli/`; this file only wires the real process argv/exit-code
+ * boundary, so `runCli` itself stays testable without spawning a process.
  */
-export function main(): number {
-  console.log(
-    "vulntrace: bootstrap CLI entrypoint (commands not yet implemented)",
-  );
-  return 0;
-}
+import { runCli } from "./cli/run.js";
+
+export { runCli } from "./cli/run.js";
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  process.exit(main());
+  process.exitCode = await runCli(process.argv.slice(2));
 }

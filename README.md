@@ -46,9 +46,14 @@ Design/implementation handoff. The coding agent should build the MVP in task ord
 vulntrace scan .
 vulntrace scan . --cve CVE-XXXX
 vulntrace scan . --format json
+vulntrace scan . --config vulntrace.yml --pretty
+vulntrace rules validate rules/vulntrace-rules.yml
+vulntrace version
 ```
 
-Exact CLI behavior is defined by the SDD and task files.
+Exit codes: `0` no AFFECTED findings, `1` at least one AFFECTED finding,
+`2` configuration/usage error, `3` analysis failure, `4` vulnerability
+provider/network failure (see `docs/SDD.md § 25` and `src/cli/scan.ts`).
 
 ## Development
 
@@ -63,8 +68,8 @@ npm run lint           # lint with eslint
 npm run format          # check formatting with prettier
 ```
 
-The CLI command surface described above is implemented incrementally across
-tasks; the current entrypoint (`src/cli.ts`) only proves the build pipeline.
+The CLI command surface described above (`scan`, `rules validate`, `version`)
+is implemented in `src/cli/`; `src/cli.ts` is the thin process entrypoint.
 
 ### Testing
 

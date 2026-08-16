@@ -150,9 +150,20 @@ async function checkReachability(
   sawUnknown: boolean;
   reasons: string[];
   representativeTarget?: VulnerableSymbolTarget;
+  /**
+   * Whether at least one reachability search actually ran. `false` means no
+   * entrypoint produced a usable source node to search from (e.g. the
+   * project has no configured/discoverable entrypoints at all) — a
+   * genuinely unchecked target, not a confirmed-unreachable one. Without
+   * this, an unreachable-by-default fallthrough would misreport such a
+   * target as `NOT_AFFECTED` purely because nothing was ever searched (see
+   * AGENTS.md: never infer NOT_AFFECTED merely because resolution failed).
+   */
+  checkedAny: boolean;
 }> {
   const referenceFile = path.join(projectRoot, "package.json");
   let sawUnknown = false;
+  let checkedAny = false;
   const reasons: string[] = [];
   let representativeTarget: VulnerableSymbolTarget | undefined;
 
@@ -176,6 +187,7 @@ async function checkReachability(
 
     for (const entrypoint of entrypoints) {
       for (const source of entrypointSourceNodes(graph, entrypoint)) {
+        checkedAny = true;
         const result = analyzeReachability(graph, source, targetNode);
 
         if (result.state === "reachable") {
@@ -184,6 +196,7 @@ async function checkReachability(
             sawUnknown,
             reasons,
             representativeTarget: target,
+            checkedAny,
           };
         }
         if (result.state === "unknown") {
@@ -194,7 +207,7 @@ async function checkReachability(
     }
   }
 
-  return { sawUnknown, reasons, representativeTarget };
+  return { sawUnknown, reasons, representativeTarget, checkedAny };
 }
 
 /**
@@ -253,7 +266,7 @@ export async function buildFinding(
     return { ...base, verdict: "UNKNOWN" };
   }
 
-  const { reachable, sawUnknown, reasons, representativeTarget } =
+  const { reachable, sawUnknown, reasons, representativeTarget, checkedAny } =
     await checkReachability(rule, graph, entrypoints, resolver, projectRoot);
 
   if (reachable) {
@@ -278,6 +291,18 @@ export async function buildFinding(
       verdict: "UNKNOWN",
       target: representativeTarget,
       evidence: reasons.length > 0 ? { path: [], reasons } : undefined,
+    };
+  }
+
+  if (!checkedAny) {
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      target: representativeTarget,
+      evidence: {
+        path: [],
+        reasons: ["no entrypoints were available to check reachability from"],
+      },
     };
   }
 

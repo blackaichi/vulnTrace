@@ -18,8 +18,12 @@ import type {
  * TASK-026 (Coverage / Diagnostics). `import`-typed edges stand in for
  * "modules": each one represents an attempted cross-module resolution,
  * resolved or not.
+ *
+ * Exported (not just used internally by {@link analyzeReachability}) so the
+ * CLI's top-level JSON `coverage` field (docs/SDD.md § 24) can reuse this
+ * same derivation for a whole scan's call graph rather than duplicating it.
  */
-function computeGraphCoverage(graph: CallGraph): Coverage {
+export function computeCoverage(graph: CallGraph): Coverage {
   const files = new Set(graph.nodes.map((node) => node.module)).size;
   const functions = graph.nodes.filter((node) => node.kind !== "module").length;
 
@@ -82,7 +86,7 @@ export function analyzeReachability(
   source: GraphNode,
   target: GraphNode,
 ): ReachabilityResult {
-  const coverage = computeGraphCoverage(graph);
+  const coverage = computeCoverage(graph);
 
   if (source.id === target.id) {
     return {
