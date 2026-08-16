@@ -2,5 +2,6 @@
 dist/
 coverage/
 .cache/
+.vulntrace-cache/
 *.log
 .env

@@ -17,7 +17,7 @@ describe("ConfigSchema defaults", () => {
           maxAnalysisSeconds: 60,
         },
       },
-      vulnerabilities: { providers: ["osv"] },
+      vulnerabilities: { providers: ["osv"], cache: { enabled: true } },
       rules: { files: [] },
       output: { format: "json", pretty: false },
     });
@@ -72,6 +72,20 @@ describe("ConfigSchema validation", () => {
   it("rejects an empty providers array", () => {
     expect(() =>
       ConfigSchema.parse({ vulnerabilities: { providers: [] } }),
+    ).toThrow();
+  });
+
+  it("accepts an explicit vulnerabilities.cache.enabled: false", () => {
+    const result = ConfigSchema.parse({
+      vulnerabilities: { cache: { enabled: false } },
+    });
+
+    expect(result.vulnerabilities.cache.enabled).toBe(false);
+  });
+
+  it("rejects a non-boolean vulnerabilities.cache.enabled", () => {
+    expect(() =>
+      ConfigSchema.parse({ vulnerabilities: { cache: { enabled: "yes" } } }),
     ).toThrow();
   });
 

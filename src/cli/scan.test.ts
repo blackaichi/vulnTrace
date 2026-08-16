@@ -102,6 +102,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       projectPathArg: fixturePath("direct-esm"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -127,6 +128,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       projectPathArg: fixturePath("direct-esm"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -143,6 +145,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       projectPathArg: fixturePath("direct-esm"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -161,6 +164,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       configPathOverride: configPath,
       cveFilter: "GHSA-does-not-match",
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -178,6 +182,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       projectPathArg: fixturePath("direct-esm"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -215,6 +220,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       projectPathArg: fixturePath("direct-esm"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -246,6 +252,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       projectPathArg: fixturePath("dynamic"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -267,6 +274,7 @@ describe("runScanCommand: error handling", () => {
       const exitCode = await runScanCommand({
         projectPathArg: tmpDir,
         provider: fakeProvider({}),
+        noCache: true,
         io,
       });
 
@@ -288,6 +296,7 @@ describe("runScanCommand: error handling", () => {
     const exitCode = await runScanCommand({
       projectPathArg: fixturePath("direct-esm"),
       provider: failingProvider,
+      noCache: true,
       io,
     });
 
@@ -308,6 +317,7 @@ describe("runScanCommand: error handling", () => {
         projectPathArg: fixturePath("direct-esm"),
         configPathOverride: configPath,
         provider: fakeProvider({}),
+        noCache: true,
         io,
       });
 

@@ -110,6 +110,7 @@ describe("E2E vertical slice (TASK-025)", () => {
       projectPathArg: fixturePath("direct-esm"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -143,6 +144,7 @@ describe("E2E vertical slice (TASK-025)", () => {
       projectPathArg: fixturePath("not-reachable"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 
@@ -174,6 +176,7 @@ describe("E2E vertical slice (TASK-025)", () => {
       projectPathArg: fixturePath("dynamic"),
       configPathOverride: configPath,
       provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
       io,
     });
 

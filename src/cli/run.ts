@@ -9,7 +9,7 @@ const SUPPORTED_FORMATS = new Set(["json"]);
 
 const USAGE =
   "vulntrace: usage: vulntrace <command> [options]\n" +
-  "  vulntrace scan <path> [--format json] [--cve <id>] [--config <file>] [--pretty]\n" +
+  "  vulntrace scan <path> [--format json] [--cve <id>] [--config <file>] [--pretty] [--no-cache]\n" +
   "  vulntrace rules validate <file>\n" +
   "  vulntrace version\n";
 
@@ -77,6 +77,7 @@ export async function runCli(
         configPathOverride: config,
         cveFilter: cve,
         pretty: flags.pretty === true,
+        noCache: flags["no-cache"] === true,
         io,
       });
     } catch (error) {

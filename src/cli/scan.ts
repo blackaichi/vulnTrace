@@ -4,6 +4,7 @@ import path from "node:path";
 import { createModuleResolver } from "../code-intelligence/module-resolver.js";
 import { loadTsProject } from "../code-intelligence/ts-project.js";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
+import { FileOsvCacheStore, createCachingProvider } from "../cache/index.js";
 import { loadConfigFile, parseConfig } from "../config/load.js";
 import type { Config } from "../config/schema.js";
 import {
@@ -23,6 +24,7 @@ import {
   computeCoverage,
 } from "../analysis/reachability.js";
 import { buildFinding } from "../analysis/verdict.js";
+import { readOwnVersion } from "../shared/own-version.js";
 import { OsvProvider } from "../vulnerabilities/osv-provider.js";
 import { normalizeOsvVulnerability } from "../vulnerabilities/osv-normalizer.js";
 import { matchVulnerabilities } from "../vulnerabilities/version-matching.js";
@@ -43,6 +45,10 @@ export interface RunScanOptions {
   readonly configPathOverride?: string;
   readonly cveFilter?: string;
   readonly pretty?: boolean;
+  /** `--no-cache` (docs/SDD.md § 28): forces the vulnerability provider cache off regardless of config. */
+  readonly noCache?: boolean;
+  /** Defaults to `<projectRoot>/.vulntrace-cache/osv`; mainly for tests. */
+  readonly cacheDir?: string;
   /** Defaults to a real {@link OsvProvider}; overridable for testing without live network access. */
   readonly provider?: VulnerabilityProvider;
   readonly io?: CliIo;
@@ -106,7 +112,7 @@ function loadRules(
  */
 export async function runScanCommand(options: RunScanOptions): Promise<number> {
   const io = options.io ?? defaultIo;
-  const provider = options.provider ?? new OsvProvider();
+  const rawProvider = options.provider ?? new OsvProvider();
   const projectRoot = path.resolve(options.projectPathArg);
 
   if (!existsSync(projectRoot) || !statSync(projectRoot).isDirectory()) {
@@ -123,6 +129,21 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     io.stderr(`vulntrace: invalid configuration: ${errorMessage(error)}\n`);
     return 2;
   }
+
+  // Cache-first vulnerability provider (see docs/SDD.md § 28). `--no-cache`
+  // always wins over config; otherwise config's `vulnerabilities.cache.enabled`
+  // decides (enabled by default).
+  const provider =
+    options.noCache !== true && config.vulnerabilities.cache.enabled
+      ? createCachingProvider(
+          rawProvider,
+          new FileOsvCacheStore(
+            options.cacheDir ??
+              path.join(projectRoot, ".vulntrace-cache", "osv"),
+          ),
+          readOwnVersion(),
+        )
+      : rawProvider;
 
   let rules: VulnerableSymbolRule[];
   let rulesById: ReadonlyMap<string, VulnerableSymbolRule>;

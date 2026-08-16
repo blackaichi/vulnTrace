@@ -52,12 +52,26 @@ const AnalysisConfigSchema = z
 
 const VulnerabilityProviderSchema = z.enum(DEFAULT_VULNERABILITY_PROVIDERS);
 
+/**
+ * Enabled by default (see docs/SDD.md § 28: "The analyzer must support
+ * offline/reproducible operation where cached data is available") — a
+ * fresh scan of an unchanged dependency set should not need live network
+ * access every time. `--no-cache` (docs/SDD.md § 25) overrides this at
+ * the CLI layer regardless of what's configured here.
+ */
+const CacheConfigSchema = z
+  .object({
+    enabled: z.boolean().default(true),
+  })
+  .strict();
+
 const VulnerabilitiesConfigSchema = z
   .object({
     providers: z
       .array(VulnerabilityProviderSchema)
       .min(1, "must not be empty")
       .default([...DEFAULT_VULNERABILITY_PROVIDERS]),
+    cache: CacheConfigSchema.default({}),
   })
   .strict();
 
