@@ -1,5 +1,8 @@
 import path from "node:path";
-import { buildModuleModel } from "../code-intelligence/module-model.js";
+import {
+  buildModuleModel,
+  mapExportsToFunctions,
+} from "../code-intelligence/module-model.js";
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
 import type { CallGraph, GraphNode, GraphNodeId } from "../domain/graph.js";
@@ -46,6 +49,27 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
  * Finds the graph node implementing `{module, export}`, or a phantom
  * placeholder when it was never discovered while building the graph.
  *
+ * A rule's `export` names the module's *canonical* export (e.g. `"default"`
+ * for CommonJS's `module.exports = someNamedFunction;` idiom — extremely
+ * common across the real npm ecosystem, e.g. lodash's per-method files),
+ * which can differ from the underlying function's own declared name (here,
+ * `someNamedFunction`). A GraphNode's `.name` is always the function's own
+ * declared name (see call-graph.ts's `prepareFile`), never the canonical
+ * export label, so matching `n.name === exportName` directly only works
+ * when the two happen to coincide (true for ESM named exports, false for a
+ * CJS whole-module default export). Re-deriving the same canonical-export
+ * -> function mapping call-graph.ts already builds internally
+ * (`mapExportsToFunctions`, see module-model.ts) and matching the graph by
+ * that function's real source location fixes this — this was previously a
+ * real bug: a rule targeting `export: "default"` against a
+ * `module.exports = zipObjectDeep;`-shaped file always fell through to a
+ * phantom node and reported NOT_AFFECTED even when genuinely reachable.
+ *
+ * Falls back to the direct name match (kept for synthetic/test graphs that
+ * bypass real file indexing entirely, and as a safety net if the target
+ * file can no longer be read) and finally to a phantom placeholder when
+ * neither locates a real node.
+ *
  * A phantom node is not a guess at reachability: nothing in the graph
  * points to it (its id can never collide with a real generated one — see
  * call-graph.ts's `${filePath}#${name}@${line}:${column}` scheme, which
@@ -64,12 +88,33 @@ function findOrPhantomTarget(
   resolvedModulePath: string,
   exportName: string,
 ): GraphNode {
-  const real = graph.nodes.find(
+  try {
+    const index = indexSourceFileFromDisk(resolvedModulePath);
+    const model = buildModuleModel(index);
+    const exportedFn = mapExportsToFunctions(index, model).get(exportName);
+    if (exportedFn) {
+      const byLocation = graph.nodes.find(
+        (n) =>
+          n.module === resolvedModulePath &&
+          n.location?.line === exportedFn.location.line &&
+          n.location?.column === exportedFn.location.column,
+      );
+      if (byLocation) {
+        return byLocation;
+      }
+    }
+  } catch {
+    // Target file unreadable/unparsable -- fall through to the name-based
+    // match below, and ultimately the phantom node.
+  }
+
+  const byName = graph.nodes.find(
     (n) => n.module === resolvedModulePath && n.name === exportName,
   );
-  if (real) {
-    return real;
+  if (byName) {
+    return byName;
   }
+
   return {
     id: `unresolved-target:${resolvedModulePath}#${exportName}`,
     kind: "function",

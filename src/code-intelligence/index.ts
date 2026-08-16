@@ -26,6 +26,7 @@ export {
   type ModuleModel,
   type ModuleSyntax,
   buildModuleModel,
+  mapExportsToFunctions,
 } from "./module-model.js";
 export {
   type ModuleResolutionResult,

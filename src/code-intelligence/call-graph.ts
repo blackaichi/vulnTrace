@@ -5,7 +5,11 @@ import type {
   GraphNode,
   GraphNodeId,
 } from "../domain/graph.js";
-import { buildModuleModel, type ModuleModel } from "./module-model.js";
+import {
+  buildModuleModel,
+  mapExportsToFunctions,
+  type ModuleModel,
+} from "./module-model.js";
 import type { ModuleResolver } from "./module-resolver.js";
 import {
   type IndexedFunction,
@@ -74,29 +78,10 @@ function prepareFile(
   }
 
   const exportNameToNodeId = new Map<string, GraphNodeId>();
-  for (const exp of model.exports) {
-    if (exp.kind === "re-export") {
-      // Chasing a re-export to its ultimate source file is not attempted
-      // here — see TASK-018 completion report.
-      continue;
-    }
-    const canonicalName = exp.kind === "default" ? "default" : exp.exportedName;
-    // Prefer the actual local identifier; for CommonJS `exports.foo = ...`
-    // there is no separate localName, but TASK-014 already infers the
-    // assigned function's own name as "foo" from the assignment target,
-    // so exportedName doubles as the correct lookup key there too.
-    const localKey = exp.localName ?? exp.exportedName;
-    if (!canonicalName || !localKey) {
-      continue;
-    }
-    const matchingFn = index.functions.find((fn) => fn.name === localKey);
-    if (matchingFn) {
-      const nodeId = functionNodeIdByLocation.get(
-        locationKey(matchingFn.location),
-      );
-      if (nodeId) {
-        exportNameToNodeId.set(canonicalName, nodeId);
-      }
+  for (const [canonicalName, fn] of mapExportsToFunctions(index, model)) {
+    const nodeId = functionNodeIdByLocation.get(locationKey(fn.location));
+    if (nodeId) {
+      exportNameToNodeId.set(canonicalName, nodeId);
     }
   }
 

@@ -2,6 +2,7 @@ import ts from "typescript";
 import type { SourceLocation } from "../domain/graph.js";
 import {
   type IndexedExport,
+  type IndexedFunction,
   type SourceIndex,
   toSourceLocation,
 } from "./source-index.js";
@@ -270,4 +271,56 @@ export function buildModuleModel(index: SourceIndex): ModuleModel {
     imports: index.imports.map(toImportBinding),
     exports: buildExportBindings(index.sourceFile, index.exports),
   };
+}
+
+/**
+ * Maps each of a module's *canonical* export names (the name an importer
+ * would bind to — "default" for a default/whole-module export, or the
+ * named-export identifier otherwise) to the {@link IndexedFunction} that
+ * implements it, when that can be attributed to a local function
+ * declaration.
+ *
+ * This is the one place that reconciles a canonical export name with the
+ * underlying function's own declared name, which can differ — most
+ * commonly for CommonJS's `module.exports = someNamedFunction;` idiom
+ * (used throughout the real npm ecosystem, e.g. lodash's per-method
+ * files): the canonical export name is `"default"`, but the function
+ * itself is still named `someNamedFunction`. Any consumer that needs to
+ * go from "the export a rule/import specifier names" to "the real
+ * function" — not just "a function that happens to share the export's
+ * literal name" — must go through this mapping rather than comparing
+ * against a function's own name directly (see call-graph.ts's
+ * `prepareFile`, which builds call edges this way, and
+ * src/analysis/verdict.ts's `findOrPhantomTarget`, which locates a rule's
+ * declared target the same way — see TASK-023 completion report for the
+ * regression this fixes).
+ */
+export function mapExportsToFunctions(
+  index: SourceIndex,
+  model: ModuleModel,
+): ReadonlyMap<string, IndexedFunction> {
+  const result = new Map<string, IndexedFunction>();
+
+  for (const exp of model.exports) {
+    if (exp.kind === "re-export") {
+      // Chasing a re-export to its ultimate source file is not attempted
+      // here — see TASK-018 completion report.
+      continue;
+    }
+    const canonicalName = exp.kind === "default" ? "default" : exp.exportedName;
+    // Prefer the actual local identifier; for CommonJS `exports.foo = ...`
+    // there is no separate localName, but TASK-014 already infers the
+    // assigned function's own name as "foo" from the assignment target,
+    // so exportedName doubles as the correct lookup key there too.
+    const localKey = exp.localName ?? exp.exportedName;
+    if (!canonicalName || !localKey) {
+      continue;
+    }
+    const matchingFn = index.functions.find((fn) => fn.name === localKey);
+    if (matchingFn) {
+      result.set(canonicalName, matchingFn);
+    }
+  }
+
+  return result;
 }

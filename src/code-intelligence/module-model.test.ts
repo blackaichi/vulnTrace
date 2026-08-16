@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildModuleModel } from "./module-model.js";
+import { buildModuleModel, mapExportsToFunctions } from "./module-model.js";
 import { indexSourceFile } from "./source-index.js";
 
 function modelOf(fileName: string, text: string) {
@@ -208,5 +208,48 @@ describe("buildModuleModel: module.exports object literal unpacking", () => {
         location: expect.any(Object),
       },
     ]);
+  });
+});
+
+describe("mapExportsToFunctions: canonical export name -> underlying function", () => {
+  it("maps 'default' to the function even though the function's own name differs (module.exports = someNamedFunction)", () => {
+    const fileName = "a.js";
+    const text =
+      "function vulnerable() {\n  return 1;\n}\n\nmodule.exports = vulnerable;\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const mapped = mapExportsToFunctions(index, model);
+
+    expect(mapped.get("default")?.name).toBe("vulnerable");
+    // The regression this guards: a naive lookup keyed by the function's
+    // own name (as a GraphNode.name comparison would do) must NOT be what
+    // callers rely on for a canonical "default" export -- only the
+    // canonical name "default" should be a key here.
+    expect(mapped.has("vulnerable")).toBe(false);
+  });
+
+  it("maps a named ESM export to the function of the same name", () => {
+    const fileName = "a.ts";
+    const text = "export function vulnerable() {\n  return 1;\n}\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const mapped = mapExportsToFunctions(index, model);
+
+    expect(mapped.get("vulnerable")?.name).toBe("vulnerable");
+  });
+
+  it("returns an empty map when module.exports is an object literal (unpacked named exports already carry their own localName)", () => {
+    const fileName = "a.js";
+    const text =
+      "function vulnerable() {\n  return 1;\n}\n\nmodule.exports = { vulnerable };\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const mapped = mapExportsToFunctions(index, model);
+
+    expect(mapped.get("vulnerable")?.name).toBe("vulnerable");
+    expect(mapped.has("default")).toBe(false);
   });
 });
