@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { fixturePath } from "../testing/fixtures.js";
@@ -32,16 +34,27 @@ describe("buildCallGraph against real fixtures", () => {
     });
   });
 
-  it("marks fixtures/commonjs's require of fixture-lib as an unresolved import (no node_modules present)", async () => {
-    const root = fixturePath("commonjs");
-    const entry = path.join(root, "src", "index.cjs");
-    const resolver = createModuleResolver(loadTsProject(root));
+  it("marks a require() of a genuinely uninstalled package as an unresolved import", async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-call-graph-unresolved-"),
+    );
+    try {
+      writeFileSync(
+        path.join(root, "index.cjs"),
+        'const fixture = require("does-not-exist-fixture-package");\n' +
+          "module.exports = function main() {\n  return fixture.vulnerable();\n};\n",
+      );
+      const entry = path.join(root, "index.cjs");
+      const resolver = createModuleResolver(loadTsProject(root));
 
-    const graph = await buildCallGraph({ entryFiles: [entry], resolver });
+      const graph = await buildCallGraph({ entryFiles: [entry], resolver });
 
-    const edge = graph.edges.find((e) => e.type === "import");
-    expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unresolved_module" },
-    });
+      const edge = graph.edges.find((e) => e.type === "import");
+      expect(edge).toMatchObject({
+        resolution: { kind: "unknown", reason: "unresolved_module" },
+      });
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

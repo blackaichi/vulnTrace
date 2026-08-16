@@ -1,3 +1,5 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { fixturePath } from "../testing/fixtures.js";
@@ -27,18 +29,21 @@ describe("createModuleResolver against real fixtures", () => {
     });
   });
 
-  it("resolves fixtures/commonjs's require of fixture-lib", async () => {
-    const root = fixturePath("commonjs");
-    const resolver = createModuleResolver(loadTsProject(root));
-
-    const result = await resolver.resolve(
-      "fixture-lib",
-      path.join(root, "src", "index.cjs"),
+  it("reports a genuinely uninstalled package as unresolved, not silently resolved or thrown", async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-module-resolver-unresolved-"),
     );
+    try {
+      const resolver = createModuleResolver(loadTsProject(root));
 
-    // The commonjs fixture has no node_modules of its own — this proves
-    // an unresolved dependency is reported explicitly, not silently
-    // treated as resolved or thrown as an exception.
-    expect(result.kind).toBe("unresolved");
+      const result = await resolver.resolve(
+        "does-not-exist-fixture-package",
+        path.join(root, "index.cjs"),
+      );
+
+      expect(result.kind).toBe("unresolved");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

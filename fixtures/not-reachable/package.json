@@ -1,8 +1,8 @@
 {
-  "name": "fixture-transitive",
+  "name": "fixture-not-reachable",
   "version": "1.0.0",
   "type": "module",
   "dependencies": {
-    "fixture-wrapper": "1.0.0"
+    "fixture-lib": "1.0.0"
   }
 }

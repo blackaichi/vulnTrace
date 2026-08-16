@@ -1,8 +1,12 @@
 # Fixture: direct-esm
 
-This fixture isolates the `direct-esm` behavior.
+A minimal ESM project with one direct npm dependency, `fixture-lib@1.0.0`
+(`export function vulnerable() {}` / `export function safe() {}`).
+`src/index.ts` imports `vulnerable` directly and calls it from its
+exported `main()`.
 
-Expected behavior should be recorded here once the fixture implementation is
-created by TASK-024.
+Expected result: a rule targeting `{module: "fixture-lib", export:
+"vulnerable"}` is **AFFECTED** — `main` calls `vulnerable()` directly,
+a one-hop resolved call path.
 
 The fixture must not execute during static analysis.
