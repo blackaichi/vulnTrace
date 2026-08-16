@@ -6,6 +6,7 @@ export {
 } from "./entrypoints.js";
 export {
   analyzeReachability,
+  collectGraphDiagnostics,
   computeCoverage,
   reachabilityEngine,
 } from "./reachability.js";

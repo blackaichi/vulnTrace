@@ -84,6 +84,7 @@ describe("validateScanOutput", () => {
       callsResolved: 1,
       callsDynamic: 0,
     },
+    diagnostics: [],
   };
 
   it("accepts a well-formed scan result against the real schemas/result.schema.json", () => {
@@ -222,6 +223,45 @@ describe("validateScanOutput", () => {
     expect(issues.length).toBeGreaterThan(0);
   });
 
+  it("accepts non-empty diagnostics explaining blockers", () => {
+    const output: ScanOutput = {
+      ...validOutput,
+      diagnostics: [
+        { source: "call-graph", message: "eval at src/index.ts#main@3:1" },
+        {
+          source: "entrypoints:configured",
+          message: "analysis.entrypoints[0] does not exist: src/typo.ts",
+        },
+      ],
+    };
+
+    expect(validateScanOutput(output)).toEqual([]);
+  });
+
+  it("rejects a missing diagnostics field", () => {
+    const withoutDiagnostics = {
+      schemaVersion: validOutput.schemaVersion,
+      scan: validOutput.scan,
+      findings: validOutput.findings,
+      coverage: validOutput.coverage,
+    };
+
+    const issues = validateScanOutput(withoutDiagnostics);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a diagnostic entry missing a message", () => {
+    const output = {
+      ...validOutput,
+      diagnostics: [{ source: "call-graph" }],
+    };
+
+    const issues = validateScanOutput(output);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
   it("rejects a scan result missing scan.id", () => {
     const output = {
       ...validOutput,
@@ -247,6 +287,7 @@ describe("formatScanOutput", () => {
       callsResolved: 0,
       callsDynamic: 0,
     },
+    diagnostics: [],
   };
 
   it("produces compact single-line JSON by default", () => {

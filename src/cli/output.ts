@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Ajv2020, type AnySchemaObject } from "ajv/dist/2020.js";
-import type { Coverage } from "../domain/coverage.js";
+import type { Coverage, Diagnostic } from "../domain/coverage.js";
 import type { Finding } from "../domain/verdict.js";
 
 const repoRoot = path.resolve(
@@ -42,6 +42,14 @@ export interface ScanOutput {
   readonly scan: { readonly id: string; readonly project: string };
   readonly findings: readonly JsonFinding[];
   readonly coverage: Coverage;
+  /**
+   * Explains blockers behind {@link Coverage}'s aggregate counts (see
+   * docs/SDD.md § 8, TASK-026): unresolved entrypoints, unresolved/dynamic
+   * call-graph edges, and vulnerability records that could not be
+   * normalized. Always present, possibly empty — never omitted merely
+   * because a scan happened to hit no blockers.
+   */
+  readonly diagnostics: readonly Diagnostic[];
 }
 
 /**

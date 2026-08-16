@@ -5,7 +5,11 @@ import type {
   DynamicCallReason,
   GraphNode,
 } from "../domain/graph.js";
-import { analyzeReachability, reachabilityEngine } from "./reachability.js";
+import {
+  analyzeReachability,
+  collectGraphDiagnostics,
+  reachabilityEngine,
+} from "./reachability.js";
 
 function node(id: string): GraphNode {
   return { id, kind: "function", module: "a.ts", name: id };
@@ -215,6 +219,34 @@ describe("analyzeReachability: coverage", () => {
       callsResolved: 1,
       callsDynamic: 1,
     });
+  });
+});
+
+describe("collectGraphDiagnostics", () => {
+  it("returns one diagnostic per unresolved/dynamic edge anywhere in the graph", () => {
+    const [a, b, c] = [node("a"), node("b"), node("c")];
+    const graph: CallGraph = {
+      nodes: [a, b, c],
+      edges: [
+        resolvedEdge("a", "b"),
+        unknownEdge("b", "eval"),
+        unknownEdge("c", "dynamic_require"),
+      ],
+    };
+
+    const diagnostics = collectGraphDiagnostics(graph);
+
+    expect(diagnostics).toEqual([
+      { source: "call-graph", message: "eval at b" },
+      { source: "call-graph", message: "dynamic_require at c" },
+    ]);
+  });
+
+  it("returns an empty array for a fully resolved graph", () => {
+    const [a, b] = [node("a"), node("b")];
+    const graph: CallGraph = { nodes: [a, b], edges: [resolvedEdge("a", "b")] };
+
+    expect(collectGraphDiagnostics(graph)).toEqual([]);
   });
 });
 

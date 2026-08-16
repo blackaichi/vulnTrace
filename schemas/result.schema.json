@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vulntrace.dev/schema/result-0.6.json",
   "type": "object",
-  "required": ["schemaVersion", "scan", "findings", "coverage"],
+  "required": ["schemaVersion", "scan", "findings", "coverage", "diagnostics"],
   "properties": {
     "schemaVersion": {
       "type": "string",
@@ -140,6 +140,23 @@
         "callsDynamic": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["source", "message"],
+        "properties": {
+          "source": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       }
     }

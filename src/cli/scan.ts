@@ -12,12 +12,16 @@ import {
   loadPackageLockFile,
 } from "../dependencies/index.js";
 import type { DependencyNode } from "../domain/dependency.js";
+import type { Diagnostic } from "../domain/coverage.js";
 import type { Finding } from "../domain/verdict.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
 import type { VulnerableSymbolRule } from "../domain/target.js";
 import { discoverEntrypoints } from "../analysis/entrypoints.js";
-import { computeCoverage } from "../analysis/reachability.js";
+import {
+  collectGraphDiagnostics,
+  computeCoverage,
+} from "../analysis/reachability.js";
 import { buildFinding } from "../analysis/verdict.js";
 import { OsvProvider } from "../vulnerabilities/osv-provider.js";
 import { normalizeOsvVulnerability } from "../vulnerabilities/osv-normalizer.js";
@@ -168,6 +172,14 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     return 3;
   }
 
+  const diagnostics: Diagnostic[] = [
+    ...entrypointsResult.diagnostics.map((d) => ({
+      source: `entrypoints:${d.source}`,
+      message: d.message,
+    })),
+    ...collectGraphDiagnostics(graph),
+  ];
+
   const cveFilter = options.cveFilter;
   const uniqueDependencies = dedupeDependencies(dependencyNodes);
   const findings: Finding[] = [];
@@ -197,9 +209,9 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
           }),
         );
       } catch (error) {
-        io.stderr(
-          `vulntrace: skipping malformed vulnerability record for ${dependency.name}@${dependency.version}: ${errorMessage(error)}\n`,
-        );
+        const message = `skipping malformed vulnerability record for ${dependency.name}@${dependency.version}: ${errorMessage(error)}`;
+        io.stderr(`vulntrace: ${message}\n`);
+        diagnostics.push({ source: "vulnerabilities", message });
       }
     }
 
@@ -237,6 +249,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     scan: { id: randomUUID(), project: options.projectPathArg },
     findings: findings.map(findingToJson),
     coverage: computeCoverage(graph),
+    diagnostics,
   };
 
   const issues = validateScanOutput(output);

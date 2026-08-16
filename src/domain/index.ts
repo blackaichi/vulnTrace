@@ -43,4 +43,4 @@ export type {
 export { isCallResolved, isReachable } from "./graph.js";
 export type { Evidence } from "./evidence.js";
 export type { Finding, Verdict } from "./verdict.js";
-export type { Coverage } from "./coverage.js";
+export type { Coverage, Diagnostic } from "./coverage.js";

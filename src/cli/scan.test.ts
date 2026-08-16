@@ -193,6 +193,67 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
         callsResolved: expect.any(Number),
         callsDynamic: expect.any(Number),
       },
+      diagnostics: [],
+    });
+  });
+
+  // Regression (TASK-026): entrypointsResult.diagnostics was computed by
+  // discoverEntrypoints() but never read anywhere in the CLI -- a typo'd
+  // `analysis.entrypoints` entry silently produced zero entrypoints (and
+  // therefore only UNKNOWN findings, per TASK-022's checkedAny fix) with
+  // no indication of why. It must now surface in the JSON output.
+  it("surfaces a diagnostic when a configured entrypoint does not exist, instead of silently dropping it", async () => {
+    tmpDir = mkdtempSync(path.join(tmpdir(), "vulntrace-scan-test-"));
+    const configPath = path.join(tmpDir, "vulntrace.yml");
+    writeFileSync(
+      configPath,
+      "analysis:\n  entrypoints:\n    - src/typo-does-not-exist.ts\n",
+    );
+    const { io, stdout } = fakeIo();
+
+    const exitCode = await runScanCommand({
+      projectPathArg: fixturePath("direct-esm"),
+      configPathOverride: configPath,
+      provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      io,
+    });
+
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(stdout.join(""));
+    expect(output.diagnostics).toEqual([
+      {
+        source: "entrypoints:configured",
+        message:
+          "analysis.entrypoints[0] does not exist: src/typo-does-not-exist.ts",
+      },
+    ]);
+    // Zero entrypoints -> zero call-graph coverage, and the vulnerable
+    // symbol was never checked -- UNKNOWN, not NOT_AFFECTED.
+    expect(output.coverage.files).toBe(0);
+    expect(output.findings[0]?.verdict).toBe("UNKNOWN");
+  });
+
+  it("surfaces a call-graph diagnostic explaining a dynamic call-graph blocker (fixtures/dynamic)", async () => {
+    tmpDir = mkdtempSync(path.join(tmpdir(), "vulntrace-scan-test-"));
+    const configPath = path.join(tmpDir, "vulntrace.yml");
+    writeFileSync(
+      configPath,
+      "analysis:\n  entrypoints:\n    - src/index.ts\n",
+    );
+    const { io, stdout } = fakeIo();
+
+    const exitCode = await runScanCommand({
+      projectPathArg: fixturePath("dynamic"),
+      configPathOverride: configPath,
+      provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      io,
+    });
+
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(stdout.join(""));
+    expect(output.diagnostics).toContainEqual({
+      source: "call-graph",
+      message: expect.stringContaining("dynamic_member_access"),
     });
   });
 });

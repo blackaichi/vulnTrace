@@ -1,4 +1,4 @@
-import type { Coverage } from "../domain/coverage.js";
+import type { Coverage, Diagnostic } from "../domain/coverage.js";
 import type {
   CallEdge,
   CallGraph,
@@ -50,6 +50,34 @@ export function computeCoverage(graph: CallGraph): Coverage {
     callsResolved,
     callsDynamic,
   };
+}
+
+/**
+ * Explains every unresolved/dynamic edge anywhere in the call graph (see
+ * docs/SDD.md § 8, TASK-026's "diagnostics explain blockers" acceptance
+ * criterion) — the per-blocker complement to {@link computeCoverage}'s
+ * aggregate `modulesUnresolved`/`callsDynamic` counts. Unlike a single
+ * {@link analyzeReachability} call's `blockers` (only the edges a specific
+ * source-to-target search actually traversed), this covers the whole
+ * graph: every file the graph builder discovered is already within the
+ * analyzed region (on-demand traversal only walks files a resolved call
+ * chain reaches — see call-graph.ts), so every one of its unresolved edges
+ * is a genuine, in-scope blocker worth surfacing, not just the ones that
+ * happened to lie on a path some rule's target was searched for.
+ */
+export function collectGraphDiagnostics(graph: CallGraph): Diagnostic[] {
+  return graph.edges
+    .filter(
+      (edge): edge is CallEdge & { resolution: { kind: "unknown" } } =>
+        edge.resolution.kind === "unknown",
+    )
+    .map((edge) => ({
+      source: "call-graph",
+      message: describeBlocker({
+        from: edge.from,
+        reason: edge.resolution.reason,
+      }),
+    }));
 }
 
 function describeBlocker(edge: UnresolvedEdge): string {
