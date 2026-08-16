@@ -39,6 +39,19 @@ async function graphFor(
   return buildCallGraph({ entryFiles, resolver });
 }
 
+/** A chain file0 -> file1 -> ... -> file{count-1}, each calling the next. */
+function buildChain(root: string, count: number): string {
+  for (let i = 0; i < count; i++) {
+    const body =
+      i + 1 < count
+        ? `import { fn${i + 1} } from "./file${i + 1}.js";\n` +
+          `export function fn${i}() { return fn${i + 1}(); }\n`
+        : `export function fn${i}() { return ${i}; }\n`;
+    write(root, `file${i}.js`, body);
+  }
+  return path.join(root, "file0.js");
+}
+
 function findNode(
   graph: CallGraph,
   predicate: (node: GraphNode) => boolean,
@@ -303,5 +316,72 @@ describe("buildCallGraph: dynamic calls are marked uncertain", () => {
         },
       }),
     );
+  });
+});
+
+describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => {
+  // docs/SDD.md § 26's analysis.limits / § 28-29's hardening requirement:
+  // a pathological or adversarial target project (e.g. an enormous or
+  // deeply/circularly interlinked codebase) must not be able to make
+  // on-demand file discovery consume unbounded time/memory.
+
+  it("discovers the full chain when no limit is configured", async () => {
+    const root = tempProject();
+    const entry = buildChain(root, 20);
+
+    const graph = await graphFor(root, [entry]);
+
+    const files = new Set(graph.nodes.map((n) => n.module));
+    expect(files.size).toBe(20);
+  });
+
+  it("stops discovering new files once maxFiles is reached", async () => {
+    const root = tempProject();
+    const entry = buildChain(root, 20);
+    const resolver = createModuleResolver(loadTsProject(root));
+
+    const graph = await buildCallGraph({
+      entryFiles: [entry],
+      resolver,
+      maxFiles: 5,
+    });
+
+    const files = new Set(graph.nodes.map((n) => n.module));
+    expect(files.size).toBeLessThanOrEqual(5);
+    expect(files.size).toBeGreaterThan(0);
+  });
+
+  it("stops discovering new files once maxGraphNodes is reached", async () => {
+    const root = tempProject();
+    const entry = buildChain(root, 20);
+    const resolver = createModuleResolver(loadTsProject(root));
+
+    const graph = await buildCallGraph({
+      entryFiles: [entry],
+      resolver,
+      maxGraphNodes: 5,
+    });
+
+    // Unbounded, this chain produces 40 nodes (a <module> + one function
+    // per file, 20 files) -- well below that confirms enforcement, not
+    // coincidence.
+    expect(graph.nodes.length).toBeLessThan(40);
+  });
+
+  it("discovers nothing once maxAnalysisSeconds has already elapsed", async () => {
+    const root = tempProject();
+    const entry = buildChain(root, 20);
+    const resolver = createModuleResolver(loadTsProject(root));
+
+    // 0 bypasses config-schema validation (which requires a positive
+    // number) deliberately, to test the raw enforcement mechanism in
+    // isolation from what values end users are allowed to configure.
+    const graph = await buildCallGraph({
+      entryFiles: [entry],
+      resolver,
+      maxAnalysisSeconds: 0,
+    });
+
+    expect(graph.nodes).toEqual([]);
   });
 });

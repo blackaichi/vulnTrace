@@ -176,6 +176,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   let entrypointsResult;
   let graph;
   let resolver;
+  let graphBuildMs = 0;
   try {
     const tsProject = loadTsProject(projectRoot);
     resolver = createModuleResolver(tsProject);
@@ -184,10 +185,15 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       resolver,
       configuredEntrypoints: config.analysis.entrypoints,
     });
+    const graphBuildStart = Date.now();
     graph = await buildCallGraph({
       entryFiles: entrypointsResult.entrypoints.map((entry) => entry.filePath),
       resolver,
+      maxFiles: config.analysis.limits.maxFiles,
+      maxGraphNodes: config.analysis.limits.maxGraphNodes,
+      maxAnalysisSeconds: config.analysis.limits.maxAnalysisSeconds,
     });
+    graphBuildMs = Date.now() - graphBuildStart;
   } catch (error) {
     io.stderr(`vulntrace: analysis failure: ${errorMessage(error)}\n`);
     return 3;
@@ -200,6 +206,31 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     })),
     ...collectGraphDiagnostics(graph),
   ];
+
+  // A limit reached mid-build (see docs/SDD.md § 26, § 29 hardening: a
+  // pathological/adversarial target project must not consume unbounded
+  // resources) truncates the call graph rather than aborting the scan —
+  // surface that truncation explicitly rather than letting a partial graph
+  // look like a complete one.
+  const filesDiscovered = computeCoverage(graph).files;
+  if (filesDiscovered >= config.analysis.limits.maxFiles) {
+    diagnostics.push({
+      source: "call-graph",
+      message: `analysis stopped after reaching the configured file limit (${config.analysis.limits.maxFiles}); results may be incomplete`,
+    });
+  }
+  if (graph.nodes.length >= config.analysis.limits.maxGraphNodes) {
+    diagnostics.push({
+      source: "call-graph",
+      message: `analysis stopped after reaching the configured graph-node limit (${config.analysis.limits.maxGraphNodes}); results may be incomplete`,
+    });
+  }
+  if (graphBuildMs >= config.analysis.limits.maxAnalysisSeconds * 1000) {
+    diagnostics.push({
+      source: "call-graph",
+      message: `analysis stopped after reaching the configured time limit (${config.analysis.limits.maxAnalysisSeconds}s); results may be incomplete`,
+    });
+  }
 
   const cveFilter = options.cveFilter;
   const uniqueDependencies = dedupeDependencies(dependencyNodes);

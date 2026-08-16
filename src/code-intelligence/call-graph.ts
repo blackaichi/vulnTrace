@@ -304,6 +304,18 @@ export interface BuildCallGraphOptions {
   /** Files to start building the graph from (see TASK-019 Entrypoints for how these will eventually be selected). */
   readonly entryFiles: readonly string[];
   readonly resolver: ModuleResolver;
+  /**
+   * Resource limits (see docs/SDD.md § 26's `analysis.limits`, § 28-29's
+   * hardening requirement to bound analysis of an adversarial/pathological
+   * target project). All optional and unbounded by default, so every
+   * existing caller that doesn't pass them keeps its current behavior.
+   * Once a limit is reached, on-demand discovery of further files stops —
+   * already-queued/in-progress work still completes, so this bounds
+   * unbounded growth rather than guaranteeing an exact cutoff.
+   */
+  readonly maxFiles?: number;
+  readonly maxGraphNodes?: number;
+  readonly maxAnalysisSeconds?: number;
 }
 
 /**
@@ -323,6 +335,19 @@ export async function buildCallGraph(
   const edges: CallEdge[] = [];
   const queue: string[] = [...options.entryFiles];
 
+  const startTime = Date.now();
+  const maxFiles = options.maxFiles ?? Infinity;
+  const maxGraphNodes = options.maxGraphNodes ?? Infinity;
+  const maxAnalysisMs = (options.maxAnalysisSeconds ?? Infinity) * 1000;
+
+  function withinLimits(): boolean {
+    return (
+      walked.size < maxFiles &&
+      nodes.size < maxGraphNodes &&
+      Date.now() - startTime < maxAnalysisMs
+    );
+  }
+
   function registerNode(node: GraphNode): void {
     if (!nodes.has(node.id)) {
       nodes.set(node.id, node);
@@ -333,6 +358,15 @@ export async function buildCallGraph(
     const cached = fileData.get(filePath);
     if (cached) {
       return cached;
+    }
+    // Gated here — the single choke point every caller (this file's own
+    // onDiscoverFile below, and classifyCall's own direct ensurePrepared
+    // call to look up a resolved target's exportNameToNodeId) goes
+    // through — rather than in each caller individually, so a limit
+    // reached mid-walk can never be bypassed by whichever call site
+    // happens to run first.
+    if (!withinLimits()) {
+      return undefined;
     }
     const prepared = prepareFile(filePath, registerNode);
     if (prepared) {
@@ -346,7 +380,10 @@ export async function buildCallGraph(
     resolver: options.resolver,
     ensurePrepared,
     onDiscoverFile: (filePath) => {
-      ensurePrepared(filePath);
+      const prepared = ensurePrepared(filePath);
+      if (!prepared) {
+        return;
+      }
       if (!walked.has(filePath)) {
         queue.push(filePath);
       }
@@ -354,6 +391,10 @@ export async function buildCallGraph(
   };
 
   while (queue.length > 0) {
+    if (!withinLimits()) {
+      break;
+    }
+
     const filePath = queue.shift();
     if (!filePath || walked.has(filePath)) {
       continue;

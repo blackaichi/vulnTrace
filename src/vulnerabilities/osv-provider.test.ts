@@ -142,4 +142,24 @@ describe("OsvProvider.queryPackage: explicit failures, never a silent empty resu
       provider.queryPackage({ ecosystem: "npm", name: "foo" }),
     ).rejects.toThrow(OsvResponseError);
   });
+
+  // TASK-028 security hardening: OSV is an untrusted external provider
+  // (docs/SDD.md § 29) -- a response envelope that superficially looks
+  // plausible but doesn't actually match the expected shape must be
+  // rejected explicitly, never silently coerced into an empty/garbage
+  // result.
+  it.each([
+    ["a top-level array instead of an object", '["not", "an", "object"]'],
+    ["a bare string", '"not even an object"'],
+    ["null", "null"],
+    ["vulns entries that are not objects", '{"vulns":["x",123,null]}'],
+    ["vulns itself null", '{"vulns":null}'],
+  ])("throws OsvResponseError for %s", async (_label, body) => {
+    const fetchImpl = fakeFetch(new Response(body, { status: 200 }));
+    const provider = new OsvProvider({ fetchImpl });
+
+    await expect(
+      provider.queryPackage({ ecosystem: "npm", name: "foo" }),
+    ).rejects.toThrow(OsvResponseError);
+  });
 });

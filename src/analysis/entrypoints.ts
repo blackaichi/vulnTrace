@@ -26,6 +26,26 @@ export interface DiscoverEntrypointsOptions {
   readonly explicitFiles?: readonly string[];
 }
 
+/**
+ * True if `candidate` is `projectRoot` itself or lies somewhere beneath it
+ * (see docs/SDD.md § 29: "must not trust target project configuration
+ * blindly"). `analysis.entrypoints` and package.json's `main`/`bin` are
+ * both read from the *scanned project's own* files — a project entirely
+ * within an attacker's control — so a value like `"../../../../etc/passwd"`
+ * or an absolute path elsewhere on the host must never be silently
+ * accepted as a file to statically parse. Compares via `path.relative`
+ * rather than a string-prefix check so a sibling directory that merely
+ * shares `projectRoot` as a prefix (e.g. `/scan/project-2` next to
+ * `/scan/project`) is correctly rejected too.
+ */
+function isWithinRoot(projectRoot: string, candidate: string): boolean {
+  const relative = path.relative(projectRoot, candidate);
+  return (
+    relative === "" ||
+    (!relative.startsWith("..") && !path.isAbsolute(relative))
+  );
+}
+
 function resolveFileList(
   projectRoot: string,
   files: readonly string[],
@@ -37,6 +57,15 @@ function resolveFileList(
 
   files.forEach((file, index) => {
     const absolute = path.resolve(projectRoot, file);
+
+    if (!isWithinRoot(projectRoot, absolute)) {
+      diagnostics.push({
+        source,
+        message: `${reasonPrefix}[${index}] resolves outside the project root and was rejected: ${file}`,
+      });
+      return;
+    }
+
     if (ts.sys.fileExists(absolute)) {
       entrypoints.push({
         filePath: absolute,
@@ -79,6 +108,14 @@ async function resolvePackageField(
   const resolution = await resolver.resolve(specifier, importerFilePath);
 
   if (resolution.kind === "resolved") {
+    if (!isWithinRoot(projectRoot, resolution.resolvedFileName)) {
+      return {
+        diagnostic: {
+          source,
+          message: `${reason} resolves outside the project root and was rejected: "${fieldValue}"`,
+        },
+      };
+    }
     return {
       entrypoint: {
         filePath: resolution.resolvedFileName,

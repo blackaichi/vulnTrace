@@ -288,4 +288,37 @@ describe("normalizeOsvVulnerability: malformed input", () => {
       ),
     ).toThrow(OsvNormalizationError);
   });
+
+  it("throws OsvNormalizationError for wrong field types, never silently coercing", () => {
+    expect(() =>
+      normalizeOsvVulnerability({ id: 12345, affected: [] }, target),
+    ).toThrow(OsvNormalizationError);
+    expect(() =>
+      normalizeOsvVulnerability({ id: "X", affected: "not-an-array" }, target),
+    ).toThrow(OsvNormalizationError);
+    expect(() =>
+      normalizeOsvVulnerability(
+        { id: "X", affected: [{ package: target, ranges: null }] },
+        target,
+      ),
+    ).toThrow(OsvNormalizationError);
+  });
+
+  // TASK-028 security hardening: an OSV record is untrusted external data
+  // (docs/SDD.md § 29) parsed with zod, which builds a fresh object from
+  // its own declared schema shape rather than copying arbitrary input
+  // keys — confirms a `__proto__` key in the raw record can never pollute
+  // Object.prototype.
+  it("is not vulnerable to prototype pollution via a '__proto__' key in the raw record", () => {
+    const malicious = JSON.parse(
+      `{"id":"GHSA-evil","__proto__":{"polluted":true},"affected":[{"package":${JSON.stringify(
+        target,
+      )},"ranges":[{"events":[{"introduced":"0"}]}]}]}`,
+    ) as Record<string, unknown>;
+
+    const result = normalizeOsvVulnerability(malicious, target);
+
+    expect(result.id).toBe("GHSA-evil");
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
 });

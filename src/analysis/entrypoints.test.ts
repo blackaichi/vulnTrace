@@ -237,6 +237,113 @@ describe("discoverEntrypoints: package.json presence", () => {
   });
 });
 
+describe("discoverEntrypoints: path traversal is rejected (TASK-028 security hardening)", () => {
+  // Regression: analysis.entrypoints and package.json main/bin are read
+  // from the scanned project's own files -- entirely attacker-controlled
+  // (docs/SDD.md § 29: "must not trust target project configuration
+  // blindly"). Before this fix, a value like "../../../../etc/passwd" or
+  // an absolute path elsewhere on the host was silently accepted and fed
+  // straight into the call graph builder for static parsing. Reproduced
+  // directly against /etc/passwd before landing this fix.
+
+  it("rejects a configured entrypoint that escapes the project root via '../' traversal", async () => {
+    const root = tempProject();
+    write(root, "src/index.ts", "export {};\n");
+    const outsideFile = write(
+      tempProject(),
+      "secret.js",
+      "module.exports = {};\n",
+    );
+    const relativeEscape = path.relative(root, outsideFile);
+
+    const result = await discoverEntrypoints({
+      projectRoot: root,
+      resolver: resolverFor(root),
+      configuredEntrypoints: [relativeEscape],
+    });
+
+    expect(result.entrypoints).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      {
+        source: "configured",
+        message: `analysis.entrypoints[0] resolves outside the project root and was rejected: ${relativeEscape}`,
+      },
+    ]);
+  });
+
+  it("rejects an explicit entrypoint given as an absolute path outside the project root", async () => {
+    const root = tempProject();
+    const outsideFile = write(
+      tempProject(),
+      "secret.js",
+      "module.exports = {};\n",
+    );
+
+    const result = await discoverEntrypoints({
+      projectRoot: root,
+      resolver: resolverFor(root),
+      explicitFiles: [outsideFile],
+    });
+
+    expect(result.entrypoints).toEqual([]);
+    expect(result.diagnostics[0]?.message).toContain(
+      "resolves outside the project root",
+    );
+  });
+
+  it("rejects a package.json main field that resolves outside the project root", async () => {
+    const root = tempProject();
+    const outsideFile = write(
+      tempProject(),
+      "secret.js",
+      "module.exports = {};\n",
+    );
+    const relativeEscape = path.relative(root, outsideFile);
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "fixture", main: relativeEscape }),
+    );
+
+    const result = await discoverEntrypoints({
+      projectRoot: root,
+      resolver: resolverFor(root),
+    });
+
+    expect(result.entrypoints).toEqual([]);
+    expect(result.diagnostics[0]?.source).toBe("package_main");
+    expect(result.diagnostics[0]?.message).toContain(
+      "resolves outside the project root",
+    );
+  });
+
+  it("still accepts a legitimate entrypoint alongside a rejected traversal attempt", async () => {
+    const root = tempProject();
+    const legitFile = write(root, "src/index.ts", "export {};\n");
+    const outsideFile = write(
+      tempProject(),
+      "secret.js",
+      "module.exports = {};\n",
+    );
+    const relativeEscape = path.relative(root, outsideFile);
+
+    const result = await discoverEntrypoints({
+      projectRoot: root,
+      resolver: resolverFor(root),
+      configuredEntrypoints: [relativeEscape, "src/index.ts"],
+    });
+
+    expect(result.entrypoints).toEqual([
+      {
+        filePath: legitFile,
+        source: "configured",
+        reason: "analysis.entrypoints[1]: src/index.ts",
+      },
+    ]);
+    expect(result.diagnostics).toHaveLength(1);
+  });
+});
+
 describe("discoverEntrypoints: combined sources", () => {
   it("combines configured, main, and bin entrypoints in one result", async () => {
     const root = tempProject();
