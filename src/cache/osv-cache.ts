@@ -85,6 +85,12 @@ export class FileOsvCacheStore implements OsvCacheStore {
   }
 }
 
+/** Cumulative cache hit/miss counts (see docs/SDD.md § 30: "Performance instrumentation must record ... cache hit/miss"). */
+export interface CacheStats {
+  hits: number;
+  misses: number;
+}
+
 /**
  * Wraps a {@link VulnerabilityProvider} with a cache-first strategy (see
  * docs/SDD.md § 28). A cache hit never calls the wrapped provider at all,
@@ -92,18 +98,29 @@ export class FileOsvCacheStore implements OsvCacheStore {
  * reproducible (the exact same raw records are reused, not re-fetched
  * from a live, potentially-changed database) and able to run offline once
  * the cache is warm.
+ *
+ * `stats`, when supplied, is mutated in place with each query's outcome —
+ * an optional out-parameter rather than a return-type change, so every
+ * existing caller that doesn't need hit/miss counts is unaffected.
  */
 export function createCachingProvider(
   provider: VulnerabilityProvider,
   store: OsvCacheStore,
   toolVersion: string,
+  stats?: CacheStats,
 ): VulnerabilityProvider {
   return {
     async queryPackage(query) {
       const key = computeOsvCacheKey({ toolVersion, query });
       const cached = store.get(key);
       if (cached) {
+        if (stats) {
+          stats.hits++;
+        }
         return cached;
+      }
+      if (stats) {
+        stats.misses++;
       }
       const result = await provider.queryPackage(query);
       store.set(key, result);

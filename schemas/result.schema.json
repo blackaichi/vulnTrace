@@ -2,7 +2,14 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://vulntrace.dev/schema/result-0.6.json",
   "type": "object",
-  "required": ["schemaVersion", "scan", "findings", "coverage", "diagnostics"],
+  "required": [
+    "schemaVersion",
+    "scan",
+    "findings",
+    "coverage",
+    "diagnostics",
+    "timings"
+  ],
   "properties": {
     "schemaVersion": {
       "type": "string",
@@ -158,6 +165,29 @@
             "minLength": 1
           }
         }
+      }
+    },
+    "timings": {
+      "type": "object",
+      "required": [
+        "parsingMs",
+        "resolutionMs",
+        "graphConstructionMs",
+        "reachabilityMs",
+        "providerMs",
+        "cacheHits",
+        "cacheMisses",
+        "totalMs"
+      ],
+      "properties": {
+        "parsingMs": { "type": "number", "minimum": 0 },
+        "resolutionMs": { "type": "number", "minimum": 0 },
+        "graphConstructionMs": { "type": "number", "minimum": 0 },
+        "reachabilityMs": { "type": "number", "minimum": 0 },
+        "providerMs": { "type": "number", "minimum": 0 },
+        "cacheHits": { "type": "integer", "minimum": 0 },
+        "cacheMisses": { "type": "integer", "minimum": 0 },
+        "totalMs": { "type": "number", "minimum": 0 }
       }
     }
   }

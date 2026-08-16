@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { Ajv2020, type AnySchemaObject } from "ajv/dist/2020.js";
 import type { Coverage, Diagnostic } from "../domain/coverage.js";
 import type { Finding } from "../domain/verdict.js";
+import type { PhaseTimings } from "../performance/timing.js";
 
 const repoRoot = path.resolve(
   fileURLToPath(new URL("../../", import.meta.url)),
@@ -50,6 +51,8 @@ export interface ScanOutput {
    * because a scan happened to hit no blockers.
    */
   readonly diagnostics: readonly Diagnostic[];
+  /** Per-phase timing instrumentation (see docs/SDD.md § 30, TASK-029). */
+  readonly timings: PhaseTimings;
 }
 
 /**

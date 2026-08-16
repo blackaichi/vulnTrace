@@ -8,6 +8,7 @@ import type {
   VulnerabilityProvider,
 } from "../domain/vulnerability.js";
 import {
+  type CacheStats,
   FileOsvCacheStore,
   computeOsvCacheKey,
   createCachingProvider,
@@ -187,5 +188,19 @@ describe("createCachingProvider", () => {
     await createCachingProvider(provider, store, "1.0.1").queryPackage(query);
 
     expect(callCount()).toBe(2);
+  });
+
+  it("records a miss then a hit in the optional stats accumulator (docs/SDD.md § 30)", async () => {
+    const results: RawVulnerability[] = [{ id: "GHSA-test-0001" }];
+    const { provider } = countingProvider(results);
+    const store = memoryStore();
+    const stats: CacheStats = { hits: 0, misses: 0 };
+    const caching = createCachingProvider(provider, store, "1.0.0", stats);
+
+    await caching.queryPackage(query);
+    expect(stats).toEqual({ hits: 0, misses: 1 });
+
+    await caching.queryPackage(query);
+    expect(stats).toEqual({ hits: 1, misses: 1 });
   });
 });

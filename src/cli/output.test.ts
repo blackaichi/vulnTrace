@@ -85,6 +85,16 @@ describe("validateScanOutput", () => {
       callsDynamic: 0,
     },
     diagnostics: [],
+    timings: {
+      parsingMs: 5,
+      resolutionMs: 2,
+      graphConstructionMs: 7,
+      reachabilityMs: 1,
+      providerMs: 10,
+      cacheHits: 0,
+      cacheMisses: 1,
+      totalMs: 20,
+    },
   };
 
   it("accepts a well-formed scan result against the real schemas/result.schema.json", () => {
@@ -262,6 +272,31 @@ describe("validateScanOutput", () => {
     expect(issues.length).toBeGreaterThan(0);
   });
 
+  it("rejects a missing timings field", () => {
+    const withoutTimings = {
+      schemaVersion: validOutput.schemaVersion,
+      scan: validOutput.scan,
+      findings: validOutput.findings,
+      coverage: validOutput.coverage,
+      diagnostics: validOutput.diagnostics,
+    };
+
+    const issues = validateScanOutput(withoutTimings);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a negative timings field", () => {
+    const output = {
+      ...validOutput,
+      timings: { ...validOutput.timings, providerMs: -1 },
+    };
+
+    const issues = validateScanOutput(output);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
   it("rejects a scan result missing scan.id", () => {
     const output = {
       ...validOutput,
@@ -288,6 +323,16 @@ describe("formatScanOutput", () => {
       callsDynamic: 0,
     },
     diagnostics: [],
+    timings: {
+      parsingMs: 0,
+      resolutionMs: 0,
+      graphConstructionMs: 0,
+      reachabilityMs: 0,
+      providerMs: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      totalMs: 0,
+    },
   };
 
   it("produces compact single-line JSON by default", () => {

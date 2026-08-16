@@ -4,7 +4,15 @@ import path from "node:path";
 import { createModuleResolver } from "../code-intelligence/module-resolver.js";
 import { loadTsProject } from "../code-intelligence/ts-project.js";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
-import { FileOsvCacheStore, createCachingProvider } from "../cache/index.js";
+import {
+  type CacheStats,
+  FileOsvCacheStore,
+  createCachingProvider,
+} from "../cache/index.js";
+import {
+  createTimingResolver,
+  type TimingAccumulator,
+} from "../performance/timing.js";
 import { loadConfigFile, parseConfig } from "../config/load.js";
 import type { Config } from "../config/schema.js";
 import {
@@ -111,9 +119,14 @@ function loadRules(
  *   entirely — merely because something failed to resolve).
  */
 export async function runScanCommand(options: RunScanOptions): Promise<number> {
+  const scanStart = Date.now();
   const io = options.io ?? defaultIo;
   const rawProvider = options.provider ?? new OsvProvider();
   const projectRoot = path.resolve(options.projectPathArg);
+  const cacheStats: CacheStats = { hits: 0, misses: 0 };
+  const resolutionTiming: TimingAccumulator = { ms: 0 };
+  let providerMs = 0;
+  let reachabilityMs = 0;
 
   if (!existsSync(projectRoot) || !statSync(projectRoot).isDirectory()) {
     io.stderr(
@@ -142,6 +155,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
               path.join(projectRoot, ".vulntrace-cache", "osv"),
           ),
           readOwnVersion(),
+          cacheStats,
         )
       : rawProvider;
 
@@ -179,7 +193,10 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   let graphBuildMs = 0;
   try {
     const tsProject = loadTsProject(projectRoot);
-    resolver = createModuleResolver(tsProject);
+    resolver = createTimingResolver(
+      createModuleResolver(tsProject),
+      resolutionTiming,
+    );
     entrypointsResult = await discoverEntrypoints({
       projectRoot,
       resolver,
@@ -238,13 +255,16 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
 
   for (const dependency of uniqueDependencies) {
     let rawVulnerabilities;
+    const providerStart = Date.now();
     try {
       rawVulnerabilities = await provider.queryPackage({
         ecosystem: dependency.ecosystem,
         name: dependency.name,
         version: dependency.version,
       });
+      providerMs += Date.now() - providerStart;
     } catch (error) {
+      providerMs += Date.now() - providerStart;
       io.stderr(
         `vulntrace: vulnerability provider failure for ${dependency.name}@${dependency.version}: ${errorMessage(error)}\n`,
       );
@@ -279,6 +299,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
 
     for (const match of matches) {
       const rule = rulesById.get(match.vulnerability.id);
+      const reachabilityStart = Date.now();
       const finding = await buildFinding({
         vulnerability: match.vulnerability,
         packageName: dependency.name,
@@ -290,6 +311,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         resolver,
         projectRoot,
       });
+      reachabilityMs += Date.now() - reachabilityStart;
       if (finding) {
         findings.push(finding);
       }
@@ -302,6 +324,18 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     findings: findings.map(findingToJson),
     coverage: computeCoverage(graph),
     diagnostics,
+    timings: {
+      // Derived, not independently measured -- see PhaseTimings' own doc
+      // comment (src/performance/timing.ts) for why.
+      parsingMs: Math.max(0, graphBuildMs - resolutionTiming.ms),
+      resolutionMs: resolutionTiming.ms,
+      graphConstructionMs: graphBuildMs,
+      reachabilityMs,
+      providerMs,
+      cacheHits: cacheStats.hits,
+      cacheMisses: cacheStats.misses,
+      totalMs: Date.now() - scanStart,
+    },
   };
 
   const issues = validateScanOutput(output);

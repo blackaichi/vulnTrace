@@ -1,4 +1,5 @@
 export {
+  type CacheStats,
   type OsvCacheKeyInput,
   type OsvCacheStore,
   FileOsvCacheStore,
