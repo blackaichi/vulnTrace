@@ -232,11 +232,47 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
         message:
           "analysis.entrypoints[0] does not exist: src/typo-does-not-exist.ts",
       },
+      {
+        source: "entrypoints",
+        message:
+          "no entrypoints were discovered (no analysis.entrypoints configured, and no resolvable package.json main/bin field); nothing could be analyzed",
+      },
     ]);
     // Zero entrypoints -> zero call-graph coverage, and the vulnerable
     // symbol was never checked -- UNKNOWN, not NOT_AFFECTED.
     expect(output.coverage.files).toBe(0);
     expect(output.findings[0]?.verdict).toBe("UNKNOWN");
+  });
+
+  // Regression (TASK-030): found while verifying the documented example
+  // scan from a clean environment -- a project with no entrypoints
+  // *configured at all* (not even a failed attempt) previously produced
+  // an empty diagnostics array, with nothing explaining why every
+  // coverage count was zero.
+  it("surfaces a diagnostic when zero entrypoints are configured or discoverable at all", async () => {
+    tmpDir = mkdtempSync(path.join(tmpdir(), "vulntrace-scan-test-"));
+    const configPath = path.join(tmpDir, "vulntrace.yml");
+    writeFileSync(configPath, "analysis: {}\n");
+    const { io, stdout } = fakeIo();
+
+    const exitCode = await runScanCommand({
+      projectPathArg: fixturePath("direct-esm"),
+      configPathOverride: configPath,
+      provider: fakeProvider({ "fixture-lib": [FIXTURE_LIB_GHSA] }),
+      noCache: true,
+      io,
+    });
+
+    expect(exitCode).toBe(0);
+    const output = JSON.parse(stdout.join(""));
+    expect(output.diagnostics).toEqual([
+      {
+        source: "entrypoints",
+        message:
+          "no entrypoints were discovered (no analysis.entrypoints configured, and no resolvable package.json main/bin field); nothing could be analyzed",
+      },
+    ]);
+    expect(output.coverage.files).toBe(0);
   });
 
   it("surfaces a call-graph diagnostic explaining a dynamic call-graph blocker (fixtures/dynamic)", async () => {
@@ -261,6 +297,60 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
     expect(output.diagnostics).toContainEqual({
       source: "call-graph",
       message: expect.stringContaining("dynamic_member_access"),
+    });
+  });
+
+  // Regression (TASK-030): found during final MVP review. OSV's primary
+  // id for an npm advisory is conventionally a GHSA id, with the
+  // corresponding CVE recorded only as an alias -- a rule authored
+  // against the CVE id (a common, natural choice) previously never
+  // matched, silently degrading to UNKNOWN for a genuinely known,
+  // reachable vulnerability.
+  it("matches a rule authored against a vulnerability's CVE alias, not just its primary GHSA id", async () => {
+    const dir = ensureTmpDir();
+    const rulesPath = path.join(dir, "rules.yml");
+    writeFileSync(
+      rulesPath,
+      "rules:\n" +
+        "  - id: CVE-2020-99999\n" +
+        "    package:\n" +
+        "      name: fixture-lib\n" +
+        "    targets:\n" +
+        "      - module: fixture-lib\n" +
+        "        export: vulnerable\n",
+    );
+    const configPath = writeConfig(rulesPath);
+    const rawVulnerability: RawVulnerability = {
+      id: "GHSA-fixture-alias-0001",
+      aliases: ["CVE-2020-99999"],
+      affected: [
+        {
+          package: { ecosystem: "npm", name: "fixture-lib" },
+          ranges: [
+            {
+              type: "SEMVER",
+              events: [{ introduced: "0" }, { fixed: "1.0.1" }],
+            },
+          ],
+        },
+      ],
+      references: [],
+    };
+    const { io, stdout } = fakeIo();
+
+    const exitCode = await runScanCommand({
+      projectPathArg: fixturePath("direct-esm"),
+      configPathOverride: configPath,
+      provider: fakeProvider({ "fixture-lib": [rawVulnerability] }),
+      noCache: true,
+      io,
+    });
+
+    expect(exitCode).toBe(1);
+    const output = JSON.parse(stdout.join(""));
+    expect(output.findings[0]).toMatchObject({
+      vulnerability: "GHSA-fixture-alias-0001",
+      verdict: "AFFECTED",
     });
   });
 });

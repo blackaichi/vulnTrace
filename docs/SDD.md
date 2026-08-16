@@ -903,9 +903,31 @@ Example:
     "functions": 12,
     "callsResolved": 10,
     "callsDynamic": 1
+  },
+  "diagnostics": [],
+  "timings": {
+    "parsingMs": 12,
+    "resolutionMs": 5,
+    "graphConstructionMs": 18,
+    "reachabilityMs": 1,
+    "providerMs": 340,
+    "cacheHits": 0,
+    "cacheMisses": 1,
+    "totalMs": 362
   }
 }
 ```
+
+`diagnostics` (TASK-026) explains blockers behind `coverage`'s aggregate
+counts — unresolved entrypoints, unresolved/dynamic call-graph edges,
+vulnerability records that failed to normalize — as
+`{source, message}` entries; always present, possibly empty.
+
+`timings` (TASK-030) records the per-phase instrumentation § 30
+requires. `parsingMs` is derived (`graphConstructionMs - resolutionMs`),
+not independently measured — parsing and resolution are interleaved
+within call-graph construction with no clean seam to isolate parsing
+alone; see `src/performance/timing.ts`.
 
 ---
 
@@ -957,6 +979,8 @@ analysis:
 vulnerabilities:
   providers:
     - osv
+  cache:
+    enabled: true
 
 rules:
   files:

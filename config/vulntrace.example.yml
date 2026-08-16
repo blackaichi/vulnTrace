@@ -22,6 +22,8 @@ analysis:
 vulnerabilities:
   providers:
     - osv
+  cache:
+    enabled: true
 
 rules:
   files:

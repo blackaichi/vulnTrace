@@ -98,6 +98,35 @@ function loadRules(
 }
 
 /**
+ * Finds the rule for a matched vulnerability, checking not just its
+ * primary `id` but every one of its `aliases` too (see TASK-012's
+ * `indexRulesByVulnerabilityId`, keyed by whatever id string a rule's own
+ * author chose). OSV's primary id for an npm advisory is conventionally a
+ * GHSA id, with the corresponding CVE (if any) recorded only as an alias
+ * — a rule authored against the CVE id (a common, natural choice) would
+ * otherwise never match, silently degrading to UNKNOWN for a genuinely
+ * known vulnerability. `--cve` filtering already checks aliases (see
+ * below); rule lookup previously did not — found and fixed during
+ * TASK-030's final review.
+ */
+function findRuleForVulnerability(
+  rulesById: ReadonlyMap<string, VulnerableSymbolRule>,
+  vulnerability: Vulnerability,
+): VulnerableSymbolRule | undefined {
+  const direct = rulesById.get(vulnerability.id);
+  if (direct) {
+    return direct;
+  }
+  for (const alias of vulnerability.aliases) {
+    const byAlias = rulesById.get(alias);
+    if (byAlias) {
+      return byAlias;
+    }
+  }
+  return undefined;
+}
+
+/**
  * `vulntrace scan <path>` (see docs/SDD.md § 25, § 32's vertical slice).
  * Runs the full pipeline — dependency graph -> vulnerability provider ->
  * normalization -> version match -> vulnerable-symbol rule -> call graph ->
@@ -224,6 +253,21 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     ...collectGraphDiagnostics(graph),
   ];
 
+  // Regression found while verifying the documented example scan from a
+  // clean environment (TASK-030): a project with no `analysis.entrypoints`
+  // configured and no resolvable package.json main/bin field discovers
+  // zero entrypoints -- and, when nothing was even attempted (as opposed
+  // to attempted and failed, which already produces its own diagnostic
+  // above), that previously produced an empty diagnostics array with no
+  // explanation for why every coverage count was zero.
+  if (entrypointsResult.entrypoints.length === 0) {
+    diagnostics.push({
+      source: "entrypoints",
+      message:
+        "no entrypoints were discovered (no analysis.entrypoints configured, and no resolvable package.json main/bin field); nothing could be analyzed",
+    });
+  }
+
   // A limit reached mid-build (see docs/SDD.md § 26, § 29 hardening: a
   // pathological/adversarial target project must not consume unbounded
   // resources) truncates the call graph rather than aborting the scan —
@@ -298,7 +342,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     const matches = matchVulnerabilities(dependency.version, relevant);
 
     for (const match of matches) {
-      const rule = rulesById.get(match.vulnerability.id);
+      const rule = findRuleForVulnerability(rulesById, match.vulnerability);
       const reachabilityStart = Date.now();
       const finding = await buildFinding({
         vulnerability: match.vulnerability,
