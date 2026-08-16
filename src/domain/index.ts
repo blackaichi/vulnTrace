@@ -10,6 +10,7 @@
  */
 
 export type { DependencyNode } from "./dependency.js";
+export type { Entrypoint, EntrypointSource } from "./entrypoint.js";
 export type {
   PackageQuery,
   RawVulnerability,
