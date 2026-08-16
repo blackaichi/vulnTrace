@@ -4,3 +4,4 @@ export {
   type EntrypointDiagnostic,
   discoverEntrypoints,
 } from "./entrypoints.js";
+export { analyzeReachability, reachabilityEngine } from "./reachability.js";
