@@ -1,0 +1,32 @@
+# Task Index
+
+- TASK-001 Bootstrap
+- TASK-002 Configuration
+- TASK-003 Domain Models
+- TASK-004 Test Infrastructure
+- TASK-005 package.json Parser
+- TASK-006 package-lock Parser
+- TASK-007 Dependency Graph
+- TASK-008 SBOM Boundary
+- TASK-009 OSV Provider
+- TASK-010 Vulnerability Normalizer
+- TASK-011 Vulnerability Matching
+- TASK-012 Manual Symbol Rules
+- TASK-013 TypeScript Project Loader
+- TASK-014 AST / Source Index
+- TASK-015 Import / Export Model
+- TASK-016 Module Resolution
+- TASK-017 Symbol Binding
+- TASK-018 Call Graph
+- TASK-019 Entrypoints
+- TASK-020 Reachability
+- TASK-021 Verdict + Evidence
+- TASK-022 CLI
+- TASK-023 JSON Output
+- TASK-024 Fixture Suite
+- TASK-025 E2E Vertical Slice
+- TASK-026 Coverage / Diagnostics
+- TASK-027 Cache / Reproducibility
+- TASK-028 Security Hardening
+- TASK-029 Performance Baseline
+- TASK-030 MVP Release

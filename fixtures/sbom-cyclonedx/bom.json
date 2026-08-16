@@ -1,0 +1,32 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "version": 1,
+  "metadata": {
+    "component": {
+      "type": "application",
+      "name": "fixture-direct-esm",
+      "version": "1.0.0",
+      "bom-ref": "fixture-direct-esm@1.0.0"
+    }
+  },
+  "components": [
+    {
+      "type": "library",
+      "name": "fixture-lib",
+      "version": "1.0.0",
+      "purl": "pkg:npm/fixture-lib@1.0.0",
+      "bom-ref": "pkg:npm/fixture-lib@1.0.0"
+    }
+  ],
+  "dependencies": [
+    {
+      "ref": "fixture-direct-esm@1.0.0",
+      "dependsOn": ["pkg:npm/fixture-lib@1.0.0"]
+    },
+    {
+      "ref": "pkg:npm/fixture-lib@1.0.0",
+      "dependsOn": []
+    }
+  ]
+}

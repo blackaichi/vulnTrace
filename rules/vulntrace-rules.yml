@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-fixture-0001
+    package:
+      name: fixture-lib
+    targets:
+      - module: fixture-lib
+        export: vulnerable
+        kind: function
+        confidence: 1.0

@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://vulntrace.dev/schema/result-0.6.json",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "scan",
+    "findings",
+    "coverage"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "type": "string"
+    },
+    "scan": {
+      "type": "object"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "vulnerability",
+          "package",
+          "version",
+          "verdict"
+        ],
+        "properties": {
+          "vulnerability": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "verdict": {
+            "enum": [
+              "AFFECTED",
+              "NOT_AFFECTED",
+              "UNKNOWN"
+            ]
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          }
+        }
+      }
+    },
+    "coverage": {
+      "type": "object"
+    }
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "vulntrace-coding-agent-kit",
+  "version": "0.6.0",
+  "project": "VulnTrace",
+  "language": "TypeScript",
+  "focus": "JavaScript/TypeScript vulnerability-specific reachability",
+  "taskCount": 30,
+  "mvpVerdicts": [
+    "AFFECTED",
+    "NOT_AFFECTED",
+    "UNKNOWN"
+  ],
+  "primaryDocs": [
+    "AGENTS.md",
+    "docs/SDD.md",
+    "docs/COMPETITIVE-ANALYSIS.md",
+    "docs/MVP-IMPLEMENTATION-PLAN.md",
+    "docs/DEFINITION-OF-DONE.md"
+  ]
+}

@@ -1,0 +1,32 @@
+project:
+  root: .
+
+analysis:
+  entrypoints:
+    - src/index.ts
+
+  include:
+    - src/**/*.ts
+    - src/**/*.js
+
+  exclude:
+    - node_modules/**
+    - dist/**
+    - coverage/**
+
+  limits:
+    maxFiles: 10000
+    maxGraphNodes: 100000
+    maxAnalysisSeconds: 60
+
+vulnerabilities:
+  providers:
+    - osv
+
+rules:
+  files:
+    - rules/vulntrace-rules.yml
+
+output:
+  format: json
+  pretty: true

@@ -1,0 +1,7 @@
+{
+  "name": "fixture-transitive",
+  "version": "1.0.0",
+  "dependencies": {
+    "fixture-wrapper": "1.0.0"
+  }
+}
