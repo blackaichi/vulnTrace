@@ -65,6 +65,15 @@ describe("validateScanOutput", () => {
         version: "1.0.0",
         verdict: "AFFECTED",
         confidence: 1,
+        target: {
+          module: "fixture-lib",
+          symbol: "vulnerable",
+          kind: "function",
+        },
+        evidence: {
+          path: ["src/index.ts:4", "node_modules/fixture-lib/index.js:10"],
+          reasons: ["vulnerable symbol resolved"],
+        },
       },
     ],
     coverage: {
@@ -100,6 +109,126 @@ describe("validateScanOutput", () => {
     };
 
     const issues = validateScanOutput(invalid);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
+  it("accepts an UNKNOWN finding with no target/evidence at all (e.g. no rule known for the vulnerability)", () => {
+    const output: ScanOutput = {
+      ...validOutput,
+      findings: [
+        {
+          vulnerability: "GHSA-fixture-0002",
+          package: "fixture-lib",
+          version: "1.0.0",
+          verdict: "UNKNOWN",
+        },
+      ],
+    };
+
+    expect(validateScanOutput(output)).toEqual([]);
+  });
+
+  it("accepts a NOT_AFFECTED finding with evidence", () => {
+    const output: ScanOutput = {
+      ...validOutput,
+      findings: [
+        {
+          vulnerability: "GHSA-fixture-0001",
+          package: "fixture-lib",
+          version: "1.0.0",
+          verdict: "NOT_AFFECTED",
+          target: { module: "fixture-lib", symbol: "vulnerable" },
+          evidence: {
+            path: [],
+            reasons: [
+              "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
+            ],
+          },
+        },
+      ],
+    };
+
+    expect(validateScanOutput(output)).toEqual([]);
+  });
+
+  // Regression: verdict.ts's buildFinding() always attaches evidence for
+  // AFFECTED and NOT_AFFECTED (see docs/SDD.md § 23's verdict logic) —
+  // an AFFECTED/NOT_AFFECTED finding with no evidence at all would be a
+  // real bug upstream, not a legitimate output shape. The schema must
+  // reject it so such a regression fails schema validation rather than
+  // silently shipping (see docs/SDD.md § 24, "Evidence and coverage are
+  // included").
+  it("rejects an AFFECTED finding missing evidence", () => {
+    const output: ScanOutput = {
+      ...validOutput,
+      findings: [
+        {
+          vulnerability: "GHSA-fixture-0001",
+          package: "fixture-lib",
+          version: "1.0.0",
+          verdict: "AFFECTED",
+        },
+      ],
+    };
+
+    const issues = validateScanOutput(output);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a NOT_AFFECTED finding missing evidence", () => {
+    const output: ScanOutput = {
+      ...validOutput,
+      findings: [
+        {
+          vulnerability: "GHSA-fixture-0001",
+          package: "fixture-lib",
+          version: "1.0.0",
+          verdict: "NOT_AFFECTED",
+        },
+      ],
+    };
+
+    const issues = validateScanOutput(output);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a finding whose target uses the domain field name 'export' instead of the documented 'symbol'", () => {
+    const output = {
+      ...validOutput,
+      findings: [
+        {
+          ...validOutput.findings[0],
+          target: { module: "fixture-lib", export: "vulnerable" },
+        },
+      ],
+    };
+
+    const issues = validateScanOutput(output);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a coverage object with a negative field", () => {
+    const output = {
+      ...validOutput,
+      coverage: { ...validOutput.coverage, callsDynamic: -1 },
+    };
+
+    const issues = validateScanOutput(output);
+
+    expect(issues.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a scan result missing scan.id", () => {
+    const output = {
+      ...validOutput,
+      scan: { project: "." },
+    };
+
+    const issues = validateScanOutput(output);
 
     expect(issues.length).toBeGreaterThan(0);
   });
