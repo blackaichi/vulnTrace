@@ -42,5 +42,11 @@ export type {
 } from "./graph.js";
 export { isCallResolved, isReachable } from "./graph.js";
 export type { Evidence } from "./evidence.js";
+export type {
+  ModuleIdentity,
+  PackageInstanceId,
+  ResolvedTarget,
+} from "./resolved-target.js";
+export { buildResolvedTarget, identifyModule } from "./resolved-target.js";
 export type { Finding, Verdict } from "./verdict.js";
 export type { Coverage, Diagnostic } from "./coverage.js";
