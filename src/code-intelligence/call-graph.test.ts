@@ -319,6 +319,132 @@ describe("buildCallGraph: dynamic calls are marked uncertain", () => {
   });
 });
 
+describe("buildCallGraph: completeness invariant (VT-201)", () => {
+  it("marks a call through a locally-bound parameter as uncertain instead of vanishing", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "function invoke(fn) {\n  fn();\n}\n" +
+        "function main() {\n  invoke(vulnerable);\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const invokeNode = findNode(graph, (n) => n.name === "invoke");
+    expect(invokeNode).toBeDefined();
+
+    // invoke() calling its own parameter fn() must not silently disappear.
+    const fnCallEdge = graph.edges.find((e) => e.from === invokeNode?.id);
+    expect(fnCallEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+
+  it("marks a method call on a locally-constructed instance as uncertain instead of vanishing", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "class Lib {\n  vulnerableMethod() {}\n}\n" +
+        "function main() {\n  const instance = new Lib();\n  instance.vulnerableMethod();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    expect(mainNode).toBeDefined();
+
+    // main() also constructs `new Lib()`, which VT-201 likewise no longer
+    // drops silently (a locally-declared class isn't attributable by name
+    // today -- see classifyNew's own doc comment; full resolution is
+    // VT-207) -- filter specifically to the `instance.vulnerableMethod()`
+    // edge by its `method` type, not just "any unknown edge from main".
+    const methodCallEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "method",
+    );
+    expect(methodCallEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+
+  it("creates a resolved constructor edge for `new` on an imported class", async () => {
+    const root = tempProject();
+    const targetFile = write(
+      root,
+      "src/lib.ts",
+      "export class Vulnerable {\n  constructor() {}\n}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Vulnerable } from "./lib.js";\n' +
+        "function main() {\n  new Vulnerable();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    expect(mainNode).toBeDefined();
+
+    // Before VT-201 this produced zero edges. It must now produce at
+    // least one constructor-typed edge (resolved to the real class node,
+    // or -- acceptable for VT-201's scope, full resolution is VT-207 --
+    // an explicit unknown), never nothing at all.
+    const constructorEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "constructor",
+    );
+    expect(constructorEdge).toBeDefined();
+    expect(["resolved", "unknown"]).toContain(constructorEdge?.resolution.kind);
+    void targetFile;
+  });
+
+  it("creates an unknown constructor edge for `new` on an unresolvable local reference", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function main(Ctor) {\n  new Ctor();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    expect(mainNode).toBeDefined();
+
+    const constructorEdge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(constructorEdge).toMatchObject({
+      type: "constructor",
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+
+  it("still creates no edge for `new` on a known global constructor", async () => {
+    const root = tempProject();
+    const entry = write(root, "src/index.ts", "new Map();\nnew Date();\n");
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toHaveLength(0);
+  });
+
+  it("still creates no edge for a call to a known global/builtin method", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function main() {\n  console.log(Math.max(1, 2));\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edgesFromMain = graph.edges.filter((e) => e.from === mainNode?.id);
+    expect(edgesFromMain).toHaveLength(0);
+  });
+});
+
 describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => {
   // docs/SDD.md § 26's analysis.limits / § 28-29's hardening requirement:
   // a pathological or adversarial target project (e.g. an enormous or
