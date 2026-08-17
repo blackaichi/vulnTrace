@@ -1,0 +1,7 @@
+analysis:
+  entrypoints:
+    - src/cli.ts
+    - src/worker.ts
+rules:
+  files:
+    - rules.yml

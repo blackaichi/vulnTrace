@@ -1,0 +1,6 @@
+{
+  "name": "adv2-009",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": { "vt2-wrapper": "1.0.0" }
+}

@@ -1,0 +1,6 @@
+{
+  "name": "adv2-013",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": { "vt2-mid": "1.0.0" }
+}
