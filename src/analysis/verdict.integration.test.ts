@@ -490,6 +490,196 @@ describe("buildFinding regression: non-hoisted multiple installed versions (VT-2
   });
 });
 
+describe("buildFinding regression: an installed instance never imported at all (VT-212)", () => {
+  // Distinct from the VT-204 test above: there, the top-level instance's
+  // safe() IS imported at the entrypoint, so the call graph discovers BOTH
+  // instances and the pre-existing "instances.size > 1" version-matching
+  // logic already disambiguates correctly. Here, the top-level instance is
+  // not imported by ANYTHING -- the call graph discovers exactly ONE
+  // instance (the nested one). Before VT-212, resolveTargetNodes only
+  // cross-checked packageVersion against graph-discovered instances when
+  // more than one was present; with exactly one, it was reused
+  // unconditionally, so the top-level instance's own Finding silently
+  // inherited the nested instance's AFFECTED verdict (see ADV2-045,
+  // tests/adversarial-v2/).
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  it("does not let the sole graph-discovered instance's reachability leak into a Finding for a never-imported sibling instance", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-unreached-instance-"),
+    );
+    // Top-level vuln-lib@2.0.0: installed (declared as a direct dependency)
+    // but not imported by any source file at all.
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "2.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    // Nested vuln-lib@1.0.0 (under consumer): its vulnerable() IS called,
+    // making this the ONLY instance the call graph ever traverses to.
+    write(
+      tmpDir,
+      "node_modules/consumer/node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/package.json",
+      JSON.stringify({ name: "consumer", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/index.js",
+      'import { vulnerable } from "vuln-lib";\n\nexport function useIt() {\n  return vulnerable();\n}\n',
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      'import { useIt } from "consumer";\n\nexport function main() {\n  return useIt();\n}\n',
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-unreached-instance",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+    const vulnerability: Vulnerability = {
+      id: "GHSA-test-unreached-instance",
+      aliases: [],
+      package: "vuln-lib",
+      ecosystem: "npm",
+      affectedVersions: [{ introduced: "0" }],
+      fixedVersions: [],
+      references: [],
+    };
+
+    const topLevelFinding = await buildFinding({
+      vulnerability,
+      packageName: "vuln-lib",
+      packageVersion: "2.0.0",
+      packageInstance: path.join(tmpDir, "node_modules/vuln-lib"),
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+    const nestedFinding = await buildFinding({
+      vulnerability,
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      packageInstance: path.join(
+        tmpDir,
+        "node_modules/consumer/node_modules/vuln-lib",
+      ),
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    // The top-level instance was never imported anywhere -- the call graph
+    // never traversed it at all. Must be confirmed NOT_AFFECTED, never
+    // AFFECTED merely because it's the same package name as the one
+    // instance the graph did discover.
+    expect(topLevelFinding?.verdict).toBe("NOT_AFFECTED");
+    // The nested instance's own vulnerable() genuinely is reachable.
+    expect(nestedFinding?.verdict).toBe("AFFECTED");
+  });
+
+  it("falls back to the pre-VT-212 version heuristic when no packageInstance is provided (backward compatibility)", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-no-instance-hint-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      'import { vulnerable } from "vuln-lib";\n\nexport function main() {\n  return vulnerable();\n}\n',
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-no-instance-hint",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-no-instance-hint",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      // packageInstance intentionally omitted.
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+});
+
 describe("buildFinding regression: {file, symbol} entrypoints, real files end to end (VT-205)", () => {
   // SDD-v0.2.md § 6's own example, driven through real files and the real
   // call graph: main() calls safe(); a sibling export, unused(), calls
