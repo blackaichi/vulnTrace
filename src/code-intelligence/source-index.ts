@@ -148,6 +148,19 @@ function inferAssignedName(node: ts.Node): string | undefined {
       return parent.left.text;
     }
   }
+  // A constructor has no `ts.Node#name` of its own -- see VT-207
+  // (SDD-v0.2.md § 7.2): its "name" is its enclosing class's name
+  // (`export class Vulnerable { constructor() {} }` exports "Vulnerable",
+  // not the constructor). For an anonymous class, fall through to the
+  // class's own assigned name (`const Foo = class { constructor() {} }`,
+  // `module.exports = class { constructor() {} }`), reusing the same
+  // variable/assignment-target cases above by recursing one level.
+  if (
+    ts.isConstructorDeclaration(node) &&
+    (ts.isClassDeclaration(parent) || ts.isClassExpression(parent))
+  ) {
+    return parent.name ? parent.name.text : inferAssignedName(parent);
+  }
   return undefined;
 }
 

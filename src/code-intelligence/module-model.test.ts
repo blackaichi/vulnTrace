@@ -252,4 +252,15 @@ describe("mapExportsToFunctions: canonical export name -> underlying function", 
     expect(mapped.get("vulnerable")?.name).toBe("vulnerable");
     expect(mapped.has("default")).toBe(false);
   });
+
+  it("maps a named class export to its own constructor (VT-207)", () => {
+    const fileName = "a.ts";
+    const text = "export class Vulnerable {\n  constructor() {}\n}\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const mapped = mapExportsToFunctions(index, model);
+
+    expect(mapped.get("Vulnerable")).toMatchObject({ kind: "constructor" });
+  });
 });

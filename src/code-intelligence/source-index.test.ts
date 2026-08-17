@@ -20,7 +20,7 @@ describe("indexSourceFile: functions", () => {
     expect(index.functions[0]?.isAsync).toBe(true);
   });
 
-  it("indexes a class method and constructor", () => {
+  it("indexes a class method and constructor, naming the constructor after its class (VT-207)", () => {
     const index = indexSourceFile(
       "a.ts",
       "class Foo {\n  constructor() {}\n  bar() {}\n}\n",
@@ -28,7 +28,7 @@ describe("indexSourceFile: functions", () => {
     expect(index.functions).toEqual([
       {
         kind: "constructor",
-        name: undefined,
+        name: "Foo",
         isAsync: false,
         location: { file: "a.ts", line: 2, column: 3 },
       },
@@ -39,6 +39,39 @@ describe("indexSourceFile: functions", () => {
         location: { file: "a.ts", line: 3, column: 3 },
       },
     ]);
+  });
+
+  it("names an anonymous class expression's constructor after the variable it's assigned to", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "const Foo = class {\n  constructor() {}\n};\n",
+    );
+    expect(index.functions[0]).toMatchObject({
+      kind: "constructor",
+      name: "Foo",
+    });
+  });
+
+  it("names an anonymous class expression's constructor from a CommonJS exports.X assignment", () => {
+    const index = indexSourceFile(
+      "a.js",
+      "exports.Foo = class {\n  constructor() {}\n};\n",
+    );
+    expect(index.functions[0]).toMatchObject({
+      kind: "constructor",
+      name: "Foo",
+    });
+  });
+
+  it("leaves a fully anonymous class expression's constructor unnamed", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "[class {\n  constructor() {}\n}];\n",
+    );
+    expect(index.functions[0]).toMatchObject({
+      kind: "constructor",
+      name: undefined,
+    });
   });
 
   it("infers a name for an arrow function assigned to a variable", () => {

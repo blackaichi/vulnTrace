@@ -369,9 +369,9 @@ describe("buildCallGraph: completeness invariant (VT-201)", () => {
     });
   });
 
-  it("creates a resolved constructor edge for `new` on an imported class", async () => {
+  it("creates a resolved constructor edge for `new` on an imported class (VT-207)", async () => {
     const root = tempProject();
-    const targetFile = write(
+    write(
       root,
       "src/lib.ts",
       "export class Vulnerable {\n  constructor() {}\n}\n",
@@ -386,18 +386,49 @@ describe("buildCallGraph: completeness invariant (VT-201)", () => {
     const graph = await graphFor(root, [entry]);
 
     const mainNode = findNode(graph, (n) => n.name === "main");
+    const constructorNode = findNode(
+      graph,
+      (n) => n.kind === "constructor" && n.name === "Vulnerable",
+    );
     expect(mainNode).toBeDefined();
+    expect(constructorNode).toBeDefined();
 
-    // Before VT-201 this produced zero edges. It must now produce at
-    // least one constructor-typed edge (resolved to the real class node,
-    // or -- acceptable for VT-201's scope, full resolution is VT-207 --
-    // an explicit unknown), never nothing at all.
+    // Before VT-201 this produced zero edges at all. Before VT-207 it
+    // produced an honest but imprecise `unknown(unresolved_target)` edge
+    // (mapExportsToFunctions couldn't attribute the "Vulnerable" export to
+    // a constructor with no name of its own). It must now resolve fully.
     const constructorEdge = graph.edges.find(
       (e) => e.from === mainNode?.id && e.type === "constructor",
     );
-    expect(constructorEdge).toBeDefined();
-    expect(["resolved", "unknown"]).toContain(constructorEdge?.resolution.kind);
-    void targetFile;
+    expect(constructorEdge).toMatchObject({
+      resolution: { kind: "resolved", target: constructorNode?.id },
+    });
+  });
+
+  it("creates a resolved constructor edge for `new` on a locally-declared (non-imported) class", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "class Vulnerable {\n  constructor() {}\n}\n" +
+        "function main() {\n  new Vulnerable();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const constructorNode = findNode(
+      graph,
+      (n) => n.kind === "constructor" && n.name === "Vulnerable",
+    );
+    expect(mainNode).toBeDefined();
+    expect(constructorNode).toBeDefined();
+
+    const constructorEdge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(constructorEdge).toMatchObject({
+      type: "constructor",
+      resolution: { kind: "resolved", target: constructorNode?.id },
+    });
   });
 
   it("creates an unknown constructor edge for `new` on an unresolvable local reference", async () => {
