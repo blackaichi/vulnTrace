@@ -13,6 +13,13 @@ import { fixturePath } from "../testing/fixtures.js";
 import { discoverEntrypoints } from "./entrypoints.js";
 import { buildFinding } from "./verdict.js";
 
+function write(root: string, relativePath: string, content: string): string {
+  const filePath = path.join(root, relativePath);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, content);
+  return filePath;
+}
+
 const repoRoot = path.resolve(
   fileURLToPath(new URL("../../", import.meta.url)),
 );
@@ -187,5 +194,298 @@ describe("buildFinding regression: CommonJS 'module.exports = someNamedFunction'
     expect(finding?.verdict).toBe("AFFECTED");
     expect(finding?.evidence?.path.length).toBeGreaterThan(0);
     expect(finding?.evidence?.path.at(-1)).toContain("vuln-lib");
+  });
+});
+
+describe("buildFinding regression: conditional exports resolved via the real import context (VT-204)", () => {
+  // Before VT-204, checkReachability resolved a rule's target module once,
+  // from the scanned project's own package.json as the "importer" -- which
+  // resolves conditional exports through a DIFFERENT branch than the
+  // app's own real ESM import context does. The call graph itself always
+  // resolved this correctly (a real edge to the esm/ file existed); only
+  // the separate, independent re-resolution disagreed with it, landing on
+  // cjs/index.js -- a file the graph never visited -- and reporting a
+  // false NOT_AFFECTED.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  it("finds AFFECTED via the graph-discovered ESM branch, not the require branch package.json-context resolution would pick", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-conditional-exports-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({
+        name: "vuln-lib",
+        version: "1.0.0",
+        exports: {
+          ".": { import: "./esm/index.js", require: "./cjs/index.js" },
+        },
+      }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/esm/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/cjs/index.js",
+      "function vulnerable() {\n  return 'vuln';\n}\n\nmodule.exports = { vulnerable };\n",
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      'import { vulnerable } from "vuln-lib";\n\nexport function main() {\n  return vulnerable();\n}\n',
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-conditional-exports",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-conditional-exports",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+    expect(finding?.evidence?.path.at(-1)).toContain("esm/index.js");
+  });
+});
+
+describe("buildFinding regression: non-hoisted multiple installed versions (VT-204)", () => {
+  // Before VT-204, checkReachability resolved a rule's target module from
+  // the project root's own context, which always finds the TOP-LEVEL
+  // installed instance -- even for a Finding about a different, nested,
+  // non-hoisted instance the call graph actually traversed to. The call
+  // graph traversal itself was always correct; only the separate
+  // re-resolution used for the reachability check disagreed with it.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  it("finds AFFECTED for the actually-installed nested instance, not the unrelated top-level one", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-multi-version-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "2.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/package.json",
+      JSON.stringify({ name: "consumer", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/index.js",
+      'import { vulnerable } from "vuln-lib";\n\nexport function useIt() {\n  return vulnerable();\n}\n',
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      'import { useIt } from "consumer";\n\nexport function main() {\n  return useIt();\n}\n',
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-multi-version",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-multi-version",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0", fixed: "2.0.0" }],
+        fixedVersions: ["2.0.0"],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+    expect(finding?.evidence?.path.at(-1)).toContain(
+      "consumer/node_modules/vuln-lib",
+    );
+  });
+
+  it("does not let one installed instance's reachability contaminate a Finding about a different instance", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-version-isolation-"),
+    );
+    // Top-level vuln-lib@2.0.0: only its safe() is ever called -- its own
+    // vulnerable() is genuinely unreachable.
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "2.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\nexport function safe() {\n  return 'safe';\n}\n",
+    );
+    // Nested vuln-lib@1.0.0 (under consumer): its vulnerable() IS called.
+    write(
+      tmpDir,
+      "node_modules/consumer/node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\nexport function safe() {\n  return 'safe';\n}\n",
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/package.json",
+      JSON.stringify({ name: "consumer", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/index.js",
+      'import { vulnerable } from "vuln-lib";\n\nexport function useIt() {\n  return vulnerable();\n}\n',
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      'import { safe } from "vuln-lib";\n' +
+        'import { useIt } from "consumer";\n\n' +
+        "export function main() {\n  safe();\n  return useIt();\n}\n",
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-version-isolation",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+    const vulnerability: Vulnerability = {
+      id: "GHSA-test-version-isolation",
+      aliases: [],
+      package: "vuln-lib",
+      ecosystem: "npm",
+      affectedVersions: [{ introduced: "0" }],
+      fixedVersions: [],
+      references: [],
+    };
+
+    const topLevelFinding = await buildFinding({
+      vulnerability,
+      packageName: "vuln-lib",
+      packageVersion: "2.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+    const nestedFinding = await buildFinding({
+      vulnerability,
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    // The top-level instance's OWN vulnerable() is never called -- must
+    // not be reported AFFECTED merely because the unrelated nested
+    // instance's vulnerable() is reachable.
+    expect(topLevelFinding?.verdict).toBe("NOT_AFFECTED");
+    // The nested instance's own vulnerable() genuinely is reachable.
+    expect(nestedFinding?.verdict).toBe("AFFECTED");
   });
 });
