@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-adv-0001
+    package:
+      name: adv-vuln-lib
+    targets:
+      - module: adv-vuln-lib
+        export: Vulnerable
+        kind: constructor
+        confidence: 1.0

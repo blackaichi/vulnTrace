@@ -1,0 +1,478 @@
+[
+  {
+    "id": "ADV-001",
+    "dir": "adv-001-direct-esm-call",
+    "category": "1. Direct ESM call",
+    "description": "A vulnerable export is imported via ESM `import` and called directly from the entrypoint.",
+    "expected": "AFFECTED",
+    "reason": "vulnerable() is invoked directly inside main(), the configured entrypoint.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-002",
+    "dir": "adv-002-direct-cjs-call",
+    "category": "2. Direct CommonJS call",
+    "description": "A vulnerable export is required via CommonJS and called directly from the entrypoint.",
+    "expected": "AFFECTED",
+    "reason": "lib.vulnerable() is invoked directly inside the CommonJS entrypoint module.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-003",
+    "dir": "adv-003-named-import",
+    "category": "3. Named import",
+    "description": "Two named exports are imported; only the vulnerable one is called, alongside a call to the safe one.",
+    "expected": "AFFECTED",
+    "reason": "vulnerable() is called, even though safe() is also called in the same function.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-004",
+    "dir": "adv-004-aliased-import",
+    "category": "4. Aliased import",
+    "description": "The vulnerable export is imported under a local alias (`vulnerable as dangerous`) and called via the alias.",
+    "expected": "AFFECTED",
+    "reason": "The renamed local binding still refers to the same vulnerable function, which is called.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-005",
+    "dir": "adv-005-namespace-import",
+    "category": "5. Namespace import",
+    "description": "The whole package is imported as a namespace object and the vulnerable member is called off it.",
+    "expected": "AFFECTED",
+    "reason": "lib.vulnerable() is called via the namespace import.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-006",
+    "dir": "adv-006-destructured-require",
+    "category": "6. Destructured require",
+    "description": "CommonJS `const { vulnerable } = require(...)` destructuring, called directly.",
+    "expected": "AFFECTED",
+    "reason": "The destructured vulnerable binding is called directly from the entrypoint.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-007",
+    "dir": "adv-007-direct-package-member-call",
+    "category": "7. Direct package member call",
+    "description": "ESM default-import interop against a CJS object export, calling `pkg.vulnerable()` off the default import.",
+    "expected": "AFFECTED",
+    "reason": "pkg.vulnerable() is called directly; the default import is the CJS module.exports object.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-008",
+    "dir": "adv-008-imported-never-called",
+    "category": "8. Vulnerable function imported but never called",
+    "description": "The vulnerable export is imported but the entrypoint never invokes it anywhere.",
+    "expected": "NOT_AFFECTED",
+    "reason": "vulnerable is imported but the only exported function returns a plain string, never invoking it.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-009",
+    "dir": "adv-009-defined-unreachable",
+    "category": "9. Vulnerable function defined but unreachable",
+    "description": "A local wrapper calls the vulnerable function, but the wrapper itself is never called from the entrypoint.",
+    "expected": "NOT_AFFECTED",
+    "reason": "wrapper() calls vulnerable() but wrapper() is never invoked by main() or anything reachable from it.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-010",
+    "dir": "adv-010-safe-function-called",
+    "category": "10. Safe function called from the same package",
+    "description": "Only the sibling safe() export is ever called; vulnerable() is never even imported.",
+    "expected": "NOT_AFFECTED",
+    "reason": "vulnerable is not imported or referenced anywhere in the project.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-011",
+    "dir": "adv-011-re-export-single-hop",
+    "category": "11. Re-export through one module",
+    "description": "main() calls vulnerable via one level of `export { vulnerable } from \"adv-vuln-lib\"` re-export.",
+    "expected": "AFFECTED",
+    "reason": "The call genuinely executes at runtime; a single re-export hop does not change what actually runs.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-012",
+    "dir": "adv-012-re-export-multi-hop",
+    "category": "12. Re-export through multiple modules",
+    "description": "main() calls vulnerable through a two-hop `export { vulnerable } from ...` re-export chain.",
+    "expected": "AFFECTED",
+    "reason": "The call genuinely executes at runtime regardless of how many re-export hops it passes through.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-013",
+    "dir": "adv-013-transitive-dependency",
+    "category": "13. Transitive dependency",
+    "description": "main() calls a middleware package's run(), which itself calls the vulnerable function of a hoisted transitive dependency.",
+    "expected": "AFFECTED",
+    "reason": "run() unconditionally calls vulnerable(), and main() unconditionally calls run().",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-014",
+    "dir": "adv-014-dynamic-property-access",
+    "category": "14. Dynamic property access",
+    "description": "main(methodName) calls `lib[methodName]()` where methodName is a runtime-supplied string.",
+    "expected": "UNKNOWN",
+    "reason": "Which method executes depends on a value only known at runtime; the analyzer cannot confirm or rule out vulnerable being selected.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-015",
+    "dir": "adv-015-dynamic-require",
+    "category": "15. Dynamic require",
+    "description": "The required module name is a runtime variable (`require(moduleName)`), not a string literal.",
+    "expected": "UNKNOWN",
+    "reason": "The required module name cannot be statically resolved from a variable/environment value.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-016",
+    "dir": "adv-016-dynamic-import",
+    "category": "16. Dynamic import",
+    "description": "An ESM dynamic `import(moduleName)` where moduleName is a function parameter, not a literal.",
+    "expected": "UNKNOWN",
+    "reason": "The imported module specifier is a runtime parameter; it cannot be statically resolved.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-017",
+    "dir": "adv-017-conditional-branch-always-true",
+    "category": "17. Conditional branch that definitely executes",
+    "description": "vulnerable() sits behind `if (1 === 1)`, a condition that is always true.",
+    "expected": "AFFECTED",
+    "reason": "The call genuinely executes on every invocation of main().",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-018",
+    "dir": "adv-018-conditional-branch-never",
+    "category": "18. Conditional branch that definitely does not execute",
+    "description": "vulnerable() sits behind `if (false)`, a condition that can never be true.",
+    "expected": "NOT_AFFECTED",
+    "reason": "A statically-dead branch behind `if (false)` never executes at runtime, regardless of the call lexically present inside it.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-019",
+    "dir": "adv-019-callback-passed",
+    "category": "19. Function passed as a callback",
+    "description": "vulnerable is passed by reference to invoke(fn), which calls fn() internally.",
+    "expected": "AFFECTED",
+    "reason": "invoke(vulnerable) genuinely calls the vulnerable function through the higher-order function.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-020",
+    "dir": "adv-020-constructor-invocation",
+    "category": "20. Constructor invocation",
+    "description": "`new Vulnerable()` invokes a vulnerable constructor.",
+    "expected": "AFFECTED",
+    "reason": "The vulnerable constructor genuinely runs when `new Vulnerable()` executes in main().",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#Vulnerable (constructor)",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-021",
+    "dir": "adv-021-class-method-invocation",
+    "category": "21. Class method invocation",
+    "description": "`new Lib().vulnerableMethod()` invokes a vulnerable instance method.",
+    "expected": "AFFECTED",
+    "reason": "The vulnerable method genuinely runs when instance.vulnerableMethod() executes in main().",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerableMethod (method)",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-022",
+    "dir": "adv-022-async-await-call",
+    "category": "22. Async/await call",
+    "description": "vulnerable() is called with `await` from inside an async function chain reachable from main().",
+    "expected": "AFFECTED",
+    "reason": "await vulnerable() genuinely executes; async/await is a control-flow detail, not a reachability blocker.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-023",
+    "dir": "adv-023-typescript-path-alias",
+    "category": "23. TypeScript path alias",
+    "description": "main() reaches the vulnerable call only through a tsconfig `paths`-mapped `@lib/wrapper` import.",
+    "expected": "AFFECTED",
+    "reason": "callVulnerable() unconditionally calls vulnerable(), and main() unconditionally calls callVulnerable() via the aliased import.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-024",
+    "dir": "adv-024-package-json-exports",
+    "category": "24. package.json exports",
+    "description": "The vulnerable package resolves via a single-target `\"exports\": \"./index.js\"` field.",
+    "expected": "AFFECTED",
+    "reason": "vulnerable() is called directly; resolution happens through the exports field rather than a bare main field.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-025",
+    "dir": "adv-025-package-json-conditional-exports",
+    "category": "25. package.json conditional exports",
+    "description": "The vulnerable package's exports map branches on the `import` vs `require` condition; the app is ESM and resolves through the `import` branch.",
+    "expected": "AFFECTED",
+    "reason": "vulnerable() is called directly; resolution must follow the `import` condition to the ESM implementation file.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-026",
+    "dir": "adv-026-multiple-installed-versions",
+    "category": "26. Multiple installed versions of the same package",
+    "description": "adv-vuln-lib@2.0.0 (patched) is installed at the project root; a separate, genuinely vulnerable adv-vuln-lib@1.0.0 is nested inside node_modules/adv-consumer, and only the nested 1.0.0 copy is ever actually called.",
+    "expected": "AFFECTED",
+    "reason": "adv-consumer's own nested adv-vuln-lib@1.0.0 copy is the one whose vulnerable() is genuinely invoked via useIt() -> main(); the unused top-level 2.0.0 copy is patched (out of the affected range) and irrelevant to this call path.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib@1.0.0 (nested under adv-consumer)#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-027",
+    "dir": "adv-027-commonjs-default-export-interop",
+    "category": "27. CommonJS default/export interop",
+    "description": "The vulnerable package does `module.exports = vulnerable;` (whole-module function export); the app does `import vulnerable from \"...\"`.",
+    "expected": "AFFECTED",
+    "reason": "vulnerable() is called directly through the default-import interop of a CJS whole-module function export.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#default",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-028",
+    "dir": "adv-028-circular-dependency",
+    "category": "28. Circular dependency",
+    "description": "a.ts and b.ts import each other (a genuine ESM cycle); main() lives in a.ts and directly calls vulnerable() alongside the cyclic call.",
+    "expected": "AFFECTED",
+    "reason": "main() directly calls vulnerable() in the same file; the cyclic import with b.ts must not prevent this call from being discovered as reachable.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-029",
+    "dir": "adv-029-dead-code",
+    "category": "29. Dead code",
+    "description": "A separate, entirely unreferenced file calls vulnerable(); nothing reachable from the entrypoint ever imports that file.",
+    "expected": "NOT_AFFECTED",
+    "reason": "deadfile.ts's deadEntry() calls vulnerable(), but deadfile.ts is never imported by index.ts or anything else in the project.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-030",
+    "dir": "adv-030-ambiguous-dynamic-call",
+    "category": "30. Ambiguous/dynamic call that must produce UNKNOWN",
+    "description": "A computed member expression is assigned to a variable from a runtime key, then invoked: `const fn = lib[key]; fn();`.",
+    "expected": "UNKNOWN",
+    "reason": "The resolved function reference depends on a runtime key; the analyzer must neither assert AFFECTED without evidence nor silently fall back to NOT_AFFECTED.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-031",
+    "dir": "adv-031-entrypoint-unused-export-other-file",
+    "category": "Entrypoint semantics: unused export in a different, unconfigured file",
+    "description": "Only src/entry.ts (with main(), calling safe()) is configured as the entrypoint. A separate src/other.ts exports unused(), which calls vulnerable(), but other.ts is never imported by entry.ts and is not itself configured.",
+    "expected": "NOT_AFFECTED",
+    "reason": "unused() lives in a file that is never imported by the configured entrypoint and is not itself configured as an entrypoint; its export must not become a reachability source merely by existing.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-032",
+    "dir": "adv-032-entrypoint-unused-export-same-file",
+    "category": "Entrypoint semantics: unused export in the SAME configured entrypoint file",
+    "description": "src/index.ts is configured as the entrypoint. It exports both main() (calls safe()) and unused() (calls vulnerable()); only main() is the intended real entrypoint.",
+    "expected": "NOT_AFFECTED",
+    "reason": "Only main() is the intended entrypoint per the user's own naming/intent; unused() being merely exported from the same file must not make it AFFECTED. (VulnTrace's entrypoint configuration is file-granular, not function-granular -- this scenario specifically probes whether that granularity mismatch causes a false AFFECTED.)",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-033",
+    "dir": "adv-033-entrypoint-multiple-configured-both-real",
+    "category": "Entrypoint semantics: multiple configured entrypoints, one genuinely vulnerable",
+    "description": "Two separate files are BOTH configured as entrypoints: entry-a.ts (apiHandler, calls vulnerable) and entry-b.ts (cliHandler, calls safe).",
+    "expected": "AFFECTED",
+    "reason": "apiHandler(), a properly configured entrypoint's own export, directly calls vulnerable().",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV-034",
+    "dir": "adv-034-entrypoint-package-json-main-fallback",
+    "category": "Entrypoint semantics: package.json main fallback, unconfigured file must stay unreachable",
+    "description": "No vulntrace.yml entrypoints are configured at all; discovery falls back to package.json's main field (./src/index.ts, calls safe()). A separate src/other.ts (unused(), calls vulnerable()) is never imported and never discovered.",
+    "expected": "NOT_AFFECTED",
+    "reason": "The fallback-discovered entrypoint (package.json main) only calls safe(); other.ts's unused() is neither imported nor itself a discovered entrypoint.",
+    "vulnerability": "GHSA-adv-0001",
+    "vulnerableTarget": "adv-vuln-lib#vulnerable",
+    "findingSelector": {
+      "package": "adv-vuln-lib",
+      "version": "1.0.0"
+    }
+  }
+]

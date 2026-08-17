@@ -1,0 +1,7 @@
+{
+  "name": "adv-015",
+  "version": "1.0.0",
+  "dependencies": {
+    "adv-vuln-lib": "1.0.0"
+  }
+}

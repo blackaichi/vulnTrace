@@ -1,0 +1,6 @@
+analysis:
+  entrypoints:
+    - src/a.ts
+rules:
+  files:
+    - rules.yml

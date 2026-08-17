@@ -1,0 +1,8 @@
+{
+  "name": "adv-013",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "adv-middleware": "1.0.0"
+  }
+}

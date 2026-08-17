@@ -1,0 +1,8 @@
+{
+  "name": "adv-004",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "adv-vuln-lib": "1.0.0"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "adv-034",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "dependencies": {
+    "adv-vuln-lib": "1.0.0"
+  }
+}
