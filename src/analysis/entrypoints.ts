@@ -17,11 +17,19 @@ export interface DiscoverEntrypointsResult {
   readonly diagnostics: readonly EntrypointDiagnostic[];
 }
 
+/**
+ * One `analysis.entrypoints` config entry (see SDD-v0.2.md § 6): a bare
+ * file path (pre-VT-205 form), or `{file, symbol}` naming exactly one
+ * export as the real entry.
+ */
+export type ConfiguredEntrypoint =
+  string | { readonly file: string; readonly symbol?: string };
+
 export interface DiscoverEntrypointsOptions {
   readonly projectRoot: string;
   readonly resolver: ModuleResolver;
-  /** From `vulntrace.yml`'s `analysis.entrypoints` (paths relative to `projectRoot`; see docs/SDD.md § 26). */
-  readonly configuredEntrypoints?: readonly string[];
+  /** From `vulntrace.yml`'s `analysis.entrypoints` (paths relative to `projectRoot`; see docs/SDD.md § 26, SDD-v0.2.md § 6). */
+  readonly configuredEntrypoints?: readonly ConfiguredEntrypoint[];
   /** A plain file-path override (e.g. a future CLI `--entrypoint` flag), independent of `vulntrace.yml`. */
   readonly explicitFiles?: readonly string[];
 }
@@ -48,20 +56,23 @@ function isWithinRoot(projectRoot: string, candidate: string): boolean {
 
 function resolveFileList(
   projectRoot: string,
-  files: readonly string[],
+  entries: readonly ConfiguredEntrypoint[],
   source: Extract<EntrypointSource, "configured" | "explicit">,
   reasonPrefix: string,
 ): { entrypoints: Entrypoint[]; diagnostics: EntrypointDiagnostic[] } {
   const entrypoints: Entrypoint[] = [];
   const diagnostics: EntrypointDiagnostic[] = [];
 
-  files.forEach((file, index) => {
+  entries.forEach((entry, index) => {
+    const file = typeof entry === "string" ? entry : entry.file;
+    const symbol = typeof entry === "string" ? undefined : entry.symbol;
     const absolute = path.resolve(projectRoot, file);
+    const label = symbol ? `${file} (symbol: ${symbol})` : file;
 
     if (!isWithinRoot(projectRoot, absolute)) {
       diagnostics.push({
         source,
-        message: `${reasonPrefix}[${index}] resolves outside the project root and was rejected: ${file}`,
+        message: `${reasonPrefix}[${index}] resolves outside the project root and was rejected: ${label}`,
       });
       return;
     }
@@ -70,12 +81,13 @@ function resolveFileList(
       entrypoints.push({
         filePath: absolute,
         source,
-        reason: `${reasonPrefix}[${index}]: ${file}`,
+        reason: `${reasonPrefix}[${index}]: ${label}`,
+        symbol,
       });
     } else {
       diagnostics.push({
         source,
-        message: `${reasonPrefix}[${index}] does not exist: ${file}`,
+        message: `${reasonPrefix}[${index}] does not exist: ${label}`,
       });
     }
   });

@@ -271,18 +271,31 @@ interface ReachableEvidence {
 
 /**
  * The graph nodes that count as reachability starting points for one
- * entrypoint: its `<module>` node (for genuine top-level/side-effect calls)
- * plus every one of its own exported functions.
+ * entrypoint.
  *
- * An entrypoint file's exports are, by definition of being an entrypoint,
+ * When `entrypoint.symbol` is configured (SDD-v0.2.md § 6's `{file,
+ * symbol}` form), sources are exactly the file's `<module>` node (loading
+ * a module always runs its top-level code, regardless of which export
+ * gets called afterwards -- that much is real JS/Node semantics, not a
+ * VulnTrace liberty) plus that one named symbol's own node. Any other
+ * export living in the same file is deliberately excluded: SDD-v0.2.md
+ * § 6 requires that "only that symbol is an entrypoint source" and that
+ * other exports "are not automatically reachable" (see VT-205).
+ *
+ * Without a configured `symbol` (the pre-VT-205 form, kept for backward
+ * compatibility), sources are the `<module>` node plus every one of the
+ * file's own exported functions -- unchanged from before VT-205. An
+ * entrypoint file's exports are, by definition of being an entrypoint,
  * invocable from outside the analyzed codebase (a CLI's default export, a
- * required module's callable surface, ...) even when the file itself never
- * calls them at module scope — e.g. `export function main() { ... }` with
- * no top-level `main()` call. Without this, `main`'s own body (and anything
- * it calls) would be invisible to reachability analysis purely because
- * nothing *inside the file* happens to invoke it. Re-indexes the entrypoint
- * file directly (cheap: entrypoints are few) rather than threading this
- * through `buildCallGraph`'s internals.
+ * required module's callable surface, ...) even when the file itself
+ * never calls them at module scope — e.g. `export function main() { ... }`
+ * with no top-level `main()` call. Without this, `main`'s own body (and
+ * anything it calls) would be invisible to reachability analysis purely
+ * because nothing *inside the file* happens to invoke it. This is the
+ * correct default only when no more precise `symbol` narrows it.
+ *
+ * Re-indexes the entrypoint file directly (cheap: entrypoints are few)
+ * rather than threading this through `buildCallGraph`'s internals.
  */
 function entrypointSourceNodes(
   graph: CallGraph,
@@ -292,6 +305,16 @@ function entrypointSourceNodes(
   const module = moduleNode(graph, entrypoint.filePath);
   if (module) {
     sources.push(module);
+  }
+
+  if (entrypoint.symbol) {
+    const node = graph.nodes.find(
+      (n) => n.module === entrypoint.filePath && n.name === entrypoint.symbol,
+    );
+    if (node) {
+      sources.push(node);
+    }
+    return sources;
   }
 
   let model;

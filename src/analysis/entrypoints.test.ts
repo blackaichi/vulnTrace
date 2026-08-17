@@ -370,3 +370,84 @@ describe("discoverEntrypoints: combined sources", () => {
     expect(filePaths).toEqual([configuredFile, mainFile, binFile].sort());
   });
 });
+
+describe("discoverEntrypoints: {file, symbol} entrypoints (VT-205)", () => {
+  it("resolves a {file, symbol} entrypoint, carrying the symbol through", async () => {
+    const root = tempProject();
+    const entryFile = write(root, "src/index.ts", "export {};\n");
+
+    const result = await discoverEntrypoints({
+      projectRoot: root,
+      resolver: resolverFor(root),
+      configuredEntrypoints: [{ file: "src/index.ts", symbol: "main" }],
+    });
+
+    expect(result.entrypoints).toEqual([
+      {
+        filePath: entryFile,
+        source: "configured",
+        reason: "analysis.entrypoints[0]: src/index.ts (symbol: main)",
+        symbol: "main",
+      },
+    ]);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("still resolves a plain-string entrypoint with no symbol (backward compatible)", async () => {
+    const root = tempProject();
+    const entryFile = write(root, "src/index.ts", "export {};\n");
+
+    const result = await discoverEntrypoints({
+      projectRoot: root,
+      resolver: resolverFor(root),
+      configuredEntrypoints: ["src/index.ts"],
+    });
+
+    expect(result.entrypoints).toEqual([
+      {
+        filePath: entryFile,
+        source: "configured",
+        reason: "analysis.entrypoints[0]: src/index.ts",
+      },
+    ]);
+  });
+
+  it("supports mixing plain-string and {file, symbol} entries in the same list", async () => {
+    const root = tempProject();
+    const fileA = write(root, "src/a.ts", "export {};\n");
+    const fileB = write(root, "src/b.ts", "export {};\n");
+
+    const result = await discoverEntrypoints({
+      projectRoot: root,
+      resolver: resolverFor(root),
+      configuredEntrypoints: ["src/a.ts", { file: "src/b.ts", symbol: "main" }],
+    });
+
+    const bySymbol = new Map(
+      result.entrypoints.map((e) => [e.filePath, e.symbol]),
+    );
+    expect(bySymbol.get(fileA)).toBeUndefined();
+    expect(bySymbol.get(fileB)).toBe("main");
+  });
+
+  it("rejects a {file, symbol} entrypoint whose file escapes the project root", async () => {
+    const root = tempProject();
+
+    const result = await discoverEntrypoints({
+      projectRoot: root,
+      resolver: resolverFor(root),
+      configuredEntrypoints: [
+        { file: "../../../../etc/passwd", symbol: "main" },
+      ],
+    });
+
+    expect(result.entrypoints).toEqual([]);
+    expect(result.diagnostics).toEqual([
+      {
+        source: "configured",
+        message:
+          "analysis.entrypoints[0] resolves outside the project root and was rejected: ../../../../etc/passwd (symbol: main)",
+      },
+    ]);
+  });
+});
