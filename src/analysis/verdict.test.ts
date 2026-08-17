@@ -603,3 +603,87 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
     );
   });
 });
+
+describe("buildFinding: {file, symbol} entrypoints scope reachability to only that symbol (VT-205)", () => {
+  // SDD-v0.2.md § 6's own example: main() calls safe(); a sibling export,
+  // unused(), calls vulnerable() but is never called by main(). With a
+  // plain file-only entrypoint both exports count as sources (unchanged,
+  // backward-compatible default); with {file, symbol: "main"}, unused()'s
+  // own edge to vulnerable() must not make this AFFECTED merely because
+  // unused() happens to live in the same file.
+  const entryFile = "/project/src/index.ts";
+  const libFile = "/node_modules/fixture-lib/index.js";
+
+  function buildGraph(): CallGraph {
+    const src = moduleNode("src#<module>", entryFile);
+    const main = fnNode("src#main@3:1", entryFile, "main", 3);
+    const unused = fnNode("src#unused@7:1", entryFile, "unused", 7);
+    const safeNode = fnNode("lib#safe@5:1", libFile, "safe", 5);
+    const vulnerableNode = fnNode(
+      "lib#vulnerable@1:1",
+      libFile,
+      "vulnerable",
+      1,
+    );
+
+    return {
+      nodes: [src, main, unused, safeNode, vulnerableNode],
+      edges: [
+        resolvedEdge(main.id, safeNode.id),
+        resolvedEdge(unused.id, vulnerableNode.id),
+      ],
+    };
+  }
+
+  it('does not become AFFECTED via a sibling export\'s own call when symbol: "main" is configured', async () => {
+    const symbolScopedEntrypoint: Entrypoint = {
+      ...entrypoint,
+      filePath: entryFile,
+      symbol: "main",
+    };
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph: buildGraph(),
+      entrypoints: [symbolScopedEntrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+    });
+
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
+  });
+
+  // The no-symbol default path enumerates every export by reading the
+  // entrypoint file from disk (unchanged, pre-VT-205 behavior) -- unlike
+  // the symbol-scoped path above, which needs no file I/O at all. That
+  // makes it untestable against these synthetic, non-existent file paths;
+  // see verdict.integration.test.ts's VT-205 block for the real-file
+  // equivalent of "no symbol configured still reaches AFFECTED via the
+  // sibling export."
+
+  it("finds AFFECTED when the configured symbol itself is the one that reaches the target", async () => {
+    const symbolScopedEntrypoint: Entrypoint = {
+      ...entrypoint,
+      filePath: entryFile,
+      symbol: "unused",
+    };
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph: buildGraph(),
+      entrypoints: [symbolScopedEntrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+});

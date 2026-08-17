@@ -41,9 +41,30 @@ const AnalysisLimitsSchema = z
   })
   .strict();
 
+/**
+ * One `analysis.entrypoints` entry (see SDD-v0.2.md § 6): either a bare
+ * file path (the pre-VT-205 form, kept for backward compatibility -- the
+ * whole file's own exports remain valid reachability sources, exactly as
+ * before), or `{file, symbol}` naming exactly one export as the real
+ * entry. When `symbol` is present, only that export -- not every export of
+ * the file -- counts as an entrypoint source (see
+ * src/analysis/verdict.ts's `entrypointSourceNodes`).
+ */
+const EntrypointConfigSchema = z.union([
+  z.string().min(1, "must not be empty"),
+  z
+    .object({
+      file: z.string().min(1, "must not be empty"),
+      symbol: z.string().min(1, "must not be empty").optional(),
+    })
+    .strict(),
+]);
+
+export type EntrypointConfig = z.infer<typeof EntrypointConfigSchema>;
+
 const AnalysisConfigSchema = z
   .object({
-    entrypoints: z.array(z.string()).default([]),
+    entrypoints: z.array(EntrypointConfigSchema).default([]),
     include: z.array(z.string()).default([...DEFAULT_INCLUDE]),
     exclude: z.array(z.string()).default([...DEFAULT_EXCLUDE]),
     limits: AnalysisLimitsSchema.default({}),

@@ -19,4 +19,15 @@ export interface Entrypoint {
   readonly reason: string;
   /** For `package_bin`: which `bin` command name this entrypoint implements. */
   readonly binName?: string;
+  /**
+   * When configured (`{file, symbol}` in `analysis.entrypoints`, see
+   * SDD-v0.2.md § 6), names the one export that is the real entrypoint —
+   * other exports of the same file are not automatically reachability
+   * sources merely by living in the same file (see
+   * src/analysis/verdict.ts's `entrypointSourceNodes`). `undefined` for
+   * the pre-VT-205 file-only form, package.json `main`/`bin`, and
+   * explicit-file entrypoints, all of which keep treating every export of
+   * the file as a potential source.
+   */
+  readonly symbol?: string;
 }

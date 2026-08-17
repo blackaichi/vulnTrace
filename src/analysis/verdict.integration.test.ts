@@ -489,3 +489,106 @@ describe("buildFinding regression: non-hoisted multiple installed versions (VT-2
     expect(nestedFinding?.verdict).toBe("AFFECTED");
   });
 });
+
+describe("buildFinding regression: {file, symbol} entrypoints, real files end to end (VT-205)", () => {
+  // SDD-v0.2.md § 6's own example, driven through real files and the real
+  // call graph: main() calls safe(); a sibling export, unused(), calls
+  // vulnerable() but main() never calls it.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  function buildProject(): { tmp: string; entry: string } {
+    const tmp = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-entrypoint-symbol-"),
+    );
+    write(
+      tmp,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmp,
+      "node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\nexport function safe() {\n  return 'safe';\n}\n",
+    );
+    write(tmp, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmp,
+      "src/index.ts",
+      'import { safe, vulnerable } from "vuln-lib";\n\n' +
+        "export function main() {\n  return safe();\n}\n\n" +
+        "export function unused() {\n  return vulnerable();\n}\n",
+    );
+    return { tmp, entry };
+  }
+
+  async function findVulnerable(
+    tmp: string,
+    entry: string,
+    configuredEntrypoints: Parameters<
+      typeof discoverEntrypoints
+    >[0]["configuredEntrypoints"],
+  ) {
+    const resolver = createModuleResolver(loadTsProject(tmp));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmp,
+        resolver,
+        configuredEntrypoints,
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-entrypoint-symbol",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+
+    return buildFinding({
+      vulnerability: {
+        id: "GHSA-test-entrypoint-symbol",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmp,
+    });
+  }
+
+  it('does not become AFFECTED via unused() when configured as {file: "src/index.ts", symbol: "main"}', async () => {
+    const { tmp, entry } = buildProject();
+    tmpDir = tmp;
+
+    const finding = await findVulnerable(tmp, entry, [
+      { file: "src/index.ts", symbol: "main" },
+    ]);
+
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
+  });
+
+  it("still becomes AFFECTED via unused() when no symbol is configured (unchanged default)", async () => {
+    const { tmp, entry } = buildProject();
+    tmpDir = tmp;
+
+    const finding = await findVulnerable(tmp, entry, ["src/index.ts"]);
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+});
