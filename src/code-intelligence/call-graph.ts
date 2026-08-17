@@ -19,6 +19,7 @@ import {
   toSourceLocation,
 } from "./source-index.js";
 import { bindCallee } from "./symbol-binder.js";
+import type { TsProject } from "./ts-project.js";
 
 function locationKey(location: { line?: number; column?: number }): string {
   return `${location.line ?? "?"}:${location.column ?? "?"}`;
@@ -220,11 +221,137 @@ function findLocalFunctionNodeId(
   return prepared.functionNodeIdByLocation.get(locationKey(match.location));
 }
 
+/**
+ * The innermost node of `root`'s own subtree whose span contains
+ * `position`, or `root` itself if none of its children do. `root` must
+ * have parent pointers set (see `ts.createSourceFile`'s own
+ * `setParentNodes` argument) for `getChildren`/`getStart`/`getEnd` to work.
+ */
+function findNodeAtPosition(root: ts.Node, position: number): ts.Node {
+  for (const child of root.getChildren()) {
+    if (position >= child.getStart() && position < child.getEnd()) {
+      return findNodeAtPosition(child, position);
+    }
+  }
+  return root;
+}
+
+/**
+ * Resolves `instance.method()` to the real class method it calls, using
+ * the TypeScript type checker to determine the receiver's own class (see
+ * SDD-v0.2.md § 7.3, VT-208) -- something no purely syntactic
+ * name/import-based matching can do, since nothing about the identifier
+ * `instance` itself names the class `Lib`. Returns `undefined` (the caller
+ * falls through to the generic `unsupported_construct` edge) whenever the
+ * receiver's type can't be resolved to a concrete class with a matching
+ * method -- an `any`-typed receiver, an interface with no located
+ * implementation, a union of multiple classes, and so on.
+ *
+ * `call-graph.ts`'s own traversal walks a lightweight, standalone-parsed
+ * AST (`indexSourceFileFromDisk`, no binder/checker), deliberately kept
+ * separate from a full `ts.Program` for performance (SDD's own
+ * performance requirements). `getTypeAtLocation` needs a node from the
+ * *program's* own bound AST, not this standalone one, so this bridges the
+ * two by position: the receiver's already-known line/column (from the
+ * standalone parse) locates the equivalent node in the program's parse of
+ * the exact same source text -- both parses produce identical positions
+ * for identical syntax, so this is a safe, if slightly indirect, way to
+ * avoid switching the whole traversal onto the program's AST just for
+ * this one case.
+ */
+function resolveInstanceMethod(
+  callee: ts.PropertyAccessExpression,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): GraphNodeId | undefined {
+  const program = ctx.getProgram();
+  if (!program) {
+    return undefined;
+  }
+
+  const programSourceFile = program.getSourceFile(prepared.index.filePath);
+  if (!programSourceFile) {
+    return undefined;
+  }
+
+  const receiverLocation = toSourceLocation(
+    prepared.index.sourceFile,
+    callee.expression,
+  );
+  if (
+    receiverLocation.line === undefined ||
+    receiverLocation.column === undefined
+  ) {
+    return undefined;
+  }
+
+  let receiverNode: ts.Node;
+  try {
+    const position = programSourceFile.getPositionOfLineAndCharacter(
+      receiverLocation.line - 1,
+      receiverLocation.column - 1,
+    );
+    receiverNode = findNodeAtPosition(programSourceFile, position);
+  } catch {
+    return undefined;
+  }
+
+  const checker = program.getTypeChecker();
+  let classDecl: ts.ClassDeclaration | ts.ClassExpression | undefined;
+  try {
+    const type = checker.getTypeAtLocation(receiverNode);
+    classDecl = type
+      .getSymbol()
+      ?.declarations?.find(
+        (d): d is ts.ClassDeclaration | ts.ClassExpression =>
+          ts.isClassDeclaration(d) || ts.isClassExpression(d),
+      );
+  } catch {
+    return undefined;
+  }
+  if (!classDecl) {
+    return undefined;
+  }
+
+  const methodDecl = classDecl.members.find(
+    (m): m is ts.MethodDeclaration =>
+      ts.isMethodDeclaration(m) &&
+      m.name !== undefined &&
+      ts.isIdentifier(m.name) &&
+      m.name.text === callee.name.text,
+  );
+  if (!methodDecl) {
+    return undefined;
+  }
+
+  const methodFile = methodDecl.getSourceFile().fileName;
+  const methodLocation = toSourceLocation(
+    methodDecl.getSourceFile(),
+    methodDecl,
+  );
+
+  ctx.onDiscoverFile(methodFile);
+  const targetFile = ctx.ensurePrepared(methodFile);
+  return targetFile?.functionNodeIdByLocation.get(locationKey(methodLocation));
+}
+
 interface WalkContext {
   readonly edges: CallEdge[];
   readonly resolver: ModuleResolver;
   readonly ensurePrepared: (filePath: string) => FileGraphData | undefined;
   readonly onDiscoverFile: (filePath: string) => void;
+  /**
+   * Lazily builds (and memoizes) a real `ts.Program` for VT-208's
+   * instance-method resolution (SDD-v0.2.md § 7.3), or `undefined` when no
+   * {@link TsProject} was supplied to `buildCallGraph` (every caller that
+   * predates VT-208). Never called unless a property-access call this
+   * graph cannot otherwise attribute is actually encountered, and built at
+   * most once per `buildCallGraph` invocation regardless of how many such
+   * calls occur -- this is real type-checking, meaningfully more expensive
+   * than the lightweight standalone parsing used everywhere else in this
+   * file, so it must never run unconditionally.
+   */
+  readonly getProgram: () => ts.Program | undefined;
 }
 
 /**
@@ -385,6 +512,23 @@ async function classifyCall(
   const root = rootIdentifierOf(callee);
   if (root && isKnownGlobalIdentifier(root)) {
     return undefined;
+  }
+
+  // VT-208: a method call on a receiver this binder can't attribute by
+  // name/import might still be resolvable via the real TypeScript type
+  // checker (SDD-v0.2.md § 7.3) -- e.g. `instance.vulnerableMethod()`
+  // where `instance` is a locally-constructed class instance. Attempted
+  // only here, after every cheaper syntactic path has already failed.
+  if (ts.isPropertyAccessExpression(callee)) {
+    const methodTarget = resolveInstanceMethod(callee, prepared, ctx);
+    if (methodTarget) {
+      return {
+        from,
+        type: "method",
+        resolution: { kind: "resolved", target: methodTarget },
+        location,
+      };
+    }
   }
 
   return {
@@ -586,6 +730,15 @@ export interface BuildCallGraphOptions {
   readonly maxFiles?: number;
   readonly maxGraphNodes?: number;
   readonly maxAnalysisSeconds?: number;
+  /**
+   * The loaded project (see ts-project.ts), enabling VT-208's instance-
+   * method resolution (SDD-v0.2.md § 7.3) via a real, lazily-built
+   * `ts.Program`/type checker. Optional and unused by default -- every
+   * caller that omits it (as every caller predating VT-208 does) keeps
+   * producing an honest `unknown(unsupported_construct)` edge for a method
+   * call this graph can't otherwise attribute, exactly as before.
+   */
+  readonly project?: TsProject;
 }
 
 /**
@@ -645,6 +798,63 @@ export async function buildCallGraph(
     return prepared;
   }
 
+  let program: ts.Program | undefined;
+  let programAttempted = false;
+
+  function getProgram(): ts.Program | undefined {
+    if (!programAttempted) {
+      programAttempted = true;
+      const project = options.project;
+      if (project) {
+        try {
+          // Rooted at entryFiles, not just project.fileNames: the latter
+          // is empty for any project with no tsconfig.json at all (a
+          // common case, including most of this file's own test
+          // fixtures), which would otherwise silently produce a
+          // zero-root-file program that can never resolve anything.
+          // entryFiles are guaranteed non-empty and, by construction,
+          // reach every file the call graph itself will ever walk via
+          // imports -- ts.createProgram follows those same imports to
+          // build the rest of the program, same as `tsc` itself. Combined
+          // with project.fileNames too, in case a relevant file is only
+          // reachable through tsconfig's own "include", not a resolved
+          // import chain.
+          const rootFiles = new Set([
+            ...options.entryFiles,
+            ...project.fileNames,
+          ]);
+          // maxNodeModuleJsDepth defaults to 0: TypeScript will resolve a
+          // plain-.js node_modules import's *specifier* but declines to
+          // parse/include the file itself for type acquisition, leaving
+          // its type as `any` -- confirmed directly (VT-208's own
+          // investigation) against a real vulnerable-package-shaped
+          // fixture with no .d.ts of its own, exactly the common case
+          // this analyzer targets. Set generously rather than left at the
+          // default: the existing maxFiles/maxGraphNodes/maxAnalysisSeconds
+          // limits already bound the overall analysis, so this doesn't
+          // need its own small ceiling.
+          const compilerOptions: ts.CompilerOptions = {
+            ...project.rawCompilerOptions,
+            maxNodeModuleJsDepth: 100,
+          };
+          program = ts.createProgram(
+            [...rootFiles],
+            compilerOptions,
+            ts.createCompilerHost(compilerOptions, true),
+          );
+        } catch {
+          // Target-project tsconfig/source data can be arbitrarily broken
+          // (see docs/SDD.md § 29); VT-208's resolution is a best-effort
+          // enhancement, not a requirement -- fall back to the
+          // unsupported_construct edge every earlier caller already
+          // produces rather than aborting the whole scan.
+          program = undefined;
+        }
+      }
+    }
+    return program;
+  }
+
   const ctx: WalkContext = {
     edges,
     resolver: options.resolver,
@@ -658,6 +868,7 @@ export async function buildCallGraph(
         queue.push(filePath);
       }
     },
+    getProgram,
   };
 
   while (queue.length > 0) {

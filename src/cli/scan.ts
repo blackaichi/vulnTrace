@@ -238,6 +238,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       maxFiles: config.analysis.limits.maxFiles,
       maxGraphNodes: config.analysis.limits.maxGraphNodes,
       maxAnalysisSeconds: config.analysis.limits.maxAnalysisSeconds,
+      project: tsProject,
     });
     graphBuildMs = Date.now() - graphBuildStart;
   } catch (error) {
