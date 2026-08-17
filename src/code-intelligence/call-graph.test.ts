@@ -39,6 +39,16 @@ async function graphFor(
   return buildCallGraph({ entryFiles, resolver });
 }
 
+/** Like {@link graphFor}, but also supplies the loaded project so VT-208's type-checker-based resolution is enabled. */
+async function graphForWithTypeChecking(
+  root: string,
+  entryFiles: string[],
+): Promise<CallGraph> {
+  const project = loadTsProject(root);
+  const resolver = createModuleResolver(project);
+  return buildCallGraph({ entryFiles, resolver, project });
+}
+
 /** A chain file0 -> file1 -> ... -> file{count-1}, each calling the next. */
 function buildChain(root: string, count: number): string {
   for (let i = 0; i < count; i++) {
@@ -473,6 +483,107 @@ describe("buildCallGraph: completeness invariant (VT-201)", () => {
     const mainNode = findNode(graph, (n) => n.name === "main");
     const edgesFromMain = graph.edges.filter((e) => e.from === mainNode?.id);
     expect(edgesFromMain).toHaveLength(0);
+  });
+});
+
+describe("buildCallGraph: instance method resolution via the type checker (VT-208)", () => {
+  it("resolves a method call on a locally-constructed instance when a project is supplied", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "class Lib {\n  vulnerableMethod() {}\n  safeMethod() {}\n}\n" +
+        "function main() {\n  const instance = new Lib();\n  instance.vulnerableMethod();\n}\n",
+    );
+
+    const graph = await graphForWithTypeChecking(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const methodNode = findNode(
+      graph,
+      (n) => n.kind === "method" && n.name === "vulnerableMethod",
+    );
+    expect(mainNode).toBeDefined();
+    expect(methodNode).toBeDefined();
+
+    const methodEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "method",
+    );
+    expect(methodEdge).toMatchObject({
+      resolution: { kind: "resolved", target: methodNode?.id },
+    });
+  });
+
+  it("resolves a method call on an instance of an imported class", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export class Lib {\n  vulnerableMethod() {}\n}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Lib } from "./lib.js";\n' +
+        "function main() {\n  const instance = new Lib();\n  instance.vulnerableMethod();\n}\n",
+    );
+
+    const graph = await graphForWithTypeChecking(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const methodNode = findNode(
+      graph,
+      (n) => n.kind === "method" && n.name === "vulnerableMethod",
+    );
+    expect(mainNode).toBeDefined();
+    expect(methodNode).toBeDefined();
+
+    const methodEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "method",
+    );
+    expect(methodEdge).toMatchObject({
+      resolution: { kind: "resolved", target: methodNode?.id },
+    });
+  });
+
+  it("still falls back to unsupported_construct when the receiver's type can't be resolved to a class", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function main(instance) {\n  instance.vulnerableMethod();\n}\n",
+    );
+
+    const graph = await graphForWithTypeChecking(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const methodEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "method",
+    );
+    expect(methodEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+
+  it("still produces the pre-VT-208 unsupported_construct edge when no project is supplied", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "class Lib {\n  vulnerableMethod() {}\n}\n" +
+        "function main() {\n  const instance = new Lib();\n  instance.vulnerableMethod();\n}\n",
+    );
+
+    // graphFor (not graphForWithTypeChecking) -- no `project` passed.
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const methodEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "method",
+    );
+    expect(methodEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
   });
 });
 
