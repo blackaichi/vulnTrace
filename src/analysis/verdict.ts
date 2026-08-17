@@ -28,6 +28,20 @@ export interface BuildFindingOptions {
   readonly entrypoints: readonly Entrypoint[];
   readonly resolver: ModuleResolver;
   readonly projectRoot: string;
+  /**
+   * Whether call-graph construction was truncated by a configured resource
+   * limit (`analysis.limits.maxFiles`/`maxGraphNodes`/`maxAnalysisSeconds`
+   * — see docs/SDD.md § 26, § 28-29's hardening requirement) before it
+   * could discover every file a resolved call chain would otherwise reach.
+   * Defaults to `false` so every existing caller that doesn't pass it keeps
+   * its current behavior (see VT-202, SDD-v0.2.md § 3.3: "NOT_AFFECTED is
+   * valid only when ... analysis coverage is complete"). A truncated graph
+   * cannot positively confirm non-reachability -- the untraversed region
+   * might have contained the very path being searched for -- so `buildFinding`
+   * must not report NOT_AFFECTED against one, even when its own search found
+   * no path and no unknown edge along the way it did traverse.
+   */
+  readonly graphTruncated?: boolean;
 }
 
 function locationOf(graph: CallGraph, id: GraphNodeId): string {
@@ -270,8 +284,11 @@ async function checkReachability(
  * The "target reachable? / coverage sufficient?" pair collapses onto
  * {@link ReachabilityResult}'s own three states (see TASK-020): `reachable`
  * is AFFECTED; `unreachable` — which TASK-020 only returns once a search
- * is fully exhausted with no blocking uncertainty — is NOT_AFFECTED;
- * `unknown` is UNKNOWN. Returns `undefined` ("no finding") only when the
+ * is fully exhausted with no blocking uncertainty — is NOT_AFFECTED,
+ * *unless* {@link BuildFindingOptions.graphTruncated} is set, in which case
+ * "coverage sufficient?" is answered NO regardless (see VT-202,
+ * SDD-v0.2.md § 3.3) and the result is UNKNOWN instead; `unknown` is
+ * UNKNOWN. Returns `undefined` ("no finding") only when the
  * installed version is confidently outside the vulnerability's affected
  * ranges — never for an `indeterminate` version match, which instead
  * degrades straight to UNKNOWN (see AGENTS.md: never infer NOT_AFFECTED —
@@ -291,6 +308,7 @@ export async function buildFinding(
     entrypoints,
     resolver,
     projectRoot,
+    graphTruncated = false,
   } = options;
 
   const base = {
@@ -347,6 +365,29 @@ export async function buildFinding(
       evidence: {
         path: [],
         reasons: ["no entrypoints were available to check reachability from"],
+      },
+    };
+  }
+
+  // VT-202 (SDD-v0.2.md § 3.3): a truncated call graph cannot positively
+  // confirm non-reachability. The search above found no path and no
+  // unknown edge along whatever it *did* traverse, but a resource limit
+  // stopped construction before every file a resolved call chain could
+  // reach was necessarily discovered -- the untraversed region might have
+  // contained the very path being searched for. Reporting NOT_AFFECTED
+  // here would be exactly the "absence of evidence treated as evidence of
+  // non-reachability" AGENTS.md forbids; it must degrade to UNKNOWN
+  // instead, same as an unresolved edge would.
+  if (graphTruncated) {
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      target: representativeTarget,
+      evidence: {
+        path: [],
+        reasons: [
+          "call-graph construction was truncated by a configured resource limit (analysis.limits) before every reachable path could be exhaustively searched",
+        ],
       },
     };
   }
