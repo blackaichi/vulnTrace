@@ -1,0 +1,8 @@
+{
+  "name": "fixture-typescript-paths",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}
