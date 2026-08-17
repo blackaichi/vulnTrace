@@ -142,4 +142,16 @@ describe("fixture suite: each required fixture (docs/SDD.md § 31) demonstrates 
 
     expect(finding?.verdict).toBe("UNKNOWN");
   });
+
+  it("typescript-paths: reached only through a baseUrl/paths-aliased local import -> AFFECTED (VT-206)", async () => {
+    const finding = await scanFixture({
+      fixture: "typescript-paths",
+      entrypoint: "src/index.ts",
+      target: "vulnerable",
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+    expect(finding?.evidence?.path).toHaveLength(3);
+    expect(finding?.evidence?.path.at(-1)).toContain("fixture-lib");
+  });
 });
