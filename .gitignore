@@ -5,3 +5,5 @@ coverage/
 .vulntrace-cache/
 *.log
 .env
+/*.zip
+/remediation/
