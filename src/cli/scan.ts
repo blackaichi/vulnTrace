@@ -363,6 +363,15 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         vulnerability: match.vulnerability,
         packageName: dependency.name,
         packageVersion: dependency.version,
+        // The dependency graph already knows exactly which installed
+        // instance this finding corresponds to (VT-212, SDD-v0.2.md § 4.3)
+        // -- pass it through as the authoritative identity rather than
+        // letting verdict resolution reconstruct it from the call graph
+        // alone, which cannot distinguish "the wrong instance" from "an
+        // instance never reached at all".
+        packageInstance: dependency.locations[0]
+          ? path.resolve(projectRoot, dependency.locations[0])
+          : undefined,
         matchResult: match.result,
         rule,
         graph,

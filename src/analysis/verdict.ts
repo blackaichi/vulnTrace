@@ -22,6 +22,19 @@ export interface BuildFindingOptions {
   readonly vulnerability: Vulnerability;
   readonly packageName: string;
   readonly packageVersion: string;
+  /**
+   * This finding's own installed instance's absolute path (see VT-212,
+   * SDD-v0.2.md § 4.3) — the dependency graph's `DependencyNode.locations`,
+   * resolved against the project root. Authoritative for which
+   * graph-discovered instance's reachability this finding may use: without
+   * it, a package with multiple installed instances can have one
+   * instance's finding silently inherit a *different* instance's
+   * reachability result whenever the call graph happens to have discovered
+   * only one of them (confirmed by the independent v2 adversarial suite,
+   * ADV2-045). Optional so existing callers/tests that predate VT-212 keep
+   * their current (approximate, version-string-based) behavior.
+   */
+  readonly packageInstance?: string;
   /** From TASK-011's matchVersion/matchVulnerabilities. */
   readonly matchResult: VersionMatchResult;
   /** From TASK-012's indexRulesByVulnerabilityId lookup; `undefined` if no rule targets this vulnerability. */
@@ -194,12 +207,26 @@ function readInstalledVersion(packageInstance: string): string | undefined {
  * produce a false NOT_AFFECTED before this fix (see VT-204;
  * SDD-v0.2.md § 4's own multiple-version example).
  *
- * When `packageVersion` is known and more than one distinct installed
- * instance is present in the graph, prefers instances whose own
- * `package.json` declares that exact version — so a Finding built against
- * one specific installed version's reachability is never contaminated by
- * a *different* installed version's own reachability. Falls back to every
- * instance found when none match, rather than silently under-including.
+ * When `packageInstance` is known (the finding's own dependency-graph-
+ * resolved install path — see VT-212, SDD-v0.2.md § 4.3), it is
+ * authoritative: only graph-discovered instances at exactly that path are
+ * used, never a different instance merely because it's the only one the
+ * call graph happened to traverse. When the graph never traversed that
+ * specific instance at all, this returns `confirmedAbsentInstance: true`
+ * rather than silently substituting an unrelated instance's nodes — a
+ * finding for one installed instance must never inherit another instance's
+ * reachability result (confirmed by the independent v2 adversarial suite,
+ * ADV2-045: with two installed instances at different versions and only
+ * one ever imported, the unreached instance's finding previously inherited
+ * the reached instance's AFFECTED verdict).
+ *
+ * When `packageInstance` is unavailable (callers that predate VT-212) but
+ * `packageVersion` is known and more than one distinct installed instance
+ * is present in the graph, falls back to the pre-VT-212 heuristic: prefer
+ * instances whose own `package.json` declares that exact version. This
+ * heuristic is necessarily approximate — it cannot detect a finding whose
+ * own instance was never discovered by the graph at all, which is exactly
+ * what `packageInstance` fixes.
  *
  * Only falls back to a fresh, independent resolution (the pre-VT-204
  * behavior) when the graph never discovered ANY instance of the package at
@@ -212,12 +239,33 @@ async function resolveTargetNodes(
   resolver: ModuleResolver,
   referenceFile: string,
   packageVersion: string | undefined,
-): Promise<{ nodes: GraphNode[]; unresolvedReason?: string }> {
+  packageInstance: string | undefined,
+): Promise<{
+  nodes: GraphNode[];
+  unresolvedReason?: string;
+  confirmedAbsentInstance?: boolean;
+}> {
   const instances = graphPackageInstances(graph, target.module);
 
   if (instances.size > 0) {
     let selected = [...instances.entries()];
-    if (packageVersion && instances.size > 1) {
+
+    if (packageInstance) {
+      const instanceMatched = selected.filter(
+        ([instance]) => instance === packageInstance,
+      );
+      if (instanceMatched.length === 0) {
+        // The graph discovered other instance(s) of this package name, but
+        // never traversed THIS finding's own instance -- not "traversed
+        // the wrong one", genuinely never visited. Under a non-truncated
+        // graph, TASK-018's on-demand discovery is complete, so this
+        // absence is itself positive evidence of non-reachability
+        // (SDD-v0.2.md § 3.3, § 4.3); it must not fall through to using a
+        // different instance's nodes.
+        return { nodes: [], confirmedAbsentInstance: true };
+      }
+      selected = instanceMatched;
+    } else if (packageVersion && instances.size > 1) {
       const versionMatched = selected.filter(
         ([instance]) => readInstalledVersion(instance) === packageVersion,
       );
@@ -355,6 +403,7 @@ async function checkReachability(
   resolver: ModuleResolver,
   projectRoot: string,
   packageVersion: string | undefined,
+  packageInstance: string | undefined,
 ): Promise<{
   reachable?: ReachableEvidence;
   sawUnknown: boolean;
@@ -378,12 +427,17 @@ async function checkReachability(
   let representativeTarget: VulnerableSymbolTarget | undefined;
 
   for (const target of rule.targets) {
-    const { nodes: targetNodes, unresolvedReason } = await resolveTargetNodes(
+    const {
+      nodes: targetNodes,
+      unresolvedReason,
+      confirmedAbsentInstance,
+    } = await resolveTargetNodes(
       graph,
       target,
       resolver,
       referenceFile,
       packageVersion,
+      packageInstance,
     );
 
     if (unresolvedReason) {
@@ -395,6 +449,17 @@ async function checkReachability(
     }
 
     representativeTarget ??= target;
+
+    if (confirmedAbsentInstance) {
+      // This finding's own package instance was never traversed by the
+      // call graph at all (VT-212) -- a genuine, positive check, not a
+      // skipped one. `checkedAny` must reflect that so buildFinding's
+      // existing graphTruncated gate (not this function) decides between
+      // NOT_AFFECTED and UNKNOWN, instead of falling through to the
+      // separate "no entrypoints were available" UNKNOWN below.
+      checkedAny = true;
+      continue;
+    }
 
     for (const targetNode of targetNodes) {
       for (const entrypoint of entrypoints) {
@@ -456,6 +521,7 @@ export async function buildFinding(
     vulnerability,
     packageName,
     packageVersion,
+    packageInstance,
     matchResult,
     rule,
     graph,
@@ -491,6 +557,7 @@ export async function buildFinding(
       resolver,
       projectRoot,
       packageVersion,
+      packageInstance,
     );
 
   if (reachable) {
