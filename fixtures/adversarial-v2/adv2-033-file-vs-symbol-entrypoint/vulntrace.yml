@@ -1,0 +1,7 @@
+analysis:
+  entrypoints:
+    - file: src/index.ts
+      symbol: main
+rules:
+  files:
+    - rules.yml

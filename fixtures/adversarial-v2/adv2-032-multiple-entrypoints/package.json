@@ -1,0 +1,6 @@
+{
+  "name": "adv2-032",
+  "version": "1.0.0",
+  "type": "module",
+  "dependencies": { "vt2-vuln-lib": "1.0.0" }
+}
