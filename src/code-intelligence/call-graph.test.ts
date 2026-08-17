@@ -330,7 +330,7 @@ describe("buildCallGraph: dynamic calls are marked uncertain", () => {
 });
 
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
-  it("marks a call through a locally-bound parameter as uncertain instead of vanishing", async () => {
+  it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -343,12 +343,19 @@ describe("buildCallGraph: completeness invariant (VT-201)", () => {
     const graph = await graphFor(root, [entry]);
 
     const invokeNode = findNode(graph, (n) => n.name === "invoke");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
     expect(invokeNode).toBeDefined();
+    expect(vulnerableNode).toBeDefined();
 
-    // invoke() calling its own parameter fn() must not silently disappear.
+    // Before VT-201, invoke() calling its own parameter fn() silently
+    // disappeared entirely. Before VT-210, it produced an honest but
+    // imprecise unknown(unsupported_construct) edge. It must now resolve
+    // fully, since main()'s own call site (invoke(vulnerable)) makes the
+    // real target determinable.
     const fnCallEdge = graph.edges.find((e) => e.from === invokeNode?.id);
     expect(fnCallEdge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      type: "callback",
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
     });
   });
 
@@ -710,6 +717,95 @@ describe("buildCallGraph: re-export chains (VT-209)", () => {
     );
     expect(edge).toMatchObject({
       resolution: { kind: "resolved", target: targetNode?.id },
+    });
+  });
+});
+
+describe("buildCallGraph: higher-order call value flow (VT-210)", () => {
+  it("resolves a parameter call through an imported function passed at the call site", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function invoke(fn) {\n  fn();\n}\n" +
+        "function main() {\n  invoke(vulnerable);\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const invokeNode = findNode(graph, (n) => n.name === "invoke");
+    const targetNode = findNode(graph, (n) => n.name === "vulnerable");
+    expect(invokeNode).toBeDefined();
+    expect(targetNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === invokeNode?.id);
+    expect(edge).toMatchObject({
+      type: "callback",
+      resolution: { kind: "resolved", target: targetNode?.id },
+    });
+  });
+
+  it("resolves to the first call site's argument when the function is called more than once", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "function safe() {}\n" +
+        "function invoke(fn) {\n  fn();\n}\n" +
+        "function main() {\n  invoke(vulnerable);\n  invoke(safe);\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const invokeNode = findNode(graph, (n) => n.name === "invoke");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    expect(invokeNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === invokeNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("still falls back to unsupported_construct when the enclosing function is never called with a resolvable argument", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function invoke(fn) {\n  fn();\n}\n" +
+        "function main(dynamicFn) {\n  invoke(dynamicFn);\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const invokeNode = findNode(graph, (n) => n.name === "invoke");
+    const edge = graph.edges.find((e) => e.from === invokeNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+
+  it("still falls back to unsupported_construct when the enclosing function is anonymous", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "const invoke = (fn) => {\n  fn();\n};\n" +
+        "invoke(vulnerable);\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const invokeNode = findNode(graph, (n) => n.name === "invoke");
+    expect(invokeNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === invokeNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
     });
   });
 });

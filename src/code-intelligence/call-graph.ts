@@ -285,6 +285,102 @@ async function resolveReExportChain(
 }
 
 /**
+ * Resolves a bare-identifier call (`fn()`) to the real target it calls
+ * when `fn` is a parameter of the enclosing named function, and that
+ * function's own file passes a resolvable function reference at the
+ * matching argument position (see SDD-v0.2.md § 7.1, VT-210):
+ *
+ * ```js
+ * function invoke(fn) {
+ *   fn();
+ * }
+ * invoke(vulnerable);
+ * ```
+ *
+ * Deliberately "lightweight," not general points-to/data-flow analysis
+ * (an explicit MVP non-goal, SDD-v0.2.md § 16): single-hop (the argument
+ * expression itself must be a plain identifier, not a further level of
+ * indirection), same-file only (searches `prepared.index.sourceFile`'s
+ * whole AST for call sites of the enclosing function, not other files --
+ * see below for why), and first-match-wins if the enclosing function is
+ * called from more than one site with different resolvable values.
+ *
+ * Same-file, whole-file search rather than "resolve as edges are
+ * discovered": `invoke`'s own body (containing `fn()`) sits *earlier* in
+ * the file than `main()`'s call site (`invoke(vulnerable)`) in the exact
+ * shape above, and call-graph traversal visits nodes in textual order --
+ * a single forward pass would reach `fn()` before ever having seen the
+ * call site that explains what `fn` holds. Searching the already-fully-
+ * parsed file (not just what traversal has walked so far) sidesteps that
+ * ordering problem entirely, at the cost of only finding same-file
+ * callers.
+ */
+async function resolveHigherOrderCallTarget(
+  callee: ts.Identifier,
+  call: ts.CallExpression,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<GraphNodeId | undefined> {
+  const enclosing = ts.findAncestor(call, isFunctionLike);
+  if (!enclosing || !ts.isFunctionDeclaration(enclosing) || !enclosing.name) {
+    return undefined;
+  }
+
+  const paramIndex = enclosing.parameters.findIndex(
+    (p) => ts.isIdentifier(p.name) && p.name.text === callee.text,
+  );
+  if (paramIndex === -1) {
+    return undefined;
+  }
+
+  const functionName = enclosing.name.text;
+  const candidateArgs: ts.Identifier[] = [];
+
+  function collectCallSites(node: ts.Node): void {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === functionName
+    ) {
+      const arg = node.arguments[paramIndex];
+      if (arg && ts.isIdentifier(arg)) {
+        candidateArgs.push(arg);
+      }
+    }
+    ts.forEachChild(node, collectCallSites);
+  }
+  collectCallSites(prepared.index.sourceFile);
+
+  for (const arg of candidateArgs) {
+    const binding = await bindCallee(
+      arg,
+      prepared.model,
+      ctx.resolver,
+      prepared.index.filePath,
+    );
+
+    if (binding.kind === "resolved") {
+      ctx.onDiscoverFile(binding.target.modulePath);
+      const targetFile = ctx.ensurePrepared(binding.target.modulePath);
+      const targetNodeId = targetFile?.exportNameToNodeId.get(
+        binding.target.exportedName,
+      );
+      if (targetNodeId) {
+        return targetNodeId;
+      }
+      continue;
+    }
+
+    const local = findLocalFunctionNodeId(arg, prepared);
+    if (local) {
+      return local;
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * The innermost node of `root`'s own subtree whose span contains
  * `position`, or `root` itself if none of its children do. `root` must
  * have parent pointers set (see `ts.createSourceFile`'s own
@@ -608,6 +704,28 @@ async function classifyCall(
         from,
         type: "method",
         resolution: { kind: "resolved", target: methodTarget },
+        location,
+      };
+    }
+  }
+
+  // VT-210: a bare-identifier call on a parameter (`fn()` inside
+  // `function invoke(fn) { fn(); }`) might still be resolvable by finding
+  // where `invoke` itself is called with a known function reference (see
+  // SDD-v0.2.md § 7.1). Attempted last, after every other resolution path
+  // has already failed.
+  if (ts.isIdentifier(callee)) {
+    const higherOrderTarget = await resolveHigherOrderCallTarget(
+      callee,
+      call,
+      prepared,
+      ctx,
+    );
+    if (higherOrderTarget) {
+      return {
+        from,
+        type: "callback",
+        resolution: { kind: "resolved", target: higherOrderTarget },
         location,
       };
     }
