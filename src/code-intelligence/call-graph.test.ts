@@ -810,6 +810,135 @@ describe("buildCallGraph: higher-order call value flow (VT-210)", () => {
   });
 });
 
+describe("buildCallGraph: static branch folding (VT-211)", () => {
+  it("still creates an edge for a call behind a provably-true condition", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "function main() {\n  if (1 === 1) {\n    vulnerable();\n  }\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const targetNode = findNode(graph, (n) => n.name === "vulnerable");
+    expect(mainNode).toBeDefined();
+    expect(targetNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: targetNode?.id },
+    });
+  });
+
+  it("creates no edge at all for a call behind a provably-false condition", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "function main() {\n  if (false) {\n    vulnerable();\n  }\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    expect(mainNode).toBeDefined();
+
+    const edgesFromMain = graph.edges.filter((e) => e.from === mainNode?.id);
+    expect(edgesFromMain).toHaveLength(0);
+  });
+
+  it("resolves the else branch when the condition is provably false", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "function safe() {}\n" +
+        "function main() {\n  if (false) {\n    safe();\n  } else {\n    vulnerable();\n  }\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const safeNode = findNode(graph, (n) => n.name === "safe");
+    expect(vulnerableNode).toBeDefined();
+
+    const edges = graph.edges.filter((e) => e.from === mainNode?.id);
+    expect(edges).toHaveLength(1);
+    expect(edges[0]).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+    // The dead then-branch's call to safe() must not have produced a node
+    // reachable from main -- safe()'s own node still exists (it's still a
+    // real declaration in the file), just never wired up as an edge target.
+    void safeNode;
+  });
+
+  it("resolves a negated constant condition (!true)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "function main() {\n  if (!true) {\n    vulnerable();\n  }\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edgesFromMain = graph.edges.filter((e) => e.from === mainNode?.id);
+    expect(edgesFromMain).toHaveLength(0);
+  });
+
+  it("still visits both branches when the condition is not statically determinable", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "function safe() {}\n" +
+        "function main(flag) {\n  if (flag) {\n    vulnerable();\n  } else {\n    safe();\n  }\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const safeNode = findNode(graph, (n) => n.name === "safe");
+
+    const edges = graph.edges.filter((e) => e.from === mainNode?.id);
+    const targets = edges
+      .filter((e) => e.resolution.kind === "resolved")
+      .map((e) => (e.resolution as { target: string }).target);
+    expect(targets).toContain(vulnerableNode?.id);
+    expect(targets).toContain(safeNode?.id);
+  });
+
+  it("still visits a call inside the condition expression itself", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function check() {\n  return false;\n}\n" +
+        "function main() {\n  if (check()) {\n  }\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const checkNode = findNode(graph, (n) => n.name === "check");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: checkNode?.id },
+    });
+  });
+});
+
 describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => {
   // docs/SDD.md § 26's analysis.limits / § 28-29's hardening requirement:
   // a pathological or adversarial target project (e.g. an enormous or

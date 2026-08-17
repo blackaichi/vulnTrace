@@ -380,6 +380,73 @@ async function resolveHigherOrderCallTarget(
   return undefined;
 }
 
+/** A numeric or string literal's own value, or `undefined` for anything else -- including a negated numeric literal (`-1`). */
+function literalValue(expr: ts.Expression): string | number | undefined {
+  if (ts.isNumericLiteral(expr)) {
+    return Number(expr.text);
+  }
+  if (ts.isStringLiteralLike(expr)) {
+    return expr.text;
+  }
+  if (
+    ts.isPrefixUnaryExpression(expr) &&
+    expr.operator === ts.SyntaxKind.MinusToken &&
+    ts.isNumericLiteral(expr.operand)
+  ) {
+    return -Number(expr.operand.text);
+  }
+  return undefined;
+}
+
+/**
+ * Evaluates `expr` to a statically-known `true`/`false`, or `undefined`
+ * when its runtime value can't be determined this way (see SDD-v0.2.md
+ * § 9, VT-211). Deliberately narrow -- literal `true`/`false`, negation,
+ * parenthesization, and literal-vs-literal equality/inequality
+ * comparisons on numbers/strings -- not general constant folding or
+ * control-flow analysis (an explicit MVP non-goal, SDD-v0.2.md § 16). Any
+ * condition that depends on a variable, parameter, or function call (the
+ * overwhelming majority of real code) correctly returns `undefined`,
+ * leaving it exactly as conservative as before this task: both branches
+ * still count as reachable.
+ */
+function evaluateConstantBoolean(expr: ts.Expression): boolean | undefined {
+  if (ts.isParenthesizedExpression(expr)) {
+    return evaluateConstantBoolean(expr.expression);
+  }
+  if (expr.kind === ts.SyntaxKind.TrueKeyword) {
+    return true;
+  }
+  if (expr.kind === ts.SyntaxKind.FalseKeyword) {
+    return false;
+  }
+  if (
+    ts.isPrefixUnaryExpression(expr) &&
+    expr.operator === ts.SyntaxKind.ExclamationToken
+  ) {
+    const inner = evaluateConstantBoolean(expr.operand);
+    return inner === undefined ? undefined : !inner;
+  }
+  if (ts.isBinaryExpression(expr)) {
+    const op = expr.operatorToken.kind;
+    const isEquality =
+      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+      op === ts.SyntaxKind.EqualsEqualsToken;
+    const isInequality =
+      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsToken;
+    if (isEquality || isInequality) {
+      const left = literalValue(expr.left);
+      const right = literalValue(expr.right);
+      if (left === undefined || right === undefined) {
+        return undefined;
+      }
+      return isEquality ? left === right : left !== right;
+    }
+  }
+  return undefined;
+}
+
 /**
  * The innermost node of `root`'s own subtree whose span contains
  * `position`, or `root` itself if none of its children do. `root` must
@@ -914,6 +981,30 @@ async function walkFile(
           ctx.edges.push(edge);
         }
       }
+    }
+
+    if (ts.isIfStatement(node)) {
+      // VT-211 (SDD-v0.2.md § 9): the condition itself always executes,
+      // whatever it evaluates to, and may contain calls of its own -- it
+      // is always visited. Only a provably-constant condition changes
+      // which branch(es) get visited; anything else (a variable,
+      // parameter, or function call -- the overwhelming majority of real
+      // conditions) still visits both, unchanged from before this task.
+      await visit(node.expression);
+      const constantValue = evaluateConstantBoolean(node.expression);
+      if (constantValue === true) {
+        await visit(node.thenStatement);
+      } else if (constantValue === false) {
+        if (node.elseStatement) {
+          await visit(node.elseStatement);
+        }
+      } else {
+        await visit(node.thenStatement);
+        if (node.elseStatement) {
+          await visit(node.elseStatement);
+        }
+      }
+      return;
     }
 
     const children: ts.Node[] = [];
