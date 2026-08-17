@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildModuleModel,
@@ -7,6 +8,7 @@ import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
 import type { CallGraph, GraphNode, GraphNodeId } from "../domain/graph.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
+import { identifyModule } from "../domain/resolved-target.js";
 import type {
   VulnerableSymbolRule,
   VulnerableSymbolTarget,
@@ -60,8 +62,8 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
 }
 
 /**
- * Finds the graph node implementing `{module, export}`, or a phantom
- * placeholder when it was never discovered while building the graph.
+ * Finds the graph node implementing `{module: resolvedFile, export: exportName}`,
+ * or `undefined` when it was never discovered while building the graph.
  *
  * A rule's `export` names the module's *canonical* export (e.g. `"default"`
  * for CommonJS's `module.exports = someNamedFunction;` idiom — extremely
@@ -81,11 +83,42 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
  *
  * Falls back to the direct name match (kept for synthetic/test graphs that
  * bypass real file indexing entirely, and as a safety net if the target
- * file can no longer be read) and finally to a phantom placeholder when
- * neither locates a real node.
- *
- * A phantom node is not a guess at reachability: nothing in the graph
- * points to it (its id can never collide with a real generated one — see
+ * file can no longer be read).
+ */
+function findExportNodeInFile(
+  graph: CallGraph,
+  resolvedFile: string,
+  exportName: string,
+): GraphNode | undefined {
+  try {
+    const index = indexSourceFileFromDisk(resolvedFile);
+    const model = buildModuleModel(index);
+    const exportedFn = mapExportsToFunctions(index, model).get(exportName);
+    if (exportedFn) {
+      const byLocation = graph.nodes.find(
+        (n) =>
+          n.module === resolvedFile &&
+          n.location?.line === exportedFn.location.line &&
+          n.location?.column === exportedFn.location.column,
+      );
+      if (byLocation) {
+        return byLocation;
+      }
+    }
+  } catch {
+    // Target file unreadable/unparsable -- fall through to the name-based
+    // match below.
+  }
+
+  return graph.nodes.find(
+    (n) => n.module === resolvedFile && n.name === exportName,
+  );
+}
+
+/**
+ * A phantom placeholder for a target that could not be matched to any real
+ * graph node. Not a guess at reachability: nothing in the graph points to
+ * it (its id can never collide with a real generated one — see
  * call-graph.ts's `${filePath}#${name}@${line}:${column}` scheme, which
  * this deliberately does not match), so handing it to
  * {@link analyzeReachability} still produces a correct answer. If the
@@ -97,43 +130,137 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
  * region — which the same reachability search already detects and reports
  * as `unknown` rather than `unreachable`.
  */
-function findOrPhantomTarget(
+function phantomNode(resolvedFile: string, exportName: string): GraphNode {
+  return {
+    id: `unresolved-target:${resolvedFile}#${exportName}`,
+    kind: "function",
+    module: resolvedFile,
+    name: exportName,
+  };
+}
+
+/**
+ * Every distinct installed instance of `packageName` the call graph itself
+ * already discovered via real resolved imports (see
+ * docs/SDD.md § 18; SDD-v0.2.md § 4's `identifyModule`), grouped by
+ * `packageInstance` so `node_modules/foo` and
+ * `node_modules/bar/node_modules/foo` are never conflated (SDD-v0.2.md
+ * § 4.2). Each instance maps to every distinct resolved file the graph
+ * discovered within it (there can be more than one, e.g. separate
+ * conditional-exports entry files for the same installed package).
+ */
+function graphPackageInstances(
   graph: CallGraph,
-  resolvedModulePath: string,
-  exportName: string,
-): GraphNode {
+  packageName: string,
+): Map<string, Set<string>> {
+  const byInstance = new Map<string, Set<string>>();
+  for (const node of graph.nodes) {
+    const identity = identifyModule(node.module);
+    if (identity.packageName !== packageName || !identity.packageInstance) {
+      continue;
+    }
+    const files = byInstance.get(identity.packageInstance) ?? new Set<string>();
+    files.add(node.module);
+    byInstance.set(identity.packageInstance, files);
+  }
+  return byInstance;
+}
+
+/** Reads `<packageInstance>/package.json`'s own declared version, or `undefined` if it can't be read/parsed. */
+function readInstalledVersion(packageInstance: string): string | undefined {
   try {
-    const index = indexSourceFileFromDisk(resolvedModulePath);
-    const model = buildModuleModel(index);
-    const exportedFn = mapExportsToFunctions(index, model).get(exportName);
-    if (exportedFn) {
-      const byLocation = graph.nodes.find(
-        (n) =>
-          n.module === resolvedModulePath &&
-          n.location?.line === exportedFn.location.line &&
-          n.location?.column === exportedFn.location.column,
+    const raw: unknown = JSON.parse(
+      readFileSync(path.join(packageInstance, "package.json"), "utf-8"),
+    );
+    const version = (raw as { version?: unknown }).version;
+    return typeof version === "string" ? version : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Resolves a rule target's `{module, export}` to every matching graph node
+ * (see docs/SDD.md § 17-18; SDD-v0.2.md § 5 "Single Resolution Source of
+ * Truth"). Reuses graph-discovered resolved targets first — every
+ * installed instance of `target.module` the call graph itself already
+ * traversed to via a real resolved import — instead of independently
+ * re-resolving from a single, generic project-root context. That
+ * independent resolution can disagree with what the graph actually
+ * traversed: a different conditional-exports branch (e.g. `"require"` vs
+ * the real `"import"` context a call site actually used), or a different
+ * installed instance entirely for a non-hoisted, multiple-version
+ * dependency. Both were confirmed, by direct call-graph inspection, to
+ * produce a false NOT_AFFECTED before this fix (see VT-204;
+ * SDD-v0.2.md § 4's own multiple-version example).
+ *
+ * When `packageVersion` is known and more than one distinct installed
+ * instance is present in the graph, prefers instances whose own
+ * `package.json` declares that exact version — so a Finding built against
+ * one specific installed version's reachability is never contaminated by
+ * a *different* installed version's own reachability. Falls back to every
+ * instance found when none match, rather than silently under-including.
+ *
+ * Only falls back to a fresh, independent resolution (the pre-VT-204
+ * behavior) when the graph never discovered ANY instance of the package at
+ * all — the common, legitimate case where nothing in the analyzed code
+ * ever imports it.
+ */
+async function resolveTargetNodes(
+  graph: CallGraph,
+  target: VulnerableSymbolTarget,
+  resolver: ModuleResolver,
+  referenceFile: string,
+  packageVersion: string | undefined,
+): Promise<{ nodes: GraphNode[]; unresolvedReason?: string }> {
+  const instances = graphPackageInstances(graph, target.module);
+
+  if (instances.size > 0) {
+    let selected = [...instances.entries()];
+    if (packageVersion && instances.size > 1) {
+      const versionMatched = selected.filter(
+        ([instance]) => readInstalledVersion(instance) === packageVersion,
       );
-      if (byLocation) {
-        return byLocation;
+      if (versionMatched.length > 0) {
+        selected = versionMatched;
       }
     }
-  } catch {
-    // Target file unreadable/unparsable -- fall through to the name-based
-    // match below, and ultimately the phantom node.
+
+    const nodes: GraphNode[] = [];
+    for (const [, files] of selected) {
+      for (const file of files) {
+        const node = findExportNodeInFile(graph, file, target.export);
+        if (node) {
+          nodes.push(node);
+        }
+      }
+    }
+
+    if (nodes.length > 0) {
+      return { nodes };
+    }
+
+    // The graph found real instance(s) of the package, but none of them
+    // implement target.export -- a phantom scoped to a real,
+    // graph-confirmed instance, not a fresh independent resolution.
+    const [firstFile] = selected[0]?.[1] ?? [];
+    return {
+      nodes: [phantomNode(firstFile ?? target.module, target.export)],
+    };
   }
 
-  const byName = graph.nodes.find(
-    (n) => n.module === resolvedModulePath && n.name === exportName,
+  const resolution = await resolver.resolve(target.module, referenceFile);
+  if (resolution.kind === "unresolved") {
+    return { nodes: [], unresolvedReason: resolution.reason };
+  }
+
+  const node = findExportNodeInFile(
+    graph,
+    resolution.resolvedFileName,
+    target.export,
   );
-  if (byName) {
-    return byName;
-  }
-
   return {
-    id: `unresolved-target:${resolvedModulePath}#${exportName}`,
-    kind: "function",
-    module: resolvedModulePath,
-    name: exportName,
+    nodes: [node ?? phantomNode(resolution.resolvedFileName, target.export)],
   };
 }
 
@@ -204,6 +331,7 @@ async function checkReachability(
   entrypoints: readonly Entrypoint[],
   resolver: ModuleResolver,
   projectRoot: string,
+  packageVersion: string | undefined,
 ): Promise<{
   reachable?: ReachableEvidence;
   sawUnknown: boolean;
@@ -227,40 +355,43 @@ async function checkReachability(
   let representativeTarget: VulnerableSymbolTarget | undefined;
 
   for (const target of rule.targets) {
-    const resolution = await resolver.resolve(target.module, referenceFile);
+    const { nodes: targetNodes, unresolvedReason } = await resolveTargetNodes(
+      graph,
+      target,
+      resolver,
+      referenceFile,
+      packageVersion,
+    );
 
-    if (resolution.kind === "unresolved") {
+    if (unresolvedReason) {
       sawUnknown = true;
       reasons.push(
-        `could not resolve module "${target.module}": ${resolution.reason}`,
+        `could not resolve module "${target.module}": ${unresolvedReason}`,
       );
       continue;
     }
 
     representativeTarget ??= target;
-    const targetNode = findOrPhantomTarget(
-      graph,
-      resolution.resolvedFileName,
-      target.export,
-    );
 
-    for (const entrypoint of entrypoints) {
-      for (const source of entrypointSourceNodes(graph, entrypoint)) {
-        checkedAny = true;
-        const result = analyzeReachability(graph, source, targetNode);
+    for (const targetNode of targetNodes) {
+      for (const entrypoint of entrypoints) {
+        for (const source of entrypointSourceNodes(graph, entrypoint)) {
+          checkedAny = true;
+          const result = analyzeReachability(graph, source, targetNode);
 
-        if (result.state === "reachable") {
-          return {
-            reachable: { target, path: result.path },
-            sawUnknown,
-            reasons,
-            representativeTarget: target,
-            checkedAny,
-          };
-        }
-        if (result.state === "unknown") {
-          sawUnknown = true;
-          reasons.push(...result.blockers);
+          if (result.state === "reachable") {
+            return {
+              reachable: { target, path: result.path },
+              sawUnknown,
+              reasons,
+              representativeTarget: target,
+              checkedAny,
+            };
+          }
+          if (result.state === "unknown") {
+            sawUnknown = true;
+            reasons.push(...result.blockers);
+          }
         }
       }
     }
@@ -330,7 +461,14 @@ export async function buildFinding(
   }
 
   const { reachable, sawUnknown, reasons, representativeTarget, checkedAny } =
-    await checkReachability(rule, graph, entrypoints, resolver, projectRoot);
+    await checkReachability(
+      rule,
+      graph,
+      entrypoints,
+      resolver,
+      projectRoot,
+      packageVersion,
+    );
 
   if (reachable) {
     return {
