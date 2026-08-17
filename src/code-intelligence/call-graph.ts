@@ -222,6 +222,69 @@ function findLocalFunctionNodeId(
 }
 
 /**
+ * Follows a named re-export chain (`export { x } from "y";`, one or more
+ * hops) to the graph node implementing its ultimate origin (see
+ * SDD-v0.2.md § 7.4, VT-209). Before this, `export { x } from "y"` was
+ * recorded in the module model but never chased: `mapExportsToFunctions`
+ * deliberately skips `kind: "re-export"` entries (see module-model.ts),
+ * so a call reached only through a re-export always fell to an honest but
+ * imprecise `unresolved_target` edge, even when the real target was
+ * trivially one hop away.
+ *
+ * Scoped to the named form only -- `export * from "y"` wildcard
+ * re-exports are a different problem (matching one specific name against
+ * an unenumerated set of re-exported names) and aren't attempted here.
+ * `visited` guards against a re-export cycle (`a` re-exports from `b`,
+ * `b` re-exports from `a`, with no real definition anywhere): each
+ * `${filePath}#${exportName}` hop is recorded, and a repeat stops the
+ * chase rather than recursing forever.
+ */
+async function resolveReExportChain(
+  prepared: FileGraphData,
+  exportName: string,
+  ctx: WalkContext,
+  visited: Set<string>,
+): Promise<GraphNodeId | undefined> {
+  const hopKey = `${prepared.index.filePath}#${exportName}`;
+  if (visited.has(hopKey)) {
+    return undefined;
+  }
+  visited.add(hopKey);
+
+  const reExport = prepared.model.exports.find(
+    (exp) =>
+      exp.kind === "re-export" &&
+      exp.exportedName === exportName &&
+      exp.specifier !== undefined,
+  );
+  if (!reExport?.specifier) {
+    return undefined;
+  }
+
+  const resolution = await ctx.resolver.resolve(
+    reExport.specifier,
+    prepared.index.filePath,
+  );
+  if (resolution.kind === "unresolved") {
+    return undefined;
+  }
+
+  ctx.onDiscoverFile(resolution.resolvedFileName);
+  const targetFile = ctx.ensurePrepared(resolution.resolvedFileName);
+  if (!targetFile) {
+    return undefined;
+  }
+
+  const originalName = reExport.localName ?? exportName;
+  const directTarget = targetFile.exportNameToNodeId.get(originalName);
+  if (directTarget) {
+    return directTarget;
+  }
+
+  return resolveReExportChain(targetFile, originalName, ctx, visited);
+}
+
+/**
  * The innermost node of `root`'s own subtree whose span contains
  * `position`, or `root` itself if none of its children do. `root` must
  * have parent pointers set (see `ts.createSourceFile`'s own
@@ -450,6 +513,25 @@ async function classifyCall(
       };
     }
 
+    // VT-209: not a local definition, but the target file might itself
+    // re-export this name from somewhere else -- chase it before giving up.
+    if (targetFile) {
+      const chased = await resolveReExportChain(
+        targetFile,
+        binding.target.exportedName,
+        ctx,
+        new Set(),
+      );
+      if (chased) {
+        return {
+          from,
+          type: "import",
+          resolution: { kind: "resolved", target: chased },
+          location,
+        };
+      }
+    }
+
     return {
       from,
       type: "import",
@@ -589,6 +671,24 @@ async function classifyNew(
         resolution: { kind: "resolved", target: targetNodeId },
         location,
       };
+    }
+
+    // VT-209: see classifyCall's identical handling above.
+    if (targetFile) {
+      const chased = await resolveReExportChain(
+        targetFile,
+        binding.target.exportedName,
+        ctx,
+        new Set(),
+      );
+      if (chased) {
+        return {
+          from,
+          type: "constructor",
+          resolution: { kind: "resolved", target: chased },
+          location,
+        };
+      }
     }
 
     return {

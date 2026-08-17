@@ -587,6 +587,133 @@ describe("buildCallGraph: instance method resolution via the type checker (VT-20
   });
 });
 
+describe("buildCallGraph: re-export chains (VT-209)", () => {
+  it("resolves a call reached only through a one-hop re-export", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    write(root, "src/a.ts", 'export { vulnerable } from "./lib.js";\n');
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./a.js";\n' +
+        "function main() {\n  vulnerable();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const targetNode = findNode(graph, (n) => n.name === "vulnerable");
+    expect(mainNode).toBeDefined();
+    expect(targetNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: targetNode?.id },
+    });
+  });
+
+  it("resolves a call reached through a two-hop re-export chain", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    write(root, "src/c.ts", 'export { vulnerable } from "./lib.js";\n');
+    write(root, "src/b.ts", 'export { vulnerable } from "./c.js";\n');
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./b.js";\n' +
+        "function main() {\n  vulnerable();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const targetNode = findNode(graph, (n) => n.name === "vulnerable");
+    expect(mainNode).toBeDefined();
+    expect(targetNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: targetNode?.id },
+    });
+  });
+
+  it("resolves an aliased re-export (export { x as y } from ...) to the real underlying name", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    write(root, "src/a.ts", 'export { vulnerable as v } from "./lib.js";\n');
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { v } from "./a.js";\n' + "function main() {\n  v();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const targetNode = findNode(graph, (n) => n.name === "vulnerable");
+    expect(mainNode).toBeDefined();
+    expect(targetNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: targetNode?.id },
+    });
+  });
+
+  it("gracefully reports unresolved_target, not an infinite loop, for a re-export cycle", async () => {
+    const root = tempProject();
+    write(root, "src/a.ts", 'export { vulnerable } from "./b.js";\n');
+    write(root, "src/b.ts", 'export { vulnerable } from "./a.js";\n');
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./a.js";\n' +
+        "function main() {\n  vulnerable();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unresolved_target" },
+    });
+  });
+
+  it("resolves `new` on a class reached only through a one-hop re-export", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export class Vulnerable {\n  constructor() {}\n}\n",
+    );
+    write(root, "src/a.ts", 'export { Vulnerable } from "./lib.js";\n');
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Vulnerable } from "./a.js";\n' +
+        "function main() {\n  new Vulnerable();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const targetNode = findNode(
+      graph,
+      (n) => n.kind === "constructor" && n.name === "Vulnerable",
+    );
+    expect(mainNode).toBeDefined();
+    expect(targetNode).toBeDefined();
+
+    const edge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "constructor",
+    );
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: targetNode?.id },
+    });
+  });
+});
+
 describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => {
   // docs/SDD.md § 26's analysis.limits / § 28-29's hardening requirement:
   // a pathological or adversarial target project (e.g. an enormous or
