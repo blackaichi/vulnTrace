@@ -398,6 +398,116 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
   });
 });
 
+describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-202)", () => {
+  it("produces UNKNOWN instead of NOT_AFFECTED when the graph was truncated by a resource limit", async () => {
+    const entryFile = "/project/src/index.ts";
+    const libFile = "/node_modules/fixture-lib/index.js";
+    const src = moduleNode("src#<module>", entryFile);
+    const other = fnNode("src#other@3:1", entryFile, "other", 3);
+    const vulnerableNode = fnNode(
+      "lib#vulnerable@1:1",
+      libFile,
+      "vulnerable",
+      1,
+    );
+
+    // Same shape as the "confirmed unreachable" NOT_AFFECTED case above --
+    // the search itself finds no path and no unknown edge -- but the
+    // graph is flagged as truncated, so the untraversed region could have
+    // held the real path.
+    const graph: CallGraph = {
+      nodes: [src, other, vulnerableNode],
+      edges: [resolvedEdge(src.id, other.id)],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      graphTruncated: true,
+    });
+
+    expect(finding).toEqual({
+      vulnerability: "GHSA-fixture-0001",
+      package: "fixture-lib",
+      version: "1.0.0",
+      verdict: "UNKNOWN",
+      target: rule.targets[0],
+      evidence: {
+        path: [],
+        reasons: [
+          "call-graph construction was truncated by a configured resource limit (analysis.limits) before every reachable path could be exhaustively searched",
+        ],
+      },
+    });
+  });
+
+  it("still produces NOT_AFFECTED when graphTruncated is explicitly false", async () => {
+    const entryFile = "/project/src/index.ts";
+    const libFile = "/node_modules/fixture-lib/index.js";
+    const src = moduleNode("src#<module>", entryFile);
+    const other = fnNode("src#other@3:1", entryFile, "other", 3);
+
+    const graph: CallGraph = {
+      nodes: [src, other],
+      edges: [resolvedEdge(src.id, other.id)],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      graphTruncated: false,
+    });
+
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
+  });
+
+  it("does not affect AFFECTED even when the graph was truncated elsewhere", async () => {
+    const entryFile = "/project/src/index.ts";
+    const libFile = "/node_modules/fixture-lib/index.js";
+    const src = moduleNode("src#<module>", entryFile);
+    const vulnerableNode = fnNode(
+      "lib#vulnerable@1:1",
+      libFile,
+      "vulnerable",
+      1,
+    );
+
+    const graph: CallGraph = {
+      nodes: [src, vulnerableNode],
+      edges: [resolvedEdge(src.id, vulnerableNode.id)],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      graphTruncated: true,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+});
+
 describe("buildFinding: UNKNOWN when reachability was never actually checked (regression)", () => {
   // Discovered while wiring the CLI (TASK-022) to real projects: a project
   // with no configured/discoverable entrypoints at all produces an empty

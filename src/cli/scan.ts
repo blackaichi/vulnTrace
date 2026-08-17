@@ -274,24 +274,38 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // surface that truncation explicitly rather than letting a partial graph
   // look like a complete one.
   const filesDiscovered = computeCoverage(graph).files;
-  if (filesDiscovered >= config.analysis.limits.maxFiles) {
+  const hitFileLimit = filesDiscovered >= config.analysis.limits.maxFiles;
+  const hitNodeLimit =
+    graph.nodes.length >= config.analysis.limits.maxGraphNodes;
+  const hitTimeLimit =
+    graphBuildMs >= config.analysis.limits.maxAnalysisSeconds * 1000;
+
+  if (hitFileLimit) {
     diagnostics.push({
       source: "call-graph",
       message: `analysis stopped after reaching the configured file limit (${config.analysis.limits.maxFiles}); results may be incomplete`,
     });
   }
-  if (graph.nodes.length >= config.analysis.limits.maxGraphNodes) {
+  if (hitNodeLimit) {
     diagnostics.push({
       source: "call-graph",
       message: `analysis stopped after reaching the configured graph-node limit (${config.analysis.limits.maxGraphNodes}); results may be incomplete`,
     });
   }
-  if (graphBuildMs >= config.analysis.limits.maxAnalysisSeconds * 1000) {
+  if (hitTimeLimit) {
     diagnostics.push({
       source: "call-graph",
       message: `analysis stopped after reaching the configured time limit (${config.analysis.limits.maxAnalysisSeconds}s); results may be incomplete`,
     });
   }
+
+  // VT-202 (SDD-v0.2.md § 3.3): a truncated graph can't positively confirm
+  // NOT_AFFECTED for any finding -- the untraversed region might have held
+  // the very path being searched for. Computed once per scan (the same
+  // graph is reused for every dependency's findings below) and passed
+  // through to buildFinding, which downgrades what would otherwise be
+  // NOT_AFFECTED to UNKNOWN when this is true.
+  const graphTruncated = hitFileLimit || hitNodeLimit || hitTimeLimit;
 
   const cveFilter = options.cveFilter;
   const uniqueDependencies = dedupeDependencies(dependencyNodes);
@@ -354,6 +368,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         entrypoints: entrypointsResult.entrypoints,
         resolver,
         projectRoot,
+        graphTruncated,
       });
       reachabilityMs += Date.now() - reachabilityStart;
       if (finding) {
