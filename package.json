@@ -2,6 +2,15 @@
   "name": "vulntrace",
   "version": "0.1.0",
   "description": "JavaScript/TypeScript vulnerability-specific reachability and impact analysis engine.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/blackaichi/vulnTrace.git"
+  },
+  "bugs": {
+    "url": "https://github.com/blackaichi/vulnTrace/issues"
+  },
+  "homepage": "https://github.com/blackaichi/vulnTrace#readme",
   "private": true,
   "type": "module",
   "bin": {
