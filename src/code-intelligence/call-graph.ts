@@ -18,7 +18,7 @@ import {
   isFunctionLike,
   toSourceLocation,
 } from "./source-index.js";
-import { bindCallee } from "./symbol-binder.js";
+import { bindCallee, type SymbolBindingResolved } from "./symbol-binder.js";
 import type { TsProject } from "./ts-project.js";
 
 function locationKey(location: { line?: number; column?: number }): string {
@@ -523,7 +523,9 @@ async function resolveAliasedValue(
   if (binding.kind === "resolved") {
     ctx.onDiscoverFile(binding.target.modulePath);
     const targetFile = ctx.ensurePrepared(binding.target.modulePath);
-    return targetFile?.exportNameToNodeId.get(binding.target.exportedName);
+    if (!resolvesToUnrelatedConstructor(value, binding, targetFile)) {
+      return targetFile?.exportNameToNodeId.get(binding.target.exportedName);
+    }
   }
 
   return ts.isIdentifier(value)
@@ -839,6 +841,46 @@ interface WalkContext {
 }
 
 /**
+ * True when `binding`'s resolved export name is itself a class's
+ * constructor, but `callee`/`value` is a property access with a real
+ * trailing chain beyond the bare import reference -- i.e. `bindCallee`'s
+ * own chain-ignoring shortcut for named imports (see its doc comment) has
+ * matched the wrong thing: `ClassName.member()` /
+ * `new ClassName.Member()` is not a call to, or construction of,
+ * `ClassName` itself.
+ *
+ * Guards against a resolved-but-wrong edge, which is strictly worse than
+ * an honest `unresolved_target`: a real-looking edge to an unrelated node
+ * with no outgoing edges of its own can make a reachability search
+ * conclude confidently, and wrongly, `unreachable`. VT-215's
+ * implicit-constructor synthesis made a bare class name resolve
+ * successfully far more often, which is what turned this from a latent,
+ * unexercised gap in `bindCallee`'s own design into an actually-reachable
+ * false NOT_AFFECTED (confirmed via the independent v2 adversarial suite,
+ * ADV2-021 -- `Lib.staticDangerous()` was resolving to `Lib`'s own,
+ * newly-synthesized, edge-less constructor node instead of staying
+ * unresolved).
+ *
+ * Resolving static/inherited member access correctly is VT-216's own,
+ * separate, not-yet-implemented task; this guard only prevents the wrong,
+ * confident answer in the meantime, restoring the pre-VT-215
+ * `unresolved_target`/UNKNOWN outcome for exactly this shape.
+ */
+function resolvesToUnrelatedConstructor(
+  callee: ts.Expression,
+  binding: SymbolBindingResolved,
+  targetFile: FileGraphData | undefined,
+): boolean {
+  if (!ts.isPropertyAccessExpression(callee) || !targetFile) {
+    return false;
+  }
+  return targetFile.index.functions.some(
+    (fn) =>
+      fn.kind === "constructor" && fn.name === binding.target.exportedName,
+  );
+}
+
+/**
  * Classifies and (when possible) resolves one call expression into a
  * {@link CallEdge} (see docs/SDD.md § 18, § 3.1's VT-201 completeness
  * invariant). Returns `undefined` only when the callee is a known ambient
@@ -921,48 +963,51 @@ async function classifyCall(
   if (binding.kind === "resolved") {
     ctx.onDiscoverFile(binding.target.modulePath);
     const targetFile = ctx.ensurePrepared(binding.target.modulePath);
-    const targetNodeId = targetFile?.exportNameToNodeId.get(
-      binding.target.exportedName,
-    );
 
-    if (targetNodeId) {
-      return {
-        from,
-        type: "import",
-        resolution: { kind: "resolved", target: targetNodeId },
-        location,
-      };
-    }
-
-    // VT-209: not a local definition, but the target file might itself
-    // re-export this name from somewhere else -- chase it before giving up.
-    if (targetFile) {
-      const chased = await resolveReExportChain(
-        targetFile,
+    if (!resolvesToUnrelatedConstructor(callee, binding, targetFile)) {
+      const targetNodeId = targetFile?.exportNameToNodeId.get(
         binding.target.exportedName,
-        ctx,
-        new Set(),
       );
-      if (chased) {
+
+      if (targetNodeId) {
         return {
           from,
           type: "import",
-          resolution: { kind: "resolved", target: chased },
+          resolution: { kind: "resolved", target: targetNodeId },
           location,
         };
       }
-    }
 
-    return {
-      from,
-      type: "import",
-      resolution: {
-        kind: "unknown",
-        reason: "unresolved_target",
-        potentialTargets: [],
-      },
-      location,
-    };
+      // VT-209: not a local definition, but the target file might itself
+      // re-export this name from somewhere else -- chase it before giving up.
+      if (targetFile) {
+        const chased = await resolveReExportChain(
+          targetFile,
+          binding.target.exportedName,
+          ctx,
+          new Set(),
+        );
+        if (chased) {
+          return {
+            from,
+            type: "import",
+            resolution: { kind: "resolved", target: chased },
+            location,
+          };
+        }
+      }
+
+      return {
+        from,
+        type: "import",
+        resolution: {
+          kind: "unknown",
+          reason: "unresolved_target",
+          potentialTargets: [],
+        },
+        location,
+      };
+    }
   }
 
   if (binding.kind === "ambiguous") {
@@ -1133,47 +1178,50 @@ async function classifyNew(
   if (binding.kind === "resolved") {
     ctx.onDiscoverFile(binding.target.modulePath);
     const targetFile = ctx.ensurePrepared(binding.target.modulePath);
-    const targetNodeId = targetFile?.exportNameToNodeId.get(
-      binding.target.exportedName,
-    );
 
-    if (targetNodeId) {
-      return {
-        from,
-        type: "constructor",
-        resolution: { kind: "resolved", target: targetNodeId },
-        location,
-      };
-    }
-
-    // VT-209: see classifyCall's identical handling above.
-    if (targetFile) {
-      const chased = await resolveReExportChain(
-        targetFile,
+    if (!resolvesToUnrelatedConstructor(callee, binding, targetFile)) {
+      const targetNodeId = targetFile?.exportNameToNodeId.get(
         binding.target.exportedName,
-        ctx,
-        new Set(),
       );
-      if (chased) {
+
+      if (targetNodeId) {
         return {
           from,
           type: "constructor",
-          resolution: { kind: "resolved", target: chased },
+          resolution: { kind: "resolved", target: targetNodeId },
           location,
         };
       }
-    }
 
-    return {
-      from,
-      type: "constructor",
-      resolution: {
-        kind: "unknown",
-        reason: "unresolved_target",
-        potentialTargets: [],
-      },
-      location,
-    };
+      // VT-209: see classifyCall's identical handling above.
+      if (targetFile) {
+        const chased = await resolveReExportChain(
+          targetFile,
+          binding.target.exportedName,
+          ctx,
+          new Set(),
+        );
+        if (chased) {
+          return {
+            from,
+            type: "constructor",
+            resolution: { kind: "resolved", target: chased },
+            location,
+          };
+        }
+      }
+
+      return {
+        from,
+        type: "constructor",
+        resolution: {
+          kind: "unknown",
+          reason: "unresolved_target",
+          potentialTargets: [],
+        },
+        location,
+      };
+    }
   }
 
   if (binding.kind === "ambiguous") {

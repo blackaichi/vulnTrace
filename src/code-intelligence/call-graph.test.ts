@@ -1214,6 +1214,163 @@ describe("buildCallGraph: local reference aliasing (VT-214)", () => {
   });
 });
 
+describe("buildCallGraph: implicit constructor resolution (VT-215)", () => {
+  it("resolves new X() for a class with no explicit constructor of its own", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export class Lib {\n  runSafe() {}\n}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Lib } from "./lib.js";\n' +
+        "function main() {\n  return new Lib();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const constructorNode = findNode(
+      graph,
+      (n) => n.kind === "constructor" && n.name === "Lib",
+    );
+    expect(constructorNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      type: "constructor",
+      resolution: { kind: "resolved", target: constructorNode?.id },
+    });
+  });
+
+  it("gives the synthesized constructor node no outgoing edges of its own", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export function vulnerable() {}\n" +
+        "export class Lib {\n  runSafe() {}\n}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Lib } from "./lib.js";\n' +
+        "function main() {\n  return new Lib();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const constructorNode = findNode(
+      graph,
+      (n) => n.kind === "constructor" && n.name === "Lib",
+    );
+    expect(constructorNode).toBeDefined();
+    expect(
+      graph.edges.filter((e) => e.from === constructorNode?.id),
+    ).toHaveLength(0);
+  });
+
+  it("still resolves the real constructor node when one is explicitly declared (no regression)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export class Lib {\n  constructor() {\n    this.ran = true;\n  }\n}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Lib } from "./lib.js";\n' +
+        "function main() {\n  return new Lib();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const constructorNodes = graph.nodes.filter(
+      (n) => n.kind === "constructor" && n.name === "Lib",
+    );
+    expect(constructorNodes).toHaveLength(1);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: constructorNodes[0]?.id },
+    });
+  });
+
+  it("never attributes ClassName.staticMember() to ClassName's own constructor (safety guard)", async () => {
+    // Regression test for a real bug this task's own synthesis exposed:
+    // bindCallee's named-import handling ignores a trailing property
+    // chain (`Lib.staticDangerous()` binds to "Lib" itself, per its own
+    // doc comment), which -- once "Lib" started resolving to this task's
+    // new synthetic constructor node -- silently produced a *resolved*
+    // edge to an unrelated, edge-less node instead of an honest
+    // unresolved one, letting a reachability search conclude a
+    // confidently WRONG unreachable/NOT_AFFECTED. This must never happen,
+    // with or without type-checking enabled.
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export class Lib {\n  static staticDangerous() {}\n}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Lib } from "./lib.js";\n' +
+        "function main() {\n  return Lib.staticDangerous();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const constructorNode = findNode(
+      graph,
+      (n) => n.kind === "constructor" && n.name === "Lib",
+    );
+    expect(constructorNode).toBeDefined();
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    // Never resolved to the constructor node -- either genuinely unknown
+    // (no type-checking available, as here), or resolved to the real
+    // staticDangerous node, but never the wrong target.
+    if (edge?.resolution.kind === "resolved") {
+      expect(edge.resolution.target).not.toBe(constructorNode?.id);
+    } else {
+      expect(edge).toMatchObject({
+        resolution: { kind: "unknown", reason: "unsupported_construct" },
+      });
+    }
+  });
+
+  it("resolves ClassName.staticMember() to the real static method when type-checking is available (VT-208 unblocked)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export class Lib {\n  static staticDangerous() {}\n}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Lib } from "./lib.js";\n' +
+        "function main() {\n  return Lib.staticDangerous();\n}\n",
+    );
+
+    const graph = await graphForWithTypeChecking(root, [entry]);
+
+    const staticMethodNode = findNode(
+      graph,
+      (n) => n.kind === "method" && n.name === "staticDangerous",
+    );
+    expect(staticMethodNode).toBeDefined();
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: staticMethodNode?.id },
+    });
+  });
+});
+
 describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => {
   // docs/SDD.md § 26's analysis.limits / § 28-29's hardening requirement:
   // a pathological or adversarial target project (e.g. an enormous or

@@ -74,6 +74,48 @@ describe("indexSourceFile: functions", () => {
     });
   });
 
+  it("synthesizes a constructor entry for a class with no explicit constructor of its own (VT-215)", () => {
+    const index = indexSourceFile("a.ts", "class Foo {\n  bar() {}\n}\n");
+    expect(index.functions).toEqual([
+      {
+        kind: "constructor",
+        name: "Foo",
+        isAsync: false,
+        location: { file: "a.ts", line: 1, column: 7 },
+      },
+      {
+        kind: "method",
+        name: "bar",
+        isAsync: false,
+        location: { file: "a.ts", line: 2, column: 3 },
+      },
+    ]);
+  });
+
+  it("does not synthesize a duplicate constructor entry when an explicit one already exists", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "class Foo {\n  constructor() {}\n}\n",
+    );
+    const constructors = index.functions.filter(
+      (fn) => fn.kind === "constructor",
+    );
+    expect(constructors).toHaveLength(1);
+    expect(constructors[0]).toMatchObject({ name: "Foo" });
+  });
+
+  it("names a synthesized constructor after the variable an anonymous class expression is assigned to", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "const Foo = class {\n  bar() {}\n};\n",
+    );
+    const constructors = index.functions.filter(
+      (fn) => fn.kind === "constructor",
+    );
+    expect(constructors).toHaveLength(1);
+    expect(constructors[0]).toMatchObject({ name: "Foo" });
+  });
+
   it("infers a name for an arrow function assigned to a variable", () => {
     const index = indexSourceFile("a.ts", "const foo = () => 1;\n");
     expect(index.functions).toEqual([
