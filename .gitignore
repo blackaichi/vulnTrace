@@ -6,4 +6,10 @@ coverage/
 *.log
 .env
 /*.zip
-/remediation/
+
+# remediation/v0.2's SDD amendment and task pack are versioned permanent
+# documentation; the per-cycle Claude kickoff prompt is not.
+remediation/**/CLAUDE-PROMPT*.md
+
+# Claude Code worktrees are local, per-task working copies, never repo state.
+.claude/worktrees/

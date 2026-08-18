@@ -145,11 +145,13 @@ is implemented in `src/cli/`; `src/cli.ts` is the thin process entrypoint.
 - **Real-world CVE validation**: `tests/validation/` scans real,
   npm-installed vulnerable packages (e.g. `lodash`) against real
   advisories, rather than the synthetic `fixture-lib` used elsewhere —
-  see `tests/validation/cases/cases.json`. Excluded from `npm test`; not
-  yet gated in CI.
+  see `tests/validation/cases/cases.json` and `docs/VALIDATION-STRATEGY.md`
+  for the full strategy (case lifecycle, oracle authorship, required
+  metrics). Excluded from `npm test`; not yet gated in CI (it has
+  documented known failures by design — see `tests/validation/FINDINGS.md`).
 
 ```bash
-npm test                # run everything
+npm test                # run everything above (unit/integration/fixture/e2e/contract/perf)
 npm run test:unit        # unit tests only
 npm run test:integration  # integration tests only
 npm run test:coverage      # run everything with V8 coverage reporting
