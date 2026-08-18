@@ -2,6 +2,9 @@ node_modules/
 dist/
 coverage/
 fixtures/
+# Adversarial test fixtures deliberately contain unusual/invalid-looking
+# code -- same treatment as fixtures/ above.
+tests/adversarial/*/fixtures/
 
 # Pre-existing spec/task/script content, out of scope for the bootstrap
 # TypeScript project (TASK-001 only owns src/ + root tool config).
@@ -12,6 +15,5 @@ rules/
 config/
 prompts/
 scripts/
-vulntrace_agent_kit_v0.6/
 manifest.json
 *.md

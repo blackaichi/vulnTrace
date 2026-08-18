@@ -18,10 +18,10 @@
     "test:integration": "vitest run integration",
     "test:coverage": "vitest run --coverage",
     "test:adversarial": "vitest run --config vitest.adversarial.config.ts",
-    "test:adversarial:v2": "vitest run --config vitest.adversarial-v2.config.ts",
     "lint": "eslint .",
     "format": "prettier --check .",
-    "format:write": "prettier --write ."
+    "format:write": "prettier --write .",
+    "validate:history": "node scripts/validate-history.mjs"
   },
   "dependencies": {
     "ajv": "^8.20.0",
