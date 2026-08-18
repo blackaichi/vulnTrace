@@ -10,6 +10,9 @@ export default tseslint.config(
       "dist/**",
       "coverage/**",
       "node_modules/**",
+      // Claude Code worktrees are local, per-task working copies (each a
+      // full duplicate checkout) -- never this project's own source.
+      ".claude/**",
       "fixtures/**",
       // Adversarial test fixtures deliberately contain unusual/invalid-
       // looking code (require() in .cjs, constant conditions, unused

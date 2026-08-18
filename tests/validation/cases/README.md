@@ -26,6 +26,11 @@ validation case, in the same spirit as an oracle entry in
   is allowed to silently pass.
 - `reason` — the rationale, written independently of VulnTrace's output.
 
+`docs/VALIDATION-STRATEGY.md § 7` proposes additional fields
+(`advisoryFetchedAt`, `ecosystem`, `author`, `addedDate`, `evidencePath`)
+for when case count grows past what these three need — not yet added here,
+since there's no real information to put in them today.
+
 ## Current cases
 
 - `VAL-001` — `lodash.template@4.5.0`, GHSA-35jh-r3h4-6jhm. Expected and

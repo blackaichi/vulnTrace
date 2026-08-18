@@ -1,5 +1,10 @@
 # Real-World CVE Validation
 
+See `docs/VALIDATION-STRATEGY.md` for the full strategy this suite
+implements (purpose, case lifecycle, oracle authorship, required metrics,
+and why false `NOT_AFFECTED` is treated as a critical security failure).
+This README covers layout and how to run it.
+
 This suite is the next phase after the two adversarial validation suites
 (`tests/adversarial/v1/`, `tests/adversarial/v2/`, both 100% passing).
 Where the adversarial suites test *synthetic* scenarios designed to probe

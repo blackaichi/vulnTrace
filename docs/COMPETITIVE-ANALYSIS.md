@@ -97,3 +97,8 @@ The benchmark must report:
 - false negatives.
 
 Do not publish claims without reproducible fixtures.
+
+`tests/validation/` (`docs/VALIDATION-STRATEGY.md`) is VulnTrace's own
+real-world CVE benchmark against real packages and real advisories — the
+prerequisite reproducible fixture set this section requires, ahead of any
+future tool-vs-tool comparison.

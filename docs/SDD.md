@@ -1073,7 +1073,12 @@ Tests:
 - fixture;
 - end-to-end;
 - contract/schema;
-- performance smoke.
+- performance smoke;
+- adversarial (synthetic scenarios, stubbed provider — semantic
+  robustness/safety against known analyzer failure modes; see
+  `tests/adversarial/v1/`, `tests/adversarial/v2/`);
+- real-world validation (real packages, real CVEs, real live OSV API —
+  see `docs/VALIDATION-STRATEGY.md`, `tests/validation/`).
 
 Fixtures must cover:
 
@@ -1204,6 +1209,13 @@ Future benchmark metrics:
 - UNKNOWN rate;
 - false-negative rate;
 - time to analyze.
+
+This benchmark now exists as `tests/validation/` — see
+`docs/VALIDATION-STRATEGY.md § 10` for the full, current metric set
+(precision/recall for both AFFECTED and NOT_AFFECTED, UNKNOWN rate, false
+AFFECTED, false NOT_AFFECTED, analysis/resolution coverage, evidence
+quality, analysis time), and its explicit statement that a false
+`NOT_AFFECTED` is a critical security failure, not a precision statistic.
 
 ---
 
