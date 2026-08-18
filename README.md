@@ -136,12 +136,25 @@ is implemented in `src/cli/`; `src/cli.ts` is the thin process entrypoint.
 - **Security**: `src/cli/scan-security.test.ts`,
   `src/analysis/entrypoints.test.ts`'s path-traversal cases,
   `src/code-intelligence/call-graph.test.ts`'s resource-limit cases.
+- **Adversarial**: `tests/adversarial/v1/` (the original 34-scenario suite)
+  and `tests/adversarial/v2/` (an independent 45-scenario suite built to
+  detect overfitting to v1). Both deliberately keep scenarios that
+  disagree with the analyzer's current output rather than fixing the
+  analyzer to pass them — see each suite's own `REPORT.md`. Excluded from
+  `npm test`; run separately and gated in CI.
+- **Real-world CVE validation**: `tests/validation/` scans real,
+  npm-installed vulnerable packages (e.g. `lodash`) against real
+  advisories, rather than the synthetic `fixture-lib` used elsewhere —
+  see `tests/validation/cases/cases.json`. Excluded from `npm test`; not
+  yet gated in CI.
 
 ```bash
 npm test                # run everything
 npm run test:unit        # unit tests only
 npm run test:integration  # integration tests only
 npm run test:coverage      # run everything with V8 coverage reporting
+npm run test:adversarial   # adversarial suites (v1 + v2); also run in CI
+npm run test:validation    # real-world CVE validation suite
 ```
 
 Coverage reports are written to `coverage/` (text summary printed to stdout,
@@ -166,3 +179,7 @@ See `docs/adr/0007-mvp-known-limitations.md` for the consolidated list
 resolution, path-traversal hardening scope, and more). None of these
 allow a false `NOT_AFFECTED` or a silently dropped finding — each one
 narrows what can be *analyzed*, never what can be *concluded*.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
