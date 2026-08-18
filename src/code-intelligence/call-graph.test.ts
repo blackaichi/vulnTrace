@@ -1476,6 +1476,126 @@ describe("buildCallGraph: implicit constructor resolution (VT-215)", () => {
   });
 });
 
+describe("buildCallGraph: constant computed-key evaluation (VT-217)", () => {
+  it("resolves a call through an aliased element access whose key is a same-file const literal", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import * as lib from "./lib.js";\n' +
+        'const KEY = "vulnerable";\n' +
+        "function main() {\n" +
+        "  const fns = lib;\n" +
+        "  const fn = fns[KEY];\n" +
+        "  return fn();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("resolves through a receiver wrapped in a double type assertion (real ADV2-042 shape)", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import * as lib from "./lib.js";\n' +
+        'const KEY = "vulnerable";\n' +
+        "function main() {\n" +
+        "  const fns = lib as unknown as Record<string, () => unknown>;\n" +
+        "  const fn = fns[KEY];\n" +
+        "  return fn();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("resolves a call through an element access with a direct string-literal key", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import * as lib from "./lib.js";\n' +
+        "function main() {\n" +
+        '  const fn = lib["vulnerable"];\n' +
+        "  return fn();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("still falls back to unsupported_construct when the element access key is not statically resolvable", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import * as lib from "./lib.js";\n' +
+        "function main(key) {\n" +
+        "  const fn = lib[key];\n" +
+        "  return fn();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+
+  it("still falls back to unsupported_construct when the key is a let (reassignment not tracked)", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import * as lib from "./lib.js";\n' +
+        'let KEY = "vulnerable";\n' +
+        "function main() {\n" +
+        "  const fn = lib[KEY];\n" +
+        "  return fn();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+});
+
 describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => {
   // docs/SDD.md § 26's analysis.limits / § 28-29's hardening requirement:
   // a pathological or adversarial target project (e.g. an enormous or
