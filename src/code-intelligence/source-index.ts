@@ -164,6 +164,44 @@ function inferAssignedName(node: ts.Node): string | undefined {
   return undefined;
 }
 
+function classHasOwnConstructor(
+  node: ts.ClassDeclaration | ts.ClassExpression,
+): boolean {
+  return node.members.some((member) => ts.isConstructorDeclaration(member));
+}
+
+/**
+ * A class relying on the implicit/default constructor (no explicit
+ * `constructor() {}` of its own -- extremely common; most classes don't
+ * need constructor logic) has no corresponding AST node at all --
+ * TypeScript's parser never synthesizes one (see VT-215, SDD-v0.2.md
+ * § 7.2). Without an entry here, `new SomeClass()` for such a class can
+ * never resolve to any graph node, degrading to an
+ * `unknown(unresolved_target)` edge that has nothing to do with whatever
+ * else the call graph is actually trying to determine, and can spuriously
+ * block an otherwise-confirmed `unreachable` conclusion elsewhere in the
+ * same search (see ADV2-041, tests/adversarial-v2/).
+ *
+ * Synthesizing this entry is safe: its `location` (the class's own
+ * name-identifier position) corresponds to no real `ConstructorDeclaration`
+ * node, so `walkFile`'s traversal can never treat it as a `from` context
+ * to visit further calls from -- an implicit constructor provably does
+ * nothing, and this entry can never acquire outgoing edges of its own.
+ * Named the same way an explicit constructor already is (see
+ * {@link inferAssignedName}): the enclosing class's own name.
+ */
+function extractImplicitConstructor(
+  sourceFile: ts.SourceFile,
+  node: ts.ClassDeclaration | ts.ClassExpression,
+): IndexedFunction {
+  return {
+    kind: "constructor",
+    name: node.name ? node.name.text : inferAssignedName(node),
+    isAsync: false,
+    location: toSourceLocation(sourceFile, node.name ?? node),
+  };
+}
+
 function extractFunction(
   sourceFile: ts.SourceFile,
   node:
@@ -496,6 +534,11 @@ function buildIndex(sourceFile: ts.SourceFile): SourceIndex {
     // exclusive.
     if (isFunctionLike(node)) {
       functions.push(extractFunction(sourceFile, node));
+    } else if (
+      (ts.isClassDeclaration(node) || ts.isClassExpression(node)) &&
+      !classHasOwnConstructor(node)
+    ) {
+      functions.push(extractImplicitConstructor(sourceFile, node));
     }
 
     if (ts.isImportDeclaration(node)) {
