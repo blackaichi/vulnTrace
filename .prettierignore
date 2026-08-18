@@ -9,11 +9,8 @@ tests/adversarial/*/fixtures/
 # Pre-existing spec/task/script content, out of scope for the bootstrap
 # TypeScript project (TASK-001 only owns src/ + root tool config).
 docs/
-tasks/
 schemas/
 rules/
 config/
-prompts/
 scripts/
-manifest.json
 *.md

@@ -17,11 +17,9 @@ export default tseslint.config(
       // treatment as the shared fixtures/** above.
       "tests/adversarial/*/fixtures/**",
       "docs/**",
-      "tasks/**",
       "schemas/**",
       "rules/**",
       "config/**",
-      "prompts/**",
       "scripts/**",
     ],
   },
