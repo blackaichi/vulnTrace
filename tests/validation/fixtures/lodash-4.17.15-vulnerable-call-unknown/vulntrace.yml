@@ -1,0 +1,6 @@
+analysis:
+  entrypoints:
+    - src/vulnerable-path.js
+rules:
+  files:
+    - rules.yml

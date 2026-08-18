@@ -1,0 +1,59 @@
+[
+  {
+    "id": "VAL-001",
+    "dir": "lodash-template-4.5.0-affected",
+    "package": "lodash.template",
+    "version": "4.5.0",
+    "vulnerability": "GHSA-35jh-r3h4-6jhm",
+    "aliases": ["CVE-2021-23337"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-35jh-r3h4-6jhm",
+    "vulnerableTarget": "lodash.template#default (the template() function)",
+    "description": "The real, npm-installed lodash.template@4.5.0's sole export (module.exports = template;) is called directly from the entrypoint on a caller-supplied template string.",
+    "expected": "AFFECTED",
+    "knownFailure": false,
+    "reason": "template() is lodash.template's entire module.exports -- a single, unambiguous CommonJS default export, exactly the pattern VulnTrace's export modeling already handles (see call-graph.test.ts's 'resolves a named function expression assigned via module.exports'). It is called directly (render() -> template(userTemplate)(data)) with no intervening indirection. A human analyst reading this file has no ambiguity: this is a real, reachable call to the exact function GHSA-35jh-r3h4-6jhm/CVE-2021-23337 names as vulnerable (code injection via crafted 'imports' option key names).",
+    "findingSelector": {
+      "package": "lodash.template",
+      "version": "4.5.0",
+      "vulnerability": "GHSA-35jh-r3h4-6jhm"
+    }
+  },
+  {
+    "id": "VAL-002",
+    "dir": "lodash-4.17.15-vulnerable-call-unknown",
+    "package": "lodash",
+    "version": "4.17.15",
+    "vulnerability": "GHSA-29mw-wpgm-hmr9",
+    "aliases": ["CVE-2020-28500"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9",
+    "vulnerableTarget": "lodash#trim",
+    "description": "The real, npm-installed lodash@4.17.15's trim() is called directly on unsanitized input from the entrypoint.",
+    "expected": "AFFECTED",
+    "knownFailure": true,
+    "reason": "sanitizeField() calls _.trim(rawValue) directly -- trim is one of the three functions (trim/trimEnd/toNumber) GHSA-29mw-wpgm-hmr9/CVE-2020-28500 names as vulnerable to ReDoS. A human analyst reading this file has no ambiguity: this is reachable. Currently returns UNKNOWN instead -- a known, tracked gap, not a fabricated oracle. See FINDINGS.md RWF-001.",
+    "findingSelector": {
+      "package": "lodash",
+      "version": "4.17.15",
+      "vulnerability": "GHSA-29mw-wpgm-hmr9"
+    }
+  },
+  {
+    "id": "VAL-003",
+    "dir": "lodash-4.17.15-safe-call-unknown",
+    "package": "lodash",
+    "version": "4.17.15",
+    "vulnerability": "GHSA-29mw-wpgm-hmr9",
+    "aliases": ["CVE-2020-28500"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-29mw-wpgm-hmr9",
+    "vulnerableTarget": "lodash#trim",
+    "description": "The real, npm-installed lodash@4.17.15 is used by the entrypoint, but only via chunk()/uniq() -- never trim, trimEnd, or toNumber.",
+    "expected": "NOT_AFFECTED",
+    "knownFailure": true,
+    "reason": "groupUniqueIds() never calls trim, trimEnd, or toNumber. A human analyst reading this file concludes with confidence this code path is not exposed to GHSA-29mw-wpgm-hmr9/CVE-2020-28500, regardless of the installed version being in the vulnerable range. Currently returns UNKNOWN instead, for the same structural reason as VAL-002 -- see FINDINGS.md RWF-001. This case demonstrates the gap degrades precision in BOTH directions: a missed AFFECTED (VAL-002) and a missed NOT_AFFECTED (this case), never a false answer either way.",
+    "findingSelector": {
+      "package": "lodash",
+      "version": "4.17.15",
+      "vulnerability": "GHSA-29mw-wpgm-hmr9"
+    }
+  }
+]

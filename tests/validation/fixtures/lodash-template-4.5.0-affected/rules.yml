@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-35jh-r3h4-6jhm
+    package:
+      name: lodash.template
+    targets:
+      - module: lodash.template
+        export: default
+        kind: function
+        confidence: 1.0
