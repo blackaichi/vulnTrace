@@ -18,6 +18,7 @@
     "test:integration": "vitest run integration",
     "test:coverage": "vitest run --coverage",
     "test:adversarial": "vitest run --config vitest.adversarial.config.ts",
+    "test:validation": "vitest run --config vitest.validation.config.ts",
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
