@@ -11,6 +11,11 @@ export default tseslint.config(
       "coverage/**",
       "node_modules/**",
       "fixtures/**",
+      // Adversarial test fixtures deliberately contain unusual/invalid-
+      // looking code (require() in .cjs, constant conditions, unused
+      // exports, ...) -- that's the point, not a lint violation. Same
+      // treatment as the shared fixtures/** above.
+      "tests/adversarial/*/fixtures/**",
       "docs/**",
       "tasks/**",
       "schemas/**",
@@ -18,7 +23,6 @@ export default tseslint.config(
       "config/**",
       "prompts/**",
       "scripts/**",
-      "vulntrace_agent_kit_v0.6/**",
     ],
   },
   js.configs.recommended,
