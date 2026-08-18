@@ -594,6 +594,111 @@ describe("buildCallGraph: instance method resolution via the type checker (VT-20
   });
 });
 
+describe("buildCallGraph: inherited method resolution (VT-216)", () => {
+  it("resolves a method inherited from a base class in a different file, never overridden locally", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export class Base {\n  vulnerableMethod() {}\n}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Base } from "./lib.js";\n' +
+        "class MySub extends Base {}\n" +
+        "function main() {\n  const instance = new MySub();\n  instance.vulnerableMethod();\n}\n",
+    );
+
+    const graph = await graphForWithTypeChecking(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const methodNode = findNode(
+      graph,
+      (n) => n.kind === "method" && n.name === "vulnerableMethod",
+    );
+    expect(methodNode).toBeDefined();
+
+    const methodEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "method",
+    );
+    expect(methodEdge).toMatchObject({
+      resolution: { kind: "resolved", target: methodNode?.id },
+    });
+  });
+
+  it("resolves the subclass's own override, not the base class's method, when one exists", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export class Base {\n  vulnerableMethod() {\n    return 'base';\n  }\n}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { Base } from "./lib.js";\n' +
+        "class MySub extends Base {\n  vulnerableMethod() {\n    return 'sub';\n  }\n}\n" +
+        "function main() {\n  const instance = new MySub();\n  instance.vulnerableMethod();\n}\n",
+    );
+
+    const graph = await graphForWithTypeChecking(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const subMethodNode = findNode(
+      graph,
+      (n) =>
+        n.kind === "method" &&
+        n.name === "vulnerableMethod" &&
+        n.module === entry,
+    );
+    expect(subMethodNode).toBeDefined();
+    // Base's own vulnerableMethod is fully shadowed by the override --
+    // nothing ever resolves to it, so lib.ts is correctly never even
+    // discovered/walked (no phantom/unused node for it either).
+    expect(
+      findNode(
+        graph,
+        (n) =>
+          n.kind === "method" &&
+          n.name === "vulnerableMethod" &&
+          n.module !== entry,
+      ),
+    ).toBeUndefined();
+
+    const methodEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "method",
+    );
+    expect(methodEdge).toMatchObject({
+      resolution: { kind: "resolved", target: subMethodNode?.id },
+    });
+  });
+
+  it("still falls back to unsupported_construct for a receiver whose type is a union of classes", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "class A {\n  vulnerableMethod() {}\n}\n" +
+        "class B {\n  vulnerableMethod() {}\n}\n" +
+        "function main(pick) {\n" +
+        "  const instance = pick ? new A() : new B();\n" +
+        "  instance.vulnerableMethod();\n" +
+        "}\n",
+    );
+
+    const graph = await graphForWithTypeChecking(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const methodEdge = graph.edges.find(
+      (e) => e.from === mainNode?.id && e.type === "method",
+    );
+    expect(methodEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+});
+
 describe("buildCallGraph: re-export chains (VT-209)", () => {
   it("resolves a call reached only through a one-hop re-export", async () => {
     const root = tempProject();

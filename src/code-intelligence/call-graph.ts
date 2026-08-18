@@ -723,15 +723,22 @@ function findNodeAtPosition(root: ts.Node, position: number): ts.Node {
 }
 
 /**
- * Resolves `instance.method()` to the real class method it calls, using
- * the TypeScript type checker to determine the receiver's own class (see
- * SDD-v0.2.md § 7.3, VT-208) -- something no purely syntactic
- * name/import-based matching can do, since nothing about the identifier
- * `instance` itself names the class `Lib`. Returns `undefined` (the caller
- * falls through to the generic `unsupported_construct` edge) whenever the
- * receiver's type can't be resolved to a concrete class with a matching
- * method -- an `any`-typed receiver, an interface with no located
- * implementation, a union of multiple classes, and so on.
+ * Resolves `instance.method()` (or `ClassName.staticMethod()`) to the real
+ * class method it calls, using the TypeScript type checker to determine
+ * the receiver's own apparent type (see SDD-v0.2.md § 7.3, VT-208) --
+ * something no purely syntactic name/import-based matching can do, since
+ * nothing about the identifier `instance` itself names the class `Lib`.
+ * Also resolves a member INHERITED from a base class, not just one the
+ * receiver's own class declares directly (VT-216): a locally-defined
+ * subclass with no override of its own (`class MySub extends Base {}`)
+ * still resolves `instance.vulnerableMethod()` to `Base`'s real
+ * declaration, since the checker's own apparent-type/property resolution
+ * already walks the heritage chain. Returns `undefined` (the caller falls
+ * through to the generic `unsupported_construct` edge) whenever the
+ * receiver's type can't be resolved to exactly one concrete method
+ * declaration -- an `any`-typed receiver, an interface with no located
+ * implementation, a union of multiple classes producing more than one
+ * candidate declaration, and so on.
  *
  * `call-graph.ts`'s own traversal walks a lightweight, standalone-parsed
  * AST (`indexSourceFileFromDisk`, no binder/checker), deliberately kept
@@ -783,29 +790,32 @@ function resolveInstanceMethod(
   }
 
   const checker = program.getTypeChecker();
-  let classDecl: ts.ClassDeclaration | ts.ClassExpression | undefined;
+  let methodDecl: ts.MethodDeclaration | undefined;
   try {
+    // checker.getPropertyOfType (rather than manually scanning the
+    // receiver's own classDecl.members, the pre-VT-216 approach) is what
+    // makes this resolve both a static member off a class reference
+    // (`ClassName.member()`, the receiver's type is `typeof ClassName`)
+    // and an INHERITED instance member (`instance.member()` where
+    // `member` is declared on a base class, not the receiver's own class)
+    // for free: the checker's own apparent-type resolution already walks
+    // the full static/instance and heritage-clause distinctions that a
+    // raw AST member scan does not (see VT-216, SDD-v0.2.md § 7.3's known
+    // gap). Exactly one real method declaration is required -- a union
+    // type can produce more than one distinct declaration for the same
+    // property name, and picking one over another there would be a
+    // guess, not a resolution (mirrors the pre-VT-216 behavior of
+    // bailing out on "a union of multiple classes").
     const type = checker.getTypeAtLocation(receiverNode);
-    classDecl = type
-      .getSymbol()
-      ?.declarations?.find(
-        (d): d is ts.ClassDeclaration | ts.ClassExpression =>
-          ts.isClassDeclaration(d) || ts.isClassExpression(d),
-      );
+    const property = checker.getPropertyOfType(type, callee.name.text);
+    const methodDeclarations = property?.declarations?.filter(
+      (d): d is ts.MethodDeclaration => ts.isMethodDeclaration(d),
+    );
+    methodDecl =
+      methodDeclarations?.length === 1 ? methodDeclarations[0] : undefined;
   } catch {
     return undefined;
   }
-  if (!classDecl) {
-    return undefined;
-  }
-
-  const methodDecl = classDecl.members.find(
-    (m): m is ts.MethodDeclaration =>
-      ts.isMethodDeclaration(m) &&
-      m.name !== undefined &&
-      ts.isIdentifier(m.name) &&
-      m.name.text === callee.name.text,
-  );
   if (!methodDecl) {
     return undefined;
   }
