@@ -209,6 +209,77 @@ describe("buildModuleModel: module.exports object literal unpacking", () => {
       },
     ]);
   });
+
+  it("unpacks a computed property whose key is a same-file const string literal (VT-217)", () => {
+    const model = modelOf(
+      "a.js",
+      'const NAME = "vulnerable";\n' +
+        "function vulnerableImpl() {}\n" +
+        "module.exports = { [NAME]: vulnerableImpl };\n",
+    );
+
+    expect(model.exports).toEqual([
+      {
+        kind: "named",
+        syntax: "commonjs",
+        exportedName: "vulnerable",
+        localName: "vulnerableImpl",
+        location: expect.any(Object),
+      },
+    ]);
+  });
+
+  it("unpacks a computed property whose key is a direct string literal", () => {
+    const model = modelOf(
+      "a.js",
+      'module.exports = { ["vulnerable"]: function () {} };\n',
+    );
+
+    expect(model.exports[0]).toMatchObject({
+      exportedName: "vulnerable",
+    });
+  });
+
+  it("unpacks a computed method-shorthand property whose key resolves to a literal", () => {
+    const model = modelOf(
+      "a.js",
+      'const NAME = "vulnerable";\n' +
+        "module.exports = { [NAME]() { return 1; } };\n",
+    );
+
+    expect(model.exports).toEqual([
+      {
+        kind: "named",
+        syntax: "commonjs",
+        exportedName: "vulnerable",
+        localName: "vulnerable",
+        location: expect.any(Object),
+      },
+    ]);
+  });
+
+  it("does not unpack a computed property whose key cannot be statically resolved", () => {
+    const model = modelOf(
+      "a.js",
+      "module.exports = { [computeName()]: function () {} };\n",
+    );
+
+    expect(model.exports).toEqual([
+      { kind: "default", syntax: "commonjs", location: expect.any(Object) },
+    ]);
+  });
+
+  it("does not unpack a computed property whose key is a let (reassignment not tracked)", () => {
+    const model = modelOf(
+      "a.js",
+      'let NAME = "vulnerable";\n' +
+        "module.exports = { [NAME]: function () {} };\n",
+    );
+
+    expect(model.exports).toEqual([
+      { kind: "default", syntax: "commonjs", location: expect.any(Object) },
+    ]);
+  });
 });
 
 describe("mapExportsToFunctions: canonical export name -> underlying function", () => {

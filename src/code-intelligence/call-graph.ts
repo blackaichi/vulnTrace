@@ -499,22 +499,115 @@ function findDestructuredBindingSource(
 }
 
 /**
+ * The statically-known string/numeric key of an element access
+ * (`obj[key]`), when the key expression is itself a literal or a
+ * same-file `const` binding initialized to one (VT-217, SDD-v0.2.md
+ * § 7.1's computed-key follow-on) -- e.g.
+ * `const KEY = "vulnerable"; fns[KEY]`. `undefined` for anything else (a
+ * parameter, a function call, a runtime value) -- a genuinely dynamic key
+ * stays unresolved exactly as before.
+ */
+function resolveElementAccessKey(
+  access: ts.ElementAccessExpression,
+  sourceFile: ts.SourceFile,
+): string | number | undefined {
+  const direct = literalValue(access.argumentExpression);
+  if (direct !== undefined) {
+    return direct;
+  }
+  if (ts.isIdentifier(access.argumentExpression)) {
+    const value = resolveSingleAssignmentValue(
+      access.argumentExpression.text,
+      sourceFile,
+    );
+    return value ? literalValue(value) : undefined;
+  }
+  return undefined;
+}
+
+/**
+ * Unwraps a type assertion (`expr as T`, `expr satisfies T`), non-null
+ * assertion (`expr!`), or parenthesization around `expr` (VT-217). None of
+ * these have any runtime effect -- `const fns = lib as unknown as X;`
+ * makes `fns` and `lib` the exact same value, not a "second alias hop" in
+ * any meaningful sense, just type-checker-only decoration erased at
+ * compile time (confirmed against the real ADV2-042 fixture,
+ * tests/adversarial-v2/, which wraps its own aliased receiver this way).
+ */
+function unwrapTypeOnlyExpression(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  for (;;) {
+    if (ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) {
+      current = current.expression;
+    } else if (ts.isNonNullExpression(current)) {
+      current = current.expression;
+    } else if (ts.isParenthesizedExpression(current)) {
+      current = current.expression;
+    } else {
+      return current;
+    }
+  }
+}
+
+/**
+ * Resolves an element/property access's own receiver (`fns` in
+ * `fns[KEY]`/`fns.member`) through at most one hop of same-file `const`
+ * aliasing, unwrapping any type-only wrapper (see
+ * {@link unwrapTypeOnlyExpression}) around the aliased value -- so
+ * `const fns = lib as X;` is recognized as `fns` simply *being* `lib`, not
+ * a second layer of indirection. Returns `expr` unchanged when it isn't a
+ * plain identifier, or resolves to nothing (e.g. it's already the direct
+ * import reference itself, which needs no further resolution here).
+ */
+function resolveReceiverExpression(
+  expr: ts.Expression,
+  sourceFile: ts.SourceFile,
+): ts.Expression {
+  if (!ts.isIdentifier(expr)) {
+    return expr;
+  }
+  const value = resolveSingleAssignmentValue(expr.text, sourceFile);
+  return value ? unwrapTypeOnlyExpression(value) : expr;
+}
+
+/**
  * Resolves a value expression a local alias ultimately points to -- a
  * plain identifier or a property access -- via the exact same import/
  * local-declaration machinery `classifyCall` already uses for a real
  * callee, since by this point the expression IS effectively being called.
+ *
+ * An element access with a statically-known key (VT-217, see
+ * {@link resolveElementAccessKey}) is first rewritten into the equivalent
+ * property access -- `fns[KEY]` where `KEY` is a same-file `const`
+ * literal is an ordinary property access written with computed-member
+ * syntax, not a genuinely dynamic lookup -- and resolved the same way
+ * from there on, with its own receiver also resolved through
+ * {@link resolveReceiverExpression}.
  */
 async function resolveAliasedValue(
   value: ts.Expression,
   prepared: FileGraphData,
   ctx: WalkContext,
 ): Promise<GraphNodeId | undefined> {
-  if (!ts.isIdentifier(value) && !ts.isPropertyAccessExpression(value)) {
+  let resolved = value;
+  if (ts.isElementAccessExpression(value)) {
+    const key = resolveElementAccessKey(value, prepared.index.sourceFile);
+    if (key === undefined) {
+      return undefined;
+    }
+    const receiver = resolveReceiverExpression(
+      value.expression,
+      prepared.index.sourceFile,
+    );
+    resolved = ts.factory.createPropertyAccessExpression(receiver, String(key));
+  }
+
+  if (!ts.isIdentifier(resolved) && !ts.isPropertyAccessExpression(resolved)) {
     return undefined;
   }
 
   const binding = await bindCallee(
-    value,
+    resolved,
     prepared.model,
     ctx.resolver,
     prepared.index.filePath,
@@ -523,7 +616,7 @@ async function resolveAliasedValue(
   if (binding.kind === "resolved") {
     ctx.onDiscoverFile(binding.target.modulePath);
     const targetFile = ctx.ensurePrepared(binding.target.modulePath);
-    if (!resolvesToUnrelatedConstructor(value, binding, targetFile)) {
+    if (!resolvesToUnrelatedConstructor(resolved, binding, targetFile)) {
       return targetFile?.exportNameToNodeId.get(binding.target.exportedName);
     }
   }

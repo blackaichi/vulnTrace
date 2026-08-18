@@ -123,14 +123,61 @@ function findLastModuleExportsAssignment(
 }
 
 /**
+ * The literal string value of a computed property name's key expression
+ * (`[expr]:` / `[expr]() {}`), when it's directly a string/numeric
+ * literal or a same-file `const` binding initialized to one (VT-217,
+ * SDD-v0.2.md § 7.1's computed-key follow-on) -- e.g.
+ * `const NAME = "vulnerable"; module.exports = { [NAME]: impl };`.
+ * `undefined` for anything else (a parameter, a function call, a runtime
+ * value) -- a genuinely dynamic key stays unresolved exactly as before.
+ */
+function resolveComputedPropertyNameLiteral(
+  sourceFile: ts.SourceFile,
+  name: ts.ComputedPropertyName,
+): string | undefined {
+  const expr = name.expression;
+  if (ts.isStringLiteralLike(expr) || ts.isNumericLiteral(expr)) {
+    return expr.text;
+  }
+  if (!ts.isIdentifier(expr)) {
+    return undefined;
+  }
+  const keyName = expr.text;
+
+  let found: string | undefined;
+  function visit(node: ts.Node): void {
+    if (found !== undefined) {
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === keyName &&
+      node.initializer &&
+      ts.isStringLiteralLike(node.initializer) &&
+      ts.isVariableDeclarationList(node.parent) &&
+      (node.parent.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      found = node.initializer.text;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return found;
+}
+
+/**
  * Unpacks `module.exports = { a, b: c, method() {} }` into individual
  * named exports — this is one of the most common CommonJS export patterns
  * and, without unpacking, its named members would be invisible to symbol
- * resolution (TASK-017). Spread elements and computed property names are
- * skipped: their exported name cannot be determined statically (see
- * docs/SDD.md § 21: dynamic constructs must not fabricate exact bindings).
- * Returns `undefined` (not unpacked) when the RHS isn't an object literal,
- * or when none of its properties are statically nameable.
+ * resolution (TASK-017). Spread elements are skipped: their exported name
+ * cannot be determined statically (see docs/SDD.md § 21: dynamic
+ * constructs must not fabricate exact bindings). A computed property name
+ * (VT-217) is unpacked only when its key resolves to a literal via
+ * {@link resolveComputedPropertyNameLiteral}; any other computed key stays
+ * unresolved. Returns `undefined` (not unpacked) when the RHS isn't an
+ * object literal, or when none of its properties are statically nameable.
  */
 function unpackObjectLiteralExports(
   sourceFile: ts.SourceFile,
@@ -153,6 +200,25 @@ function unpackObjectLiteralExports(
           : undefined,
         location: toSourceLocation(sourceFile, property),
       });
+    } else if (
+      ts.isPropertyAssignment(property) &&
+      ts.isComputedPropertyName(property.name)
+    ) {
+      const exportedName = resolveComputedPropertyNameLiteral(
+        sourceFile,
+        property.name,
+      );
+      if (exportedName !== undefined) {
+        results.push({
+          kind: "named",
+          syntax: "commonjs",
+          exportedName,
+          localName: ts.isIdentifier(property.initializer)
+            ? property.initializer.text
+            : undefined,
+          location: toSourceLocation(sourceFile, property),
+        });
+      }
     } else if (ts.isShorthandPropertyAssignment(property)) {
       results.push({
         kind: "named",
@@ -172,9 +238,26 @@ function unpackObjectLiteralExports(
         localName: property.name.text,
         location: toSourceLocation(sourceFile, property),
       });
+    } else if (
+      ts.isMethodDeclaration(property) &&
+      ts.isComputedPropertyName(property.name)
+    ) {
+      const exportedName = resolveComputedPropertyNameLiteral(
+        sourceFile,
+        property.name,
+      );
+      if (exportedName !== undefined) {
+        results.push({
+          kind: "named",
+          syntax: "commonjs",
+          exportedName,
+          localName: exportedName,
+          location: toSourceLocation(sourceFile, property),
+        });
+      }
     }
-    // Spread elements, computed property names, and accessor properties
-    // are intentionally not unpacked.
+    // Spread elements and any other computed property name (one that
+    // doesn't resolve to a literal) are intentionally not unpacked.
   }
 
   return results.length > 0 ? results : undefined;
