@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-29mw-wpgm-hmr9
+    package:
+      name: lodash
+    targets:
+      - module: lodash
+        export: trim
+        kind: function
+        confidence: 1.0

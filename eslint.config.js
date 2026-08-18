@@ -16,6 +16,10 @@ export default tseslint.config(
       // exports, ...) -- that's the point, not a lint violation. Same
       // treatment as the shared fixtures/** above.
       "tests/adversarial/*/fixtures/**",
+      // Real, vendored third-party npm packages (real lodash/lodash.template
+      // source, not written to this project's style) -- not lintable
+      // project code, same treatment as the adversarial fixtures above.
+      "tests/validation/fixtures/**",
       "docs/**",
       "schemas/**",
       "rules/**",

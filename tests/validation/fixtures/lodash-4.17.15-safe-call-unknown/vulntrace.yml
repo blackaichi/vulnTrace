@@ -1,0 +1,6 @@
+analysis:
+  entrypoints:
+    - src/safe-path.js
+rules:
+  files:
+    - rules.yml

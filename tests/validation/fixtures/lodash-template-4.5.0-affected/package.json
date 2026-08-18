@@ -1,0 +1,7 @@
+{
+  "name": "vulntrace-real-world-demo-2",
+  "version": "1.0.0",
+  "dependencies": {
+    "lodash.template": "4.5.0"
+  }
+}

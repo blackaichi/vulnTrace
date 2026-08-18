@@ -1,0 +1,6 @@
+analysis:
+  entrypoints:
+    - src/index.cjs
+rules:
+  files:
+    - rules.yml
