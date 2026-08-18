@@ -939,6 +939,146 @@ describe("buildCallGraph: static branch folding (VT-211)", () => {
   });
 });
 
+describe("buildCallGraph: inline callback-argument invocation (VT-213)", () => {
+  it("connects a call site to the exactly-one inline arrow-function argument it passes", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function main() {\n  return [1, 2, 3].map(() => vulnerable());\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    expect(mainNode).toBeDefined();
+    expect(vulnerableNode).toBeDefined();
+
+    const mainEdge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(mainEdge).toMatchObject({
+      type: "callback",
+      resolution: { kind: "resolved" },
+    });
+    const callbackNodeId =
+      mainEdge?.resolution.kind === "resolved"
+        ? mainEdge.resolution.target
+        : undefined;
+    expect(callbackNodeId).toBeDefined();
+
+    // The callback's own body (walked separately, unaffected by this task)
+    // must itself resolve to vulnerable() -- confirming the full two-hop
+    // path main -> callback -> vulnerable is now connected end to end.
+    const callbackEdge = graph.edges.find((e) => e.from === callbackNodeId);
+    expect(callbackEdge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("connects a call site to an inline callback regardless of the method name (no special-casing)", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function main(obj) {\n  return obj.someUtterlyArbitraryMethodName(() => vulnerable());\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const mainEdge = graph.edges.find((e) => e.from === mainNode?.id);
+    const callbackNodeId =
+      mainEdge?.resolution.kind === "resolved"
+        ? mainEdge.resolution.target
+        : undefined;
+    expect(callbackNodeId).toBeDefined();
+    const callbackEdge = graph.edges.find((e) => e.from === callbackNodeId);
+    expect(callbackEdge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("connects a call site to an inline function-expression argument, not just arrow functions", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function main() {\n" +
+        "  return [1, 2, 3].map(function () {\n    return vulnerable();\n  });\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const mainEdge = graph.edges.find((e) => e.from === mainNode?.id);
+    const callbackNodeId =
+      mainEdge?.resolution.kind === "resolved"
+        ? mainEdge.resolution.target
+        : undefined;
+    expect(callbackNodeId).toBeDefined();
+    const callbackEdge = graph.edges.find((e) => e.from === callbackNodeId);
+    expect(callbackEdge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("still falls back to unsupported_construct for a NAMED callback reference (not an inline literal)", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function main() {\n  return [1, 2, 3].map(vulnerable);\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+
+  it("still falls back to unsupported_construct when more than one inline callback argument is present", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/lib.ts",
+      "export function vulnerable() {}\nexport function safe() {}\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable, safe } from "./lib.js";\n' +
+        "function main(p) {\n" +
+        "  return p.then(\n" +
+        "    () => vulnerable(),\n" +
+        "    () => safe(),\n" +
+        "  );\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+});
+
 describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => {
   // docs/SDD.md § 26's analysis.limits / § 28-29's hardening requirement:
   // a pathological or adversarial target project (e.g. an enormous or
