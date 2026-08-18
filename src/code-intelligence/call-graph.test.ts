@@ -1079,6 +1079,141 @@ describe("buildCallGraph: inline callback-argument invocation (VT-213)", () => {
   });
 });
 
+describe("buildCallGraph: local reference aliasing (VT-214)", () => {
+  it("resolves a call through a plain const variable alias", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function main() {\n  const doIt = vulnerable;\n  return doIt();\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      type: "direct",
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("resolves a call through an object-literal property alias", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function main() {\n" +
+        "  const obj = { run: vulnerable };\n" +
+        "  return obj.run();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      type: "method",
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("resolves a call through a destructured, renamed binding off a namespace import", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import * as lib from "./lib.js";\n' +
+        "function main() {\n" +
+        "  const { vulnerable: doIt } = lib;\n" +
+        "  return doIt();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("resolves a call through a destructured shorthand binding off a namespace import", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import * as lib from "./lib.js";\n' +
+        "function main() {\n" +
+        "  const { vulnerable } = lib;\n" +
+        "  return vulnerable();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("still falls back to unsupported_construct when the alias is declared with let (reassignment not tracked)", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function main() {\n" +
+        "  let doIt = vulnerable;\n" +
+        "  return doIt();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+
+  it("still falls back to unsupported_construct when the alias value is itself unresolvable", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function main(dynamicFn) {\n" +
+        "  const doIt = dynamicFn;\n" +
+        "  return doIt();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_construct" },
+    });
+  });
+});
+
 describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => {
   // docs/SDD.md § 26's analysis.limits / § 28-29's hardening requirement:
   // a pathological or adversarial target project (e.g. an enormous or

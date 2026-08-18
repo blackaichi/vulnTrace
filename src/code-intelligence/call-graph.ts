@@ -380,6 +380,219 @@ async function resolveHigherOrderCallTarget(
   return undefined;
 }
 
+function isConstDeclaration(decl: ts.VariableDeclaration): boolean {
+  const list = decl.parent;
+  return (
+    ts.isVariableDeclarationList(list) &&
+    (list.flags & ts.NodeFlags.Const) !== 0
+  );
+}
+
+/**
+ * The initializer of a same-file `const name = <value>;` declaration, or
+ * `undefined` when no such declaration exists. `const`-only: a `let`/`var`
+ * could be reassigned elsewhere in the file, which this makes no attempt
+ * to track (see {@link resolveLocalAlias}). Whole-file search,
+ * first-match-wins on a shadowed name -- the same acceptable imprecision
+ * {@link resolveHigherOrderCallTarget} (VT-210) and
+ * {@link findLocalFunctionNodeId} already carry, both already shipped.
+ */
+function resolveSingleAssignmentValue(
+  name: string,
+  sourceFile: ts.SourceFile,
+): ts.Expression | undefined {
+  let found: ts.Expression | undefined;
+  function visit(node: ts.Node): void {
+    if (found) {
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isIdentifier(node.name) &&
+      node.name.text === name &&
+      node.initializer &&
+      isConstDeclaration(node)
+    ) {
+      found = node.initializer;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return found;
+}
+
+/** The value of an object literal's `propertyName` property (`{ propertyName: value }` or shorthand `{ propertyName }`), or `undefined`. Computed property names are intentionally not evaluated -- see module-model.ts's `unpackObjectLiteralExports` for the identical scoping decision on the export side. */
+function findObjectLiteralPropertyValue(
+  obj: ts.ObjectLiteralExpression,
+  propertyName: string,
+): ts.Expression | undefined {
+  for (const property of obj.properties) {
+    if (
+      ts.isPropertyAssignment(property) &&
+      ts.isIdentifier(property.name) &&
+      property.name.text === propertyName
+    ) {
+      return property.initializer;
+    }
+    if (
+      ts.isShorthandPropertyAssignment(property) &&
+      property.name.text === propertyName
+    ) {
+      return property.name;
+    }
+  }
+  return undefined;
+}
+
+interface DestructuredBindingSource {
+  readonly source: ts.Identifier;
+  readonly propertyName: string;
+}
+
+/**
+ * Finds a same-file `const { originalName: name } = source;` (or
+ * shorthand `const { name } = source;`) destructuring `name` out of a
+ * plain-identifier `source`, or `undefined`. `const`-only and
+ * single-property-source-must-be-a-plain-identifier, matching
+ * {@link resolveSingleAssignmentValue}'s own scoping.
+ */
+function findDestructuredBindingSource(
+  name: string,
+  sourceFile: ts.SourceFile,
+): DestructuredBindingSource | undefined {
+  let found: DestructuredBindingSource | undefined;
+  function visit(node: ts.Node): void {
+    if (found) {
+      return;
+    }
+    if (
+      ts.isVariableDeclaration(node) &&
+      ts.isObjectBindingPattern(node.name) &&
+      node.initializer &&
+      ts.isIdentifier(node.initializer) &&
+      isConstDeclaration(node)
+    ) {
+      const source = node.initializer;
+      for (const element of node.name.elements) {
+        if (
+          element.dotDotDotToken ||
+          !ts.isIdentifier(element.name) ||
+          element.name.text !== name
+        ) {
+          continue;
+        }
+        const propertyNameNode = element.propertyName ?? element.name;
+        if (
+          ts.isIdentifier(propertyNameNode) ||
+          ts.isStringLiteralLike(propertyNameNode)
+        ) {
+          found = { source, propertyName: propertyNameNode.text };
+        }
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return found;
+}
+
+/**
+ * Resolves a value expression a local alias ultimately points to -- a
+ * plain identifier or a property access -- via the exact same import/
+ * local-declaration machinery `classifyCall` already uses for a real
+ * callee, since by this point the expression IS effectively being called.
+ */
+async function resolveAliasedValue(
+  value: ts.Expression,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<GraphNodeId | undefined> {
+  if (!ts.isIdentifier(value) && !ts.isPropertyAccessExpression(value)) {
+    return undefined;
+  }
+
+  const binding = await bindCallee(
+    value,
+    prepared.model,
+    ctx.resolver,
+    prepared.index.filePath,
+  );
+
+  if (binding.kind === "resolved") {
+    ctx.onDiscoverFile(binding.target.modulePath);
+    const targetFile = ctx.ensurePrepared(binding.target.modulePath);
+    return targetFile?.exportNameToNodeId.get(binding.target.exportedName);
+  }
+
+  return ts.isIdentifier(value)
+    ? findLocalFunctionNodeId(value, prepared)
+    : undefined;
+}
+
+/**
+ * Resolves a call whose callee is a same-file `const` binding that simply
+ * aliases an already-resolvable value, rather than being a genuinely new
+ * declaration (VT-214, SDD-v0.2.md § 7.1's local-alias-flow follow-on to
+ * VT-210): a plain reassignment (`const doIt = vulnerable; doIt();`), an
+ * object-literal property holding one
+ * (`const o = { run: vulnerable }; o.run();`), or a destructured rename
+ * off a namespace/default import (`const { vulnerable: v } = lib; v();`).
+ *
+ * Deliberately narrow, matching VT-210's own scope (SDD-v0.2.md § 16):
+ * `const`-only (see {@link resolveSingleAssignmentValue}), single-hop (the
+ * aliased-to value itself must resolve via an existing mechanism -- never
+ * a further level of aliasing), and same-file.
+ */
+async function resolveLocalAlias(
+  callee: ts.Expression,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<GraphNodeId | undefined> {
+  const sourceFile = prepared.index.sourceFile;
+
+  if (ts.isPropertyAccessExpression(callee)) {
+    if (!ts.isIdentifier(callee.expression)) {
+      return undefined;
+    }
+    const receiverValue = resolveSingleAssignmentValue(
+      callee.expression.text,
+      sourceFile,
+    );
+    if (!receiverValue || !ts.isObjectLiteralExpression(receiverValue)) {
+      return undefined;
+    }
+    const propertyValue = findObjectLiteralPropertyValue(
+      receiverValue,
+      callee.name.text,
+    );
+    return propertyValue
+      ? resolveAliasedValue(propertyValue, prepared, ctx)
+      : undefined;
+  }
+
+  if (!ts.isIdentifier(callee)) {
+    return undefined;
+  }
+
+  const directValue = resolveSingleAssignmentValue(callee.text, sourceFile);
+  if (directValue) {
+    return resolveAliasedValue(directValue, prepared, ctx);
+  }
+
+  const destructured = findDestructuredBindingSource(callee.text, sourceFile);
+  if (destructured) {
+    const synthetic = ts.factory.createPropertyAccessExpression(
+      destructured.source,
+      destructured.propertyName,
+    );
+    return resolveAliasedValue(synthetic, prepared, ctx);
+  }
+
+  return undefined;
+}
+
 /**
  * Resolves a call to the exactly-one inline function-expression/arrow
  * argument it passes, when nothing else already accounted for this call
@@ -841,6 +1054,22 @@ async function classifyCall(
         location,
       };
     }
+  }
+
+  // VT-214: the callee itself (or its receiver, for a property access)
+  // might be a same-file `const` binding that simply aliases an
+  // already-resolvable value -- `const doIt = vulnerable; doIt();`,
+  // `const o = { run: vulnerable }; o.run();`, or a destructured rename
+  // off a namespace import (see SDD-v0.2.md § 7.1). Attempted after every
+  // cheaper syntactic path has already failed.
+  const aliasTarget = await resolveLocalAlias(callee, prepared, ctx);
+  if (aliasTarget) {
+    return {
+      from,
+      type: ts.isPropertyAccessExpression(callee) ? "method" : "direct",
+      resolution: { kind: "resolved", target: aliasTarget },
+      location,
+    };
   }
 
   // VT-213: a call this graph still cannot attribute might pass exactly
