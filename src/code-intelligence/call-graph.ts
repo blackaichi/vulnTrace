@@ -380,6 +380,51 @@ async function resolveHigherOrderCallTarget(
   return undefined;
 }
 
+/**
+ * Resolves a call to the exactly-one inline function-expression/arrow
+ * argument it passes, when nothing else already accounted for this call
+ * (VT-213, SDD-v0.2.md § 7.1). Handles the extremely common built-in
+ * higher-order pattern `arr.map(() => vulnerable())`,
+ * `promise.then(() => vulnerable())`, etc. -- without special-casing any
+ * specific method name (`.map`/`.then`/`.forEach`/...): any call whose
+ * callee this graph cannot otherwise attribute, and which passes exactly
+ * one inline function/arrow expression as an argument, is treated as
+ * invoking that argument, since that argument is unambiguously the only
+ * function value being handed to this call.
+ *
+ * Before this, `walkFile`'s own `forEachChild` traversal already visited
+ * the inline callback's body as its own function scope (`source-index.ts`
+ * already indexes it as a `"callback"`-kind function) and recorded any
+ * calls made from *within* it correctly -- but nothing connected the call
+ * *site* to that callback's own node, so it was reachable only as a graph
+ * component disconnected from its actual caller.
+ *
+ * Deliberately narrow, matching VT-210's own scope (SDD-v0.2.md § 16):
+ * exactly one inline function/arrow argument, never a named reference
+ * (`arr.map(vulnerable)` -- that's local-alias/value-flow territory, a
+ * different problem, see VT-210/VT-214) and never when more than one
+ * inline callback argument is present (e.g.
+ * `promise.then(onFulfilled, onRejected)`) -- picking one over the other
+ * without more information would be a guess, not a resolution.
+ */
+function resolveInlineCallbackArgument(
+  call: ts.CallExpression,
+  prepared: FileGraphData,
+): GraphNodeId | undefined {
+  const inlineCallbacks = call.arguments.filter(
+    (arg) => ts.isFunctionExpression(arg) || ts.isArrowFunction(arg),
+  );
+  if (inlineCallbacks.length !== 1) {
+    return undefined;
+  }
+  const [callback] = inlineCallbacks;
+  if (!callback) {
+    return undefined;
+  }
+  const location = toSourceLocation(prepared.index.sourceFile, callback);
+  return prepared.functionNodeIdByLocation.get(locationKey(location));
+}
+
 /** A numeric or string literal's own value, or `undefined` for anything else -- including a negated numeric literal (`-1`). */
 function literalValue(expr: ts.Expression): string | number | undefined {
   if (ts.isNumericLiteral(expr)) {
@@ -796,6 +841,20 @@ async function classifyCall(
         location,
       };
     }
+  }
+
+  // VT-213: a call this graph still cannot attribute might pass exactly
+  // one inline function/arrow-function argument (see SDD-v0.2.md § 7.1) --
+  // e.g. `arr.map(() => vulnerable())`, `promise.then(() => vulnerable())`.
+  // Attempted last, after every other resolution path has already failed.
+  const callbackTarget = resolveInlineCallbackArgument(call, prepared);
+  if (callbackTarget) {
+    return {
+      from,
+      type: "callback",
+      resolution: { kind: "resolved", target: callbackTarget },
+      location,
+    };
   }
 
   return {
