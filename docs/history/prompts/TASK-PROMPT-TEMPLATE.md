@@ -1,6 +1,6 @@
 # Task Prompt Template
 
-Implement `tasks/NNN-*.md`.
+Implement `docs/history/tasks/NNN-*.md`.
 
 Before coding:
 

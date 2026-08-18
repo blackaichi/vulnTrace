@@ -1,5 +1,11 @@
 # VulnTrace Coding Agent Kit v0.6
 
+> **Historical document.** This was the implementation handoff used to
+> bootstrap VulnTrace's original MVP (TASK-001 through TASK-030, all
+> complete). Kept for historical record -- see `docs/history/README.md`.
+> For the project's current state, start at the repository root
+> `README.md` and `AGENTS.md` instead.
+
 This repository is the implementation handoff for an AI coding agent.
 
 ## Read order
@@ -9,7 +15,7 @@ This repository is the implementation handoff for an AI coding agent.
 3. `docs/COMPETITIVE-ANALYSIS.md`
 4. `docs/MVP-IMPLEMENTATION-PLAN.md`
 5. `docs/DEFINITION-OF-DONE.md`
-6. `tasks/001-bootstrap.md`
+6. `docs/history/tasks/001-bootstrap.md`
 7. Follow tasks in numerical order.
 
 ## Core product thesis
