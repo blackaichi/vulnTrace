@@ -66,6 +66,25 @@ export interface BuildFindingOptions {
    * no path and no unknown edge along the way it did traverse.
    */
   readonly graphTruncated?: boolean;
+  /**
+   * Test-only escape hatch (VT-301B; see RWF-011,
+   * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 7.3/§ 10, R-6). Allows
+   * `findExportNodeInFile`'s same-file bare-name target match as a last
+   * resort — a construct that is unsafe against real, indexed production
+   * files (a coincidentally same-named function has no real relationship
+   * to a rule's target) but is the ONLY resolution mechanism available to
+   * synthetic/test graphs that construct `GraphNode`s directly with no
+   * real file on disk behind them at all (see verdict.test.ts).
+   *
+   * Defaults to `false`/unset. No production caller (the real CLI scan
+   * path — `src/cli/scan.ts`) sets this; it is not exposed through
+   * `vulntrace.yml` or any CLI flag, deliberately — this is an internal
+   * API seam for tests, not a configurable analysis behavior. A real file
+   * that cannot be read or parsed does NOT implicitly enable this (see
+   * `findExportNodeInFile`'s own doc comment): only this explicit flag
+   * does, regardless of why structural attribution failed.
+   */
+  readonly allowSyntheticNameOnlyTargetBinding?: boolean;
 }
 
 function locationOf(graph: CallGraph, id: GraphNodeId): string {
@@ -87,7 +106,14 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
  * Finds every graph node implementing `{module: resolvedFile, export:
  * exportName}` — usually exactly one, but see the class-member step below
  * for when more than one is a structurally valid answer. Returns `[]`
- * when nothing could be attributed at all.
+ * when nothing could be attributed at all — a real, indexed file for
+ * which neither structural path below attributes anything is NEVER
+ * rescued by a same-file bare-name search (VT-301B; see RWF-011,
+ * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 7.3/§ 10, R-6): a function
+ * merely sharing `exportName`'s literal text, with no real export
+ * relationship to it, is coincidence, not provenance, and binding a
+ * vulnerability target to it can manufacture a false `NOT_AFFECTED` the
+ * moment that unrelated function happens to be unreachable.
  *
  * A rule's `export` names the module's *canonical* export (e.g. `"default"`
  * for CommonJS's `module.exports = someNamedFunction;` idiom — extremely
@@ -115,17 +141,23 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
  * one is returned: this function does not pick a candidate arbitrarily,
  * that is `checkReachability`'s existing OR-across-nodes job.
  *
- * Only when NEITHER structural path attributes anything does this fall
- * back to a direct same-file name match (kept for synthetic/test graphs
- * that bypass real file indexing entirely — their `GraphNode`s are the
- * only source of truth available in that case — and as a safety net if
- * the target file can no longer be read; VT-301A deliberately leaves this
- * fallback exactly as it already behaves — see VT-301B for hardening it).
+ * `allowSyntheticNameOnlyTargetBinding` is the ONLY thing that can still
+ * reach the bare same-file name match below, and defaults to `false` in
+ * every production caller (see `BuildFindingOptions`). It exists purely
+ * for synthetic/test graphs that construct `GraphNode`s directly with no
+ * real file behind them at all (see verdict.test.ts) — there, the graph
+ * itself is the only available source of truth, so a name match is the
+ * only mechanism those tests have. Deliberately NOT inferred from whether
+ * `indexSourceFileFromDisk` throws: a real, installed production file
+ * that happens to be unreadable or unparseable must degrade to an
+ * unresolved target (preserving uncertainty), never silently gain the
+ * same unsafe name-only binding a synthetic test explicitly opted into.
  */
 function findExportNodeInFile(
   graph: CallGraph,
   resolvedFile: string,
   exportName: string,
+  allowSyntheticNameOnlyTargetBinding: boolean,
 ): GraphNode[] {
   const byLocation = (fn: {
     readonly location: { readonly line?: number; readonly column?: number };
@@ -158,8 +190,13 @@ function findExportNodeInFile(
       }
     }
   } catch {
-    // Target file unreadable/unparsable -- fall through to the name-based
-    // match below.
+    // Target file unreadable/unparsable -- NOT synthetic-mode inference;
+    // see this function's own doc comment. Falls through to the same
+    // opt-in gate below as a successfully-indexed-but-unattributed file.
+  }
+
+  if (!allowSyntheticNameOnlyTargetBinding) {
+    return [];
   }
 
   const fallback = graph.nodes.find(
@@ -272,6 +309,26 @@ function readInstalledVersion(packageInstance: string): string | undefined {
  * behavior) when the graph never discovered ANY instance of the package at
  * all — the common, legitimate case where nothing in the analyzed code
  * ever imports it.
+ *
+ * Two structurally different "target not found" cases exist here (VT-301B;
+ * see docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 3/§ 15's Site A/Site B):
+ *
+ * - **Site A** (`instances.size > 0`, below): the package instance genuinely
+ *   IS in the graph — something real touched it — but `target.export`
+ *   could not be attributed to any node within it. The module loaded; only
+ *   the symbol's own identity is unknown. Returns `unresolvedReason`
+ *   directly rather than a phantom: SDD.md § 23's "vulnerable target
+ *   known?" is answered NO here, so this must become UNKNOWN, never risk a
+ *   reachability search concluding a confident (and false) NOT_AFFECTED
+ *   against a target it never actually identified.
+ * - **Site B** (`instances.size === 0`, below): the package was never
+ *   discovered by the graph at all — genuinely unimported. A phantom fed
+ *   into reachability search is correct and intentional here: if nothing
+ *   in the entrypoint's reachable code even references this package,
+ *   "unreachable" is a positively established conclusion (this is exactly
+ *   what VT-212/VT-300 already rely on and guard — see
+ *   `confirmedAbsentInstance` above and `hasReachableClosureWideningBlocker`
+ *   in `checkReachability`). Deliberately left unchanged by VT-301B.
  */
 async function resolveTargetNodes(
   graph: CallGraph,
@@ -280,6 +337,7 @@ async function resolveTargetNodes(
   referenceFile: string,
   packageVersion: string | undefined,
   packageInstance: string | undefined,
+  allowSyntheticNameOnlyTargetBinding: boolean,
 ): Promise<{
   nodes: GraphNode[];
   unresolvedReason?: string;
@@ -317,7 +375,14 @@ async function resolveTargetNodes(
     const nodes: GraphNode[] = [];
     for (const [, files] of selected) {
       for (const file of files) {
-        nodes.push(...findExportNodeInFile(graph, file, target.export));
+        nodes.push(
+          ...findExportNodeInFile(
+            graph,
+            file,
+            target.export,
+            allowSyntheticNameOnlyTargetBinding,
+          ),
+        );
       }
     }
 
@@ -325,12 +390,16 @@ async function resolveTargetNodes(
       return { nodes };
     }
 
-    // The graph found real instance(s) of the package, but none of them
-    // implement target.export -- a phantom scoped to a real,
-    // graph-confirmed instance, not a fresh independent resolution.
-    const [firstFile] = selected[0]?.[1] ?? [];
+    // Site A (VT-301B; see this function's own doc comment above): the
+    // package instance is genuinely present in the graph, but
+    // target.export could not be attributed to any node within it. NOT a
+    // phantom -- an explicit unresolved target, so checkReachability's
+    // existing "could not resolve module" handling degrades this straight
+    // to UNKNOWN without ever running a reachability search against a
+    // target whose own identity was never established.
     return {
-      nodes: [phantomNode(firstFile ?? target.module, target.export)],
+      nodes: [],
+      unresolvedReason: `export "${target.export}" could not be attributed to any function or class member in the resolved module`,
     };
   }
 
@@ -339,10 +408,15 @@ async function resolveTargetNodes(
     return { nodes: [], unresolvedReason: resolution.reason };
   }
 
+  // Site B (VT-301B; see this function's own doc comment above):
+  // deliberately unchanged -- the package was never discovered by the
+  // graph at all, so a phantom target feeding a genuinely clean,
+  // fully-resolved reachability search to "unreachable" remains correct.
   const nodes = findExportNodeInFile(
     graph,
     resolution.resolvedFileName,
     target.export,
+    allowSyntheticNameOnlyTargetBinding,
   );
   return {
     nodes:
@@ -487,6 +561,7 @@ async function checkReachability(
   projectRoot: string,
   packageVersion: string | undefined,
   packageInstance: string | undefined,
+  allowSyntheticNameOnlyTargetBinding: boolean,
 ): Promise<{
   reachable?: ReachableEvidence;
   sawUnknown: boolean;
@@ -521,6 +596,7 @@ async function checkReachability(
       referenceFile,
       packageVersion,
       packageInstance,
+      allowSyntheticNameOnlyTargetBinding,
     );
 
     if (unresolvedReason) {
@@ -635,6 +711,7 @@ export async function buildFinding(
     resolver,
     projectRoot,
     graphTruncated = false,
+    allowSyntheticNameOnlyTargetBinding = false,
   } = options;
 
   const base = {
@@ -664,6 +741,7 @@ export async function buildFinding(
       projectRoot,
       packageVersion,
       packageInstance,
+      allowSyntheticNameOnlyTargetBinding,
     );
 
   if (reachable) {
