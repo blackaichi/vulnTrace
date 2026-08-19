@@ -52,6 +52,50 @@ export type DynamicCallReason =
   | "unsupported_construct";
 
 /**
+ * Whether a {@link DynamicCallReason} widens the module-load closure --
+ * i.e. whether the underlying construct could, at runtime, load or invoke
+ * a module the call graph never discovered while it was built (see
+ * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 3, RWF-002/RWF-008; VT-300).
+ *
+ * Closure-widening (`true`): the construct can name or load an arbitrary
+ * module at runtime that graph construction had no way to discover.
+ * `dynamic_require`/`dynamic_import` can load literally any installed
+ * module; `eval` can do anything, including calling `require` itself;
+ * `unresolved_module` means the specifier itself could not even be
+ * identified, so whatever module it names (or that module's own
+ * transitive requires) is unknown by definition.
+ *
+ * Non-widening (`false`): the construct's uncertainty is bounded to
+ * values/modules the graph already discovered. `unsupported_construct`
+ * and `dynamic_member_access` can only ever reach a function value
+ * already in scope, from a module already loaded; `unresolved_target`
+ * means the module itself resolved successfully and only the specific
+ * export lookup inside it failed.
+ *
+ * This partition is normative (see the audit doc's § 3.3/§ 12) and MUST
+ * NOT be changed silently: every current consumer
+ * (`resolveTargetNodes`'s `confirmedAbsentInstance` guard, src/analysis
+ * /verdict.ts) treats it as a soundness boundary, not a precision knob.
+ * The exhaustive `switch` (no `default` case) is deliberate: adding a new
+ * `DynamicCallReason` value without updating this function is a compile
+ * error, not a silent misclassification.
+ */
+export function isClosureWideningReason(reason: DynamicCallReason): boolean {
+  switch (reason) {
+    case "dynamic_require":
+    case "dynamic_import":
+    case "eval":
+    case "unresolved_module":
+      return true;
+    case "unsupported_construct":
+    case "dynamic_member_access":
+    case "unresolved_target": {
+      return false;
+    }
+  }
+}
+
+/**
  * A call edge either resolves to an exact node, or is explicitly
  * represented as uncertain. Dynamic constructs (`foo[method]()`,
  * `require(variable)`, `import(variable)`) must never fabricate exact

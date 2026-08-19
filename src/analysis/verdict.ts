@@ -6,7 +6,12 @@ import {
 } from "../code-intelligence/module-model.js";
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
-import type { CallGraph, GraphNode, GraphNodeId } from "../domain/graph.js";
+import {
+  isClosureWideningReason,
+  type CallGraph,
+  type GraphNode,
+  type GraphNodeId,
+} from "../domain/graph.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
 import { identifyModule } from "../domain/resolved-target.js";
 import type {
@@ -16,7 +21,10 @@ import type {
 import type { Finding } from "../domain/verdict.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import type { VersionMatchResult } from "../vulnerabilities/version-matching.js";
-import { analyzeReachability } from "./reachability.js";
+import {
+  analyzeReachability,
+  collectReachableUnknownEdges,
+} from "./reachability.js";
 
 export interface BuildFindingOptions {
   readonly vulnerability: Vulnerability;
@@ -389,6 +397,49 @@ function entrypointSourceNodes(
 }
 
 /**
+ * Whether any construct reachable from `entrypoints`' own source nodes
+ * could, at runtime, load a module the call graph never discovered (VT-300;
+ * see docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 3.6/§ 15, RWF-008).
+ *
+ * `resolveTargetNodes`'s `confirmedAbsentInstance` result treats a package
+ * instance's total absence from the call graph as positive evidence of
+ * non-reachability -- correct only when the graph's own on-demand
+ * discovery (TASK-018) was actually complete. It is NOT complete when a
+ * closure-widening construct (`dynamic_require`, `dynamic_import`, `eval`,
+ * `unresolved_module` -- see {@link isClosureWideningReason}) sits
+ * somewhere reachable from an entrypoint: such a construct could, at
+ * runtime, load exactly the undiscovered instance in question, so its
+ * absence from the graph stops being evidence of anything. Reproduced
+ * directly: an otherwise-identical fixture with vs. without a reachable
+ * `require(variable)` changes the correct verdict for an untouched sibling
+ * package instance from `UNKNOWN` to a **false** `NOT_AFFECTED`.
+ *
+ * Scoped deliberately to each entrypoint's own reachable subgraph, not the
+ * whole graph: an unrelated closure-widening construct in code no
+ * entrypoint can ever reach says nothing about what THIS entrypoint might
+ * load at runtime (the same reachable-subgraph scoping that already
+ * protects {@link analyzeReachability}'s own `unreachable` conclusion from
+ * unrelated blockers elsewhere in the graph -- see
+ * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 3.3's RWB-07 evidence).
+ */
+function hasReachableClosureWideningBlocker(
+  graph: CallGraph,
+  entrypoints: readonly Entrypoint[],
+): boolean {
+  for (const entrypoint of entrypoints) {
+    for (const source of entrypointSourceNodes(graph, entrypoint)) {
+      const unresolvedEdges = collectReachableUnknownEdges(graph, source);
+      if (
+        unresolvedEdges.some((edge) => isClosureWideningReason(edge.reason))
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+/**
  * Checks every `{target × entrypoint}` combination for a rule, stopping at
  * the first confirmed-reachable one (see docs/SDD.md § 23's "target
  * reachable?" step). Aggregates the rest: any `unknown` result anywhere
@@ -458,6 +509,29 @@ async function checkReachability(
       // NOT_AFFECTED and UNKNOWN, instead of falling through to the
       // separate "no entrypoints were available" UNKNOWN below.
       checkedAny = true;
+
+      // VT-300 (docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 3.6/§ 15,
+      // RWF-008): the graph's on-demand discovery is complete under a
+      // non-truncated graph ONLY WHEN nothing reachable from an
+      // entrypoint could still load this exact, undiscovered instance at
+      // runtime. A closure-widening construct (dynamic_require,
+      // dynamic_import, eval, unresolved_module -- see
+      // isClosureWideningReason) reachable from an entrypoint means this
+      // instance's absence from the graph is no longer positive evidence
+      // of anything: reporting NOT_AFFECTED here would be exactly the
+      // false negative AGENTS.md forbids (confirmed reproducible -- see
+      // the audit's RWF-008 isolation and the ADV2-047 regression case).
+      // Non-widening blockers (unsupported_construct,
+      // dynamic_member_access, unresolved_target) do NOT trigger this --
+      // their uncertainty is bounded to values/modules already
+      // discovered, so they cannot have loaded this undiscovered
+      // instance either.
+      if (hasReachableClosureWideningBlocker(graph, entrypoints)) {
+        sawUnknown = true;
+        reasons.push(
+          `package instance for module "${target.module}" was never traversed by the call graph, but a closure-widening construct reachable from an entrypoint could load it at runtime`,
+        );
+      }
       continue;
     }
 

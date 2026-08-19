@@ -493,5 +493,49 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-046",
+    "dir": "adv2-046-multi-instance-dynamic-require",
+    "category": "46. Multi-instance + reachable dynamic require (reached instance)",
+    "description": "Two installed instances of vt2-vuln-lib exist (nested 1.0.0 under vt2-holder, reached via main(); top-level 1.9.0, never imported). A second, unrelated entrypoint export (loadPlugin) calls require(pluginName) with a non-literal argument. Control check: the reached, nested instance must still resolve to AFFECTED regardless of the unrelated dynamic require elsewhere in the same file.",
+    "expected": "AFFECTED",
+    "reason": "main() calls holder.useHolder(), which requires the nested vt2-vuln-lib@1.0.0 instance directly and calls its dangerousOp() unconditionally -- a fully resolved chain, independent of loadPlugin's own unrelated dynamic require.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+  },
+  {
+    "id": "ADV2-047",
+    "dir": "adv2-046-multi-instance-dynamic-require",
+    "category": "47. RWF-008 regression: unreached instance + reachable dynamic require",
+    "description": "Same fixture as ADV2-046. The OTHER installed instance of vt2-vuln-lib (top-level, version 1.9.0) is a declared dependency, never imported by any source file -- but a SEPARATE entrypoint-exported function in the same file, loadPlugin(pluginName), calls require(pluginName) with a runtime-only value. Regression case for RWF-008 (docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md section 3.6): the call graph never traversing an instance is only positive evidence of non-reachability when nothing reachable from the entrypoint could still load it at runtime.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but loadPlugin's require(pluginName) is reachable from this same entrypoint (no configured symbol narrows sources to main() alone) and could load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here: absence from the statically-discovered graph is not, by itself, proof this instance is unreachable, because the analyzer cannot see what value pluginName takes at runtime. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-048",
+    "dir": "adv2-048-multi-instance-control",
+    "category": "48. Multi-instance control, no widening blocker (reached instance)",
+    "description": "Control fixture for ADV2-047, identical two-instance layout minus the require(variable)-containing export. The reached, nested vt2-vuln-lib@1.0.0 instance must resolve to AFFECTED.",
+    "expected": "AFFECTED",
+    "reason": "main() calls holder.useHolder(), which requires the nested vt2-vuln-lib@1.0.0 instance directly and calls its dangerousOp() unconditionally.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+  },
+  {
+    "id": "ADV2-049",
+    "dir": "adv2-048-multi-instance-control",
+    "category": "49. RWF-008 control: unreached instance, no widening blocker",
+    "description": "Control for ADV2-047. Same fixture as ADV2-048: the top-level vt2-vuln-lib@1.9.0 instance is a declared dependency, never imported anywhere, and -- unlike ADV2-047 -- this file contains no closure-widening construct (dynamic_require/dynamic_import/eval/unresolved_module) reachable from the entrypoint at all. Verifies VT-300's guard does not broaden UNKNOWN beyond cases that actually contain a widening blocker: this must remain NOT_AFFECTED exactly as ADV2-045's equivalent case already does.",
+    "expected": "NOT_AFFECTED",
+    "reason": "No source file in the project imports the top-level vt2-vuln-lib@1.9.0 instance, and the entrypoint's entire reachable subgraph (main() -> holder.useHolder() -> the nested instance's dangerousOp()) is fully, statically resolved with zero unresolved edges of any kind.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]
