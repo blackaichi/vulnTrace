@@ -1,0 +1,10 @@
+{
+  "name": "rwb-09-semver-multi-instance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-09 real-world benchmark fixture: the same package name (semver) resolved to two different real installed versions -- one vulnerable, one patched -- via npm aliasing.",
+  "dependencies": {
+    "semver": "7.5.2",
+    "semver-vulnerable": "npm:semver@7.5.1"
+  }
+}

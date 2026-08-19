@@ -1,0 +1,6 @@
+analysis:
+  entrypoints:
+    - src/serialize-filters.js
+rules:
+  files:
+    - rules.yml

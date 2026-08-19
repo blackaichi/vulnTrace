@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-f2jv-r9rf-7988
+    package:
+      name: handlebars
+    targets:
+      - module: handlebars
+        export: compile
+        kind: function
+        confidence: 1.0

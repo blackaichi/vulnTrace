@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-3fx5-fwvr-xrjg
+    package:
+      name: ms
+    targets:
+      - module: ms
+        export: default
+        kind: function
+        confidence: 1.0

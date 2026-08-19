@@ -1,0 +1,7 @@
+analysis:
+  entrypoints:
+    - file: src/cli.js
+      symbol: main
+rules:
+  files:
+    - rules.yml

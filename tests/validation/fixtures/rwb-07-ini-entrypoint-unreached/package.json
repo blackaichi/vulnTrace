@@ -1,0 +1,9 @@
+{
+  "name": "rwb-07-ini-entrypoint-unreached",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-07 real-world benchmark fixture: ini.parse() is genuinely called in the source, but only from a function unreachable from the configured entrypoint.",
+  "dependencies": {
+    "ini": "1.3.5"
+  }
+}

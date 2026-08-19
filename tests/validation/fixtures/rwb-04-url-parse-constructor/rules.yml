@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-8v38-pw62-9cw2
+    package:
+      name: url-parse
+    targets:
+      - module: url-parse
+        export: default
+        kind: constructor
+        confidence: 1.0

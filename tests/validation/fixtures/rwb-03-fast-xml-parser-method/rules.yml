@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-37qj-frw5-hhjh
+    package:
+      name: fast-xml-parser
+    targets:
+      - module: fast-xml-parser
+        export: parse
+        kind: method
+        confidence: 1.0

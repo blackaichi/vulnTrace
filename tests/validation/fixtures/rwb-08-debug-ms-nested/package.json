@@ -1,0 +1,9 @@
+{
+  "name": "rwb-08-debug-ms-nested",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-08 real-world benchmark fixture: ms's vulnerable parser reached only via debug's own re-export (debug.humanize), never a direct app dependency.",
+  "dependencies": {
+    "debug": "2.0.0"
+  }
+}

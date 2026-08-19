@@ -61,8 +61,11 @@ call-graph/verdict logic already covered by the adversarial suites).
 Fixtures themselves are fully vendored (real `node_modules/` committed),
 so no `npm install` step is needed at run time.
 
-Currently exits non-zero: 2 of 3 cases are known, tracked failures (see
-`FINDINGS.md` RWF-001) — this is expected and not a regression. Not part
-of `npm test`/CI's default gate, and not yet added to CI at all (unlike
-`test:adversarial`, which is 100% clean) — there'd be nothing meaningful
-for a red/green CI gate to report while known failures are expected.
+Currently exits non-zero: 4 of 14 cases pass; the other 10 are known,
+tracked failures (see `FINDINGS.md` RWF-001 through RWF-006) — this is
+expected and not a regression. `REPORT.md`'s own "Unexpected failures"
+count is the actual regression signal to watch, and is currently `0`. Not
+part of `npm test`/CI's default gate, and not yet added to CI at all
+(unlike `test:adversarial`, which is 100% clean) — there'd be nothing
+meaningful for a red/green CI gate to report while known failures are
+expected.

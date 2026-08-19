@@ -1,0 +1,9 @@
+{
+  "name": "rwb-05-qs-unused-api",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-05 real-world benchmark fixture: qs's vulnerable parse() export is never used, only the unrelated stringify() export is.",
+  "dependencies": {
+    "qs": "6.10.1"
+  }
+}

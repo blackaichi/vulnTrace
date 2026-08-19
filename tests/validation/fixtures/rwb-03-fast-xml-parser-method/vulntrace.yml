@@ -1,0 +1,7 @@
+analysis:
+  entrypoints:
+    - file: src/feed-reader.js
+      symbol: parseFeed
+rules:
+  files:
+    - rules.yml

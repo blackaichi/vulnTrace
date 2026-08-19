@@ -55,5 +55,214 @@
       "version": "4.17.15",
       "vulnerability": "GHSA-29mw-wpgm-hmr9"
     }
+  },
+  {
+    "id": "RWB-01",
+    "dir": "rwb-01-trim-newlines-direct",
+    "package": "trim-newlines",
+    "version": "3.0.0",
+    "vulnerability": "GHSA-7p7h-4mm5-852v",
+    "aliases": ["CVE-2021-33623"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-7p7h-4mm5-852v",
+    "vulnerableTarget": "trim-newlines#end",
+    "description": "Real-world benchmark RWB-01 (DIRECT): the real, npm-installed trim-newlines@3.0.0's vulnerable named export .end() is called directly from the entrypoint on caller-supplied input.",
+    "expected": "AFFECTED",
+    "knownFailure": true,
+    "reason": "normalize() calls trimNewlines.end(userInput) directly and unconditionally -- no wrapper, no aliasing, no dead code. A human analyst reading this file has no ambiguity: this is a real, reachable call to the exact function GHSA-7p7h-4mm5-852v/CVE-2021-33623 names as vulnerable (ReDoS). Currently returns UNKNOWN instead -- a known, tracked gap, not a fabricated oracle. See FINDINGS.md RWF-005 (TypeScript module resolution prefers trim-newlines's index.d.ts over its real index.js implementation).",
+    "findingSelector": {
+      "package": "trim-newlines",
+      "version": "3.0.0",
+      "vulnerability": "GHSA-7p7h-4mm5-852v"
+    }
+  },
+  {
+    "id": "RWB-02",
+    "dir": "rwb-02-minimist-wrapper",
+    "package": "minimist",
+    "version": "1.2.5",
+    "vulnerability": "GHSA-xvch-5gv4-984h",
+    "aliases": ["CVE-2021-44906"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-xvch-5gv4-984h",
+    "vulnerableTarget": "minimist#default (the minimist(args, opts) function)",
+    "description": "Real-world benchmark RWB-02 (WRAPPER): minimist's default export is reached through an app-authored CLI-args wrapper, one same-file hop removed from the entrypoint.",
+    "expected": "AFFECTED",
+    "knownFailure": true,
+    "reason": "main() calls parseArgs(), an app-authored wrapper in the same file that forwards process.argv straight into minimist() with no filtering. A human analyst reading this file has no ambiguity: this is a real, reachable call to minimist's vulnerable parser (prototype pollution via constructor.prototype keys, GHSA-xvch-5gv4-984h/CVE-2021-44906). Currently returns UNKNOWN instead -- a known, tracked gap, not a fabricated oracle. See FINDINGS.md RWF-003 (module.exports assigned as an anonymous function expression isn't matched to a named function declaration).",
+    "findingSelector": {
+      "package": "minimist",
+      "version": "1.2.5",
+      "vulnerability": "GHSA-xvch-5gv4-984h"
+    }
+  },
+  {
+    "id": "RWB-03",
+    "dir": "rwb-03-fast-xml-parser-method",
+    "package": "fast-xml-parser",
+    "version": "5.3.3",
+    "vulnerability": "GHSA-37qj-frw5-hhjh",
+    "aliases": ["CVE-2026-25128"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-37qj-frw5-hhjh",
+    "vulnerableTarget": "fast-xml-parser#XMLParser.parse (instance method)",
+    "description": "Real-world benchmark RWB-03 (METHOD): parseFeed() constructs a real XMLParser instance with htmlEntities:true and calls its vulnerable .parse() method on caller-supplied XML text.",
+    "expected": "AFFECTED",
+    "knownFailure": true,
+    "reason": "parseFeed() unconditionally constructs `new XMLParser({processEntities:true, htmlEntities:true})` and calls `.parse(xmlText)` on it -- the exact option shape the advisory's own PoC uses. Live-reproduced against the real installed package before this oracle was written (RangeError: Invalid code point 9999999). A human analyst reading this file has no ambiguity: this is a real, reachable call to the vulnerable instance method. Currently returns UNKNOWN instead -- a known, tracked gap, not a fabricated oracle. See FINDINGS.md RWF-006 (webpack-bundled getter-defined class exports aren't recognized as constructible/method-bearing).",
+    "findingSelector": {
+      "package": "fast-xml-parser",
+      "version": "5.3.3",
+      "vulnerability": "GHSA-37qj-frw5-hhjh"
+    }
+  },
+  {
+    "id": "RWB-04",
+    "dir": "rwb-04-url-parse-constructor",
+    "package": "url-parse",
+    "version": "1.4.4",
+    "vulnerability": "GHSA-8v38-pw62-9cw2",
+    "aliases": ["CVE-2022-0639"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-8v38-pw62-9cw2",
+    "vulnerableTarget": "url-parse#default (the Url constructor)",
+    "description": "Real-world benchmark RWB-04 (CONSTRUCTOR): isAllowedWebhook() constructs a real Url directly from caller-supplied input; the entire vulnerable parse logic runs inside the constructor body itself.",
+    "expected": "AFFECTED",
+    "knownFailure": false,
+    "reason": "isAllowedWebhook() calls `new Url(rawUrl)` directly and unconditionally. The Url constructor (index.js line 162) runs the full rule-based parse -- including the @-handling rule the advisory names -- synchronously as part of construction; no separate .parse() call exists or is needed. A human analyst reading this file has no ambiguity: this is a real, reachable construction of the vulnerable class.",
+    "findingSelector": {
+      "package": "url-parse",
+      "version": "1.4.4",
+      "vulnerability": "GHSA-8v38-pw62-9cw2"
+    }
+  },
+  {
+    "id": "RWB-05",
+    "dir": "rwb-05-qs-unused-api",
+    "package": "qs",
+    "version": "6.10.1",
+    "vulnerability": "GHSA-hrpp-h998-j3pp",
+    "aliases": ["CVE-2022-24999"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-hrpp-h998-j3pp",
+    "vulnerableTarget": "qs#parse",
+    "description": "Real-world benchmark RWB-05 (UNUSED_API): the application imports qs and calls only the unrelated, unaffected qs.stringify() export -- the vulnerable qs.parse() export is never referenced.",
+    "expected": "NOT_AFFECTED",
+    "knownFailure": true,
+    "reason": "toQueryString() calls qs.stringify(filters) only. qs.parse (the export GHSA-hrpp-h998-j3pp/CVE-2022-24999 names as vulnerable) is never imported or called anywhere in this application's source -- confirmed by reading the real installed lib/index.js, which exports parse and stringify as two independent named exports of the same module. A human analyst reading this file has no ambiguity: this vulnerable export is never reached. Currently returns UNKNOWN instead, and even the SAFE call (qs.stringify) fails to resolve -- see FINDINGS.md RWF-004 (module.exports referencing values imported from sibling files isn't chased).",
+    "findingSelector": {
+      "package": "qs",
+      "version": "6.10.1",
+      "vulnerability": "GHSA-hrpp-h998-j3pp"
+    }
+  },
+  {
+    "id": "RWB-06",
+    "dir": "rwb-06-node-forge-unreached",
+    "package": "node-forge",
+    "version": "1.3.3",
+    "vulnerability": "GHSA-2328-f5f3-gj25",
+    "aliases": ["CVE-2026-33896"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-2328-f5f3-gj25",
+    "vulnerableTarget": "node-forge#pki.verifyCertificateChain",
+    "description": "Real-world benchmark RWB-06 (UNREACHED_DEPENDENCY): node-forge is a real, installed direct dependency but is never require()'d anywhere in this application's source.",
+    "expected": "NOT_AFFECTED",
+    "knownFailure": true,
+    "reason": "src/index.js implements unrelated header-formatting logic with zero require('node-forge') or import from 'node-forge' anywhere in src/. node-forge is genuinely installed (real package.json dependency, real node_modules/node-forge/) but there is no import edge into it at all from the configured entrypoint. A human analyst reading this project has no ambiguity: this dependency is never touched. Currently returns UNKNOWN instead of NOT_AFFECTED, but not because of node-forge itself -- see FINDINGS.md RWF-002: an isolation test proved a single unrelated built-in-method call elsewhere in the same entrypoint file (String.prototype.trim(), nothing to do with node-forge) poisons the entire reachability search to UNKNOWN; removing it alone (leaving node-forge equally unimported) fixes this case to the expected NOT_AFFECTED.",
+    "findingSelector": {
+      "package": "node-forge",
+      "version": "1.3.3",
+      "vulnerability": "GHSA-2328-f5f3-gj25"
+    }
+  },
+  {
+    "id": "RWB-07",
+    "dir": "rwb-07-ini-entrypoint-unreached",
+    "package": "ini",
+    "version": "1.3.5",
+    "vulnerability": "GHSA-qqgx-2p2h-9c37",
+    "aliases": ["CVE-2020-7788"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-qqgx-2p2h-9c37",
+    "vulnerableTarget": "ini#parse",
+    "description": "Real-world benchmark RWB-07 (entrypoint-unreached): ini.parse() is genuinely called in this source, but only from a function never reached by the configured {file, symbol} entrypoint.",
+    "expected": "NOT_AFFECTED",
+    "knownFailure": false,
+    "reason": "loadLegacyIniConfig() has a real, live, unconditional call to ini.parse() -- a naive grep for 'calls the vulnerable function' would wrongly flag it. But the configured entrypoint is {file: src/config.js, symbol: loadModernConfig}; loadLegacyIniConfig is not itself an entrypoint source, is never called by loadModernConfig, and is never called by anything else in this file. A human analyst reading this file, informed of the actual entrypoint, concludes with confidence this code path is not reachable from the application's real usage.",
+    "findingSelector": {
+      "package": "ini",
+      "version": "1.3.5",
+      "vulnerability": "GHSA-qqgx-2p2h-9c37"
+    }
+  },
+  {
+    "id": "RWB-08",
+    "dir": "rwb-08-debug-ms-nested",
+    "package": "ms",
+    "version": "0.6.2",
+    "vulnerability": "GHSA-3fx5-fwvr-xrjg",
+    "aliases": ["CVE-2015-8315"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-3fx5-fwvr-xrjg",
+    "vulnerableTarget": "ms#default (reached via debug's own re-export, debug.humanize)",
+    "description": "Real-world benchmark RWB-08 (nested/transitive dependency instance): ms is never a direct dependency of this application -- it is pulled in transitively by debug, and reached only via debug's own re-export (debug.humanize = require('ms')).",
+    "expected": "AFFECTED",
+    "knownFailure": true,
+    "reason": "parseWindow() calls debug.humanize(userSuppliedDuration) directly and unconditionally. Confirmed by reading the real installed debug@2.0.0's debug.js line 14 (`exports.humanize = require('ms')`) and the real resolved node_modules/ms/package.json (version 0.6.2, within GHSA-3fx5-fwvr-xrjg/CVE-2015-8315's vulnerable range). A human analyst reading both files together has no ambiguity: debug.humanize IS ms's own vulnerable function, reached through a real cross-package re-export, not a coincidence of naming. Currently returns UNKNOWN instead -- a known, tracked gap. See FINDINGS.md RWF-004 (cross-package re-export chasing).",
+    "findingSelector": {
+      "package": "ms",
+      "version": "0.6.2",
+      "vulnerability": "GHSA-3fx5-fwvr-xrjg"
+    }
+  },
+  {
+    "id": "RWB-09a",
+    "dir": "rwb-09-semver-multi-instance",
+    "package": "semver",
+    "version": "7.5.1",
+    "vulnerability": "GHSA-c2qf-rxjj-qqgw",
+    "aliases": ["CVE-2022-25883"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-c2qf-rxjj-qqgw",
+    "vulnerableTarget": "semver#Range",
+    "description": "Real-world benchmark RWB-09a (MULTI_INSTANCE, vulnerable instance): the vulnerable semver@7.5.1 instance, installed under the npm-aliased dependency name semver-vulnerable, reached via isLegacyCompatible().",
+    "expected": "AFFECTED",
+    "knownFailure": true,
+    "reason": "isLegacyCompatible() calls `new legacySemver.Range(userRange)` directly, where legacySemver is `require('semver-vulnerable')` -- a real npm-aliased install of the real semver@7.5.1 (confirmed: node_modules/semver-vulnerable/package.json declares \"name\": \"semver\", \"version\": \"7.5.1\", within GHSA-c2qf-rxjj-qqgw/CVE-2022-25883's vulnerable range 7.0.0-<7.5.2). A human analyst reading this file and the real package-lock.json has no ambiguity: this specific installed instance is reached. Currently returns UNKNOWN instead -- a known, tracked gap. See FINDINGS.md RWF-004 (Range is exported via `require('./classes/range')` inline in an object literal, a cross-file re-export not chased).",
+    "findingSelector": {
+      "package": "semver",
+      "version": "7.5.1",
+      "vulnerability": "GHSA-c2qf-rxjj-qqgw"
+    }
+  },
+  {
+    "id": "RWB-09b",
+    "dir": "rwb-09-semver-multi-instance",
+    "package": "semver",
+    "version": "7.5.2",
+    "vulnerability": "GHSA-c2qf-rxjj-qqgw",
+    "aliases": ["CVE-2022-25883"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-c2qf-rxjj-qqgw",
+    "vulnerableTarget": "semver#Range",
+    "description": "Real-world benchmark RWB-09b (MULTI_INSTANCE, patched instance): the patched semver@7.5.2 instance, the application's plain direct dependency, reached via isCompatible().",
+    "expected": "NOT_AFFECTED",
+    "knownFailure": true,
+    "reason": "isCompatible() calls `new semver.Range(userRange)`, where semver is `require('semver')` -- the real, patched semver@7.5.2 (>=7.5.2, outside GHSA-c2qf-rxjj-qqgw/CVE-2022-25883's vulnerable range). Same class, same rule, same file as RWB-09a -- the only difference is which real installed instance is reached from which entrypoint function. A human analyst reading this file and the real package-lock.json has no ambiguity: this specific installed instance is patched. IMPORTANT -- this is a BENCHMARK DESIGN ISSUE, not a VulnTrace defect: the actual scan result is NO_FINDING (no findings entry at all for this instance), not an explicit NOT_AFFECTED verdict, because VulnTrace's buildFinding() correctly omits any finding when matchResult is confidently \"not_affected\" by version alone (verdict.ts's documented behavior). This case's expected value should arguably represent \"no finding\" rather than a verdict string; left unchanged here per instructions not to silently alter the oracle -- see FINDINGS.md's note on RWB-09b.",
+    "findingSelector": {
+      "package": "semver",
+      "version": "7.5.2",
+      "vulnerability": "GHSA-c2qf-rxjj-qqgw"
+    }
+  },
+  {
+    "id": "RWB-10",
+    "dir": "rwb-10-handlebars-dynamic-dispatch",
+    "package": "handlebars",
+    "version": "4.7.6",
+    "vulnerability": "GHSA-f2jv-r9rf-7988",
+    "aliases": ["CVE-2021-23369"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-f2jv-r9rf-7988",
+    "vulnerableTarget": "handlebars#compile",
+    "description": "Real-world benchmark RWB-10 (UNKNOWN via unresolvable dynamic dispatch): Handlebars.compile is reachable only through a computed property lookup on a registry object, keyed by a runtime config value VulnTrace cannot statically evaluate.",
+    "expected": "UNKNOWN",
+    "knownFailure": false,
+    "reason": "renderTemplate() looks up `engines[engineName]` where engines = {hbs: Handlebars.compile, upper: upperCompile} (two real, distinct functions) and engineName is read from config.json at runtime (which, in this fixture, is actually \"hbs\" -- the vulnerable branch is genuinely taken). A human analyst cannot determine from static source alone which branch executes without evaluating the runtime config; per AGENTS.md, an unresolved dynamic-dispatch target must fall back to UNKNOWN, never NOT_AFFECTED (that would be the exact false-negative this benchmark treats as a critical security failure) and never a guessed AFFECTED either.",
+    "findingSelector": {
+      "package": "handlebars",
+      "version": "4.7.6",
+      "vulnerability": "GHSA-f2jv-r9rf-7988"
+    }
   }
 ]

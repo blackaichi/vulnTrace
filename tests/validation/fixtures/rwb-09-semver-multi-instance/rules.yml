@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-c2qf-rxjj-qqgw
+    package:
+      name: semver
+    targets:
+      - module: semver
+        export: Range
+        kind: constructor
+        confidence: 1.0

@@ -1,0 +1,6 @@
+analysis:
+  entrypoints:
+    - src/version-check.js
+rules:
+  files:
+    - rules.yml

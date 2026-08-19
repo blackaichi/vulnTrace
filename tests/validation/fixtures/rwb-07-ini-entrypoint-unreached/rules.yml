@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-qqgx-2p2h-9c37
+    package:
+      name: ini
+    targets:
+      - module: ini
+        export: parse
+        kind: function
+        confidence: 1.0
