@@ -1,0 +1,10 @@
+{
+  "name": "rwb-11-url-parse-nested-multi-instance",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-11 real-world benchmark fixture (VT-303): a genuine nested multi-instance case for url-parse (GHSA-8v38-pw62-9cw2 / CVE-2022-0639, vulnerable range >=1.0.0 <1.5.7) with NO npm aliasing anywhere. Two distinct, real, unmodified published url-parse instances: a top-level url-parse@1.4.4 (vulnerable, never required by anything reachable from the entrypoint) and a nested node_modules/consumer/node_modules/url-parse@1.4.7 (vulnerable, genuinely reached via consumer.parseNested()). \"consumer\" is a small, fixture-authored wrapper package (honestly labeled as such in its own package.json, NOT a real published npm package) that exists only to force the nested install -- both url-parse copies are the real, unmodified npm-published package content (npm pack url-parse@1.4.4 / url-parse@1.4.7). The rule target (module.exports = Url, a whole-module default export) is the same shape already proven to resolve cleanly and precisely in RWB-04, deliberately chosen so the ONLY mechanism under test here is package-instance discrimination, not export attribution.",
+  "dependencies": {
+    "consumer": "1.0.0",
+    "url-parse": "1.4.4"
+  }
+}

@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-2328-f5f3-gj25
+    package:
+      name: node-forge
+    targets:
+      - module: node-forge
+        export: pki
+        kind: module
+        confidence: 1.0

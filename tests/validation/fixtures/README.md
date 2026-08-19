@@ -36,6 +36,19 @@ vulnerable symbol.
 - `rwb-06-node-forge-unreached/` — real `node-forge@1.3.3`
   (GHSA-2328-f5f3-gj25 / CVE-2026-33896), installed but never imported
   anywhere in the fixture's source. RWB-06, UNREACHED_DEPENDENCY.
+  **Confounded/precision-stress case (VT-303)**: the entrypoint also
+  contains an incidental `token.trim()` call, an unrelated
+  `unsupported_construct` that drives the actual result to UNKNOWN
+  instead of the intended NOT_AFFECTED (RWF-002). Kept unchanged
+  deliberately, as the RWF-002 exhibit — see `rwb-06a-...` below for the
+  isolated control.
+- `rwb-06a-node-forge-unreached-clean/` (VT-303) — identical thesis to
+  `rwb-06-node-forge-unreached/` (same package, same version, same
+  advisory), but with zero other unresolved/dynamic constructs anywhere
+  in the entrypoint's reachable subgraph (plain string concatenation
+  instead of `token.trim()`). Verified directly: 2 graph nodes, 0 edges,
+  node-forge never discovered in the graph at all. **Clean single-cause
+  UNREACHED_DEPENDENCY control — currently passes.** RWB-06A.
 - `rwb-07-ini-entrypoint-unreached/` — real `ini@1.3.5`
   (GHSA-qqgx-2p2h-9c37 / CVE-2020-7788); `ini.parse()` is genuinely called,
   but only from a function unreachable from the configured `{file, symbol}`
@@ -47,6 +60,32 @@ vulnerable symbol.
   `semver@7.5.1` (npm-aliased as `semver-vulnerable`) coexisting
   (GHSA-c2qf-rxjj-qqgw / CVE-2022-25883). RWB-09a (vulnerable instance,
   AFFECTED) + RWB-09b (patched instance, NOT_AFFECTED), MULTI_INSTANCE.
+  **Reclassified (VT-303): ALIASED_INSTALL / package identity under npm
+  aliasing.** Its own failures (RWB-09a: NOT_AFFECTED instead of AFFECTED;
+  RWB-09b: NO_FINDING vs. NOT_AFFECTED) are attributed to RWF-009
+  (`identifyModule` derives identity from the install-directory alias
+  name, not the package's own declared `name`) and RWF-004 (`Range`'s
+  cross-file re-export), plus RWB-09b's own pre-existing benchmark-design
+  limitation — see `FINDINGS.md`/`docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md`.
+  Kept unchanged and unfixed deliberately, as the dedicated npm-alias
+  stress case. See `rwb-11-...` below for a genuine multi-instance case
+  with no aliasing at all.
+- `rwb-11-url-parse-nested-multi-instance/` (VT-303) — real
+  `url-parse@1.4.7` nested under a small, fixture-authored wrapper package
+  (`node_modules/consumer/node_modules/url-parse`, honestly labeled as
+  fixture-only in its own `package.json` — NOT a real published npm
+  package) and real `url-parse@1.4.4` at the top level
+  (GHSA-8v38-pw62-9cw2 / CVE-2022-0639, vulnerable range `>=1.0.0
+  <1.5.7`). Both `url-parse` copies are the real, unmodified,
+  npm-published package content (`npm pack url-parse@1.4.4` /
+  `url-parse@1.4.7`) — **no npm alias anywhere**, a plain nested install
+  exactly like npm itself produces for a transitive dependency needing a
+  version its consumers don't share. RWB-11a (nested instance, reached via
+  `consumer.parseNested()`, AFFECTED) + RWB-11b (top-level instance, never
+  imported by anything reachable, NOT_AFFECTED). Both instances are
+  deliberately vulnerable versions (not one patched) so the case tests
+  pure instance discrimination without also depending on version-range
+  matching. **Both currently pass.**
 - `rwb-10-handlebars-dynamic-dispatch/` — real `handlebars@4.7.6`
   (GHSA-f2jv-r9rf-7988 / CVE-2021-23369), `Handlebars.compile` reachable
   only through a computed property lookup keyed by a runtime config value.

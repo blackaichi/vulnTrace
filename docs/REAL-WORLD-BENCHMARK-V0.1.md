@@ -834,3 +834,30 @@ dispatch.
   (the same discipline `docs/VALIDATION-STRATEGY.md § 7` already requires
   via the proposed `advisoryFetchedAt` field) is recommended for all 10
   cases, not only the two flagged above as newest.
+
+## 9. Implementation status update (VT-303)
+
+The independent audit of the implemented benchmark
+(`docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md`) found that `RWB-06` and
+`RWB-09` — as implemented from this design — each ended up testing more
+than one independent mechanism at once (see `tests/validation/FINDINGS.md`
+§ "Benchmark methodology note — VT-303 cause-splitting" for the full
+before/after breakdown). VT-303 added single-cause sibling cases for
+both, leaving every original case and expected verdict in this document
+unchanged:
+
+- **`RWB-06A`** (new) — a clean sibling of § "RWB-06 — `node-forge`
+  (UNREACHED_DEPENDENCY)" above, isolating that thesis from the
+  incidental `token.trim()` construct that turned out to confound it
+  (RWF-002). Currently passes.
+- **`RWB-11a`/`RWB-11b`** (new) — the genuine, non-aliased nested
+  multi-instance case § 8's "RWB-09's realism" note above already
+  anticipated might be needed: real `url-parse@1.4.7` (nested under a
+  small, honestly-labeled, fixture-authored wrapper package) and real
+  `url-parse@1.4.4` (top-level), with **no npm aliasing** — the exact gap
+  that note flagged for `semver` at design time. `RWB-09` itself is
+  unchanged and now reclassified as the dedicated **ALIASED_INSTALL**
+  stress case (its own failures remain attributed to RWF-009/RWF-004,
+  neither fixed here). Both new cases currently pass.
+
+The benchmark remains v0.1 in scope: no new CVEs were added by VT-303.
