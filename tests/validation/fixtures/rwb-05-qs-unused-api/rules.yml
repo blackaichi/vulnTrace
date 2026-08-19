@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-hrpp-h998-j3pp
+    package:
+      name: qs
+    targets:
+      - module: qs
+        export: parse
+        kind: function
+        confidence: 1.0

@@ -1,0 +1,6 @@
+analysis:
+  entrypoints:
+    - src/rate-limit.js
+rules:
+  files:
+    - rules.yml

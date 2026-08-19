@@ -1,0 +1,7 @@
+analysis:
+  entrypoints:
+    - file: src/config.js
+      symbol: loadModernConfig
+rules:
+  files:
+    - rules.yml

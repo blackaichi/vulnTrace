@@ -1,0 +1,9 @@
+{
+  "name": "rwb-01-trim-newlines-direct",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-01 real-world benchmark fixture: direct call to trim-newlines's vulnerable .end() export.",
+  "dependencies": {
+    "trim-newlines": "3.0.0"
+  }
+}

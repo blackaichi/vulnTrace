@@ -1,0 +1,9 @@
+{
+  "name": "rwb-10-handlebars-dynamic-dispatch",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-10 real-world benchmark fixture: Handlebars.compile is reachable only through a computed property lookup keyed by a runtime config value.",
+  "dependencies": {
+    "handlebars": "4.7.6"
+  }
+}

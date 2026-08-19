@@ -1,0 +1,9 @@
+{
+  "name": "rwb-06-node-forge-unreached",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-06 real-world benchmark fixture: node-forge is a real, installed dependency but is never imported anywhere in this application's source.",
+  "dependencies": {
+    "node-forge": "1.3.3"
+  }
+}

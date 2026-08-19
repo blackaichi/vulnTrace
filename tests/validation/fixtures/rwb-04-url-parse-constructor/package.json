@@ -1,0 +1,9 @@
+{
+  "name": "rwb-04-url-parse-constructor",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-04 real-world benchmark fixture: url-parse's Url constructor reached directly on caller-supplied input.",
+  "dependencies": {
+    "url-parse": "1.4.4"
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "name": "rwb-03-fast-xml-parser-method",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-03 real-world benchmark fixture: XMLParser instance method call reaching the vulnerable numeric-entity handling.",
+  "dependencies": {
+    "fast-xml-parser": "5.3.3"
+  }
+}

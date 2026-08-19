@@ -1,0 +1,6 @@
+analysis:
+  entrypoints:
+    - src/template-engine.js
+rules:
+  files:
+    - rules.yml

@@ -1,0 +1,9 @@
+{
+  "name": "rwb-02-minimist-wrapper",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-02 real-world benchmark fixture: minimist's default export reached through an app-authored CLI args wrapper.",
+  "dependencies": {
+    "minimist": "1.2.5"
+  }
+}

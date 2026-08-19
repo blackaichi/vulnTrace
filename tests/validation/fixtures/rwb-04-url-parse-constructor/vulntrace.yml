@@ -1,0 +1,7 @@
+analysis:
+  entrypoints:
+    - file: src/webhook-validator.js
+      symbol: isAllowedWebhook
+rules:
+  files:
+    - rules.yml

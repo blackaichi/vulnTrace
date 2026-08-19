@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-xvch-5gv4-984h
+    package:
+      name: minimist
+    targets:
+      - module: minimist
+        export: default
+        kind: function
+        confidence: 1.0

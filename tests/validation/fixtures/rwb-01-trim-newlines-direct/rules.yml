@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-7p7h-4mm5-852v
+    package:
+      name: trim-newlines
+    targets:
+      - module: trim-newlines
+        export: end
+        kind: function
+        confidence: 1.0
