@@ -1,7 +1,15 @@
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  cpSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { runScanCommand } from "../../src/cli/scan.js";
 import { validateScanOutput } from "../../src/cli/output.js";
 
@@ -30,6 +38,25 @@ import { validateScanOutput } from "../../src/cli/output.js";
  * the OSV query itself is live). Not part of `npm test`/CI's default gate
  * (see vitest.validation.config.ts) -- and, while it has known failures,
  * deliberately not added to CI at all yet (see package.json/CI history).
+ *
+ * VT-302 (RWF-010, docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 9.3/R-9b):
+ * each case's fixture is copied to a fresh OS-temp directory (see
+ * `copyFixtureToTempDir` below) before scanning, rather than scanned in
+ * place under `tests/validation/fixtures/`. A fixture scanned in place
+ * inherits VulnTrace's OWN repository as an ancestor directory --
+ * `ts.resolveModuleName`'s Node-style upward `node_modules` walk is not
+ * bounded by the fixture (or even the scanned project) root, so a bare
+ * specifier the fixture's own `node_modules` doesn't satisfy (e.g. no
+ * `@types/<pkg>` shadow) can silently resolve into VulnTrace's own
+ * `node_modules` instead (confirmed reproducible: RWB-09's `semver`
+ * specifier landed on this repo's own `node_modules/@types/semver`, a
+ * VulnTrace devDependency wholly unrelated to the fixture). Running from
+ * a temp directory whose own ancestor chain has no `node_modules` at all
+ * makes that walk-up terminate at the fixture's own vendored tree (or
+ * fail outright) instead -- see `docs/VALIDATION-STRATEGY.md` and
+ * `tests/validation/hermeticity.test.ts` for the permanent regression
+ * coverage. Deliberately a benchmark-level fix, not an analyzer resolver
+ * change (see the audit's R-9a, explicitly out of scope here).
  */
 
 interface ValidationCase {
@@ -85,16 +112,54 @@ function fakeIo() {
   };
 }
 
+/**
+ * Copies `fixtureDir` into a fresh directory under the OS temp root (VT-302;
+ * see this file's own header comment / RWF-010). `mkdtempSync` guarantees a
+ * unique, race-free directory per call, so concurrent/repeated test runs
+ * never collide. `cpSync`'s default `dereference: false` preserves symlinks
+ * as symlinks rather than resolving them (some fixtures' vendored
+ * `node_modules/.bin/` contains real npm-style symlinks) -- the copy is
+ * byte-for-byte structurally identical to the source, including
+ * `package.json`/`package-lock.json`/`vulntrace.yml`/`rules.yml` and every
+ * vendored `node_modules` entry, just rooted somewhere with no `node_modules`
+ * of its own anywhere in its ancestor chain.
+ */
+function copyFixtureToTempDir(fixtureDir: string, caseId: string): string {
+  const dest = mkdtempSync(
+    path.join(tmpdir(), `vulntrace-validation-${caseId}-`),
+  );
+  cpSync(fixtureDir, dest, { recursive: true, dereference: false });
+  return dest;
+}
+
 const results: CaseResult[] = [];
+const tempDirsToClean: string[] = [];
+
+afterEach(() => {
+  // Deterministic cleanup regardless of pass/fail (afterEach always runs) --
+  // never leaves a case's temp copy behind, and never accumulates across
+  // cases within one run.
+  while (tempDirsToClean.length > 0) {
+    const dir = tempDirsToClean.pop();
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
 
 describe("VulnTrace real-world CVE validation suite", () => {
   for (const testCase of cases) {
     it(`${testCase.id} ${testCase.description}`, async () => {
-      const fixtureDir = path.join(FIXTURES_ROOT, testCase.dir);
+      const sourceFixtureDir = path.join(FIXTURES_ROOT, testCase.dir);
+      const fixtureDir = copyFixtureToTempDir(sourceFixtureDir, testCase.id);
+      tempDirsToClean.push(fixtureDir);
       const { io, stdout, stderr } = fakeIo();
 
       // provider intentionally omitted -- runScanCommand defaults to a
-      // real OsvProvider, so this hits the live OSV API.
+      // real OsvProvider, so this hits the live OSV API. projectPathArg/
+      // configPathOverride both point at the TEMP copy (VT-302), never the
+      // original fixture under tests/validation/fixtures/ -- see this
+      // file's header comment for why scanning in place is unsafe.
       const exitCode = await runScanCommand({
         projectPathArg: fixtureDir,
         configPathOverride: path.join(fixtureDir, "vulntrace.yml"),
