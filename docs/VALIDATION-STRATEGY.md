@@ -137,6 +137,21 @@ theoretically shift if the advisory's own OSV record is edited after the
 fact. This risk is accepted, not yet mitigated; see the proposed
 `advisoryFetchedAt` field below.
 
+A vendored `node_modules/` alone is not sufficient for reproducibility,
+because dependency resolution can still walk *up* past the fixture into
+whatever the fixture happens to be nested inside (see VT-302,
+docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 9.3's RWF-010: RWB-09's `semver`
+specifier resolved into VulnTrace's own repository `node_modules` — a
+devDependency of the analyzer itself, not the fixture — purely because the
+fixture happened to be scanned in place under `tests/validation/fixtures/`,
+an ancestor of which is VulnTrace's own `node_modules`). Since VT-302, every
+case is scanned from a fresh copy in a temp directory outside the repository
+tree (`copyFixtureToTempDir` in `validation.test.ts`) specifically so a
+case's result can never depend on what VulnTrace itself has installed, nor
+on where the fixture happens to sit in the analyzer's own directory
+structure. See `tests/validation/hermeticity.test.ts` for the permanent
+regression coverage.
+
 ### Proposed case metadata fields (not yet implemented)
 
 The three current cases (`VAL-001`..`VAL-003`) do not yet need these, but a
