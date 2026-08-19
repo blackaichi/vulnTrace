@@ -3,11 +3,39 @@ import ts from "typescript";
 import type { GraphNodeKind, SourceLocation } from "../domain/graph.js";
 import { SourceFileNotFoundError } from "./source-index-errors.js";
 
+/**
+ * Structural class-membership provenance for a {@link IndexedFunction}
+ * that is a method or constructor (see VT-301A;
+ * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md RWF-011/R-6). `className` is the
+ * enclosing class's own identity — its declared name
+ * (`class Lib { ... }`), or, for an anonymous class expression, the same
+ * assigned-name inference {@link inferAssignedName} already uses for
+ * implicit constructors (`module.exports = class { ... }`,
+ * `const Lib = class { ... }`) — never derived from the member's own name,
+ * which is exactly the coincidence RWF-011 identified as unsafe.
+ *
+ * This is real AST parent-child structure, not an inference: a
+ * `MethodDeclaration`/`ConstructorDeclaration` can only ever appear as a
+ * direct child of a `ClassDeclaration`/`ClassExpression`'s body, so
+ * deriving `memberOf` from `node.parent` is exact, not heuristic.
+ */
+export interface ClassMemberOwnership {
+  readonly className: string;
+  readonly isStatic: boolean;
+}
+
 export interface IndexedFunction {
   readonly kind: GraphNodeKind;
   readonly name?: string;
   readonly isAsync: boolean;
   readonly location: SourceLocation;
+  /**
+   * Set only for a method or constructor whose enclosing class could be
+   * identified (see {@link ClassMemberOwnership}); `undefined` for every
+   * other function-like construct (a plain function, a callback, a method
+   * on a plain object literal — `{ foo() {} }` is not a class member).
+   */
+  readonly memberOf?: ClassMemberOwnership;
 }
 
 export type ImportBindingKind =
@@ -190,16 +218,68 @@ function classHasOwnConstructor(
  * Named the same way an explicit constructor already is (see
  * {@link inferAssignedName}): the enclosing class's own name.
  */
+/**
+ * Builds a {@link ClassMemberOwnership}, or `undefined` when the enclosing
+ * class has no derivable identity at all (e.g. a fully anonymous class
+ * expression with no name and no assignment target — genuinely
+ * unattributable, not a bug in this derivation).
+ */
+function classMemberOwnership(
+  className: string | undefined,
+  isStatic: boolean,
+): ClassMemberOwnership | undefined {
+  return className ? { className, isStatic } : undefined;
+}
+
 function extractImplicitConstructor(
   sourceFile: ts.SourceFile,
   node: ts.ClassDeclaration | ts.ClassExpression,
 ): IndexedFunction {
+  const name = node.name ? node.name.text : inferAssignedName(node);
   return {
     kind: "constructor",
-    name: node.name ? node.name.text : inferAssignedName(node),
+    name,
     isAsync: false,
     location: toSourceLocation(sourceFile, node.name ?? node),
+    // An implicit constructor is itself the class's own member (VT-301A):
+    // recorded the same way an explicit constructor below is, for
+    // consistency, even though canonical-export attribution
+    // (mapExportsToFunctions) already resolves constructor targets via
+    // the class's own name directly and does not need this field.
+    memberOf: classMemberOwnership(name, false),
   };
+}
+
+/**
+ * A `MethodDeclaration`/`ConstructorDeclaration` can only ever appear as a
+ * direct child of a `ClassDeclaration`/`ClassExpression`'s body — real AST
+ * structure, not an inference (VT-301A). Returns `undefined` for every
+ * other function-like construct (plain functions, callbacks, methods on a
+ * plain object literal), which are not class members at all.
+ */
+function classMembershipOf(
+  node:
+    | ts.FunctionDeclaration
+    | ts.MethodDeclaration
+    | ts.ConstructorDeclaration
+    | ts.FunctionExpression
+    | ts.ArrowFunction,
+): ClassMemberOwnership | undefined {
+  if (!ts.isMethodDeclaration(node) && !ts.isConstructorDeclaration(node)) {
+    return undefined;
+  }
+  const parent = node.parent as ts.Node | undefined;
+  if (
+    !parent ||
+    (!ts.isClassDeclaration(parent) && !ts.isClassExpression(parent))
+  ) {
+    return undefined;
+  }
+  const className = parent.name ? parent.name.text : inferAssignedName(parent);
+  const isStatic =
+    ts.isMethodDeclaration(node) &&
+    hasModifier(node, ts.SyntaxKind.StaticKeyword);
+  return classMemberOwnership(className, isStatic);
 }
 
 function extractFunction(
@@ -230,6 +310,7 @@ function extractFunction(
     name,
     isAsync: isAsyncFunction(node),
     location: toSourceLocation(sourceFile, node),
+    memberOf: classMembershipOf(node),
   };
 }
 

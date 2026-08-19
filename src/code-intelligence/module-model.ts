@@ -407,3 +407,70 @@ export function mapExportsToFunctions(
 
   return result;
 }
+
+/**
+ * Structurally attributes a rule target's `export` name to every
+ * class-member declaration (method or constructor) reachable through a
+ * REAL, module-level export binding that names a class (VT-301A; see
+ * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 7.3/§ 10's RWF-011/R-6
+ * provenance requirement).
+ *
+ * The chain is exact, never a same-file name search:
+ *
+ * ```text
+ * export binding (canonical name -> local class name)
+ *   -> that class's own IndexedFunction (mapExportsToFunctions,
+ *      kind === "constructor" -- constructors are always named after
+ *      their enclosing class, see source-index.ts)
+ *   -> every OTHER IndexedFunction in the same file whose
+ *      memberOf.className equals that class's own name AND whose own
+ *      name equals memberName
+ * ```
+ *
+ * A method/constructor belonging to a class the module does not itself
+ * export is never a candidate here, no matter how uniquely its bare name
+ * matches `memberName` elsewhere in the file — this is exactly the
+ * coincidence RWF-011 identified as unsafe for a same-file bare-name
+ * search to rely on.
+ *
+ * When more than one exported class legitimately declares a member named
+ * `memberName` (e.g. two exported classes both happen to have a `parse()`
+ * method), every one of them is a structurally valid candidate: this
+ * returns ALL of them rather than arbitrarily picking one. It is the
+ * caller's (`findExportNodeInFile`'s) job to turn each into a graph node,
+ * and `resolveTargetNodes`/`checkReachability`'s existing
+ * OR-across-candidate-nodes aggregation that already backs
+ * multiple-`VulnerableSymbolTarget`/multiple-entrypoint reachability
+ * decides AFFECTED/NOT_AFFECTED/UNKNOWN from there — this function never
+ * narrows ambiguity down to one answer itself.
+ *
+ * Returns an empty array (not a guess) when the module exports no class
+ * at all, or when no exported class's own members include `memberName` —
+ * e.g. a webpack-bundled module whose export table
+ * (`mapExportsToFunctions`) has no attributable class entry at all (see
+ * RWF-006/RWB-03: this deliberately does not fall back to treating every
+ * class in the file as if it were exported).
+ */
+export function findExportedClassMembers(
+  index: SourceIndex,
+  model: ModuleModel,
+  memberName: string,
+): readonly IndexedFunction[] {
+  const exportedClassNames = new Set<string>();
+  for (const fn of mapExportsToFunctions(index, model).values()) {
+    if (fn.kind === "constructor" && fn.name !== undefined) {
+      exportedClassNames.add(fn.name);
+    }
+  }
+
+  if (exportedClassNames.size === 0) {
+    return [];
+  }
+
+  return index.functions.filter(
+    (fn) =>
+      fn.name === memberName &&
+      fn.memberOf !== undefined &&
+      exportedClassNames.has(fn.memberOf.className),
+  );
+}
