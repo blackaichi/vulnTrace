@@ -264,5 +264,62 @@
       "version": "4.7.6",
       "vulnerability": "GHSA-f2jv-r9rf-7988"
     }
+  },
+  {
+    "id": "RWB-06A",
+    "dir": "rwb-06a-node-forge-unreached-clean",
+    "package": "node-forge",
+    "version": "1.3.3",
+    "vulnerability": "GHSA-2328-f5f3-gj25",
+    "aliases": ["CVE-2026-33896"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-2328-f5f3-gj25",
+    "vulnerableTarget": "node-forge#pki.verifyCertificateChain",
+    "description": "Real-world benchmark RWB-06A (VT-303: clean UNREACHED_DEPENDENCY control, sibling of RWB-06): node-forge is a real, installed direct dependency but is never require()'d anywhere in this application's source, and the entrypoint contains no other unresolved or dynamic construct at all.",
+    "expected": "NOT_AFFECTED",
+    "knownFailure": false,
+    "reason": "Same package, same version, same vulnerability, and the same UNREACHED_DEPENDENCY thesis as RWB-06 (kept unchanged as the RWF-002 confounded exhibit -- see its own entry and FINDINGS.md). The ONLY difference: this entrypoint's formatAuthHeader() uses plain string concatenation instead of RWB-06's token.trim() call, so the reachable call graph contains zero unresolved/dynamic constructs of any kind (verified directly: 2 graph nodes, 0 edges, 0 unknown edges, node-forge never discovered in the graph at all). A human analyst reading this file has no ambiguity: node-forge is genuinely installed and genuinely never touched. This case isolates UNREACHED_DEPENDENCY as the sole mechanism under test, independent of RWF-002's own separate contamination question -- and demonstrates directly that the analyzer already handles the isolated case correctly.",
+    "findingSelector": {
+      "package": "node-forge",
+      "version": "1.3.3",
+      "vulnerability": "GHSA-2328-f5f3-gj25"
+    }
+  },
+  {
+    "id": "RWB-11a",
+    "dir": "rwb-11-url-parse-nested-multi-instance",
+    "package": "url-parse",
+    "version": "1.4.7",
+    "vulnerability": "GHSA-8v38-pw62-9cw2",
+    "aliases": ["CVE-2022-0639"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-8v38-pw62-9cw2",
+    "vulnerableTarget": "url-parse#default (the Url constructor)",
+    "description": "Real-world benchmark RWB-11a (VT-303: genuine nested multi-instance, reached instance): two distinct, real, unaliased url-parse installs exist (nested 1.4.7 under a fixture-authored wrapper package, reached via consumer.parseNested(); top-level 1.4.4, never imported). Only the nested instance is reached.",
+    "expected": "AFFECTED",
+    "knownFailure": false,
+    "reason": "checkNestedUrl() calls consumer.parseNested(rawUrl), which requires(\"url-parse\") from inside node_modules/consumer -- Node's own nearest-node_modules resolution finds the NESTED node_modules/consumer/node_modules/url-parse@1.4.7 instance, never the fixture's own top-level url-parse@1.4.4. Unlike RWB-09 (which tests npm-ALIASED identity via a differently-NAMED install directory, semver-vulnerable), no aliasing is involved anywhere here: both instances are plain, differently-versioned, real published url-parse installs at different real paths, the exact shape npm itself produces for a transitive dependency needing a version its consumers don't share. Verified directly (hermetic execution): resolves to node_modules/consumer/node_modules/url-parse/index.js, packageId.name=\"url-parse\" correctly (no identity mismatch), evidence path src/index.js -> consumer/index.js -> url-parse/index.js:177 (the Url constructor) -- the same target shape RWB-04 already proves resolves cleanly, chosen deliberately so the only mechanism under test is package-instance discrimination, not export attribution.",
+    "findingSelector": {
+      "package": "url-parse",
+      "version": "1.4.7",
+      "vulnerability": "GHSA-8v38-pw62-9cw2"
+    }
+  },
+  {
+    "id": "RWB-11b",
+    "dir": "rwb-11-url-parse-nested-multi-instance",
+    "package": "url-parse",
+    "version": "1.4.4",
+    "vulnerability": "GHSA-8v38-pw62-9cw2",
+    "aliases": ["CVE-2022-0639"],
+    "advisoryUrl": "https://osv.dev/vulnerability/GHSA-8v38-pw62-9cw2",
+    "vulnerableTarget": "url-parse#default (the Url constructor)",
+    "description": "Real-world benchmark RWB-11b (VT-303: genuine nested multi-instance, unreached instance): same fixture as RWB-11a. The top-level url-parse@1.4.4 instance is a real, genuinely installed direct dependency, never imported by anything reachable from the entrypoint at all -- only the nested 1.4.7 instance (RWB-11a) is ever called.",
+    "expected": "NOT_AFFECTED",
+    "knownFailure": false,
+    "reason": "No source file in this fixture ever calls require(\"url-parse\") directly from a location reachable by the configured entrypoint -- only consumer's OWN internal require(\"url-parse\"), which resolves to the nested instance (RWB-11a), not this one. Deliberately BOTH instances are vulnerable versions (1.4.4 and 1.4.7, both within GHSA-8v38-pw62-9cw2's real >=1.0.0 <1.5.7 range) rather than one vulnerable and one patched -- this keeps the test isolated to instance discrimination alone (VT-212/VT-300's confirmedAbsentInstance mechanism) rather than also depending on version-range matching, and avoids RWB-09b's own known NO_FINDING oracle-design limitation entirely (see FINDINGS.md). Verified directly (hermetic execution): the top-level instance is never discovered by the call graph, and the analyzer correctly reports NOT_AFFECTED for it even though 44 unrelated unsupported_construct edges exist elsewhere in url-parse's own internal implementation (none of them closure-widening, so VT-300's guard correctly does not intervene).",
+    "findingSelector": {
+      "package": "url-parse",
+      "version": "1.4.4",
+      "vulnerability": "GHSA-8v38-pw62-9cw2"
+    }
   }
 ]

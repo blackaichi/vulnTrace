@@ -61,11 +61,29 @@ call-graph/verdict logic already covered by the adversarial suites).
 Fixtures themselves are fully vendored (real `node_modules/` committed),
 so no `npm install` step is needed at run time.
 
-Currently exits non-zero: 4 of 14 cases pass; the other 10 are known,
-tracked failures (see `FINDINGS.md` RWF-001 through RWF-006) — this is
-expected and not a regression. `REPORT.md`'s own "Unexpected failures"
-count is the actual regression signal to watch, and is currently `0`. Not
-part of `npm test`/CI's default gate, and not yet added to CI at all
-(unlike `test:adversarial`, which is 100% clean) — there'd be nothing
-meaningful for a red/green CI gate to report while known failures are
-expected.
+Currently exits non-zero: 6 of 17 cases pass; the other 11 are known,
+tracked failures (see `FINDINGS.md` RWF-001 through RWF-006 and RWF-012)
+— this is expected and not a regression. `REPORT.md`'s own "Unexpected
+failures" count is the actual regression signal to watch, and is
+currently `0`. Not part of `npm test`/CI's default gate, and not yet
+added to CI at all (unlike `test:adversarial`, which is 100% clean) —
+there'd be nothing meaningful for a red/green CI gate to report while
+known failures are expected.
+
+Each case's fixture is scanned from a fresh, isolated temporary directory
+outside the repository tree, never in place under `fixtures/` — see
+`docs/VALIDATION-STRATEGY.md` § 7 (VT-302, RWF-010) and
+`hermeticity.test.ts`'s own permanent regression coverage for why.
+
+Three real-world benchmark cases (`RWB-06`, `RWB-09`) were originally
+cause-confounded — testing more than one independent mechanism at once
+(see `docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md` and VT-303). Rather than
+rewriting them, each got a clean, single-cause sibling case added instead,
+keeping the original as its own (differently-scoped) exhibit:
+
+- `RWB-06` (kept unchanged, RWF-002's confounded exhibit) vs. `RWB-06A`
+  (new, a clean UNREACHED_DEPENDENCY control — currently **passing**).
+- `RWB-09` (kept unchanged, the npm-alias/package-identity stress case,
+  ALIASED_INSTALL — its own failures attributed to RWF-009/RWF-004, not
+  yet fixed) vs. `RWB-11a`/`RWB-11b` (new, a genuine nested multi-instance
+  case with **no aliasing** — currently **both passing**).
