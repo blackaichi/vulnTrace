@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildModuleModel,
+  findExportedClassMembers,
   mapExportsToFunctions,
 } from "../code-intelligence/module-model.js";
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
@@ -83,8 +84,10 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
 }
 
 /**
- * Finds the graph node implementing `{module: resolvedFile, export: exportName}`,
- * or `undefined` when it was never discovered while building the graph.
+ * Finds every graph node implementing `{module: resolvedFile, export:
+ * exportName}` — usually exactly one, but see the class-member step below
+ * for when more than one is a structurally valid answer. Returns `[]`
+ * when nothing could be attributed at all.
  *
  * A rule's `export` names the module's *canonical* export (e.g. `"default"`
  * for CommonJS's `module.exports = someNamedFunction;` idiom — extremely
@@ -102,28 +105,56 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
  * `module.exports = zipObjectDeep;`-shaped file always fell through to a
  * phantom node and reported NOT_AFFECTED even when genuinely reachable.
  *
- * Falls back to the direct name match (kept for synthetic/test graphs that
- * bypass real file indexing entirely, and as a safety net if the target
- * file can no longer be read).
+ * When `exportName` isn't a canonical module-level export at all (the
+ * common shape for `kind: "method"`/`"constructor"` rule targets, e.g.
+ * `export: "runDangerous"` naming a *method* of an exported class, not the
+ * class itself), falls to structural class-member attribution (VT-301A;
+ * see {@link findExportedClassMembers}) — export -> exported class ->
+ * class member -> location, never a same-file name search. When more than
+ * one exported class legitimately declares a member with that name, every
+ * one is returned: this function does not pick a candidate arbitrarily,
+ * that is `checkReachability`'s existing OR-across-nodes job.
+ *
+ * Only when NEITHER structural path attributes anything does this fall
+ * back to a direct same-file name match (kept for synthetic/test graphs
+ * that bypass real file indexing entirely — their `GraphNode`s are the
+ * only source of truth available in that case — and as a safety net if
+ * the target file can no longer be read; VT-301A deliberately leaves this
+ * fallback exactly as it already behaves — see VT-301B for hardening it).
  */
 function findExportNodeInFile(
   graph: CallGraph,
   resolvedFile: string,
   exportName: string,
-): GraphNode | undefined {
+): GraphNode[] {
+  const byLocation = (fn: {
+    readonly location: { readonly line?: number; readonly column?: number };
+  }): GraphNode | undefined =>
+    graph.nodes.find(
+      (n) =>
+        n.module === resolvedFile &&
+        n.location?.line === fn.location.line &&
+        n.location?.column === fn.location.column,
+    );
+
   try {
     const index = indexSourceFileFromDisk(resolvedFile);
     const model = buildModuleModel(index);
     const exportedFn = mapExportsToFunctions(index, model).get(exportName);
     if (exportedFn) {
-      const byLocation = graph.nodes.find(
-        (n) =>
-          n.module === resolvedFile &&
-          n.location?.line === exportedFn.location.line &&
-          n.location?.column === exportedFn.location.column,
-      );
-      if (byLocation) {
-        return byLocation;
+      const node = byLocation(exportedFn);
+      if (node) {
+        return [node];
+      }
+    }
+
+    const memberCandidates = findExportedClassMembers(index, model, exportName);
+    if (memberCandidates.length > 0) {
+      const nodes = memberCandidates
+        .map(byLocation)
+        .filter((n): n is GraphNode => n !== undefined);
+      if (nodes.length > 0) {
+        return nodes;
       }
     }
   } catch {
@@ -131,9 +162,10 @@ function findExportNodeInFile(
     // match below.
   }
 
-  return graph.nodes.find(
+  const fallback = graph.nodes.find(
     (n) => n.module === resolvedFile && n.name === exportName,
   );
+  return fallback ? [fallback] : [];
 }
 
 /**
@@ -285,10 +317,7 @@ async function resolveTargetNodes(
     const nodes: GraphNode[] = [];
     for (const [, files] of selected) {
       for (const file of files) {
-        const node = findExportNodeInFile(graph, file, target.export);
-        if (node) {
-          nodes.push(node);
-        }
+        nodes.push(...findExportNodeInFile(graph, file, target.export));
       }
     }
 
@@ -310,13 +339,16 @@ async function resolveTargetNodes(
     return { nodes: [], unresolvedReason: resolution.reason };
   }
 
-  const node = findExportNodeInFile(
+  const nodes = findExportNodeInFile(
     graph,
     resolution.resolvedFileName,
     target.export,
   );
   return {
-    nodes: [node ?? phantomNode(resolution.resolvedFileName, target.export)],
+    nodes:
+      nodes.length > 0
+        ? nodes
+        : [phantomNode(resolution.resolvedFileName, target.export)],
   };
 }
 

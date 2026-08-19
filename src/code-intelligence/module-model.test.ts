@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildModuleModel, mapExportsToFunctions } from "./module-model.js";
+import {
+  buildModuleModel,
+  findExportedClassMembers,
+  mapExportsToFunctions,
+} from "./module-model.js";
 import { indexSourceFile } from "./source-index.js";
 
 function modelOf(fileName: string, text: string) {
@@ -333,5 +337,112 @@ describe("mapExportsToFunctions: canonical export name -> underlying function", 
     const mapped = mapExportsToFunctions(index, model);
 
     expect(mapped.get("Vulnerable")).toMatchObject({ kind: "constructor" });
+  });
+});
+
+describe("findExportedClassMembers: export -> exported class -> member provenance (VT-301A)", () => {
+  it("attributes an instance method of an exported class by structural provenance, not name search", () => {
+    const fileName = "a.ts";
+    const text = "export class Lib {\n  runDangerous() {}\n  runSafe() {}\n}\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const candidates = findExportedClassMembers(index, model, "runDangerous");
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      kind: "method",
+      name: "runDangerous",
+      memberOf: { className: "Lib", isStatic: false },
+    });
+  });
+
+  it("attributes a static method of an exported class", () => {
+    const fileName = "a.ts";
+    const text = "export class Lib {\n  static staticDangerous() {}\n}\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const candidates = findExportedClassMembers(
+      index,
+      model,
+      "staticDangerous",
+    );
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.memberOf).toEqual({
+      className: "Lib",
+      isStatic: true,
+    });
+  });
+
+  it("attributes a base class's method reached only via a rule targeting the exporting module (inheritance)", () => {
+    const fileName = "a.ts";
+    const text = "export class Base {\n  dangerousOp() {}\n}\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const candidates = findExportedClassMembers(index, model, "dangerousOp");
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]?.memberOf?.className).toBe("Base");
+  });
+
+  it("does NOT attribute a same-named method belonging to a class the module does not export (RWF-011 provenance guard)", () => {
+    const fileName = "a.ts";
+    const text =
+      "class Unexported {\n  parse() {}\n}\n\nexport class Lib {\n  runDangerous() {}\n}\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    // "parse" exists in the file (on Unexported) but Unexported is never
+    // exported -- a same-file bare-name search would find it; structural
+    // export provenance must not.
+    const candidates = findExportedClassMembers(index, model, "parse");
+
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("returns every structurally valid candidate when two exported classes both declare a member with the same name (ambiguity is preserved, not resolved arbitrarily)", () => {
+    const fileName = "a.ts";
+    const text =
+      "export class A {\n  parse() {}\n}\nexport class B {\n  parse() {}\n}\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const candidates = findExportedClassMembers(index, model, "parse");
+
+    expect(candidates).toHaveLength(2);
+    expect(candidates.map((c) => c.memberOf?.className).sort()).toEqual([
+      "A",
+      "B",
+    ]);
+  });
+
+  it("returns an empty array when the module exports no attributable class at all (RWB-03/fast-xml-parser shape: no class in the canonical export table)", () => {
+    const fileName = "a.js";
+    // Simulates a webpack-style export where the export table can't
+    // attribute any class at all -- module-model.ts's mapExportsToFunctions
+    // never sees a class here, so findExportedClassMembers must not fall
+    // back to scanning every class declared anywhere in the file.
+    const text =
+      "class Hidden {\n  parse() {}\n}\n\nObject.defineProperty(module.exports, 'X', { get: () => Hidden });\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const candidates = findExportedClassMembers(index, model, "parse");
+
+    expect(candidates).toHaveLength(0);
+  });
+
+  it("returns an empty array for a member name that no exported class declares", () => {
+    const fileName = "a.ts";
+    const text = "export class Lib {\n  runDangerous() {}\n}\n";
+    const index = indexSourceFile(fileName, text);
+    const model = buildModuleModel(index);
+
+    const candidates = findExportedClassMembers(index, model, "nope");
+
+    expect(candidates).toHaveLength(0);
   });
 });

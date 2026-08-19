@@ -782,3 +782,180 @@ describe("buildFinding regression: {file, symbol} entrypoints, real files end to
     expect(finding?.verdict).toBe("AFFECTED");
   });
 });
+
+describe("buildFinding regression: structural class-member attribution, not bare-name search (VT-301A)", () => {
+  // Proves findExportNodeInFile resolves a method-kind rule target via
+  // real export -> class -> member provenance, NOT the pre-existing
+  // same-file bare-name fallback -- by constructing a fixture where the
+  // two mechanisms would disagree. A same-file, never-called decoy
+  // function shares the rule's exact target name and is declared BEFORE
+  // the real, exported class's own method (so Array.prototype.find's
+  // first-match bare-name fallback would pick the decoy, not the real
+  // target, if it were still in effect). Asserting only the final verdict
+  // would not distinguish "structural attribution worked" from "the
+  // fallback happened to still produce the right answer" -- so this
+  // asserts the exact resolved location too.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  it("resolves a method-kind target to the exported class's own method, ignoring a same-named decoy the bare-name fallback would have matched instead", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-class-member-attribution-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      // The decoy is declared FIRST and shares the rule's exact target
+      // name ("runDangerous") -- graph.nodes.find(n => n.name ===
+      // exportName) would match it before ever reaching Lib's own
+      // method, if that fallback were still consulted. It is never
+      // called by anything and has no outgoing edges, so binding to it
+      // would make the search conclude a confident (WRONG) NOT_AFFECTED
+      // even though Lib.runDangerous() genuinely IS called below.
+      "function runDangerous() {\n" +
+        "  return 'decoy -- unrelated, never called, not a class member';\n" +
+        "}\n\n" +
+        "export class Lib {\n" +
+        "  runDangerous() {\n" +
+        "    return 'the real vulnerable behavior';\n" +
+        "  }\n" +
+        "}\n",
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      'import { Lib } from "vuln-lib";\n\n' +
+        "export function main() {\n" +
+        "  const instance = new Lib();\n" +
+        "  return instance.runDangerous();\n" +
+        "}\n",
+    );
+
+    const project = loadTsProject(tmpDir);
+    const resolver = createModuleResolver(project);
+    // instance.runDangerous() needs VT-208's real-type-checker instance-
+    // method resolution to resolve at all (see call-graph.ts) -- `project`
+    // must be passed through, unlike this file's other, simpler tests.
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver, project }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-class-member-attribution",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "runDangerous", kind: "method" }],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-class-member-attribution",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    // If the bare-name fallback had matched the decoy instead, this would
+    // be NOT_AFFECTED (the decoy is never called by anything) -- AFFECTED
+    // here is only possible via structural export -> class -> member
+    // attribution finding Lib's own method.
+    expect(finding?.verdict).toBe("AFFECTED");
+    // Lib.runDangerous() is declared on line 6 of the written file (the
+    // decoy is on line 1) -- asserting the exact resolved line proves
+    // which node was actually bound, not merely that SOME node was.
+    expect(finding?.evidence?.path.at(-1)).toBe(
+      `${path.join(tmpDir, "node_modules/vuln-lib/index.js")}:6`,
+    );
+  });
+
+  it("still resolves a plain function target via the canonical export path, unaffected by the new class-member step", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-class-member-control-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "export function runDangerous() {\n  return 'vuln';\n}\n",
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      'import { runDangerous } from "vuln-lib";\n\n' +
+        "export function main() {\n  return runDangerous();\n}\n",
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-class-member-control",
+      package: { name: "vuln-lib" },
+      targets: [
+        { module: "vuln-lib", export: "runDangerous", kind: "function" },
+      ],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-class-member-control",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+});

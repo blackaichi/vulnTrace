@@ -31,12 +31,14 @@ describe("indexSourceFile: functions", () => {
         name: "Foo",
         isAsync: false,
         location: { file: "a.ts", line: 2, column: 3 },
+        memberOf: { className: "Foo", isStatic: false },
       },
       {
         kind: "method",
         name: "bar",
         isAsync: false,
         location: { file: "a.ts", line: 3, column: 3 },
+        memberOf: { className: "Foo", isStatic: false },
       },
     ]);
   });
@@ -82,12 +84,14 @@ describe("indexSourceFile: functions", () => {
         name: "Foo",
         isAsync: false,
         location: { file: "a.ts", line: 1, column: 7 },
+        memberOf: { className: "Foo", isStatic: false },
       },
       {
         kind: "method",
         name: "bar",
         isAsync: false,
         location: { file: "a.ts", line: 2, column: 3 },
+        memberOf: { className: "Foo", isStatic: false },
       },
     ]);
   });
@@ -148,6 +152,99 @@ describe("indexSourceFile: functions", () => {
       "const obj = { foo: function () {} };\n",
     );
     expect(index.functions[0]?.name).toBe("foo");
+  });
+});
+
+describe("indexSourceFile: class-member provenance (memberOf, VT-301A)", () => {
+  it("records instance-method ownership", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "class Lib {\n  runDangerous() {}\n}\n",
+    );
+    const method = index.functions.find((fn) => fn.name === "runDangerous");
+    expect(method?.memberOf).toEqual({ className: "Lib", isStatic: false });
+  });
+
+  it("records static-method ownership with isStatic true", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "class Lib {\n  static staticDangerous() {}\n}\n",
+    );
+    const method = index.functions.find((fn) => fn.name === "staticDangerous");
+    expect(method?.memberOf).toEqual({ className: "Lib", isStatic: true });
+  });
+
+  it("records constructor ownership (explicit constructor)", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "class Lib {\n  constructor() {}\n}\n",
+    );
+    const ctor = index.functions.find((fn) => fn.kind === "constructor");
+    expect(ctor?.memberOf).toEqual({ className: "Lib", isStatic: false });
+  });
+
+  it("records constructor ownership for a synthesized implicit constructor (VT-215)", () => {
+    const index = indexSourceFile("a.ts", "class Lib {\n  foo() {}\n}\n");
+    const ctor = index.functions.find((fn) => fn.kind === "constructor");
+    expect(ctor?.memberOf).toEqual({ className: "Lib", isStatic: false });
+  });
+
+  it("attributes a base class's own method to the base class, not any subclass (inheritance)", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "class Base {\n  dangerousOp() {}\n}\n\nclass Sub extends Base {}\n",
+    );
+    const method = index.functions.find((fn) => fn.name === "dangerousOp");
+    expect(method?.memberOf).toEqual({ className: "Base", isStatic: false });
+    // Sub declares no members of its own beyond its synthesized
+    // constructor -- dangerousOp must not be duplicated/reattributed to it.
+    const subOwned = index.functions.filter(
+      (fn) => fn.memberOf?.className === "Sub",
+    );
+    expect(subOwned).toHaveLength(1);
+    expect(subOwned[0]?.kind).toBe("constructor");
+  });
+
+  it("distinguishes two classes that each declare a member with the same name", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "class A {\n  parse() {}\n}\nclass B {\n  parse() {}\n}\n",
+    );
+    const parses = index.functions.filter((fn) => fn.name === "parse");
+    expect(parses).toHaveLength(2);
+    expect(parses.map((fn) => fn.memberOf?.className).sort()).toEqual([
+      "A",
+      "B",
+    ]);
+  });
+
+  it("attributes a method on an anonymous class expression assigned to a variable", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "const Lib = class {\n  runDangerous() {}\n};\n",
+    );
+    const method = index.functions.find((fn) => fn.name === "runDangerous");
+    expect(method?.memberOf).toEqual({ className: "Lib", isStatic: false });
+  });
+
+  it("attributes a method on an anonymous default-exported class expression", () => {
+    const index = indexSourceFile(
+      "a.js",
+      "module.exports = class Lib {\n  runDangerous() {}\n};\n",
+    );
+    const method = index.functions.find((fn) => fn.name === "runDangerous");
+    expect(method?.memberOf).toEqual({ className: "Lib", isStatic: false });
+  });
+
+  it("leaves memberOf undefined for a plain, non-class function", () => {
+    const index = indexSourceFile("a.ts", "function plain() {}\n");
+    expect(index.functions[0]?.memberOf).toBeUndefined();
+  });
+
+  it("leaves memberOf undefined for a method-shaped property on a plain object literal", () => {
+    const index = indexSourceFile("a.ts", "const obj = {\n  foo() {}\n};\n");
+    const method = index.functions.find((fn) => fn.name === "foo");
+    expect(method?.memberOf).toBeUndefined();
   });
 });
 
