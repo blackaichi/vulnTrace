@@ -195,6 +195,67 @@ export function analyzeReachability(
   };
 }
 
+/**
+ * Every unresolved/dynamic edge reachable from `source` via resolved edges
+ * only — the same reachable-subgraph definition {@link analyzeReachability}
+ * itself traverses, without requiring a specific target node to search
+ * for. Used by verdict.ts's `confirmedAbsentInstance` guard (VT-300; see
+ * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 3.6/§ 15, RWF-008) to
+ * determine whether *anything* reachable from an entrypoint could, at
+ * runtime, load a package instance the call graph itself never
+ * discovered — a question with no fixed target, so
+ * {@link analyzeReachability} cannot answer it directly.
+ *
+ * Deliberately a separate, minimal traversal rather than a refactor of
+ * {@link analyzeReachability} itself: the two functions have different
+ * termination conditions (stop at the first match for one; visit
+ * everything for the other) and different correctness requirements
+ * (a passing regression suite already depends on
+ * {@link analyzeReachability}'s exact behavior) — sharing state between
+ * them risks coupling two functions that should be able to evolve
+ * independently. No path tracking, no coverage computation: callers here
+ * only need the unresolved-edge set, not a full {@link ReachabilityResult}.
+ */
+export function collectReachableUnknownEdges(
+  graph: CallGraph,
+  source: GraphNode,
+): readonly UnresolvedEdge[] {
+  const edgesByFrom = new Map<GraphNodeId, CallEdge[]>();
+  for (const edge of graph.edges) {
+    const list = edgesByFrom.get(edge.from);
+    if (list) {
+      list.push(edge);
+    } else {
+      edgesByFrom.set(edge.from, [edge]);
+    }
+  }
+
+  const visited = new Set<GraphNodeId>([source.id]);
+  const unresolvedEdges: UnresolvedEdge[] = [];
+  const queue: GraphNodeId[] = [source.id];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) {
+      break;
+    }
+
+    for (const edge of edgesByFrom.get(current) ?? []) {
+      if (edge.resolution.kind === "resolved") {
+        const nextId = edge.resolution.target;
+        if (!visited.has(nextId)) {
+          visited.add(nextId);
+          queue.push(nextId);
+        }
+      } else {
+        unresolvedEdges.push({ from: current, reason: edge.resolution.reason });
+      }
+    }
+  }
+
+  return unresolvedEdges;
+}
+
 /** Object form of {@link analyzeReachability}, matching SDD § 20's literal `ReachabilityEngine` interface. */
 export const reachabilityEngine: ReachabilityEngine = {
   analyze: analyzeReachability,
