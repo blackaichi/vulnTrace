@@ -1,0 +1,9 @@
+{
+  "name": "rwb-06a-node-forge-unreached-clean",
+  "version": "1.0.0",
+  "private": true,
+  "description": "RWB-06A real-world benchmark fixture (VT-303): a clean, single-cause sibling of RWB-06 -- node-forge is a real, installed dependency, genuinely never imported anywhere in this application's source, and the entrypoint contains no other unresolved or dynamic construct at all. Isolates UNREACHED_DEPENDENCY as the sole mechanism under test.",
+  "dependencies": {
+    "node-forge": "1.3.3"
+  }
+}
