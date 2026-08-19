@@ -96,6 +96,15 @@ describe("buildFinding: dependency not vulnerable", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({}),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding).toBeUndefined();
@@ -114,6 +123,15 @@ describe("buildFinding: indeterminate version match degrades to UNKNOWN", () => 
       entrypoints: [entrypoint],
       resolver: fakeResolver({}),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding).toEqual({
@@ -137,6 +155,15 @@ describe("buildFinding: no known vulnerable target", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({}),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding).toEqual({
@@ -160,6 +187,15 @@ describe("buildFinding: no known vulnerable target", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({}),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("UNKNOWN");
@@ -197,6 +233,15 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding).toEqual({
@@ -246,6 +291,15 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.confidence).toBe(0.8);
@@ -282,6 +336,15 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       entrypoints: [entrypointA, entrypointB],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("AFFECTED");
@@ -321,6 +384,15 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("AFFECTED");
@@ -355,6 +427,15 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding).toEqual({
@@ -392,6 +473,15 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("NOT_AFFECTED");
@@ -430,6 +520,15 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
       graphTruncated: true,
     });
 
@@ -469,6 +568,15 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
       graphTruncated: false,
     });
 
@@ -501,6 +609,15 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
       graphTruncated: true,
     });
 
@@ -535,6 +652,15 @@ describe("buildFinding: UNKNOWN when reachability was never actually checked (re
       entrypoints: [],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("UNKNOWN");
@@ -575,6 +701,15 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("UNKNOWN");
@@ -595,6 +730,15 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({}), // "fixture-lib" is not in the mapping
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("UNKNOWN");
@@ -652,6 +796,15 @@ describe("buildFinding: {file, symbol} entrypoints scope reachability to only th
       entrypoints: [symbolScopedEntrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("NOT_AFFECTED");
@@ -682,8 +835,140 @@ describe("buildFinding: {file, symbol} entrypoints scope reachability to only th
       entrypoints: [symbolScopedEntrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // VT-301B: this suite's graphs are entirely synthetic (fake paths
+      // like "/node_modules/fixture-lib/index.js" that never exist on
+      // disk) -- production real-file target attribution has no
+      // authoritative index to fall back on here, so this explicit
+      // test-only opt-in is required. See the dedicated describe block
+      // below proving the flag is what gates this, and
+      // verdict.integration.test.ts for real-file coverage where this
+      // flag is correctly never needed.
+      allowSyntheticNameOnlyTargetBinding: true,
     });
 
     expect(finding?.verdict).toBe("AFFECTED");
+  });
+});
+
+describe("buildFinding: allowSyntheticNameOnlyTargetBinding gates the bare-name fallback (VT-301B)", () => {
+  // Same fixture used throughout this file: a synthetic graph node named
+  // "vulnerable" in libFile, reachable from the entrypoint, with no real
+  // file on disk behind it at all -- indexSourceFileFromDisk always
+  // throws for this path, so this exercises exactly the "catch" branch
+  // of findExportNodeInFile.
+  function buildSyntheticAffectedGraph() {
+    const entryFile = "/project/src/index.ts";
+    const libFile = "/node_modules/fixture-lib/index.js";
+    const src = moduleNode("src#<module>", entryFile);
+    const vulnerableNode = fnNode(
+      "lib#vulnerable@1:1",
+      libFile,
+      "vulnerable",
+      1,
+    );
+    const graph: CallGraph = {
+      nodes: [src, vulnerableNode],
+      edges: [resolvedEdge(src.id, vulnerableNode.id)],
+    };
+    return { graph, libFile };
+  }
+
+  it("does NOT bind via bare-name match when the flag is omitted (production default), even though the reachable edge would otherwise make this AFFECTED", async () => {
+    const { graph, libFile } = buildSyntheticAffectedGraph();
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      // Deliberately omitted -- proves the flag, not something else,
+      // gates the fallback.
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.reasons?.[0]).toContain(
+      "could not be attributed to any function or class member",
+    );
+  });
+
+  it("does NOT bind via bare-name match when the flag is explicitly false", async () => {
+    const { graph, libFile } = buildSyntheticAffectedGraph();
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      allowSyntheticNameOnlyTargetBinding: false,
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+  });
+
+  it("DOES bind via bare-name match, and reports AFFECTED, only when the flag is explicitly true", async () => {
+    const { graph, libFile } = buildSyntheticAffectedGraph();
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+});
+
+describe("buildFinding: Site B (package never discovered by the graph at all) is unchanged by VT-301B", () => {
+  // Distinct from Site A above: here NOTHING in the graph touches
+  // fixture-lib at all (graphPackageInstances finds zero instances), so
+  // resolveTargetNodes takes the fresh-resolution branch and falls
+  // through to a phantom target -- a clean, fully-resolved reachability
+  // search then correctly and positively concludes "unreachable". This
+  // must remain NOT_AFFECTED regardless of
+  // allowSyntheticNameOnlyTargetBinding, since the package was never
+  // discovered in the first place -- there is no bare-name match to gate
+  // here at all (the file doesn't exist and the graph has no nodes for it
+  // either way). Explicitly passes flag: false (the production default)
+  // to prove this doesn't depend on the synthetic opt-in.
+  it("still produces NOT_AFFECTED with the flag explicitly false", async () => {
+    const entryFile = "/project/src/index.ts";
+    const libFile = "/node_modules/fixture-lib/index.js";
+    const src = moduleNode("src#<module>", entryFile);
+
+    // No node anywhere in this graph belongs to fixture-lib -- genuinely
+    // never discovered, matching Site B exactly.
+    const graph: CallGraph = { nodes: [src], edges: [] };
+
+    const finding = await buildFinding({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      allowSyntheticNameOnlyTargetBinding: false,
+    });
+
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
   });
 });

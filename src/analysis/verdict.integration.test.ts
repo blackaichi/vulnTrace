@@ -959,3 +959,229 @@ describe("buildFinding regression: structural class-member attribution, not bare
     expect(finding?.verdict).toBe("AFFECTED");
   });
 });
+
+describe("buildFinding regression: RWF-011 -- production real file, attribution fails, coincidental same-name candidate exists (VT-301B)", () => {
+  // The package's real "vulnerable" export is defined via
+  // Object.defineProperty -- invisible to mapExportsToFunctions's export
+  // indexing (only module.exports = x / exports.x = y /
+  // module.exports.x = y assignment shapes are recognized), so it can
+  // never be structurally attributed to a function declaration, and the
+  // file exports no class at all (findExportedClassMembers has nothing to
+  // work with either). This is the same structural gap RWF-006's webpack
+  // getter-defined exports exhibit (see fast-xml-parser/fxp.cjs), hand-
+  // reproduced without needing a real bundler.
+  //
+  // A same-named decoy function exists in the SAME file -- proving the
+  // pre-VT-301B bare-name fallback WOULD have matched it (it is never
+  // called by anything, so binding to it would make a clean reachability
+  // search conclude a confident, WRONG NOT_AFFECTED). The application
+  // itself never calls .vulnerable at all -- it only calls the
+  // unrelated, properly-attributed .safe() export, which is what gets
+  // this package discovered by the call graph in the first place.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  function buildFixture(): { tmp: string; entry: string; libFile: string } {
+    const tmp = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-rwf-011-regression-"),
+    );
+    write(
+      tmp,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    const libFile = write(
+      tmp,
+      "node_modules/vuln-lib/index.js",
+      // Decoy: a real, indexed, never-called function whose name
+      // coincidentally matches the rule's target export.
+      "function vulnerable() {\n" +
+        "  return 'decoy -- unrelated, never called, would have been matched by the old bare-name fallback';\n" +
+        "}\n\n" +
+        "module.exports.safe = function safe() {\n" +
+        "  return 'ok';\n" +
+        "};\n\n" +
+        // The real export -- structurally unattributable.
+        "Object.defineProperty(module.exports, 'vulnerable', {\n" +
+        "  enumerable: true,\n" +
+        "  get() {\n" +
+        "    return function realImpl() {\n" +
+        "      return 'the real vulnerable behavior, never reached here';\n" +
+        "    };\n" +
+        "  },\n" +
+        "});\n",
+    );
+    write(tmp, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmp,
+      "src/index.ts",
+      'import vulnLib from "vuln-lib";\n\n' +
+        "export function main() {\n  return vulnLib.safe();\n}\n",
+    );
+    return { tmp, entry, libFile };
+  }
+
+  it("resolves to UNKNOWN, never a confident NOT_AFFECTED, when export attribution fails despite a same-named decoy existing in the file", async () => {
+    const { tmp, entry, libFile } = buildFixture();
+    tmpDir = tmp;
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    // Prove the same-name candidate genuinely exists in the discovered
+    // graph -- this is not "target missing entirely", it is "target
+    // present under a name that must not be trusted as provenance".
+    const decoyNode = graph.nodes.find(
+      (n) => n.name === "vulnerable" && n.module === libFile,
+    );
+    expect(decoyNode).toBeDefined();
+    expect(decoyNode?.kind).toBe("function");
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-rwf-011-regression",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-rwf-011-regression",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+      // Deliberately omitted (production default: false) -- this is the
+      // whole point of the regression.
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.reasons?.[0]).toContain(
+      "could not be attributed to any function or class member",
+    );
+  });
+
+  it("control: in the SAME file, the properly-attributed 'safe' export still resolves correctly and precisely (does not overcorrect into blanket UNKNOWN)", async () => {
+    const { tmp, entry } = buildFixture();
+    tmpDir = tmp;
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-rwf-011-control",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "safe", kind: "function" }],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-rwf-011-control",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+
+  it("a real file that becomes unreadable does NOT silently enable name-only matching -- degrades to UNKNOWN, not to the pre-VT-301B fallback behavior", async () => {
+    const { tmp, entry, libFile } = buildFixture();
+    tmpDir = tmp;
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    // The graph already discovered vuln-lib/index.js (via .safe()) and
+    // registered its own "vulnerable" decoy node from it -- confirming
+    // this scenario is NOT "the package was never touched" (Site B).
+    // Deleting the file AFTER graph construction reproduces a real file
+    // that becomes unreadable between graph build and verdict resolution
+    // -- findExportNodeInFile's own re-read of it must throw.
+    expect(
+      graph.nodes.some((n) => n.name === "vulnerable" && n.module === libFile),
+    ).toBe(true);
+    rmSync(libFile, { force: true });
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-rwf-011-unreadable",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-rwf-011-unreadable",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+      // Not set, and MUST NOT matter here: the file is unreadable, not
+      // synthetic -- the point of this test is that even an explicit
+      // opt-in would be irrelevant to a real, now-unreadable file, since
+      // production code never sets it in the first place.
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+  });
+});
