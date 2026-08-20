@@ -1,0 +1,725 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import { buildCallGraph } from "../code-intelligence/call-graph.js";
+import { createModuleResolver } from "../code-intelligence/module-resolver.js";
+import { loadTsProject } from "../code-intelligence/ts-project.js";
+import type { Entrypoint } from "../domain/entrypoint.js";
+import {
+  buildModuleLoadClosure,
+  closureContainsFile,
+  closureContainsPackageInstance,
+  type ClosureIncompletenessReason,
+  type ModuleLoadClosure,
+} from "./module-load-closure.js";
+
+const tempDirs: string[] = [];
+
+function tempProject(): string {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "vulntrace-closure-"));
+  tempDirs.push(dir);
+  return dir;
+}
+
+function write(root: string, relativePath: string, content: string): string {
+  const filePath = path.join(root, relativePath);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, content);
+  return filePath;
+}
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop();
+    if (dir) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
+
+function entrypoint(filePath: string, symbol?: string): Entrypoint {
+  return {
+    filePath,
+    source: "configured",
+    reason: "test",
+    ...(symbol === undefined ? {} : { symbol }),
+  };
+}
+
+/** Builds the real call graph and the closure over it, exactly as a caller would. */
+async function closureFor(
+  root: string,
+  entryFiles: readonly string[],
+  options: { maxFiles?: number; symbol?: string } = {},
+): Promise<ModuleLoadClosure> {
+  const project = loadTsProject(root);
+  const resolver = createModuleResolver(project);
+  const graph = await buildCallGraph({
+    entryFiles: [...entryFiles],
+    resolver,
+    project,
+  });
+  return buildModuleLoadClosure({
+    entrypoints: entryFiles.map((f) => entrypoint(f, options.symbol)),
+    resolver,
+    graph,
+    ...(options.maxFiles === undefined ? {} : { maxFiles: options.maxFiles }),
+  });
+}
+
+function reasonsOf(closure: ModuleLoadClosure): ClosureIncompletenessReason[] {
+  return [...new Set(closure.incompleteness.map((i) => i.reason))];
+}
+
+describe("ModuleLoadClosure: membership is module loading, not call binding (VT-307c)", () => {
+  it("(1) leaves an installed but never-imported package OUT of the closure", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/never-imported/package.json",
+      JSON.stringify({ name: "never-imported", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/never-imported/index.js",
+      "module.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "function main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toEqual([entry]);
+    expect(
+      closure.loadedPackageInstances.some((i) => i.includes("never-imported")),
+    ).toBe(false);
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(2) includes a package loaded by a static CJS require", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0" }),
+    );
+    const pkgEntry = write(
+      root,
+      "node_modules/pkg/index.js",
+      "module.exports = { thing(){ return 1; } };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const pkg = require('pkg');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, pkgEntry)).toBe(true);
+    expect(
+      closureContainsPackageInstance(
+        closure,
+        path.join(root, "node_modules/pkg"),
+      ),
+    ).toBe(true);
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(3) includes a package loaded by an ESM side-effect import", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0", type: "module" }),
+    );
+    const pkgEntry = write(
+      root,
+      "node_modules/pkg/index.js",
+      "export const loaded = true;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "import 'pkg';\nexport function main(){ return 1; }\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, pkgEntry)).toBe(true);
+  });
+
+  it("(4) includes a package loaded by a named or default import whose binding is never called (M)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0", type: "module" }),
+    );
+    const pkgEntry = write(
+      root,
+      "node_modules/pkg/index.js",
+      "export function vulnerable(){ return 'v'; }\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      // `vulnerable` is imported and NEVER called -- the whole point of M:
+      // module-load membership must not depend on call binding.
+      "import { vulnerable } from 'pkg';\nexport function main(){ return 'never calls it'; }\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, pkgEntry)).toBe(true);
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(5) includes transitively loaded modules a -> b -> c", async () => {
+    const root = tempProject();
+    for (const [name, dep] of [
+      ["a", "b"],
+      ["b", "c"],
+    ] as const) {
+      write(
+        root,
+        `node_modules/${name}/package.json`,
+        JSON.stringify({ name, version: "1.0.0" }),
+      );
+      write(
+        root,
+        `node_modules/${name}/index.js`,
+        `const next = require('${dep}');\nmodule.exports = { use(){ return next; } };\n`,
+      );
+    }
+    write(
+      root,
+      "node_modules/c/package.json",
+      JSON.stringify({ name: "c", version: "1.0.0" }),
+    );
+    const cEntry = write(
+      root,
+      "node_modules/c/index.js",
+      "module.exports = { deep(){ return 1; } };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const a = require('a');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, cEntry)).toBe(true);
+    for (const name of ["a", "b", "c"]) {
+      expect(
+        closureContainsPackageInstance(
+          closure,
+          path.join(root, `node_modules/${name}`),
+        ),
+      ).toBe(true);
+    }
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(6) treats a Node builtin as resolved, contributing no local file and no package instance", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const fs = require('fs');\nfunction main(){ return fs; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toEqual([entry]);
+    expect(closure.loadedPackageInstances).toEqual([]);
+    // A builtin is known, not an uncertainty -- it must not make the
+    // closure incomplete (VT-305).
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(15) tracks sibling package instances by exact install location, never by shared package name", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "2.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/foo/index.js",
+      "module.exports = { v(){ return 2; } };\n",
+    );
+    write(
+      root,
+      "node_modules/bar/package.json",
+      JSON.stringify({ name: "bar", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/bar/index.js",
+      "const foo = require('foo');\nmodule.exports = { use(){ return foo; } };\n",
+    );
+    write(
+      root,
+      "node_modules/bar/node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/bar/node_modules/foo/index.js",
+      "module.exports = { v(){ return 1; } };\n",
+    );
+    // Only `bar` is imported -- so only bar's OWN nested foo loads. The
+    // top-level foo@2.0.0 is installed but never loaded by anything.
+    const entry = write(
+      root,
+      "src/index.js",
+      "const bar = require('bar');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(
+      closureContainsPackageInstance(
+        closure,
+        path.join(root, "node_modules/bar/node_modules/foo"),
+      ),
+    ).toBe(true);
+    expect(
+      closureContainsPackageInstance(
+        closure,
+        path.join(root, "node_modules/foo"),
+      ),
+    ).toBe(false);
+  });
+});
+
+describe("ModuleLoadClosure: entrypoint roots are FILES, never narrowed by symbol (VT-307c Part 2)", () => {
+  it("roots at the whole file for a {file, symbol} entrypoint, so top-level imports still load", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0", type: "module" }),
+    );
+    const pkgEntry = write(
+      root,
+      "node_modules/pkg/index.js",
+      "export function unused(){ return 1; }\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "import { unused } from 'pkg';\n" +
+        "export function main(){ return 'main'; }\n" +
+        "export function other(){ return unused(); }\n",
+    );
+
+    // `main` is the configured symbol; `other` (the only caller of the
+    // imported binding) is NOT a call-reachability source. The module is
+    // loaded regardless.
+    const closure = await closureFor(root, [entry], { symbol: "main" });
+
+    expect(closure.rootFiles).toEqual([entry]);
+    expect(closureContainsFile(closure, pkgEntry)).toBe(true);
+  });
+
+  it("produces an identical closure with and without a configured symbol", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0", type: "module" }),
+    );
+    write(root, "node_modules/pkg/index.js", "export const x = 1;\n");
+    const entry = write(
+      root,
+      "src/index.js",
+      "import 'pkg';\nexport function main(){ return 1; }\nexport function other(){ return 2; }\n",
+    );
+
+    const withSymbol = await closureFor(root, [entry], { symbol: "main" });
+    const withoutSymbol = await closureFor(root, [entry]);
+
+    expect([...withSymbol.loadedFiles].sort()).toEqual(
+      [...withoutSymbol.loadedFiles].sort(),
+    );
+  });
+});
+
+describe("ModuleLoadClosure: completeness is explicit (VT-307c Parts 5-7)", () => {
+  it("(7) is incomplete for an unresolved module specifier, recording the specifier", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const missing = require('definitely-not-installed');\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(closure.incompleteness).toContainEqual(
+      expect.objectContaining({
+        reason: "unresolved_module",
+        importer: entry,
+        specifier: "definitely-not-installed",
+      }),
+    );
+  });
+
+  it("(8) is incomplete for a declaration-only resolution", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/types-only/package.json",
+      JSON.stringify({ name: "types-only", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/types-only/index.d.ts",
+      "export declare function vulnerable(x: string): string;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      "import { vulnerable } from 'types-only';\nexport function main(){ return vulnerable('x'); }\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("declaration_only_resolution");
+  });
+
+  it.each([
+    [
+      "(9) dynamic require",
+      "dynamic_require",
+      "const n = process.env.P;\nfunction main(){ require(n); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(10) aliased require",
+      "aliased_require",
+      "const r = require;\nconst n = process.env.P;\nfunction main(){ r(n); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(11) createRequire loader",
+      "create_require",
+      "const { createRequire } = require('module');\nconst r = createRequire(__filename);\nconst n = process.env.P;\nfunction main(){ r(n); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(12) Function constructor",
+      "function_constructor",
+      "function main(){ return new Function('return 1')(); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(13) aliased eval",
+      "aliased_eval",
+      "const e = eval;\nfunction main(){ e('1'); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(13b) globalThis.eval",
+      "aliased_eval",
+      "function main(){ globalThis.eval('1'); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(14) module.require",
+      "module_require",
+      "const n = process.env.P;\nfunction main(){ module.require(n); }\nmodule.exports = { main };\n",
+    ],
+  ])("%s makes the closure incomplete", async (_label, reason, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain(reason);
+  });
+
+  it("stays complete for an ordinary non-widening unsupported construct (precision control)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function main(token){ return token.trim(); }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    // token.trim() cannot introduce a module, so it must not make the
+    // closure incomplete -- otherwise every real project would be
+    // permanently incomplete and the closure would carry no information.
+    expect(closure.complete).toBe(true);
+    expect(closure.incompleteness).toEqual([]);
+  });
+
+  it("(V) is incomplete when a closure member cannot be parsed/indexed", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/broken/package.json",
+      JSON.stringify({ name: "broken", version: "1.0.0" }),
+    );
+    // A real file that exists and genuinely loads at runtime, but that
+    // this analyzer cannot index -- so its own imports are unknown.
+    const brokenEntry = path.join(root, "node_modules/broken/index.js");
+    mkdirSync(path.dirname(brokenEntry), { recursive: true });
+    rmSync(brokenEntry, { force: true });
+    mkdirSync(brokenEntry); // a directory where a file is expected -> unreadable
+
+    const entry = write(
+      root,
+      "src/index.js",
+      "const broken = require('broken');\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    // Either the specifier fails to resolve to a readable file, or it
+    // resolves and then fails to index -- both are honest incompleteness,
+    // never silent success.
+    expect(
+      reasonsOf(closure).some(
+        (r) => r === "parse_failure" || r === "unresolved_module",
+      ),
+    ).toBe(true);
+  });
+
+  it("(V) is incomplete when a closure member is present but syntactically unindexable", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/weird/package.json",
+      JSON.stringify({ name: "weird", version: "1.0.0" }),
+    );
+    write(root, "node_modules/weird/index.js", "module.exports = {};\n");
+    const entry = write(
+      root,
+      "src/index.js",
+      "const weird = require('weird');\nmodule.exports = {};\n",
+    );
+    // Replace the resolved file with an unreadable directory AFTER
+    // resolution would have succeeded, so traversal reaches the indexing
+    // step and fails there specifically.
+    const weirdEntry = path.join(root, "node_modules/weird/index.js");
+    rmSync(weirdEntry, { force: true });
+    mkdirSync(weirdEntry);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+  });
+
+  it("(U) is incomplete when traversal hits the configured file limit", async () => {
+    const root = tempProject();
+    for (const [name, dep] of [
+      ["a", "b"],
+      ["b", "c"],
+    ] as const) {
+      write(
+        root,
+        `node_modules/${name}/package.json`,
+        JSON.stringify({ name, version: "1.0.0" }),
+      );
+      write(
+        root,
+        `node_modules/${name}/index.js`,
+        `const next = require('${dep}');\nmodule.exports = { next };\n`,
+      );
+    }
+    write(
+      root,
+      "node_modules/c/package.json",
+      JSON.stringify({ name: "c", version: "1.0.0" }),
+    );
+    write(root, "node_modules/c/index.js", "module.exports = {};\n");
+    const entry = write(
+      root,
+      "src/index.js",
+      "const a = require('a');\nmodule.exports = { a };\n",
+    );
+
+    const unbounded = await closureFor(root, [entry]);
+    expect(unbounded.complete).toBe(true);
+    expect(unbounded.loadedFiles.length).toBe(4);
+
+    const truncated = await closureFor(root, [entry], { maxFiles: 2 });
+
+    expect(truncated.complete).toBe(false);
+    expect(reasonsOf(truncated)).toContain("traversal_truncated");
+    expect(truncated.loadedFiles.length).toBeLessThan(4);
+  });
+});
+
+describe("ModuleLoadClosure: independence from call binding (VT-307c Parts 3, 11)", () => {
+  it("(T) includes a package reached only through an export-resolution gap the call graph cannot bind", async () => {
+    const root = tempProject();
+    // `ms`-shaped: `inner` is loaded by `outer`'s own top-level require and
+    // re-exported as a whole-module value. The rule-relevant export can't
+    // be attributed through that cross-package re-export (RWF-004), so the
+    // call graph never binds a call into `inner` -- but `inner` genuinely
+    // loads, and must be in the closure.
+    write(
+      root,
+      "node_modules/inner/package.json",
+      JSON.stringify({ name: "inner", version: "1.0.0" }),
+    );
+    const innerEntry = write(
+      root,
+      "node_modules/inner/index.js",
+      "module.exports = function humanize(x){ return x; };\n",
+    );
+    write(
+      root,
+      "node_modules/outer/package.json",
+      JSON.stringify({ name: "outer", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/outer/index.js",
+      "exports.humanize = require('inner');\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const outer = require('outer');\n" +
+        "function main(d){ return outer.humanize(d); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, innerEntry)).toBe(true);
+    expect(
+      closureContainsPackageInstance(
+        closure,
+        path.join(root, "node_modules/inner"),
+      ),
+    ).toBe(true);
+  });
+
+  it("marks the closure incomplete for a dynamic loader at a transitively-loaded module's TOP LEVEL", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/consumer.js",
+      "const n = process.env.P;\nrequire(n);\nmodule.exports = { useIt(){ return 1; } };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const c = require('./consumer.js');\nfunction main(){ return c.useIt(); }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(closure.incompleteness).toContainEqual(
+      expect.objectContaining({
+        reason: "dynamic_require",
+        importer: path.join(root, "src/consumer.js"),
+      }),
+    );
+  });
+});
+
+describe("ModuleLoadClosure: agrees with VT-307a module_load edges (VT-307c Part 13)", () => {
+  it("every resolved module_load edge target is a closure member, and every non-root closure member is a module_load target", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/pkg/index.js",
+      "const dep = require('dep');\nmodule.exports = { use(){ return dep; } };\n",
+    );
+    write(
+      root,
+      "node_modules/dep/package.json",
+      JSON.stringify({ name: "dep", version: "1.0.0" }),
+    );
+    write(root, "node_modules/dep/index.js", "module.exports = { d: 1 };\n");
+    write(
+      root,
+      "src/local.js",
+      "module.exports = { helper(){ return 1; } };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const pkg = require('pkg');\n" +
+        "const local = require('./local.js');\n" +
+        "function main(){ return local.helper(); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const project = loadTsProject(root);
+    const resolver = createModuleResolver(project);
+    const graph = await buildCallGraph({
+      entryFiles: [entry],
+      resolver,
+      project,
+    });
+    const closure = await buildModuleLoadClosure({
+      entrypoints: [entrypoint(entry)],
+      resolver,
+      graph,
+    });
+
+    const moduleByNodeId = new Map(graph.nodes.map((n) => [n.id, n.module]));
+    const moduleLoadTargets = new Set<string>();
+    for (const edge of graph.edges) {
+      if (edge.type !== "module_load" || edge.resolution.kind !== "resolved") {
+        continue;
+      }
+      const target = moduleByNodeId.get(edge.resolution.target);
+      if (target) {
+        moduleLoadTargets.add(target);
+      }
+    }
+
+    // Direction 1: nothing the graph says is loaded is missing from the closure.
+    for (const target of moduleLoadTargets) {
+      expect(closureContainsFile(closure, target)).toBe(true);
+    }
+    // Direction 2: nothing the closure says is loaded is missing from the graph.
+    for (const file of closure.loadedFiles) {
+      if (closure.rootFiles.includes(file)) {
+        continue;
+      }
+      expect(moduleLoadTargets.has(file)).toBe(true);
+    }
+  });
+});
