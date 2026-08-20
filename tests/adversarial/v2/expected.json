@@ -537,5 +537,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-050",
+    "dir": "adv2-050-dependency-toplevel-dynamic-require",
+    "category": "50. VT-307a regression: widening blocker in a DEPENDENCY's own module top-level scope",
+    "description": "Distinct from ADV2-047's shape: there, the dynamic require sits inside a called function of the ENTRYPOINT's own file. Here, it sits at the MODULE TOP LEVEL of vt2-holder -- a dependency the entrypoint loads via require('vt2-holder') but whose own module-scope code the entrypoint never directly calls into. Before VT-307a, no edge connected the entrypoint's <module> node to vt2-holder's own <module> node, so this blocker was invisible to any entrypoint-rooted traversal even though loading vt2-holder genuinely executes it. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own require(pluginName), which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), could load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here: absence from the statically-discovered graph is not, by itself, proof this instance is unreachable. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]

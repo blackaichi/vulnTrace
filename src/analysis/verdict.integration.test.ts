@@ -874,6 +874,244 @@ describe("buildFinding regression: {file, symbol} entrypoints, real files end to
 
     expect(finding?.verdict).toBe("AFFECTED");
   });
+
+  it("still creates module-load reachability into an unrelated dependency for {file, symbol} entrypoints (VT-307a): loading the file always executes its top level, regardless of which symbol is configured", async () => {
+    const { tmp, entry } = buildProject();
+    tmpDir = tmp;
+    // A second, entirely separate package, side-effect-imported at
+    // index.ts's own top level (unrelated to the `main`/`unused` split
+    // above). Loading index.ts always executes this import, no matter
+    // which symbol narrows CALL reachability.
+    write(
+      tmp,
+      "node_modules/side-effect-lib/package.json",
+      JSON.stringify({
+        name: "side-effect-lib",
+        version: "1.0.0",
+        type: "module",
+      }),
+    );
+    write(
+      tmp,
+      "node_modules/side-effect-lib/index.js",
+      "export const loaded = true;\n",
+    );
+    writeFileSync(
+      entry,
+      'import { safe, vulnerable } from "vuln-lib";\n' +
+        'import "side-effect-lib";\n\n' +
+        "export function main() {\n  return safe();\n}\n\n" +
+        "export function unused() {\n  return vulnerable();\n}\n",
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmp));
+    const graph = await buildCallGraph({ entryFiles: [entry], resolver });
+
+    const sideEffectModule = graph.nodes.find(
+      (n) => n.kind === "module" && n.module.includes("side-effect-lib"),
+    );
+    expect(sideEffectModule).toBeDefined();
+
+    // The module-load edge exists regardless of any {file, symbol}
+    // narrowing -- narrowing is a CALL-reachability concept, applied later
+    // by entrypointSourceNodes, never something that changes what
+    // buildCallGraph itself discovers as loaded.
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        type: "module_load",
+        resolution: { kind: "resolved", target: sideEffectModule?.id },
+      }),
+    );
+  });
+});
+
+describe("buildFinding regression: module-load execution is itself reachable evidence (VT-307a)", () => {
+  // The exact false-negative shape the VT-307 soundness re-audit
+  // reproduced live: a package's own module-scope code calls the
+  // vulnerable function unconditionally on load. Before VT-307a, nothing
+  // connected the entrypoint's module to the package's own module, so this
+  // real, unconditional execution was invisible and the finding read
+  // NOT_AFFECTED -- a false negative, not merely an imprecise UNKNOWN.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  const rule: VulnerableSymbolRule = {
+    id: "GHSA-test-module-load-exec",
+    package: { name: "vuln-lib" },
+    targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+  };
+  const vulnerability: Vulnerability = {
+    id: "GHSA-test-module-load-exec",
+    aliases: [],
+    package: "vuln-lib",
+    ecosystem: "npm",
+    affectedVersions: [{ introduced: "0" }],
+    fixedVersions: [],
+    references: [],
+  };
+
+  it("becomes AFFECTED when a top-level require()'d package's own module scope calls the vulnerable function unconditionally on load (CJS)", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-module-load-exec-cjs-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "function vulnerable(x) {\n  return x;\n}\n" +
+        // Runs the moment this module is loaded -- no caller ever invokes
+        // it explicitly.
+        "vulnerable('runs at module load');\n" +
+        "module.exports = { vulnerable };\n",
+    );
+    write(tmpDir, "package.json", JSON.stringify({ name: "app" }));
+    const entry = write(
+      tmpDir,
+      "src/index.js",
+      // The app itself never calls lib.vulnerable() -- merely requiring
+      // the package is what triggers the vulnerable execution.
+      "const lib = require('vuln-lib');\n" +
+        "function main(token) {\n  return 'x' + token;\n}\n" +
+        "module.exports = { main };\n",
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.js"],
+      }),
+    ]);
+
+    const finding = await buildFinding({
+      vulnerability,
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      packageInstance: path.join(tmpDir, "node_modules/vuln-lib"),
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+
+  it("becomes AFFECTED for the identical shape via an ESM side-effect import", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-module-load-exec-esm-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "export function vulnerable(x) {\n  return x;\n}\n" +
+        "vulnerable('runs at module load');\n",
+    );
+    write(
+      tmpDir,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const entry = write(
+      tmpDir,
+      "src/index.js",
+      "import 'vuln-lib';\n" +
+        "export function main(token) {\n  return 'x' + token;\n}\n",
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.js"],
+      }),
+    ]);
+
+    const finding = await buildFinding({
+      vulnerability,
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      packageInstance: path.join(tmpDir, "node_modules/vuln-lib"),
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+
+  it("control: stays NOT_AFFECTED when the same package is top-level required but its module scope never calls the vulnerable function at all", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-module-load-inert-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "function vulnerable(x) {\n  return x;\n}\nmodule.exports = { vulnerable };\n",
+    );
+    write(tmpDir, "package.json", JSON.stringify({ name: "app" }));
+    const entry = write(
+      tmpDir,
+      "src/index.js",
+      "const lib = require('vuln-lib');\n" +
+        "function main(token) {\n  return 'x' + token;\n}\n" +
+        "module.exports = { main };\n",
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.js"],
+      }),
+    ]);
+
+    const finding = await buildFinding({
+      vulnerability,
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      packageInstance: path.join(tmpDir, "node_modules/vuln-lib"),
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
+  });
 });
 
 describe("buildFinding regression: structural class-member attribution, not bare-name search (VT-301A)", () => {

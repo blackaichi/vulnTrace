@@ -27,8 +27,21 @@ export interface GraphNode {
   readonly location?: SourceLocation;
 }
 
+/**
+ * `"module_load"` (VT-307a) is deliberately distinct from every other
+ * value here: it means "loading the `from` module causes the target
+ * module's own top-level code to execute" -- a fact about the module
+ * system, never a claim that a function was called. Every other value
+ * (`"direct"`, `"method"`, `"constructor"`, `"callback"`, `"import"`)
+ * represents an actual JS call/construct site, including `"import"`
+ * itself, which means "a call whose callee was bound through an import,"
+ * not "an import occurred." Consumers that render or reason about a
+ * reachability path (e.g. AFFECTED evidence) MUST NOT describe a
+ * `"module_load"` edge as a call -- see docs/REAL-WORLD-BENCHMARK-AUDIT-
+ * V0.1.md's RWF-002 module-load-closure work.
+ */
 export type CallEdgeType =
-  "direct" | "method" | "constructor" | "callback" | "import";
+  "direct" | "method" | "constructor" | "callback" | "import" | "module_load";
 
 /**
  * Why a call could not be resolved to an exact target

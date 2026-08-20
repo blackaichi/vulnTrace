@@ -1442,10 +1442,128 @@ async function classifyNew(
   };
 }
 
+/**
+ * Emits one `"module_load"` edge per DISTINCT specifier `prepared`'s own
+ * file imports/requires -- independent of whether any call ever binds to
+ * the resulting value (VT-307a, RWF-002's own prerequisite). This is the
+ * module-load-reachability half of graph construction, deliberately kept
+ * separate from {@link classifyCall}'s call-reachability edges: a plain
+ * `import "pkg"` (or `require("pkg")` with its result discarded) still
+ * executes `pkg`'s top-level code, and `ModuleModel.imports` records that
+ * specifier (as a `"side-effect"` binding -- see module-model.ts) whether
+ * or not it's ever called. Before this, a module was only discovered as a
+ * side effect of a *successful call binding* into it (`onDiscoverFile` was
+ * only ever invoked from inside `classifyCall`/`classifyNew`/
+ * `resolveReExportChain`/`resolveInstanceMethod`), so a module that is
+ * genuinely loaded but never called into (or whose only call site the
+ * binder can't attribute) was invisible to the graph entirely.
+ *
+ * A `"module_load"` edge is added to `ctx.edges` alongside, never instead
+ * of, whatever call edges the same specifier's bindings independently
+ * produce elsewhere in this file's walk -- the two answer different
+ * questions ("does loading this module load that one?" vs. "does this
+ * call reach that function?") and neither should be inferred from the
+ * other (see {@link CallEdgeType}'s own doc comment).
+ *
+ * Resolver-kind handling (mirrors symbol-binder.ts's own dispatch, VT-304/
+ * VT-305):
+ * - `"resolved"` (a real runtime file): a resolved edge to that file's own
+ *   `<module>` node, and the file is queued for its own walk exactly as a
+ *   call-discovered file already is.
+ * - `"declaration"`: an `unknown(declaration_only_resolution)` edge --
+ *   same closure-widening treatment `bindCallee` already gives a call
+ *   through a declaration-only import (VT-304).
+ * - `"unresolved"`: an `unknown(unresolved_module)` edge -- same as an
+ *   unresolved call-bound specifier.
+ * - `"builtin"`: no edge at all (VT-305) -- a builtin has no local module
+ *   node to load, and is not an uncertainty.
+ *
+ * If the resolved target file can't actually be prepared (unreadable/
+ * unparsable, or a configured resource limit was already reached -- see
+ * `ensurePrepared`), no edge is emitted for that specifier: fabricating a
+ * `"resolved"` edge to a module node that was never registered would be
+ * worse than an honest gap, and `scan.ts`'s own `graphTruncated` signal
+ * already forces every finding to UNKNOWN when a limit caused a real
+ * omission (VT-202) -- this mirrors how {@link resolveReExportChain}
+ * already gives up silently on the same failure rather than fabricating
+ * a destination.
+ */
+async function emitModuleLoadEdges(
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<void> {
+  const bySpecifier = new Map<
+    string,
+    (typeof prepared.model.imports)[number]
+  >();
+  for (const imp of prepared.model.imports) {
+    if (!bySpecifier.has(imp.specifier)) {
+      bySpecifier.set(imp.specifier, imp);
+    }
+  }
+
+  for (const [specifier, imp] of bySpecifier) {
+    const resolution = await ctx.resolver.resolve(
+      specifier,
+      prepared.index.filePath,
+    );
+
+    if (resolution.kind === "builtin") {
+      continue;
+    }
+
+    if (resolution.kind === "unresolved") {
+      ctx.edges.push({
+        from: prepared.moduleNodeId,
+        type: "module_load",
+        resolution: {
+          kind: "unknown",
+          reason: "unresolved_module",
+          potentialTargets: [],
+        },
+        location: imp.location,
+      });
+      continue;
+    }
+
+    if (resolution.kind === "declaration") {
+      ctx.edges.push({
+        from: prepared.moduleNodeId,
+        type: "module_load",
+        resolution: {
+          kind: "unknown",
+          reason: "declaration_only_resolution",
+          potentialTargets: [],
+        },
+        location: imp.location,
+      });
+      continue;
+    }
+
+    ctx.onDiscoverFile(resolution.resolvedFileName);
+    const targetPrepared = ctx.ensurePrepared(resolution.resolvedFileName);
+    if (!targetPrepared) {
+      continue;
+    }
+
+    ctx.edges.push({
+      from: prepared.moduleNodeId,
+      type: "module_load",
+      resolution: {
+        kind: "resolved",
+        target: targetPrepared.moduleNodeId,
+      },
+      location: imp.location,
+    });
+  }
+}
+
 async function walkFile(
   prepared: FileGraphData,
   ctx: WalkContext,
 ): Promise<void> {
+  await emitModuleLoadEdges(prepared, ctx);
+
   const stack: GraphNodeId[] = [prepared.moduleNodeId];
 
   async function visit(node: ts.Node): Promise<void> {
