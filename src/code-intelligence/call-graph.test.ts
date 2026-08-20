@@ -773,6 +773,395 @@ describe("buildCallGraph: dynamic calls are marked uncertain", () => {
   });
 });
 
+describe("buildCallGraph: loader-shaped constructs are closure-widening (VT-307b)", () => {
+  it("classifies an aliased require call as aliased_require (P)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const r = require;\n" +
+        "const n = process.env.PLUGIN;\n" +
+        "function main(){ r(n); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "aliased_require",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("classifies an aliased require call the same way even with a literal argument (deliberate, documented conservatism)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const r = require;\n" +
+        "function main(){ r('some-package'); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "aliased_require",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("classifies createRequire(...)(n) called inline as create_require (Q)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const { createRequire } = require('module');\n" +
+        "const n = process.env.PLUGIN;\n" +
+        "function main(){ createRequire(__filename)(n); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "create_require",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("classifies a createRequire(...) result assigned to a local const as create_require", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const { createRequire } = require('module');\n" +
+        "const r = createRequire(__filename);\n" +
+        "const n = process.env.PLUGIN;\n" +
+        "function main(){ r(n); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "create_require",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("never flags a same-file function coincidentally named createRequire that has no relationship to Node's module system (precision control)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function createRequire(x){ return x; }\n" +
+        "const r = createRequire(1);\n" +
+        "function main(){ return r; }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(
+      graph.edges.some(
+        (e) =>
+          e.resolution.kind === "unknown" &&
+          e.resolution.reason === "create_require",
+      ),
+    ).toBe(false);
+  });
+
+  it("classifies module.require(n) as module_require, never suppressed by the known-global fallback (R1)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const n = process.env.PLUGIN;\n" +
+        "function main(){ module.require(n); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "module_require",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("classifies process.mainModule.require(n) as module_require (R2)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const n = process.env.PLUGIN;\n" +
+        "function main(){ process.mainModule.require(n); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "module_require",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("classifies new Function(...) as function_constructor (S1)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      'function main(){ return new Function("return 1")(); }\n' +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "function_constructor",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("classifies Function(...) called without new as function_constructor too", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      'function main(){ return Function("return 1")(); }\n' +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "function_constructor",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("classifies an aliased eval call as aliased_eval (S2)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const e = eval;\n" +
+        "function main(){ e(\"require('x')\"); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "aliased_eval",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("classifies globalThis.eval(...) as aliased_eval, never suppressed by the known-global fallback (S3)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function main(){ globalThis.eval(\"require('x')\"); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "aliased_eval",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("still classifies an ordinary unsupported call as unsupported_construct, never widened merely because it's unsupported (control)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function main(token){ return token.trim(); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "unsupported_construct",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("still classifies an ordinary dynamic member dispatch as dynamic_member_access, never widened (control)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function main(obj, name){ return obj[name](); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "dynamic_member_access",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("still classifies a resolved-but-unattributed target as unresolved_target, never widened (control)", async () => {
+    const root = tempProject();
+    write(root, "src/lib.js", "module.exports = { real(){ return 1; } };\n");
+    const entry = write(
+      root,
+      "src/index.js",
+      "const lib = require('./lib.js');\n" +
+        "function main(){ return lib.doesNotExist(); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "unresolved_target",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it("makes an aliased require in a transitively-loaded module's TOP-LEVEL scope reachable from the entrypoint (module-scope interaction)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/consumer.js",
+      "const r = require;\n" +
+        "const n = process.env.PLUGIN;\n" +
+        "r(n);\n" + // top-level, never inside a called function
+        "function useIt(){ return 1; }\n" +
+        "module.exports = { useIt };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const c = require('./consumer.js');\n" +
+        "function main(){ return c.useIt(); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const consumerModule = findNode(
+      graph,
+      (n) => n.kind === "module" && n.module.endsWith("consumer.js"),
+    );
+    expect(consumerModule).toBeDefined();
+    const blockerEdge = graph.edges.find(
+      (e) => e.from === consumerModule?.id && e.resolution.kind === "unknown",
+    );
+    expect(blockerEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "aliased_require" },
+    });
+  });
+
+  it("makes globalThis.eval inside a CALLED function of a dependency reachable too (module-scope interaction, called-function variant)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/consumer.js",
+      "function useIt(){\n" +
+        "  globalThis.eval(\"require('x')\");\n" +
+        "  return 1;\n" +
+        "}\n" +
+        "module.exports = { useIt };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const c = require('./consumer.js');\n" +
+        "function main(){ return c.useIt(); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "aliased_eval",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+});
+
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
   it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();

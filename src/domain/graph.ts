@@ -63,7 +63,12 @@ export type DynamicCallReason =
   | "unresolved_module"
   | "unresolved_target"
   | "unsupported_construct"
-  | "declaration_only_resolution";
+  | "declaration_only_resolution"
+  | "aliased_require"
+  | "create_require"
+  | "function_constructor"
+  | "aliased_eval"
+  | "module_require";
 
 /**
  * Whether a {@link DynamicCallReason} widens the module-load closure --
@@ -98,6 +103,40 @@ export type DynamicCallReason =
  * fully analyzed and has no further edges" -- precisely the
  * confident-`unreachable` fabrication risk the audit identifies.
  *
+ * `aliased_require`, `create_require`, `function_constructor`,
+ * `aliased_eval`, and `module_require` (VT-307b) are all widening for the
+ * same underlying reason as `dynamic_require`/`dynamic_import`/`eval`
+ * themselves: each names a *different syntactic route* to the exact same
+ * "load or execute arbitrary code at runtime" capability, which the VT-307
+ * soundness review found `unsupported_construct` was silently swallowing
+ * (or, for property-access forms rooted in a known global like `module`/
+ * `process`/`globalThis`, not even producing an edge at all). Splitting
+ * these out preserves `unsupported_construct`'s own precision for
+ * constructs that genuinely cannot introduce a new module (see below) --
+ * the fix is a more precise partition, not a blanket "make
+ * `unsupported_construct` widening" retreat:
+ * - `aliased_require`: `const r = require; r(x)` -- a local binding whose
+ *   value is exactly the `require` function itself, called indirectly.
+ *   Classified as widening regardless of whether `x` is a literal or
+ *   dynamic (VT-307b deliberately does not attempt alias-aware static
+ *   resolution of the literal case -- see call-graph.ts's own doc comment
+ *   on this boundary).
+ * - `create_require`: `require("module").createRequire(...)` (aliased or
+ *   called inline) -- Node's own sanctioned way to mint a *new* `require`
+ *   function at runtime; the same call-through-the-result risk as
+ *   `aliased_require`.
+ * - `function_constructor`: `Function(...)`/`new Function(...)` --
+ *   compiles and can execute arbitrary generated source, which may itself
+ *   call `require`/`import`. VT-307b classifies the construct itself as
+ *   widening; it never inspects or executes the string argument.
+ * - `aliased_eval`: `const e = eval; e(x)` or `globalThis.eval(x)` --
+ *   indirect eval is still eval.
+ * - `module_require`: `module.require(x)` / `process.mainModule.require(x)`
+ *   -- explicit alternate spellings of `require` reached through a
+ *   property access on a known global, which the pre-VT-307b
+ *   `KNOWN_GLOBAL_IDENTIFIERS` suppression let through with no edge at
+ *   all (see call-graph.ts).
+ *
  * This partition is normative (see the audit doc's § 3.3/§ 12) and MUST
  * NOT be changed silently: every current consumer
  * (`resolveTargetNodes`'s `confirmedAbsentInstance` guard, src/analysis
@@ -113,6 +152,11 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "eval":
     case "unresolved_module":
     case "declaration_only_resolution":
+    case "aliased_require":
+    case "create_require":
+    case "function_constructor":
+    case "aliased_eval":
+    case "module_require":
       return true;
     case "unsupported_construct":
     case "dynamic_member_access":
