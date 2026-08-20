@@ -235,6 +235,40 @@ describe("buildCallGraph: imported calls", () => {
       resolution: { kind: "unknown", reason: "unresolved_module" },
     });
   });
+
+  it("marks a declaration-only package as uncertain, never as a resolved zero-edge module (VT-304, RWF-005)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/types-only-package/package.json",
+      JSON.stringify({ name: "types-only-package", version: "1.0.0" }),
+    );
+    const declFile = write(
+      root,
+      "node_modules/types-only-package/index.d.ts",
+      "export declare function vulnerable(input: string): string;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "types-only-package";\nvulnerable("x");\n',
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const edge = graph.edges.find((e) => e.type === "import");
+    expect(edge).toMatchObject({
+      resolution: {
+        kind: "unknown",
+        reason: "declaration_only_resolution",
+        potentialTargets: [],
+      },
+    });
+    // The declaration file must never be indexed as an analyzable module --
+    // no graph node should ever claim to represent its (nonexistent)
+    // runtime body.
+    expect(findNode(graph, (node) => node.module === declFile)).toBeUndefined();
+  });
 });
 
 describe("buildCallGraph: dynamic calls are marked uncertain", () => {

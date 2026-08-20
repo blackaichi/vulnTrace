@@ -8,7 +8,10 @@ import { buildModuleModel } from "./module-model.js";
 import { indexSourceFile } from "./source-index.js";
 import { bindCallee } from "./symbol-binder.js";
 
-function fakeResolver(mapping: Record<string, string>): ModuleResolver {
+function fakeResolver(
+  mapping: Record<string, string>,
+  declarationOnly: Record<string, string> = {},
+): ModuleResolver {
   return {
     resolve(specifier, importer): Promise<ModuleResolutionResult> {
       const resolvedFileName = mapping[specifier];
@@ -16,6 +19,14 @@ function fakeResolver(mapping: Record<string, string>): ModuleResolver {
         return Promise.resolve({
           kind: "resolved",
           resolvedFileName,
+          isExternalLibraryImport: true,
+        });
+      }
+      const declarationFileName = declarationOnly[specifier];
+      if (declarationFileName) {
+        return Promise.resolve({
+          kind: "declaration",
+          resolvedFileName: declarationFileName,
           isExternalLibraryImport: true,
         });
       }
@@ -216,6 +227,28 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
       kind: "unresolved_module",
       specifier: "missing-package",
       reason: 'no mapping for "missing-package"',
+    });
+  });
+
+  it("returns declaration_only when the resolver finds only a .d.ts (VT-304)", async () => {
+    const declOnlyResolver = fakeResolver(
+      {},
+      { "types-only-package": "/resolved/types-only-package/index.d.ts" },
+    );
+    const text =
+      'import { vulnerable } from "types-only-package";\nvulnerable();\n';
+    const model = buildModuleModel(indexSourceFile("a.ts", text));
+    const result = await bindCallee(
+      findCallee(text),
+      model,
+      declOnlyResolver,
+      "a.ts",
+    );
+
+    expect(result).toEqual({
+      kind: "declaration_only",
+      specifier: "types-only-package",
+      resolvedFileName: "/resolved/types-only-package/index.d.ts",
     });
   });
 

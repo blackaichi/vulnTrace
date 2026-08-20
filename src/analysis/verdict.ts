@@ -408,6 +408,19 @@ async function resolveTargetNodes(
     return { nodes: [], unresolvedReason: resolution.reason };
   }
 
+  // VT-304 (RWF-005/R-4): the module resolved only to a TypeScript
+  // declaration file, never a runtime implementation -- there is no
+  // concrete runtime target to bind, so this must become UNKNOWN
+  // (`unresolvedReason`, unconditionally, same as an outright resolution
+  // failure above), never fall through and search a phantom/real node as
+  // though genuine runtime evidence were available.
+  if (resolution.kind === "declaration") {
+    return {
+      nodes: [],
+      unresolvedReason: `module "${target.module}" resolved only to a TypeScript declaration file (${resolution.resolvedFileName}), not a runtime implementation`,
+    };
+  }
+
   // Site B (VT-301B; see this function's own doc comment above):
   // deliberately unchanged -- the package was never discovered by the
   // graph at all, so a phantom target feeding a genuinely clean,

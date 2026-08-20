@@ -265,7 +265,10 @@ async function resolveReExportChain(
     reExport.specifier,
     prepared.index.filePath,
   );
-  if (resolution.kind === "unresolved") {
+  // VT-304: a declaration-only resolution must never be chased as though
+  // it were a real re-export target -- treated the same as "unresolved"
+  // here, not as a resolved file to index.
+  if (resolution.kind !== "resolved") {
     return undefined;
   }
 
@@ -1139,6 +1142,24 @@ async function classifyCall(
     };
   }
 
+  if (binding.kind === "declaration_only") {
+    // VT-304: the specifier resolved only to a TypeScript declaration file
+    // -- never indexed as a module (a `.d.ts` has no executable bodies to
+    // index), so this must not fabricate a "resolved, zero-edge" region.
+    // See isClosureWideningReason's own doc comment for why this reason is
+    // closure-widening.
+    return {
+      from,
+      type: "import",
+      resolution: {
+        kind: "unknown",
+        reason: "declaration_only_resolution",
+        potentialTargets: [],
+      },
+      location,
+    };
+  }
+
   // Not an import: a direct, same-file call is still worth an edge.
   const localTarget = findLocalFunctionNodeId(callee, prepared);
   if (localTarget) {
@@ -1347,6 +1368,21 @@ async function classifyNew(
       resolution: {
         kind: "unknown",
         reason: "unresolved_module",
+        potentialTargets: [],
+      },
+      location,
+    };
+  }
+
+  if (binding.kind === "declaration_only") {
+    // VT-304: see the equivalent branch in classifyCall for why this must
+    // not fabricate a resolved, zero-edge region.
+    return {
+      from,
+      type: "constructor",
+      resolution: {
+        kind: "unknown",
+        reason: "declaration_only_resolution",
         potentialTargets: [],
       },
       location,

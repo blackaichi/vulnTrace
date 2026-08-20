@@ -80,7 +80,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-002 | any (`node-forge` isolates it cleanly) | One unresolved/dynamic construct *anywhere* in an entrypoint's reachable call graph forces `UNKNOWN` for every vulnerability checked against that entrypoint, even when the construct is entirely unrelated to the target | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model | Open, not yet scoped as a task |
 | RWF-003 | `minimist` | `module.exports = function (...) {...}` (an anonymous function expression, not a named local declaration) isn't matched by export-to-function resolution | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
 | RWF-004 | `qs`, `debug`→`ms`, `semver` | An exported value that is itself a re-export of a function declared in a *different* file (same-package sibling file or a different package entirely) is never chased to its real declaration | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
-| RWF-005 | `trim-newlines` | TypeScript module resolution prefers a package's hand-authored `.d.ts` over its real `.js` implementation when resolving a bare specifier from a plain `.js` importer | Precision only — degrades to UNKNOWN (analysis operates on a file with no real function bodies) | Open, not yet scoped as a task |
+| RWF-005 | `trim-newlines` | TypeScript module resolution prefers a package's hand-authored `.d.ts` over its real `.js` implementation when resolving a bare specifier from a plain `.js` importer | Precision only — degrades to UNKNOWN (analysis operates on a file with no real function bodies) | **Fixed (VT-304)** |
 | RWF-006 | `fast-xml-parser` | A webpack-bundled, `Object.defineProperty`-getter-defined class export isn't recognized as a constructible/method-bearing target | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
 | RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | Open, not yet scoped as a task |
 
@@ -208,6 +208,34 @@ Both `parse` and `stringify` are **local variables whose values come from `requi
 ---
 
 ## RWF-005 — TypeScript module resolution prefers a package's `.d.ts` over its real `.js` implementation
+
+**Status: Fixed (VT-304).** `src/code-intelligence/module-resolver.ts`'s
+`resolveSync` now checks whether `ts.resolveModuleName`'s result is a
+declaration file (`.d.ts`/`.d.cts`/`.d.mts`, identified via the compiler's
+own `ResolvedModuleFull.extension`) and, if so, attempts to identify the
+real runtime implementation before ever returning it as a normal
+`"resolved"` result: first by re-resolving the same specifier with
+TypeScript's internal `noDtsResolution` option (isolated to one function,
+`attemptNoDtsResolution`, with a documented, cast, try/catch-guarded call
+site), then by a structurally-scoped same-package sibling probe
+(`attemptSiblingRuntimeFile`, respecting `package.json`'s own `main` field
+when present) as a fallback. If neither finds a real implementation, the
+result is now an explicit, first-class `DeclarationOnlyModule` (`kind:
+"declaration"`) — never silently treated as an analyzable module.
+Downstream, a declaration-only import now produces an explicit
+`declaration_only_resolution` call-edge/`DynamicCallReason`, classified as
+closure-widening (the real runtime file was never indexed, so its
+behavior — including any further `require`/`import` calls — is exactly as
+unknown as an unresolved module), and the declaration file itself is never
+indexed as a graph node. `RWB-01` now correctly resolves to `AFFECTED`
+(previously `UNKNOWN`) with 0 regressions elsewhere in the suite. See
+`src/code-intelligence/module-resolver.ts`'s own doc comments and
+`src/code-intelligence/module-resolver.test.ts`'s VT-304 test group for the
+full regression coverage, including the `@types/*` case (RWB-09's fixture
+never actually exercised the `@types/*` shape — its own real `semver`
+installs declare `"main": "index.js"` and ship no `.d.ts` at all, so its
+remaining failures are exclusively RWF-004/RWF-009, unrelated to this
+finding).
 
 **Discovered:** scanning real `trim-newlines@3.0.0` (`RWB-01`) against real GHSA-7p7h-4mm5-852v / CVE-2021-33623.
 
