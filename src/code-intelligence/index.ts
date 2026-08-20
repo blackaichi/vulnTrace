@@ -29,6 +29,7 @@ export {
   mapExportsToFunctions,
 } from "./module-model.js";
 export {
+  type BuiltinModule,
   type DeclarationOnlyModule,
   type ModuleResolutionResult,
   type ModuleResolver,
@@ -40,6 +41,7 @@ export {
 export {
   type CanonicalSymbolTarget,
   type SymbolBindingAmbiguous,
+  type SymbolBindingBuiltin,
   type SymbolBindingDeclarationOnly,
   type SymbolBindingNotAnImport,
   type SymbolBindingResolved,

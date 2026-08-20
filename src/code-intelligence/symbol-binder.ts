@@ -47,6 +47,19 @@ export interface SymbolBindingDeclarationOnly {
   readonly resolvedFileName: string;
 }
 
+/**
+ * The callee references a known import, but its module specifier names a
+ * Node.js builtin module (VT-305, RWF-007, see module-resolver.ts's
+ * {@link BuiltinModule}) -- a known runtime module supplied by Node
+ * itself, never an npm package to look up or an uncertainty to flag.
+ * `specifier` is the normalized, unprefixed form (`"fs"`, not
+ * `"node:fs"`).
+ */
+export interface SymbolBindingBuiltin {
+  readonly kind: "builtin";
+  readonly specifier: string;
+}
+
 /** The callee does not reference an imported binding at all (e.g. a call to a locally-defined function). */
 export interface SymbolBindingNotAnImport {
   readonly kind: "not_an_import";
@@ -57,6 +70,7 @@ export type SymbolBindingResult =
   | SymbolBindingAmbiguous
   | SymbolBindingUnresolvedModule
   | SymbolBindingDeclarationOnly
+  | SymbolBindingBuiltin
   | SymbolBindingNotAnImport;
 
 interface CalleeShape {
@@ -180,6 +194,13 @@ export async function bindCallee(
       kind: "declaration_only",
       specifier: binding.specifier,
       resolvedFileName: resolution.resolvedFileName,
+    };
+  }
+
+  if (resolution.kind === "builtin") {
+    return {
+      kind: "builtin",
+      specifier: resolution.specifier,
     };
   }
 

@@ -421,6 +421,19 @@ async function resolveTargetNodes(
     };
   }
 
+  // VT-305 (RWF-007): a rule targeting a Node builtin module by name has
+  // no filesystem file to bind to (see module-resolver.ts's
+  // {@link BuiltinModule}) -- out of this benchmark's practical scope, but
+  // handled the same conservative way as a declaration-only resolution
+  // rather than left to fall through into a field access that doesn't
+  // exist on this variant.
+  if (resolution.kind === "builtin") {
+    return {
+      nodes: [],
+      unresolvedReason: `module "${target.module}" is a Node builtin module, not a resolvable runtime file`,
+    };
+  }
+
   // Site B (VT-301B; see this function's own doc comment above):
   // deliberately unchanged -- the package was never discovered by the
   // graph at all, so a phantom target feeding a genuinely clean,

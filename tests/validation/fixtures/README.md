@@ -93,7 +93,13 @@ vulnerable symbol.
 - `rwb-10-handlebars-dynamic-dispatch/` — real `handlebars@4.7.6`
   (GHSA-f2jv-r9rf-7988 / CVE-2021-23369), `Handlebars.compile` reachable
   only through a computed property lookup keyed by a runtime config value.
-  RWB-10, UNKNOWN.
+  RWB-10, UNKNOWN. Also the RWF-007/VT-305 exhibit: its entrypoint's own
+  `require("fs")`/`require("path")` used to each produce a spurious
+  closure-widening `unresolved_module` edge alongside the case's intended
+  `unsupported_construct` blocker. **Since VT-305**, those builtin-related
+  edges are gone (Node builtins are now classified explicitly, never as
+  unresolved modules); the verdict itself was already the correct
+  `UNKNOWN` either way, via the intended blocker alone.
 
 Not lintable/prettier-checked project code — see `eslint.config.js` and
 `.prettierignore`'s `tests/validation/fixtures/**` entries.

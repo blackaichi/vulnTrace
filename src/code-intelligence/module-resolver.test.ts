@@ -527,6 +527,67 @@ describe("createModuleResolver: declaration vs. runtime resolution (VT-304, RWF-
   });
 });
 
+describe("createModuleResolver: Node builtin classification (VT-305, RWF-007)", () => {
+  it.each(["fs", "path", "crypto", "http", "node:fs", "node:path"])(
+    "classifies %s as a builtin, never unresolved, never a filesystem path",
+    async (specifier) => {
+      const root = tempProject();
+      write(root, "src/index.js", "export {};\n");
+
+      const resolver = createModuleResolver(loadTsProject(root));
+      const result = await resolver.resolve(
+        specifier,
+        path.join(root, "src", "index.js"),
+      );
+
+      expect(result.kind).toBe("builtin");
+      if (result.kind === "builtin") {
+        // Normalized to the bare form regardless of which spelling was
+        // requested -- "fs" and "node:fs" are the same module identity.
+        expect(result.specifier).toBe(specifier.replace(/^node:/, ""));
+      }
+    },
+  );
+
+  it("classifies a builtin the same way even when a local node_modules package shares its name", async () => {
+    const root = tempProject();
+    write(root, "src/index.js", "export {};\n");
+    // A same-named npm package installed locally must never shadow the
+    // real Node builtin -- real Node.js itself never allows this either.
+    write(
+      root,
+      "node_modules/fs/package.json",
+      JSON.stringify({ name: "fs", version: "1.0.0", main: "index.js" }),
+    );
+    write(
+      root,
+      "node_modules/fs/index.js",
+      "module.exports = { FIXTURE_MARKER: true };\n",
+    );
+
+    const resolver = createModuleResolver(loadTsProject(root));
+    const result = await resolver.resolve(
+      "fs",
+      path.join(root, "src", "index.js"),
+    );
+
+    expect(result).toEqual({ kind: "builtin", specifier: "fs" });
+  });
+
+  it("retains existing unresolved behavior for a specifier that merely resembles a builtin name", async () => {
+    const root = tempProject();
+    write(root, "src/index.js", "export {};\n");
+
+    const resolver = createModuleResolver(loadTsProject(root));
+    const result = await resolver.resolve(
+      "not-a-real-builtin",
+      path.join(root, "src", "index.js"),
+    );
+
+    expect(result.kind).toBe("unresolved");
+  });
+});
+
 describe("createModuleResolver: resolution failure", () => {
   it("returns an explicit unresolved result, never throws, for a nonexistent module", async () => {
     const root = tempProject();
