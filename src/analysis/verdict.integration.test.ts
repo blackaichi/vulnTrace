@@ -680,6 +680,99 @@ describe("buildFinding regression: an installed instance never imported at all (
   });
 });
 
+describe("buildFinding regression: npm-aliased package instance is visible to graphPackageInstances (VT-306, RWF-009)", () => {
+  // The install DIRECTORY name ("foo-alias") never matches the aliased
+  // package's own declared name ("foo") -- exactly the real
+  // "semver-vulnerable": "npm:semver@7.5.1" shape RWF-009 was named for.
+  // Before VT-306, identifyModule derived packageName purely from the
+  // path segment ("foo-alias"), so graphPackageInstances(graph, "foo")
+  // never matched this instance at all -- resolveTargetNodes fell to
+  // instances.size === 0 (Site B) even though the call graph DID
+  // genuinely discover and traverse this exact instance, risking either a
+  // missed AFFECTED or (worse) a confirmedAbsentInstance-driven
+  // NOT_AFFECTED for a package that was, in fact, reached.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  it("resolves a reachable target inside an aliased install directory to AFFECTED, keyed by the package.json name, not the directory name", async () => {
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-aliased-instance-"),
+    );
+    // Real npm alias shape: "foo-alias": "npm:foo@1.2.3" in package.json,
+    // installed at node_modules/foo-alias, but the installed package's OWN
+    // package.json declares its real name.
+    write(
+      tmpDir,
+      "node_modules/foo-alias/package.json",
+      JSON.stringify({ name: "foo", version: "1.2.3", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/foo-alias/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      // The import specifier is the ALIAS name -- exactly what a real
+      // Node app writes to reach an npm-aliased dependency.
+      'import { vulnerable } from "foo-alias";\n\nexport function main() {\n  return vulnerable();\n}\n',
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    // The rule targets the package by its REAL identity ("foo") -- exactly
+    // how a rule authored against a real CVE advisory names the package,
+    // never the consuming application's own local alias name.
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-aliased-instance",
+      package: { name: "foo" },
+      targets: [{ module: "foo", export: "vulnerable", kind: "function" }],
+    };
+
+    const finding = await buildFinding({
+      vulnerability: {
+        id: "GHSA-test-aliased-instance",
+        aliases: [],
+        package: "foo",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "foo",
+      packageVersion: "1.2.3",
+      packageInstance: path.join(tmpDir, "node_modules/foo-alias"),
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+    });
+
+    // Must be a genuine AFFECTED via the real reachable call -- never a
+    // confirmedAbsentInstance false negative, and never UNKNOWN merely
+    // because the aliased instance was invisible to graphPackageInstances.
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+});
+
 describe("buildFinding regression: {file, symbol} entrypoints, real files end to end (VT-205)", () => {
   // SDD-v0.2.md § 6's own example, driven through real files and the real
   // call graph: main() calls safe(); a sibling export, unused(), calls
