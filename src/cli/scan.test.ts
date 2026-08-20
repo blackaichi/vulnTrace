@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -18,6 +18,13 @@ function fakeProvider(
       return Promise.resolve(byPackageName[query.name] ?? []);
     },
   };
+}
+
+function write(root: string, relativePath: string, content: string): string {
+  const filePath = path.join(root, relativePath);
+  mkdirSync(path.dirname(filePath), { recursive: true });
+  writeFileSync(filePath, content);
+  return filePath;
 }
 
 function fakeIo() {
@@ -352,6 +359,502 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       vulnerability: "GHSA-fixture-alias-0001",
       verdict: "AFFECTED",
     });
+  });
+});
+
+describe("runScanCommand: same package name+version installed at multiple locations (VT-307c-fix-1)", () => {
+  // Reproduces the live false negative the VT-307d soundness review found:
+  // foo@1.0.0 installed at TWO distinct locations (non-hoisted, since a
+  // top-level foo@2.0.0 forces both nested copies to stay put). Only the
+  // instance under `b` is ever loaded, and its vulnerable() is genuinely
+  // called; the instance under `a` is installed but never imported by
+  // anything. Before this fix, scan.ts's own `dedupeDependencies` collapsed
+  // both `foo@1.0.0` DependencyNodes (one per install location) into a
+  // single one keyed by "foo@1.0.0", silently discarding whichever wasn't
+  // first -- so the finding pipeline evaluated reachability against
+  // whichever instance survived, not necessarily the one actually reached.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  const FOO_GHSA: RawVulnerability = {
+    id: "GHSA-foo-multi-0001",
+    aliases: [],
+    affected: [
+      {
+        package: { ecosystem: "npm", name: "foo" },
+        ranges: [
+          { type: "SEMVER", events: [{ introduced: "0" }, { fixed: "2.0.0" }] },
+        ],
+      },
+    ],
+    references: [],
+  };
+
+  function buildFixture(): string {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-scan-multi-instance-"),
+    );
+
+    write(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { a: "1.0.0", b: "1.0.0", foo: "2.0.0" },
+      }),
+    );
+    write(
+      root,
+      "package-lock.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": {
+            name: "app",
+            version: "1.0.0",
+            dependencies: { a: "1.0.0", b: "1.0.0", foo: "2.0.0" },
+          },
+          "node_modules/foo": { version: "2.0.0" },
+          "node_modules/a": {
+            version: "1.0.0",
+            dependencies: { foo: "1.0.0" },
+          },
+          "node_modules/a/node_modules/foo": { version: "1.0.0" },
+          "node_modules/b": {
+            version: "1.0.0",
+            dependencies: { foo: "1.0.0" },
+          },
+          "node_modules/b/node_modules/foo": { version: "1.0.0" },
+        },
+      }),
+    );
+
+    const FOO_SOURCE =
+      "function vulnerable(){ return 'BOOM'; }\nmodule.exports = { vulnerable };\n";
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "2.0.0" }),
+    );
+    write(root, "node_modules/foo/index.js", FOO_SOURCE);
+
+    // `a`: installed, requires its own nested foo@1.0.0, but NOTHING in the
+    // application ever requires `a` itself -- this instance is never loaded.
+    write(
+      root,
+      "node_modules/a/package.json",
+      JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { foo: "1.0.0" },
+      }),
+    );
+    write(
+      root,
+      "node_modules/a/node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(root, "node_modules/a/node_modules/foo/index.js", FOO_SOURCE);
+    write(
+      root,
+      "node_modules/a/index.js",
+      "const foo = require('foo');\nmodule.exports = { unused(){ return foo.vulnerable(); } };\n",
+    );
+
+    // `b`: installed, requires its own nested foo@1.0.0, and the
+    // application requires `b` and calls its `useIt()`, which genuinely
+    // calls foo.vulnerable().
+    write(
+      root,
+      "node_modules/b/package.json",
+      JSON.stringify({
+        name: "b",
+        version: "1.0.0",
+        dependencies: { foo: "1.0.0" },
+      }),
+    );
+    write(
+      root,
+      "node_modules/b/node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(root, "node_modules/b/node_modules/foo/index.js", FOO_SOURCE);
+    write(
+      root,
+      "node_modules/b/index.js",
+      "const foo = require('foo');\nmodule.exports = { useIt(){ return foo.vulnerable(); } };\n",
+    );
+
+    write(
+      root,
+      "src/index.js",
+      "const b = require('b');\nfunction main(){ return b.useIt(); }\nmodule.exports = { main };\n",
+    );
+    write(
+      root,
+      "vulntrace.yml",
+      "analysis:\n  entrypoints:\n    - src/index.js\nrules:\n  files:\n    - rules.yml\n",
+    );
+    write(
+      root,
+      "rules.yml",
+      "rules:\n" +
+        "  - id: GHSA-foo-multi-0001\n" +
+        "    package:\n" +
+        "      name: foo\n" +
+        "    targets:\n" +
+        "      - module: foo\n" +
+        "        export: vulnerable\n" +
+        "        kind: function\n",
+    );
+
+    return root;
+  }
+
+  it("does not lose the reached instance's AFFECTED verdict merely because a sibling install shares its name+version", async () => {
+    const root = buildFixture();
+    tmpDir = root;
+    const { io, stdout, stderr } = fakeIo();
+
+    const exitCode = await runScanCommand({
+      projectPathArg: root,
+      provider: fakeProvider({ foo: [FOO_GHSA] }),
+      noCache: true,
+      io,
+    });
+
+    expect(stderr).toEqual([]);
+    const output = JSON.parse(stdout.join(""));
+    const fooFindings = output.findings.filter(
+      (f: { vulnerability: string }) =>
+        f.vulnerability === "GHSA-foo-multi-0001",
+    );
+
+    // The scan as a whole must never conclude NOT_AFFECTED for this
+    // vulnerability merely because one of the two identically-named/
+    // versioned installed instances happened to be discarded before
+    // reachability -- the genuinely-reached `b` instance's AFFECTED
+    // verdict must survive.
+    expect(
+      fooFindings.some((f: { verdict: string }) => f.verdict === "AFFECTED"),
+    ).toBe(true);
+    expect(exitCode).toBe(1);
+  });
+
+  it("evaluates both installed instances separately: one per exact install location, not one shared verdict", async () => {
+    const root = buildFixture();
+    tmpDir = root;
+    const { io, stdout, stderr } = fakeIo();
+
+    await runScanCommand({
+      projectPathArg: root,
+      provider: fakeProvider({ foo: [FOO_GHSA] }),
+      noCache: true,
+      io,
+    });
+
+    expect(stderr).toEqual([]);
+    const output = JSON.parse(stdout.join(""));
+    const fooFindings = output.findings.filter(
+      (f: { vulnerability: string }) =>
+        f.vulnerability === "GHSA-foo-multi-0001",
+    );
+
+    // Both installed foo@1.0.0 instances (under `a` and under `b`) are
+    // covered by the advisory and must each get their own reachability
+    // evaluation -- one AFFECTED (b, genuinely reached) and one
+    // NOT_AFFECTED (a, never loaded at all), never collapsed into a
+    // single shared finding.
+    expect(fooFindings).toHaveLength(2);
+    const verdicts = fooFindings
+      .map((f: { verdict: string }) => f.verdict)
+      .sort();
+    expect(verdicts).toEqual(["AFFECTED", "NOT_AFFECTED"]);
+
+    const affected = fooFindings.find(
+      (f: { verdict: string }) => f.verdict === "AFFECTED",
+    );
+    // The AFFECTED finding's own evidence path must reference the actually
+    // reached instance's own directory (`b`), not the unreached one (`a`)
+    // -- proving the fix carries the correct per-instance identity through
+    // to reachability, not merely that "some" finding happens to be
+    // AFFECTED by coincidence.
+    expect(
+      affected.evidence.path.some((p: string) =>
+        p.includes("node_modules/b/node_modules/foo"),
+      ),
+    ).toBe(true);
+  });
+
+  it("negative control: neither instance reached -- no cross-instance borrowing produces a false AFFECTED", async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-scan-multi-instance-negative-"),
+    );
+    tmpDir = root;
+
+    write(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { a: "1.0.0", b: "1.0.0", foo: "2.0.0" },
+      }),
+    );
+    write(
+      root,
+      "package-lock.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": {
+            name: "app",
+            version: "1.0.0",
+            dependencies: { a: "1.0.0", b: "1.0.0", foo: "2.0.0" },
+          },
+          "node_modules/foo": { version: "2.0.0" },
+          "node_modules/a": {
+            version: "1.0.0",
+            dependencies: { foo: "1.0.0" },
+          },
+          "node_modules/a/node_modules/foo": { version: "1.0.0" },
+          "node_modules/b": {
+            version: "1.0.0",
+            dependencies: { foo: "1.0.0" },
+          },
+          "node_modules/b/node_modules/foo": { version: "1.0.0" },
+        },
+      }),
+    );
+
+    const FOO_SOURCE =
+      "function vulnerable(){ return 'BOOM'; }\nfunction safe(){ return 'ok'; }\nmodule.exports = { vulnerable, safe };\n";
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "2.0.0" }),
+    );
+    write(root, "node_modules/foo/index.js", FOO_SOURCE);
+
+    // `a` IS loaded and calls foo, but only the SAFE export -- never the
+    // vulnerable one.
+    write(
+      root,
+      "node_modules/a/package.json",
+      JSON.stringify({
+        name: "a",
+        version: "1.0.0",
+        dependencies: { foo: "1.0.0" },
+      }),
+    );
+    write(
+      root,
+      "node_modules/a/node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(root, "node_modules/a/node_modules/foo/index.js", FOO_SOURCE);
+    write(
+      root,
+      "node_modules/a/index.js",
+      "const foo = require('foo');\nmodule.exports = { useSafe(){ return foo.safe(); } };\n",
+    );
+
+    // `b` is installed but never required by anything -- never loaded.
+    write(
+      root,
+      "node_modules/b/package.json",
+      JSON.stringify({
+        name: "b",
+        version: "1.0.0",
+        dependencies: { foo: "1.0.0" },
+      }),
+    );
+    write(
+      root,
+      "node_modules/b/node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(root, "node_modules/b/node_modules/foo/index.js", FOO_SOURCE);
+    write(
+      root,
+      "node_modules/b/index.js",
+      "const foo = require('foo');\nmodule.exports = { useIt(){ return foo.vulnerable(); } };\n",
+    );
+
+    write(
+      root,
+      "src/index.js",
+      "const a = require('a');\nfunction main(){ return a.useSafe(); }\nmodule.exports = { main };\n",
+    );
+    write(
+      root,
+      "vulntrace.yml",
+      "analysis:\n  entrypoints:\n    - src/index.js\nrules:\n  files:\n    - rules.yml\n",
+    );
+    write(
+      root,
+      "rules.yml",
+      "rules:\n" +
+        "  - id: GHSA-foo-multi-0001\n" +
+        "    package:\n" +
+        "      name: foo\n" +
+        "    targets:\n" +
+        "      - module: foo\n" +
+        "        export: vulnerable\n" +
+        "        kind: function\n",
+    );
+
+    const { io, stdout, stderr } = fakeIo();
+    const exitCode = await runScanCommand({
+      projectPathArg: root,
+      provider: fakeProvider({ foo: [FOO_GHSA] }),
+      noCache: true,
+      io,
+    });
+
+    expect(stderr).toEqual([]);
+    const output = JSON.parse(stdout.join(""));
+    const fooFindings = output.findings.filter(
+      (f: { vulnerability: string }) =>
+        f.vulnerability === "GHSA-foo-multi-0001",
+    );
+
+    expect(fooFindings).toHaveLength(2);
+    // Neither instance's vulnerable() is ever reached -- `a` only calls
+    // safe(), `b` is never loaded at all -- so no cross-instance evidence
+    // borrowing may manufacture an AFFECTED verdict for either.
+    expect(
+      fooFindings.every((f: { verdict: string }) => f.verdict !== "AFFECTED"),
+    ).toBe(true);
+    expect(exitCode).toBe(0);
+  });
+
+  it("npm alias: two differently-named aliases resolving to the same real package name and version stay distinct instances", async () => {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-scan-alias-same-version-"),
+    );
+    tmpDir = root;
+
+    // "foo-old"/"foo-new" are npm aliases (VT-306): the install DIRECTORY
+    // names differ, but both installed package.json files declare the
+    // real name "foo" -- and, deliberately, the SAME version, so scan.ts's
+    // own advisory-lookup grouping (keyed by name@version) puts both in
+    // ONE group. Only foo-new's copy is ever loaded and its vulnerable()
+    // called.
+    write(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: {
+          "foo-old": "npm:foo@1.0.0",
+          "foo-new": "npm:foo@1.0.0",
+        },
+      }),
+    );
+    write(
+      root,
+      "package-lock.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": {
+            name: "app",
+            version: "1.0.0",
+            dependencies: {
+              "foo-old": "npm:foo@1.0.0",
+              "foo-new": "npm:foo@1.0.0",
+            },
+          },
+          "node_modules/foo-old": { name: "foo", version: "1.0.0" },
+          "node_modules/foo-new": { name: "foo", version: "1.0.0" },
+        },
+      }),
+    );
+
+    const FOO_SOURCE =
+      "function vulnerable(){ return 'BOOM'; }\nmodule.exports = { vulnerable };\n";
+    write(
+      root,
+      "node_modules/foo-old/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(root, "node_modules/foo-old/index.js", FOO_SOURCE);
+    write(
+      root,
+      "node_modules/foo-new/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(root, "node_modules/foo-new/index.js", FOO_SOURCE);
+
+    write(
+      root,
+      "src/index.js",
+      "const fooNew = require('foo-new');\n" +
+        "function main(){ return fooNew.vulnerable(); }\n" +
+        "module.exports = { main };\n",
+    );
+    write(
+      root,
+      "vulntrace.yml",
+      "analysis:\n  entrypoints:\n    - src/index.js\nrules:\n  files:\n    - rules.yml\n",
+    );
+    write(
+      root,
+      "rules.yml",
+      "rules:\n" +
+        "  - id: GHSA-foo-multi-0001\n" +
+        "    package:\n" +
+        "      name: foo\n" +
+        "    targets:\n" +
+        "      - module: foo\n" +
+        "        export: vulnerable\n" +
+        "        kind: function\n",
+    );
+
+    const { io, stdout, stderr } = fakeIo();
+    const exitCode = await runScanCommand({
+      projectPathArg: root,
+      provider: fakeProvider({ foo: [FOO_GHSA] }),
+      noCache: true,
+      io,
+    });
+
+    expect(stderr).toEqual([]);
+    const output = JSON.parse(stdout.join(""));
+    const fooFindings = output.findings.filter(
+      (f: { vulnerability: string }) =>
+        f.vulnerability === "GHSA-foo-multi-0001",
+    );
+
+    // Both aliases are covered by ONE advisory lookup (same name@version),
+    // but each is still its own installed instance -- foo-old (never
+    // loaded) must not borrow foo-new's AFFECTED verdict, and foo-new's
+    // genuine AFFECTED must not be discarded merely because foo-old shares
+    // its identity and version.
+    expect(fooFindings).toHaveLength(2);
+    const verdicts = fooFindings
+      .map((f: { verdict: string }) => f.verdict)
+      .sort();
+    expect(verdicts).toEqual(["AFFECTED", "NOT_AFFECTED"]);
+    expect(exitCode).toBe(1);
   });
 });
 

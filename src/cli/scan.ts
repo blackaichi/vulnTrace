@@ -62,18 +62,39 @@ export interface RunScanOptions {
   readonly io?: CliIo;
 }
 
-/** One {@link DependencyNode} per distinct install location; a scan only needs one check per distinct name+version. */
-function dedupeDependencies(
+/**
+ * Groups {@link DependencyNode}s by advisory-lookup key (`name@version`)
+ * (VT-307c-fix-1). `buildDependencyGraph` produces one `DependencyNode`
+ * per distinct install location (see its own doc comment) -- the same
+ * `name@version` can genuinely appear at more than one location (a
+ * non-hoisted nested install, an npm alias with an identical real
+ * version, ...), and each is a distinct {@link PackageInstanceId}
+ * (VT-212/VT-306) that may have entirely different reachability.
+ *
+ * This groups ONLY for the vulnerability-provider query below, which is
+ * identical for every instance sharing a name+version and must not be
+ * repeated per instance -- it is deliberately NOT an instance-level
+ * dedupe. Every `DependencyNode` in a group is still carried through to
+ * its own `buildFinding` call further down: collapsing to a single
+ * representative here (the bug this task fixes) silently discarded
+ * whichever instance didn't happen to be seen first, which could discard
+ * the one actually reached at runtime and reported a false NOT_AFFECTED
+ * for the vulnerability as a whole.
+ */
+function groupDependenciesForAdvisoryLookup(
   nodes: readonly DependencyNode[],
-): DependencyNode[] {
-  const seen = new Map<string, DependencyNode>();
+): Map<string, DependencyNode[]> {
+  const groups = new Map<string, DependencyNode[]>();
   for (const node of nodes) {
     const key = `${node.name}@${node.version}`;
-    if (!seen.has(key)) {
-      seen.set(key, node);
+    const group = groups.get(key);
+    if (group) {
+      group.push(node);
+    } else {
+      groups.set(key, [node]);
     }
   }
-  return [...seen.values()];
+  return groups;
 }
 
 function loadConfig(projectRoot: string, configPathOverride?: string): Config {
@@ -309,23 +330,31 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   const graphTruncated = hitFileLimit || hitNodeLimit || hitTimeLimit;
 
   const cveFilter = options.cveFilter;
-  const uniqueDependencies = dedupeDependencies(dependencyNodes);
+  const dependencyGroups = groupDependenciesForAdvisoryLookup(dependencyNodes);
   const findings: Finding[] = [];
 
-  for (const dependency of uniqueDependencies) {
+  for (const [, instances] of dependencyGroups) {
+    // Every instance in a group shares the same name+version (that's the
+    // grouping key) -- safe to use the first as the representative for the
+    // one shared provider query and version match below.
+    const representative = instances[0];
+    if (!representative) {
+      continue;
+    }
+
     let rawVulnerabilities;
     const providerStart = Date.now();
     try {
       rawVulnerabilities = await provider.queryPackage({
-        ecosystem: dependency.ecosystem,
-        name: dependency.name,
-        version: dependency.version,
+        ecosystem: representative.ecosystem,
+        name: representative.name,
+        version: representative.version,
       });
       providerMs += Date.now() - providerStart;
     } catch (error) {
       providerMs += Date.now() - providerStart;
       io.stderr(
-        `vulntrace: vulnerability provider failure for ${dependency.name}@${dependency.version}: ${errorMessage(error)}\n`,
+        `vulntrace: vulnerability provider failure for ${representative.name}@${representative.version}: ${errorMessage(error)}\n`,
       );
       return 4;
     }
@@ -335,12 +364,12 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       try {
         vulnerabilities.push(
           normalizeOsvVulnerability(raw, {
-            ecosystem: dependency.ecosystem,
-            name: dependency.name,
+            ecosystem: representative.ecosystem,
+            name: representative.name,
           }),
         );
       } catch (error) {
-        const message = `skipping malformed vulnerability record for ${dependency.name}@${dependency.version}: ${errorMessage(error)}`;
+        const message = `skipping malformed vulnerability record for ${representative.name}@${representative.version}: ${errorMessage(error)}`;
         io.stderr(`vulntrace: ${message}\n`);
         diagnostics.push({ source: "vulnerabilities", message });
       }
@@ -354,35 +383,44 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         )
       : vulnerabilities;
 
-    const matches = matchVulnerabilities(dependency.version, relevant);
+    const matches = matchVulnerabilities(representative.version, relevant);
 
     for (const match of matches) {
       const rule = findRuleForVulnerability(rulesById, match.vulnerability);
-      const reachabilityStart = Date.now();
-      const finding = await buildFinding({
-        vulnerability: match.vulnerability,
-        packageName: dependency.name,
-        packageVersion: dependency.version,
-        // The dependency graph already knows exactly which installed
-        // instance this finding corresponds to (VT-212, SDD-v0.2.md § 4.3)
-        // -- pass it through as the authoritative identity rather than
-        // letting verdict resolution reconstruct it from the call graph
-        // alone, which cannot distinguish "the wrong instance" from "an
-        // instance never reached at all".
-        packageInstance: dependency.locations[0]
-          ? path.resolve(projectRoot, dependency.locations[0])
-          : undefined,
-        matchResult: match.result,
-        rule,
-        graph,
-        entrypoints: entrypointsResult.entrypoints,
-        resolver,
-        projectRoot,
-        graphTruncated,
-      });
-      reachabilityMs += Date.now() - reachabilityStart;
-      if (finding) {
-        findings.push(finding);
+
+      // Fan out per installed instance -- and per location within an
+      // instance's own `locations`, honoring its plural shape even though
+      // `buildDependencyGraph` currently only ever populates one location
+      // per node (VT-307c-fix-1 Part 11): every exact install location
+      // this advisory applies to gets its own, independent reachability
+      // evaluation, never sharing or borrowing a verdict from a sibling.
+      for (const instance of instances) {
+        for (const location of instance.locations) {
+          const reachabilityStart = Date.now();
+          const finding = await buildFinding({
+            vulnerability: match.vulnerability,
+            packageName: instance.name,
+            packageVersion: instance.version,
+            // The dependency graph already knows exactly which installed
+            // instance this finding corresponds to (VT-212, SDD-v0.2.md
+            // § 4.3) -- pass it through as the authoritative identity
+            // rather than letting verdict resolution reconstruct it from
+            // the call graph alone, which cannot distinguish "the wrong
+            // instance" from "an instance never reached at all".
+            packageInstance: path.resolve(projectRoot, location),
+            matchResult: match.result,
+            rule,
+            graph,
+            entrypoints: entrypointsResult.entrypoints,
+            resolver,
+            projectRoot,
+            graphTruncated,
+          });
+          reachabilityMs += Date.now() - reachabilityStart;
+          if (finding) {
+            findings.push(finding);
+          }
+        }
       }
     }
   }
