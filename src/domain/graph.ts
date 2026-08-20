@@ -49,7 +49,8 @@ export type DynamicCallReason =
   | "eval"
   | "unresolved_module"
   | "unresolved_target"
-  | "unsupported_construct";
+  | "unsupported_construct"
+  | "declaration_only_resolution";
 
 /**
  * Whether a {@link DynamicCallReason} widens the module-load closure --
@@ -72,6 +73,18 @@ export type DynamicCallReason =
  * means the module itself resolved successfully and only the specific
  * export lookup inside it failed.
  *
+ * `declaration_only_resolution` (VT-304, RWF-005/R-4) is widening: it means
+ * the specifier resolved only to a TypeScript declaration file (`.d.ts`/
+ * `.d.cts`/`.d.mts`) -- type information with no executable function
+ * bodies -- because no real runtime implementation could be identified
+ * (see module-resolver.ts). Unlike `unresolved_target`, the module that
+ * actually runs at runtime was never discovered or indexed at all, so
+ * whatever it does (including further `require`/`import` calls) is exactly
+ * as unknown as an `unresolved_module`. Treating it as bounded/non-widening
+ * would let a body-less declaration file stand in as "this region was
+ * fully analyzed and has no further edges" -- precisely the
+ * confident-`unreachable` fabrication risk the audit identifies.
+ *
  * This partition is normative (see the audit doc's § 3.3/§ 12) and MUST
  * NOT be changed silently: every current consumer
  * (`resolveTargetNodes`'s `confirmedAbsentInstance` guard, src/analysis
@@ -86,6 +99,7 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "dynamic_import":
     case "eval":
     case "unresolved_module":
+    case "declaration_only_resolution":
       return true;
     case "unsupported_construct":
     case "dynamic_member_access":
