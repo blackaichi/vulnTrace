@@ -418,6 +418,261 @@ describe("buildCallGraph: Node builtin modules (VT-305, RWF-007)", () => {
   });
 });
 
+describe("buildCallGraph: module-load edges (VT-307a, RWF-002 prerequisite)", () => {
+  it("makes a dynamic_require in a transitively-loaded module's TOP-LEVEL scope reachable from the entrypoint", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/consumer.js",
+      // Top-level, never inside a called function -- before VT-307a there
+      // was no edge connecting index.js's module to consumer.js's module,
+      // so this blocker was invisible to any entrypoint-rooted traversal.
+      "const n = process.env.PLUGIN;\n" +
+        "require(n);\n" +
+        "function useIt(){ return 1; }\n" +
+        "module.exports = { useIt };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const c = require('./consumer.js');\n" +
+        "function main(){ return c.useIt(); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const consumerModule = findNode(
+      graph,
+      (n) => n.kind === "module" && n.module.endsWith("consumer.js"),
+    );
+    expect(consumerModule).toBeDefined();
+
+    const moduleLoadEdge = graph.edges.find(
+      (e) => e.type === "module_load" && e.resolution.kind === "resolved",
+    );
+    expect(moduleLoadEdge).toMatchObject({
+      resolution: { kind: "resolved", target: consumerModule?.id },
+    });
+
+    const blockerEdge = graph.edges.find(
+      (e) => e.from === consumerModule?.id && e.resolution.kind === "unknown",
+    );
+    expect(blockerEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "dynamic_require" },
+    });
+  });
+
+  it("makes a dynamic_import in a transitively-loaded module's top-level scope reachable", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "src/consumer.mjs",
+      "const n = process.env.PLUGIN;\n" +
+        "await import(n);\n" +
+        "export function useIt(){ return 1; }\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      "import { useIt } from './consumer.mjs';\n" +
+        "export function main(){ return useIt(); }\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const consumerModule = findNode(
+      graph,
+      (n) => n.kind === "module" && n.module.endsWith("consumer.mjs"),
+    );
+    const blockerEdge = graph.edges.find(
+      (e) => e.from === consumerModule?.id && e.resolution.kind === "unknown",
+    );
+    expect(blockerEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "dynamic_import" },
+    });
+  });
+
+  it("makes a declaration-only resolution in a transitively-loaded module reachable", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/types-only-package/package.json",
+      JSON.stringify({ name: "types-only-package", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/types-only-package/index.d.ts",
+      "export declare function vulnerable(x: string): string;\n",
+    );
+    write(
+      root,
+      "src/consumer.ts",
+      'import { vulnerable } from "types-only-package";\n' +
+        "export function useIt(){ return vulnerable('x'); }\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { useIt } from "./consumer.js";\n' +
+        "export function main(){ return useIt(); }\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const consumerModule = findNode(
+      graph,
+      (n) => n.kind === "module" && n.module.endsWith("consumer.ts"),
+    );
+    const blockerEdge = graph.edges.find(
+      (e) => e.from === consumerModule?.id && e.resolution.kind === "unknown",
+    );
+    expect(blockerEdge).toMatchObject({
+      resolution: { kind: "unknown", reason: "declaration_only_resolution" },
+    });
+  });
+
+  it('connects a static side-effect import (`import "./x"`) to the imported module\'s own node', async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(root, "src/side-effect.mjs", "globalThis.SIDE_EFFECT = true;\n");
+    const entry = write(
+      root,
+      "src/index.mjs",
+      "import './side-effect.mjs';\nexport function main(){ return 1; }\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const sideEffectModule = findNode(
+      graph,
+      (n) => n.kind === "module" && n.module.endsWith("side-effect.mjs"),
+    );
+    expect(sideEffectModule).toBeDefined();
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        type: "module_load",
+        resolution: { kind: "resolved", target: sideEffectModule?.id },
+      }),
+    );
+  });
+
+  it("connects an ESM named import to its module's node even when the imported binding is never called", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(root, "src/lib.mjs", "export function unused(){ return 1; }\n");
+    const entry = write(
+      root,
+      "src/index.mjs",
+      "import { unused } from './lib.mjs';\n" +
+        "export function main(){ return 'never calls unused'; }\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const libModule = findNode(
+      graph,
+      (n) => n.kind === "module" && n.module.endsWith("lib.mjs"),
+    );
+    expect(libModule).toBeDefined();
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        type: "module_load",
+        resolution: { kind: "resolved", target: libModule?.id },
+      }),
+    );
+  });
+
+  it("connects require('pkg') to the package entry module's own node even when no exported function is called", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/vuln-lib/index.js",
+      "function vulnerable(){ return 'x'; }\nmodule.exports = { vulnerable };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const lib = require('vuln-lib');\n" +
+        "function main(){ return 'never calls lib'; }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const libModule = findNode(
+      graph,
+      (n) => n.kind === "module" && n.module.includes("node_modules/vuln-lib"),
+    );
+    expect(libModule).toBeDefined();
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        type: "module_load",
+        resolution: { kind: "resolved", target: libModule?.id },
+      }),
+    );
+  });
+
+  it("never fabricates a local module-load edge/blocker for a Node builtin import", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const fs = require('fs');\n" +
+        "function main(){ return fs.readFileSync('x'); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges.some((e) => e.type === "module_load")).toBe(false);
+  });
+
+  it("emits no module-load edge into a package that is never imported at all", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/never-imported/package.json",
+      JSON.stringify({ name: "never-imported", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/never-imported/index.js",
+      "module.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "function main(){ return 'nothing imported'; }\nmodule.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(
+      graph.nodes.some((n) => n.module.includes("node_modules/never-imported")),
+    ).toBe(false);
+    expect(graph.edges.some((e) => e.type === "module_load")).toBe(false);
+  });
+});
+
 describe("buildCallGraph: dynamic calls are marked uncertain", () => {
   it("marks eval() as uncertain", async () => {
     const root = tempProject();
@@ -453,16 +708,24 @@ describe("buildCallGraph: dynamic calls are marked uncertain", () => {
     );
   });
 
-  it("does not create an edge for a static require() call itself", async () => {
+  it("does not create a CALL edge for a static require() call itself (only the VT-307a module-load edge)", async () => {
     const root = tempProject();
-    write(root, "src/lib.js", "module.exports = {};\n");
+    const libFile = write(root, "src/lib.js", "module.exports = {};\n");
     const entry = write(root, "src/index.js", 'require("./lib.js");\n');
 
     const graph = await graphFor(root, [entry]);
 
-    // The require() call site itself produces no edge (it's import setup,
-    // not a meaningful "call into" target).
-    expect(graph.edges).toHaveLength(0);
+    // The require() call site itself produces no CALL edge (it's import
+    // setup, not a meaningful "call into" target) -- the sole edge is the
+    // VT-307a module-load edge recording that loading index.js loads
+    // lib.js, which is a different, non-call relationship (see
+    // CallEdgeType's own doc comment).
+    expect(graph.edges).toHaveLength(1);
+    const libModule = findNode(graph, (n) => n.module === libFile);
+    expect(graph.edges[0]).toMatchObject({
+      type: "module_load",
+      resolution: { kind: "resolved", target: libModule?.id },
+    });
   });
 
   it("marks a dynamic import() as uncertain", async () => {
@@ -835,17 +1098,26 @@ describe("buildCallGraph: inherited method resolution (VT-216)", () => {
     );
     expect(subMethodNode).toBeDefined();
     // Base's own vulnerableMethod is fully shadowed by the override --
-    // nothing ever resolves to it, so lib.ts is correctly never even
-    // discovered/walked (no phantom/unused node for it either).
+    // nothing ever CALLS it. `lib.ts` is now legitimately discovered
+    // (VT-307a: `import { Base } from "./lib.js"` genuinely loads lib.ts
+    // at runtime, so its module-load edge -- and, as a side effect of
+    // preparing that file, its own function/method nodes -- correctly
+    // appear in the graph), but no CALL edge may ever resolve to Base's
+    // own method.
+    const baseMethodNode = findNode(
+      graph,
+      (n) =>
+        n.kind === "method" &&
+        n.name === "vulnerableMethod" &&
+        n.module !== entry,
+    );
     expect(
-      findNode(
-        graph,
-        (n) =>
-          n.kind === "method" &&
-          n.name === "vulnerableMethod" &&
-          n.module !== entry,
+      graph.edges.some(
+        (e) =>
+          e.resolution.kind === "resolved" &&
+          e.resolution.target === baseMethodNode?.id,
       ),
-    ).toBeUndefined();
+    ).toBe(false);
 
     const methodEdge = graph.edges.find(
       (e) => e.from === mainNode?.id && e.type === "method",
