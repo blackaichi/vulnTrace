@@ -79,6 +79,18 @@ a declaration-only result as an explicit, conservative uncertainty rather
 than an analyzable module) — `RWB-01` now passes. See `FINDINGS.md`
 RWF-005 and `src/code-intelligence/module-resolver.ts`.
 
+`RWB-10` (`handlebars`) was RWF-007's own exhibit: Node builtin specifiers
+(`fs`, `path`, `node:*`, ...) never resolved via `ts.resolveModuleName`, so
+every builtin `require`/`import` produced a spurious closure-widening
+`unresolved_module` edge alongside a case's real, intended blocker(s).
+VT-305 classifies builtins explicitly at the resolver boundary (never as
+unresolved, never as a filesystem path, never as an uncertainty) — the
+two `unresolved_module` edges `RWB-10`'s own `require("fs")`/
+`require("path")` used to produce are gone; its verdict was already the
+correct `UNKNOWN` either way, via its own intended dynamic-dispatch
+blocker. See `FINDINGS.md` RWF-007 and
+`src/code-intelligence/module-resolver.ts`.
+
 Each case's fixture is scanned from a fresh, isolated temporary directory
 outside the repository tree, never in place under `fixtures/` — see
 `docs/VALIDATION-STRATEGY.md` § 7 (VT-302, RWF-010) and

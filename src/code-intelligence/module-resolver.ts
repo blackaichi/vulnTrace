@@ -1,3 +1,4 @@
+import { isBuiltin } from "node:module";
 import path from "node:path";
 import ts from "typescript";
 import type { TsProject } from "./ts-project.js";
@@ -39,6 +40,20 @@ export interface ResolutionFailure {
 }
 
 /**
+ * The specifier names a Node.js builtin module (`fs`, `node:fs`, `path`,
+ * ...) -- a known runtime module supplied by Node itself, not a file on
+ * disk (VT-305, RWF-007). `specifier` is normalized to the bare,
+ * unprefixed form (`"fs"`, never `"node:fs"`) so the two spellings are
+ * never treated as different module identities downstream. Deliberately
+ * has no `resolvedFileName`: a builtin has no filesystem path, and callers
+ * must never invent one or attempt a `node_modules` lookup for it.
+ */
+export interface BuiltinModule {
+  readonly kind: "builtin";
+  readonly specifier: string;
+}
+
+/**
  * See docs/SDD.md § 16. A plain union of tagged variants (rather than
  * throwing on failure) -- resolution failure is an expected, first-class
  * outcome (an unresolved import, a typo, an optional dependency that
@@ -46,9 +61,11 @@ export interface ResolutionFailure {
  * uncertainty must be represented explicitly). `DeclarationOnlyModule`
  * (VT-304) is a third, equally first-class outcome: the specifier resolved
  * to a real file on disk, but that file cannot serve as runtime evidence.
+ * `BuiltinModule` (VT-305) is a fourth: the specifier is a known Node
+ * runtime module, neither a file to analyze nor an uncertainty to flag.
  */
 export type ModuleResolutionResult =
-  ResolvedModule | DeclarationOnlyModule | ResolutionFailure;
+  ResolvedModule | DeclarationOnlyModule | BuiltinModule | ResolutionFailure;
 
 /**
  * See docs/SDD.md § 16. `importerFilePath` (a plain path) stands in for
@@ -80,6 +97,23 @@ const DECLARATION_EXTENSIONS: ReadonlySet<string> = new Set([
 
 function isDeclarationExtension(extension: string): boolean {
   return DECLARATION_EXTENSIONS.has(extension);
+}
+
+const NODE_PREFIX = "node:";
+
+/**
+ * Normalizes a Node builtin specifier to its bare, unprefixed form
+ * (`"node:fs"` -> `"fs"`), so `require("fs")` and `require("node:fs")`
+ * are recognized as the exact same module identity everywhere downstream
+ * (VT-305 Part 2). Only ever called after {@link isBuiltin} has already
+ * confirmed the specifier names a real builtin -- a handful of newer
+ * builtins (e.g. `node:test`, `node:sea`) are only valid *with* the
+ * prefix, so this must never be used to decide builtin-ness itself.
+ */
+function normalizeBuiltinSpecifier(specifier: string): string {
+  return specifier.startsWith(NODE_PREFIX)
+    ? specifier.slice(NODE_PREFIX.length)
+    : specifier;
 }
 
 const DECLARATION_SUFFIXES = [".d.ts", ".d.mts", ".d.cts"] as const;
@@ -315,20 +349,32 @@ function attemptSiblingRuntimeFile(
  * `NOT_AFFECTED`/`unreachable` conclusion. See
  * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 6.
  *
- * Order: (1) the default resolution; if it isn't a declaration file, done
- * -- this is the common case and behavior is unchanged. (2) Otherwise,
- * {@link attemptNoDtsResolution} re-resolves the same specifier preferring
- * runtime candidates. (3) Otherwise, {@link attemptSiblingRuntimeFile}
- * tries a structurally-scoped same-package fallback. (4) Otherwise, the
- * result is honestly reported as {@link DeclarationOnlyModule} -- an
- * explicit, first-class uncertainty, never silently coerced into either a
- * normal resolution or a plain resolution failure.
+ * Order: (0) a Node builtin specifier (VT-305, RWF-007) is classified as
+ * {@link BuiltinModule} immediately, before any filesystem/`node_modules`
+ * lookup is even attempted -- this matches real Node.js semantics, where a
+ * builtin always shadows any same-named `node_modules` package, and
+ * `ts.resolveModuleName` itself never resolves core specifiers at all (its
+ * knowledge of Node's core API is ambient `@types/node` declarations, not
+ * per-specifier resolution -- see docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md
+ * § 3.5). (1) Otherwise, the default resolution; if it isn't a declaration
+ * file, done -- this is the common case and behavior is unchanged.
+ * (2) Otherwise, {@link attemptNoDtsResolution} re-resolves the same
+ * specifier preferring runtime candidates. (3) Otherwise,
+ * {@link attemptSiblingRuntimeFile} tries a structurally-scoped
+ * same-package fallback. (4) Otherwise, the result is honestly reported as
+ * {@link DeclarationOnlyModule} -- an explicit, first-class uncertainty,
+ * never silently coerced into either a normal resolution or a plain
+ * resolution failure.
  */
 function resolveSync(
   specifier: string,
   importerFilePath: string,
   compilerOptions: ts.CompilerOptions,
 ): ModuleResolutionResult {
+  if (isBuiltin(specifier)) {
+    return { kind: "builtin", specifier: normalizeBuiltinSpecifier(specifier) };
+  }
+
   const resolutionMode = resolutionModeFor(importerFilePath, compilerOptions);
   const result = ts.resolveModuleName(
     specifier,

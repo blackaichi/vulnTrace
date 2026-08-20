@@ -271,6 +271,153 @@ describe("buildCallGraph: imported calls", () => {
   });
 });
 
+describe("buildCallGraph: Node builtin modules (VT-305, RWF-007)", () => {
+  it.each([
+    ["fs", "require", 'const fs = require("fs");\nfs.readFileSync("x");\n'],
+    ["path", "require", 'const path = require("path");\npath.basename("x");\n'],
+    [
+      "crypto",
+      "require",
+      'const crypto = require("crypto");\ncrypto.randomBytes(8);\n',
+    ],
+    ["http", "require", 'const http = require("http");\nhttp.get("x");\n'],
+    [
+      "node:fs",
+      "require",
+      'const fs = require("node:fs");\nfs.readFileSync("x");\n',
+    ],
+    [
+      "node:path",
+      "require",
+      'const path = require("node:path");\npath.basename("x");\n',
+    ],
+  ])(
+    "creates no unresolved_module or any other blocker for %s (%s)",
+    async (_specifier, _form, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      // No edge at all for a plain builtin call with no callback argument
+      // -- never unresolved_module, never unsupported_construct, never any
+      // other fabricated blocker (VT-305 Parts 4/6).
+      expect(graph.edges).toHaveLength(0);
+    },
+  );
+
+  it('classifies an ESM default import of a builtin the same way (import fs from "node:fs")', async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'import fs from "node:fs";\nfs.readFileSync("x");\n',
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toHaveLength(0);
+  });
+
+  it('classifies an ESM named import of a builtin the same way (import { readFileSync } from "fs")', async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'import { readFileSync } from "fs";\nreadFileSync("x");\n',
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toHaveLength(0);
+  });
+
+  it('still classifies require("fs") as builtin even when a local node_modules package is named fs', async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/fs/package.json",
+      JSON.stringify({ name: "fs", version: "1.0.0", main: "index.js" }),
+    );
+    write(
+      root,
+      "node_modules/fs/index.js",
+      "module.exports = { readFileSync() { return 'FAKE'; } };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      'const fs = require("fs");\nfs.readFileSync("x");\n',
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    // Real Node.js semantics: a builtin always shadows a same-named
+    // node_modules package. No edge, and definitely no edge into the fake
+    // local package's own module node.
+    expect(graph.edges).toHaveLength(0);
+    expect(
+      findNode(graph, (node) => node.module.includes("node_modules/fs")),
+    ).toBeUndefined();
+  });
+
+  it("retains existing unresolved_module behavior for a specifier that merely resembles a builtin name", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      'const lib = require("not-a-real-builtin");\nlib.doThing();\n',
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const edge = graph.edges.find((e) => e.type === "import");
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unresolved_module" },
+    });
+  });
+
+  it("preserves VT-213 callback-flow modeling for a builtin call that takes a real callback (fs.readFile(file, callback))", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        'import fs from "node:fs";\n' +
+        "function main() {\n" +
+        '  fs.readFile("x", (err, data) => vulnerable());\n' +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    expect(mainNode).toBeDefined();
+    expect(vulnerableNode).toBeDefined();
+
+    // The builtin call site itself must still connect to its inline
+    // callback argument -- classifying `fs` as a builtin must never
+    // suppress VT-213's higher-order callback modeling.
+    const mainEdge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(mainEdge).toMatchObject({
+      type: "callback",
+      resolution: { kind: "resolved" },
+    });
+    const callbackNodeId =
+      mainEdge?.resolution.kind === "resolved"
+        ? mainEdge.resolution.target
+        : undefined;
+    expect(callbackNodeId).toBeDefined();
+
+    const callbackEdge = graph.edges.find((e) => e.from === callbackNodeId);
+    expect(callbackEdge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+});
+
 describe("buildCallGraph: dynamic calls are marked uncertain", () => {
   it("marks eval() as uncertain", async () => {
     const root = tempProject();
