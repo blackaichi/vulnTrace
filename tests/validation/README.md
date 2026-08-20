@@ -63,12 +63,13 @@ so no `npm install` step is needed at run time.
 
 Currently exits non-zero: 7 of 17 cases pass; the other 10 are known,
 tracked failures (see `FINDINGS.md` RWF-001 through RWF-004, RWF-006, and
-RWF-012 -- RWF-005 was fixed by VT-304, see below) — this is expected and
-not a regression. `REPORT.md`'s own "Unexpected failures" count is the
-actual regression signal to watch, and is currently `0`. Not part of
-`npm test`/CI's default gate, and not yet added to CI at all (unlike
-`test:adversarial`, which is 100% clean) — there'd be nothing meaningful
-for a red/green CI gate to report while known failures are expected.
+RWF-012 -- RWF-005/RWF-007/RWF-009 were fixed by VT-304/VT-305/VT-306
+respectively, see below) — this is expected and not a regression.
+`REPORT.md`'s own "Unexpected failures" count is the actual regression
+signal to watch, and is currently `0`. Not part of `npm test`/CI's default
+gate, and not yet added to CI at all (unlike `test:adversarial`, which is
+100% clean) — there'd be nothing meaningful for a red/green CI gate to
+report while known failures are expected.
 
 `RWB-01` (`trim-newlines`) was RWF-005's own exhibit: TypeScript's module
 resolver used to prefer the package's hand-authored `index.d.ts` over its
@@ -91,6 +92,20 @@ correct `UNKNOWN` either way, via its own intended dynamic-dispatch
 blocker. See `FINDINGS.md` RWF-007 and
 `src/code-intelligence/module-resolver.ts`.
 
+`RWB-09a` (`semver`, npm-aliased as `semver-vulnerable`) was RWF-009's own
+exhibit: `identifyModule()` derived package identity purely from the
+install directory name, so the aliased instance (directory
+`semver-vulnerable`, `package.json` name `semver`) was invisible to
+`graphPackageInstances(graph, "semver")` even though the call graph
+genuinely traversed it -- producing a false `NOT_AFFECTED`. VT-306 made
+`identifyModule()` read the installed instance's own `package.json`
+`"name"` field as the authoritative identity, keeping the install path as
+a separate, unaffected instance/location concept. `RWB-09a` moved from
+`NOT_AFFECTED` to `UNKNOWN` -- the aliased instance is now correctly
+found, but its own `Range` export is still blocked by the separate,
+independent RWF-004 (cross-file re-export chasing, still open). See
+`FINDINGS.md` RWF-009 and `src/domain/resolved-target.ts`.
+
 Each case's fixture is scanned from a fresh, isolated temporary directory
 outside the repository tree, never in place under `fixtures/` — see
 `docs/VALIDATION-STRATEGY.md` § 7 (VT-302, RWF-010) and
@@ -105,6 +120,6 @@ keeping the original as its own (differently-scoped) exhibit:
 - `RWB-06` (kept unchanged, RWF-002's confounded exhibit) vs. `RWB-06A`
   (new, a clean UNREACHED_DEPENDENCY control — currently **passing**).
 - `RWB-09` (kept unchanged, the npm-alias/package-identity stress case,
-  ALIASED_INSTALL — its own failures attributed to RWF-009/RWF-004, not
-  yet fixed) vs. `RWB-11a`/`RWB-11b` (new, a genuine nested multi-instance
+  ALIASED_INSTALL — RWF-009 fixed by VT-306, RWF-004 remains open) vs.
+  `RWB-11a`/`RWB-11b` (new, a genuine nested multi-instance
   case with **no aliasing** — currently **both passing**).

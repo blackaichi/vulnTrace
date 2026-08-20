@@ -65,14 +65,15 @@ vulnerable symbol.
   (GHSA-c2qf-rxjj-qqgw / CVE-2022-25883). RWB-09a (vulnerable instance,
   AFFECTED) + RWB-09b (patched instance, NOT_AFFECTED), MULTI_INSTANCE.
   **Reclassified (VT-303): ALIASED_INSTALL / package identity under npm
-  aliasing.** Its own failures (RWB-09a: NOT_AFFECTED instead of AFFECTED;
-  RWB-09b: NO_FINDING vs. NOT_AFFECTED) are attributed to RWF-009
-  (`identifyModule` derives identity from the install-directory alias
-  name, not the package's own declared `name`) and RWF-004 (`Range`'s
-  cross-file re-export), plus RWB-09b's own pre-existing benchmark-design
-  limitation — see `FINDINGS.md`/`docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md`.
-  Kept unchanged and unfixed deliberately, as the dedicated npm-alias
-  stress case. See `rwb-11-...` below for a genuine multi-instance case
+  aliasing.** RWF-009 (`identifyModule` derived identity from the
+  install-directory alias name, not the package's own declared `name`)
+  was **fixed by VT-306** — RWB-09a moved from a false `NOT_AFFECTED` to
+  the safe `UNKNOWN`, since the aliased instance's own `Range` export is
+  still blocked by the separate, independent RWF-004 (cross-file
+  re-export chasing, open, out of VT-306's scope). RWB-09b's own
+  NO_FINDING-vs-NOT_AFFECTED gap remains its own pre-existing
+  benchmark-design limitation, unrelated to either finding — see
+  `FINDINGS.md`. See `rwb-11-...` below for a genuine multi-instance case
   with no aliasing at all.
 - `rwb-11-url-parse-nested-multi-instance/` (VT-303) — real
   `url-parse@1.4.7` nested under a small, fixture-authored wrapper package
