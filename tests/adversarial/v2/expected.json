@@ -548,5 +548,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-051",
+    "dir": "adv2-051-dependency-toplevel-aliased-require",
+    "category": "51. VT-307b regression: aliased require in a DEPENDENCY's own module top-level scope",
+    "description": "Same shape as ADV2-050, but the widening construct is an ALIASED require (const r = require; r(pluginName);) rather than a direct require(pluginName) call, sitting at the MODULE TOP LEVEL of vt2-holder. Before VT-307b, this was classified as a plain unsupported_construct -- non-closure-widening -- so this real module-loading capability was invisible to VT-300's guard even after VT-307a made the surrounding module scope reachable at all. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own aliased require call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), could load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here merely because the require call is indirect. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]
