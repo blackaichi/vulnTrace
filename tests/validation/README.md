@@ -61,14 +61,23 @@ call-graph/verdict logic already covered by the adversarial suites).
 Fixtures themselves are fully vendored (real `node_modules/` committed),
 so no `npm install` step is needed at run time.
 
-Currently exits non-zero: 6 of 17 cases pass; the other 11 are known,
-tracked failures (see `FINDINGS.md` RWF-001 through RWF-006 and RWF-012)
-— this is expected and not a regression. `REPORT.md`'s own "Unexpected
-failures" count is the actual regression signal to watch, and is
-currently `0`. Not part of `npm test`/CI's default gate, and not yet
-added to CI at all (unlike `test:adversarial`, which is 100% clean) —
-there'd be nothing meaningful for a red/green CI gate to report while
-known failures are expected.
+Currently exits non-zero: 7 of 17 cases pass; the other 10 are known,
+tracked failures (see `FINDINGS.md` RWF-001 through RWF-004, RWF-006, and
+RWF-012 -- RWF-005 was fixed by VT-304, see below) — this is expected and
+not a regression. `REPORT.md`'s own "Unexpected failures" count is the
+actual regression signal to watch, and is currently `0`. Not part of
+`npm test`/CI's default gate, and not yet added to CI at all (unlike
+`test:adversarial`, which is 100% clean) — there'd be nothing meaningful
+for a red/green CI gate to report while known failures are expected.
+
+`RWB-01` (`trim-newlines`) was RWF-005's own exhibit: TypeScript's module
+resolver used to prefer the package's hand-authored `index.d.ts` over its
+real `index.js`, so `RWB-01` returned `UNKNOWN` instead of the correct
+`AFFECTED`. VT-304 made declaration-vs-runtime resolution explicit at the
+resolver boundary (preferring a real runtime implementation, and treating
+a declaration-only result as an explicit, conservative uncertainty rather
+than an analyzable module) — `RWB-01` now passes. See `FINDINGS.md`
+RWF-005 and `src/code-intelligence/module-resolver.ts`.
 
 Each case's fixture is scanned from a fresh, isolated temporary directory
 outside the repository tree, never in place under `fixtures/` — see

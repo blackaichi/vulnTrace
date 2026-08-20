@@ -138,6 +138,17 @@ async function resolvePackageField(
     };
   }
 
+  if (resolution.kind === "declaration") {
+    // VT-304: a package.json main/bin field that resolves only to a
+    // TypeScript declaration file is not a usable runtime entrypoint.
+    return {
+      diagnostic: {
+        source,
+        message: `${reason} resolves only to a TypeScript declaration file, not a runtime implementation: "${fieldValue}"`,
+      },
+    };
+  }
+
   return {
     diagnostic: {
       source,

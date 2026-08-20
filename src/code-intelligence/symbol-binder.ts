@@ -32,6 +32,21 @@ export interface SymbolBindingUnresolvedModule {
   readonly reason: string;
 }
 
+/**
+ * The callee references a known import, but its module specifier resolved
+ * only to a TypeScript declaration file, never a runtime implementation
+ * (VT-304, see module-resolver.ts's {@link DeclarationOnlyModule}). Kept
+ * distinct from {@link SymbolBindingUnresolvedModule}: the specifier itself
+ * resolved successfully (to a real file on disk), so callers that want the
+ * more specific diagnostic can distinguish "nothing there" from "type
+ * information only, no runtime evidence."
+ */
+export interface SymbolBindingDeclarationOnly {
+  readonly kind: "declaration_only";
+  readonly specifier: string;
+  readonly resolvedFileName: string;
+}
+
 /** The callee does not reference an imported binding at all (e.g. a call to a locally-defined function). */
 export interface SymbolBindingNotAnImport {
   readonly kind: "not_an_import";
@@ -41,6 +56,7 @@ export type SymbolBindingResult =
   | SymbolBindingResolved
   | SymbolBindingAmbiguous
   | SymbolBindingUnresolvedModule
+  | SymbolBindingDeclarationOnly
   | SymbolBindingNotAnImport;
 
 interface CalleeShape {
@@ -156,6 +172,14 @@ export async function bindCallee(
       kind: "unresolved_module",
       specifier: binding.specifier,
       reason: resolution.reason,
+    };
+  }
+
+  if (resolution.kind === "declaration") {
+    return {
+      kind: "declaration_only",
+      specifier: binding.specifier,
+      resolvedFileName: resolution.resolvedFileName,
     };
   }
 

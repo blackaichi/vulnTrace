@@ -20,7 +20,11 @@ vulnerable symbol.
   vulnerability, entrypoint genuinely never calls `trim`/`trimEnd`/
   `toNumber`. VAL-003.
 - `rwb-01-trim-newlines-direct/` — real `trim-newlines@3.0.0`
-  (GHSA-7p7h-4mm5-852v / CVE-2021-33623). RWB-01, DIRECT.
+  (GHSA-7p7h-4mm5-852v / CVE-2021-33623). RWB-01, DIRECT. Also the
+  RWF-005/VT-304 exhibit: `trim-newlines` ships a hand-authored `index.d.ts`
+  alongside its real `index.js` with no `main` field to disambiguate them,
+  which is exactly the shape TypeScript's resolver used to prefer the
+  declaration file for. **Currently passes** (AFFECTED) since VT-304.
 - `rwb-02-minimist-wrapper/` — real `minimist@1.2.5`
   (GHSA-xvch-5gv4-984h / CVE-2021-44906), reached through an app-authored
   CLI-args wrapper. RWB-02, WRAPPER.
