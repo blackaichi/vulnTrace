@@ -11,6 +11,7 @@ import { bindCallee } from "./symbol-binder.js";
 function fakeResolver(
   mapping: Record<string, string>,
   declarationOnly: Record<string, string> = {},
+  builtins: ReadonlySet<string> = new Set(),
 ): ModuleResolver {
   return {
     resolve(specifier, importer): Promise<ModuleResolutionResult> {
@@ -29,6 +30,9 @@ function fakeResolver(
           resolvedFileName: declarationFileName,
           isExternalLibraryImport: true,
         });
+      }
+      if (builtins.has(specifier)) {
+        return Promise.resolve({ kind: "builtin", specifier });
       }
       return Promise.resolve({
         kind: "unresolved",
@@ -250,6 +254,20 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
       specifier: "types-only-package",
       resolvedFileName: "/resolved/types-only-package/index.d.ts",
     });
+  });
+
+  it("returns builtin when the resolver classifies the specifier as a Node builtin (VT-305)", async () => {
+    const builtinResolver = fakeResolver({}, {}, new Set(["fs"]));
+    const text = 'const fs = require("fs");\nfs.readFileSync("x");\n';
+    const model = buildModuleModel(indexSourceFile("a.js", text));
+    const result = await bindCallee(
+      findCallee(text, 1),
+      model,
+      builtinResolver,
+      "a.js",
+    );
+
+    expect(result).toEqual({ kind: "builtin", specifier: "fs" });
   });
 
   it("returns not_an_import for a call to a locally-defined function", async () => {

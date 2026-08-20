@@ -149,6 +149,19 @@ async function resolvePackageField(
     };
   }
 
+  if (resolution.kind === "builtin") {
+    // VT-305: unreachable in practice -- `specifier` above is always
+    // forced into relative form, which `isBuiltin` never matches -- but
+    // handled explicitly for exhaustiveness rather than left to fall
+    // through into a field access that doesn't exist on this variant.
+    return {
+      diagnostic: {
+        source,
+        message: `${reason} resolves to a Node builtin module, not a usable file entrypoint: "${fieldValue}"`,
+      },
+    };
+  }
+
   return {
     diagnostic: {
       source,

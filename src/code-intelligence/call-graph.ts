@@ -1255,6 +1255,22 @@ async function classifyCall(
     };
   }
 
+  // VT-305 (RWF-007): a Node builtin (`fs.readFile(...)`, `path.basename`,
+  // ...) is a known external runtime module, not uncertainty -- it must
+  // never fabricate an `unsupported_construct` edge merely because it has
+  // no local source file to attribute the call to. Deliberately checked
+  // here, AFTER the inline-callback fallback above (not alongside
+  // `isKnownGlobalIdentifier`'s earlier check): unlike ambient globals,
+  // builtin methods very commonly take a real callback argument
+  // (`fs.readFile(file, callback)`) whose own call-graph connection VT-213
+  // must still get a chance to make; only once every real resolution
+  // avenue has failed does this fall back to "no edge, known operation" --
+  // mirroring `isKnownGlobalIdentifier`'s own treatment, never
+  // `unsupported_construct`.
+  if (binding.kind === "builtin") {
+    return undefined;
+  }
+
   return {
     from,
     type: ts.isPropertyAccessExpression(callee) ? "method" : "direct",
@@ -1404,6 +1420,13 @@ async function classifyNew(
 
   const root = rootIdentifierOf(callee);
   if (root && isKnownGlobalIdentifier(root)) {
+    return undefined;
+  }
+
+  // VT-305 (RWF-007): see the equivalent, more fully-explained check in
+  // classifyCall -- a Node builtin is a known external module, never
+  // `unsupported_construct`.
+  if (binding.kind === "builtin") {
     return undefined;
   }
 
