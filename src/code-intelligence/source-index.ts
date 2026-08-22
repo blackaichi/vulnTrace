@@ -92,6 +92,40 @@ export interface SourceIndex {
   readonly functions: readonly IndexedFunction[];
   readonly imports: readonly IndexedImport[];
   readonly exports: readonly IndexedExport[];
+  /**
+   * Whether TypeScript's parser recorded any syntax-level diagnostics while
+   * producing {@link sourceFile} (VT-307c-fix-2). `ts.createSourceFile`
+   * never runs the type checker, so this can only ever reflect a
+   * syntax/parser failure -- never a semantic or type diagnostic -- by
+   * construction, not by filtering.
+   *
+   * TypeScript's parser is error-tolerant: given invalid syntax it still
+   * returns a `SourceFile` containing whatever partial AST it could
+   * recover, silently dropping or reshaping the constructs it couldn't
+   * make sense of (see `indexSourceFile`'s own doc comment). A caller that
+   * only checks "did indexing throw" cannot see this -- it never does, for
+   * a syntax error -- so `imports`/`exports`/`functions` derived from a
+   * `true` here must be treated as unreliable, not as a complete account
+   * of the file (this is exactly what ModuleLoadClosure now does with it;
+   * see `parse_failure` in module-load-closure.ts).
+   */
+  readonly hasSyntaxErrors: boolean;
+}
+
+/**
+ * TypeScript's parser populates `parseDiagnostics` on every `SourceFile` it
+ * produces, but leaves the field off the public `ts.SourceFile` type --
+ * it has lived at this exact runtime location across many major TS
+ * versions, and other tools in the ecosystem (e.g. ts-morph) already rely
+ * on it the same way. Reading it here, once, keeps that cast contained to
+ * a single reusable source-index-level signal rather than letting every
+ * caller reach into TypeScript internals on its own (VT-307c-fix-2).
+ */
+function hasSyntaxErrors(sourceFile: ts.SourceFile): boolean {
+  const diagnostics = (
+    sourceFile as unknown as { parseDiagnostics?: readonly unknown[] }
+  ).parseDiagnostics;
+  return Array.isArray(diagnostics) && diagnostics.length > 0;
 }
 
 /** Shared by other code-intelligence modules that need to locate AST nodes (e.g. module-model.ts). */
@@ -666,6 +700,7 @@ function buildIndex(sourceFile: ts.SourceFile): SourceIndex {
     functions,
     imports,
     exports: exportsList,
+    hasSyntaxErrors: hasSyntaxErrors(sourceFile),
   };
 }
 
