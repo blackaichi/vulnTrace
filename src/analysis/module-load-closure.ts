@@ -135,6 +135,18 @@ export interface BuildModuleLoadClosureOptions {
   readonly resolver: ModuleResolver;
   /** Bounds traversal (see docs/SDD.md § 26, § 28-29). Reaching it marks the closure incomplete, never silently partial. */
   readonly maxFiles?: number;
+  /**
+   * The scanned project's own root (VT-307c-fix-4), passed through to
+   * `identifyModule` so a loaded file that escapes `node_modules`
+   * entirely -- an npm workspace/`file:` link whose physical target has no
+   * `node_modules` segment of its own -- can still be attributed to its
+   * owning package instance instead of silently losing identity. Optional
+   * only for backward compatibility with callers that predate this option
+   * (e.g. existing tests using synthetic paths); omitting it does not
+   * change behavior for any install shape that already has a
+   * `node_modules` segment.
+   */
+  readonly projectRoot?: string;
 }
 
 /**
@@ -166,7 +178,7 @@ export interface BuildModuleLoadClosureOptions {
 export async function buildModuleLoadClosure(
   options: BuildModuleLoadClosureOptions,
 ): Promise<ModuleLoadClosure> {
-  const { entrypoints, resolver } = options;
+  const { entrypoints, resolver, projectRoot } = options;
   const maxFiles = options.maxFiles ?? Infinity;
 
   const rootFiles = [...new Set(entrypoints.map((e) => e.filePath))];
@@ -274,7 +286,7 @@ export async function buildModuleLoadClosure(
 
   const loadedPackageInstances = new Set<PackageInstanceId>();
   for (const file of loadedFiles) {
-    const instance = identifyModule(file).packageInstance;
+    const instance = identifyModule(file, projectRoot).packageInstance;
     if (instance !== undefined) {
       loadedPackageInstances.add(instance);
     }

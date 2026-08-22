@@ -22,6 +22,7 @@ import {
 } from "../dependencies/index.js";
 import type { DependencyNode } from "../domain/dependency.js";
 import type { Diagnostic } from "../domain/coverage.js";
+import { canonicalizePackageInstancePath } from "../domain/resolved-target.js";
 import type { Finding } from "../domain/verdict.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
@@ -407,7 +408,21 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
             // rather than letting verdict resolution reconstruct it from
             // the call graph alone, which cannot distinguish "the wrong
             // instance" from "an instance never reached at all".
-            packageInstance: path.resolve(projectRoot, location),
+            //
+            // Canonicalized (VT-307c-fix-4): `location` is a LOGICAL
+            // lockfile-derived path, which can differ from the PHYSICAL
+            // path the resolver/call-graph/ModuleLoadClosure side derives
+            // for a symlinked install (pnpm's content-addressed store, an
+            // npm workspace/`file:` link, `npm link`) -- without this, the
+            // two sides would never compare equal for such an install even
+            // though it is the exact same physical code. Canonicalized
+            // here, at construction, rather than deferred to verdict.ts:
+            // the finding must carry its authoritative identity from the
+            // moment it exists, not have it silently redefined by whoever
+            // happens to compare it later.
+            packageInstance: canonicalizePackageInstancePath(
+              path.resolve(projectRoot, location),
+            ),
             matchResult: match.result,
             rule,
             graph,

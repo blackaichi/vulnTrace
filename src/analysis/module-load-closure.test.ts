@@ -1,10 +1,17 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
 import { createModuleResolver } from "../code-intelligence/module-resolver.js";
 import { loadTsProject } from "../code-intelligence/ts-project.js";
+import { canonicalizePackageInstancePath } from "../domain/resolved-target.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
 import {
   buildModuleLoadClosure,
@@ -56,13 +63,14 @@ function entrypoint(filePath: string, symbol?: string): Entrypoint {
 async function closureFor(
   root: string,
   entryFiles: readonly string[],
-  options: { maxFiles?: number; symbol?: string } = {},
+  options: { maxFiles?: number; symbol?: string; projectRoot?: string } = {},
 ): Promise<ModuleLoadClosure> {
   const project = loadTsProject(root);
   const resolver = createModuleResolver(project);
   return buildModuleLoadClosure({
     entrypoints: entryFiles.map((f) => entrypoint(f, options.symbol)),
     resolver,
+    projectRoot: options.projectRoot ?? root,
     ...(options.maxFiles === undefined ? {} : { maxFiles: options.maxFiles }),
   });
 }
@@ -957,5 +965,113 @@ describe("ModuleLoadClosure: agrees with VT-307a module_load edges (VT-307c Part
       }
       expect(moduleLoadTargets.has(file)).toBe(true);
     }
+  });
+});
+
+describe("ModuleLoadClosure: package-instance identity survives symlinked installs (VT-307c-fix-4, VT-307d review Blocker A)", () => {
+  it("(pnpm-style) closureContainsPackageInstance recognizes a package reached through a pnpm-store symlink, keyed by the canonicalized LOGICAL location", async () => {
+    const root = tempProject();
+    const real = "node_modules/.pnpm/foo@1.0.0/node_modules/foo";
+    write(
+      root,
+      `${real}/package.json`,
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      `${real}/index.js`,
+      "module.exports = { vulnerable(){ return 1; } };\n",
+    );
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, real),
+      path.join(root, "node_modules/foo"),
+      "dir",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const foo = require('foo');\nfunction main(){ return foo.vulnerable(); }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    // The finding side's own authority (VT-212, canonicalized VT-307c-fix-4
+    // the same way `cli/scan.ts` does): the LOGICAL, lockfile-derived
+    // install location -- never the closure's own already-physical path.
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo"),
+    );
+
+    expect(closure.complete).toBe(true);
+    expect(closureContainsPackageInstance(closure, findingInstance)).toBe(true);
+  });
+
+  it("(workspace/external symlink) closureContainsPackageInstance recognizes a package whose physical target lives outside node_modules entirely", async () => {
+    const workspaceRoot = tempProject();
+    const projectRoot = path.join(workspaceRoot, "app");
+    write(
+      workspaceRoot,
+      "packages/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      workspaceRoot,
+      "packages/foo/index.js",
+      "module.exports = { vulnerable(){ return 1; } };\n",
+    );
+    mkdirSync(path.join(projectRoot, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(workspaceRoot, "packages/foo"),
+      path.join(projectRoot, "node_modules/foo"),
+      "dir",
+    );
+    const entry = write(
+      projectRoot,
+      "src/index.js",
+      "const foo = require('foo');\nfunction main(){ return foo.vulnerable(); }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(projectRoot, [entry], { projectRoot });
+
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(projectRoot, "node_modules/foo"),
+    );
+
+    expect(closure.complete).toBe(true);
+    expect(closureContainsPackageInstance(closure, findingInstance)).toBe(true);
+  });
+
+  it("(negative control) an installed but never-imported symlinked package stays OUT of the closure", async () => {
+    const root = tempProject();
+    const real = "node_modules/.pnpm/foo@1.0.0/node_modules/foo";
+    write(
+      root,
+      `${real}/package.json`,
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(root, `${real}/index.js`, "module.exports = {};\n");
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, real),
+      path.join(root, "node_modules/foo"),
+      "dir",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "function main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo"),
+    );
+
+    expect(closure.complete).toBe(true);
+    expect(closureContainsPackageInstance(closure, findingInstance)).toBe(
+      false,
+    );
   });
 });
