@@ -570,5 +570,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-053",
+    "dir": "adv2-053-dependency-toplevel-module-constructor-load",
+    "category": "53. VT-307c-fix-6 regression: module.constructor._load in a DEPENDENCY's own module top-level scope",
+    "description": "Same shape as ADV2-050/051/052, but the widening construct is module.constructor._load(pluginName) -- Node's own Module-constructor-level loading primitive underneath require() itself, a Node runtime loader primitive VT-307c-fix-6 adds -- sitting at the MODULE TOP LEVEL of vt2-holder. Before VT-307c-fix-6, this construct was invisible entirely (not even an unsupported_construct edge), so this real module-loading capability went completely undetected. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050/ADV2-051/ADV2-052.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own module.constructor._load(pluginName) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), could load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here merely because the loader is reached through module.constructor rather than a plain require() call. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]

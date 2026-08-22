@@ -1423,3 +1423,174 @@ describe("ModuleLoadClosure: package-instance identity survives symlinked instal
     );
   });
 });
+
+describe("ModuleLoadClosure: Node Module-constructor loading primitives and child_process API coverage (VT-307c-fix-6)", () => {
+  it.each([
+    [
+      "(A) Module.prototype.require.call(module, name)",
+      "const Module = require('module');\nfunction main(){ Module.prototype.require.call(module, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(B) module.constructor._load(name)",
+      "function main(){ module.constructor._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(C) require('module').Module._load(name)",
+      "function main(){ require('module').Module._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(D) new M.Module('x').load(name)",
+      "const M = require('module');\nfunction main(){ new M.Module('x').load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(E) M.Module.prototype.load.call(modObj, name)",
+      "const M = require('node:module');\nconst modObj = new M.Module('y');\nfunction main(){ M.Module.prototype.load.call(modObj, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "%s makes the closure incomplete (module_internal_load)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain("module_internal_load");
+    },
+  );
+
+  it.each([
+    [
+      "1 UserModule.prototype.require.call(...) -- no Node Module provenance",
+      "class UserModule { require(x){ return x; } }\nfunction main(){ UserModule.prototype.require.call({}, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "2 obj.constructor._load(...) -- root is not the ambient `module`",
+      "const obj = {};\nfunction main(){ obj.constructor._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "3 user.Module._load(...) -- `user` is not module-builtin-bound",
+      "const user = { Module: { _load(){} } };\nfunction main(){ user.Module._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "4 new UserModule().load(...) -- UserModule is not Node's Module",
+      "class UserModule { load(x){ return x; } }\nfunction main(){ new UserModule().load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "5 user.Module.prototype.load.call(...) -- no Node Module provenance",
+      "const user = { Module: { prototype: { load(){} } } };\nfunction main(){ user.Module.prototype.load.call({}, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-fix-6 Part 8 precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(reasonsOf(closure)).not.toContain("module_internal_load");
+    },
+  );
+
+  it.each([
+    ["exec", "cp.exec(process.env.P);"],
+    ["execSync", "cp.execSync(process.env.P);"],
+    ["execFile", "cp.execFile(process.env.P);"],
+    ["execFileSync", "cp.execFileSync(process.env.P);"],
+    ["spawn", "cp.spawn(process.env.P);"],
+    ["spawnSync", "cp.spawnSync(process.env.P);"],
+    ["fork", "cp.fork(process.env.P);"],
+  ])(
+    "(child_process policy) cp.%s(...) makes the closure incomplete (VT-307c-fix-6 Part 9)",
+    async (_label, statement) => {
+      const root = tempProject();
+      const entry = write(
+        root,
+        "src/index.js",
+        `const cp = require('child_process');\nfunction main(){ ${statement} }\nmodule.exports = { main };\n`,
+      );
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain("child_process_execution");
+    },
+  );
+
+  it("(child_process policy) a user-defined function coincidentally named exec/spawn is never flagged (precision control)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function exec(x){ return x; }\nconst spawn = (x) => x;\nfunction main(){ exec(process.env.P); spawn(process.env.P); }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(true);
+    expect(closure.incompleteness).toEqual([]);
+  });
+});
+
+describe("ModuleLoadClosure: require.extensions loader-hook mutation (VT-307c-fix-6 Part 11)", () => {
+  it.each([
+    [
+      "require.extensions['.js'] = hook (element access)",
+      "require.extensions['.js'] = function(m, f){ return m; };\nmodule.exports = {};\n",
+    ],
+    [
+      "require.extensions.js = hook (property access)",
+      "require.extensions.js = function(m, f){ return m; };\nmodule.exports = {};\n",
+    ],
+  ])(
+    "%s makes the closure incomplete (loader_hook_mutation)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+    },
+  );
+
+  it("(transitive dependency) a require.extensions mutation in a loaded dependency's own module scope still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/foo/index.js",
+      "require.extensions['.js'] = function(m, f){ return m; };\nmodule.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('foo');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it("(precision control) obj.extensions['.js'] = hook is NOT classified -- obj is not the ambient require", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const obj = {};\nobj.extensions['.js'] = function(m, f){ return m; };\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(true);
+    expect(reasonsOf(closure)).not.toContain("loader_hook_mutation");
+  });
+});
