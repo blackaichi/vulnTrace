@@ -22,7 +22,10 @@ import {
 } from "../dependencies/index.js";
 import type { DependencyNode } from "../domain/dependency.js";
 import type { Diagnostic } from "../domain/coverage.js";
-import { canonicalizePackageInstancePath } from "../domain/resolved-target.js";
+import {
+  buildKnownPackageRoots,
+  canonicalizePackageInstancePath,
+} from "../domain/resolved-target.js";
 import type { Finding } from "../domain/verdict.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
@@ -238,6 +241,21 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     return 3;
   }
 
+  // The scan's dependency-provenance registry (VT-307c-fix-4b), built once
+  // from the full dependency graph -- every DependencyNode's every
+  // location, canonicalized -- so identifyModule can attribute a linked
+  // dependency (an npm workspace member, a `file:` dependency, ...) whose
+  // physical target has no `node_modules` segment of its own, regardless
+  // of whether that target lives inside or outside projectRoot. Threaded
+  // explicitly into every buildFinding call below so verdict.ts's own
+  // identifyModule calls (Site A instance-matching, VT-300's closure-
+  // widening guard) use the exact same identity authority as the finding's
+  // own packageInstance just below.
+  const knownPackageRoots = buildKnownPackageRoots(
+    dependencyNodes,
+    projectRoot,
+  );
+
   let entrypointsResult;
   let graph;
   let resolver;
@@ -429,6 +447,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
             entrypoints: entrypointsResult.entrypoints,
             resolver,
             projectRoot,
+            knownPackageRoots,
             graphTruncated,
           });
           reachabilityMs += Date.now() - reachabilityStart;
