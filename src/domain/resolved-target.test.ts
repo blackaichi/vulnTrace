@@ -1,8 +1,18 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildResolvedTarget, identifyModule } from "./resolved-target.js";
+import {
+  buildResolvedTarget,
+  canonicalizePackageInstancePath,
+  identifyModule,
+} from "./resolved-target.js";
 
 const tempDirs: string[] = [];
 
@@ -343,5 +353,237 @@ describe("buildResolvedTarget", () => {
     expect(target.resolutionEvidence).toEqual([
       "resolved via named ESM import",
     ]);
+  });
+});
+
+describe("canonicalizePackageInstancePath (VT-307c-fix-4)", () => {
+  it("falls back to a normalized absolute path when the target does not exist", () => {
+    expect(canonicalizePackageInstancePath("/definitely/not/a/real/path")).toBe(
+      path.resolve("/definitely/not/a/real/path"),
+    );
+  });
+
+  it("is idempotent for an already-canonical existing path", () => {
+    const root = tempProject();
+    const once = canonicalizePackageInstancePath(root);
+    const twice = canonicalizePackageInstancePath(once);
+    expect(once).toBe(twice);
+  });
+});
+
+describe("identifyModule: canonical PackageInstance identity across symlinks (VT-307c-fix-4, VT-307d review Blocker A)", () => {
+  it("(A, pnpm-style) a logical node_modules symlink and its physical pnpm-store target canonicalize to the same PackageInstance", () => {
+    const root = tempProject();
+    const real = "node_modules/.pnpm/foo@1.0.0/node_modules/foo";
+    write(
+      root,
+      `${real}/package.json`,
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    const file = write(root, `${real}/index.js`, "module.exports = {};\n");
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, real),
+      path.join(root, "node_modules/foo"),
+      "dir",
+    );
+
+    // Finding side (VT-212): the LOGICAL, lockfile-derived install location.
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo"),
+    );
+    // Closure/call-graph side: the resolver already reports the physical
+    // (post-symlink) file.
+    const closureIdentity = identifyModule(file);
+
+    expect(closureIdentity.packageInstance).toBe(findingInstance);
+  });
+
+  it("(C, plain npm control) a regular install directory already agrees on both sides with no symlink involved", () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    const file = write(
+      root,
+      "node_modules/foo/index.js",
+      "module.exports = {};\n",
+    );
+
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo"),
+    );
+    const closureIdentity = identifyModule(file);
+
+    expect(closureIdentity.packageInstance).toBe(findingInstance);
+    expect(closureIdentity.packageInstance).toBe(
+      path.join(root, "node_modules/foo"),
+    );
+  });
+
+  it("(B, workspace/external symlink) a node_modules symlink to a physical target OUTSIDE node_modules still resolves to a stable PackageInstance", () => {
+    // Real monorepo topology: the SCANNED sub-project (`projectRoot`) and
+    // the workspace member it depends on are SIBLINGS under a common
+    // workspace root -- `packages/foo` is never inside `app` itself. A
+    // test that nested `packages/foo` under `projectRoot` would trivially
+    // satisfy "escapes the project" for the wrong reason.
+    const workspaceRoot = tempProject();
+    const projectRoot = path.join(workspaceRoot, "app");
+    write(
+      workspaceRoot,
+      "packages/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    const file = write(
+      workspaceRoot,
+      "packages/foo/lib/index.js",
+      "module.exports = {};\n",
+    );
+    mkdirSync(path.join(projectRoot, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(workspaceRoot, "packages/foo"),
+      path.join(projectRoot, "node_modules/foo"),
+      "dir",
+    );
+
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(projectRoot, "node_modules/foo"),
+    );
+    // Without `projectRoot`, this must NOT silently drop identity, but it
+    // has no way to escape the node_modules-segment assumption either --
+    // confirms the projectRoot-gated fallback is what actually recovers it.
+    expect(identifyModule(file)).toEqual({ resolvedFile: file });
+
+    const closureIdentity = identifyModule(file, projectRoot);
+
+    expect(closureIdentity.packageName).toBe("foo");
+    expect(closureIdentity.packageInstance).toBe(findingInstance);
+    expect(closureIdentity.packageInstance).toBe(
+      path.join(workspaceRoot, "packages/foo"),
+    );
+  });
+
+  it("never attributes package identity to the scanned project's own source, even with no node_modules segment", () => {
+    const root = tempProject();
+    write(root, "package.json", JSON.stringify({ name: "app" }));
+    const file = write(root, "src/index.js", "module.exports = {};\n");
+
+    const identity = identifyModule(file, root);
+
+    expect(identity).toEqual({ resolvedFile: file });
+  });
+
+  it("(negative control) two logical installs pointing to DIFFERENT physical pnpm-store targets remain distinct instances", () => {
+    const root = tempProject();
+    const realA = "node_modules/.pnpm/foo@1.0.0/node_modules/foo";
+    const realB = "node_modules/.pnpm/foo@2.0.0/node_modules/foo";
+    write(
+      root,
+      `${realA}/package.json`,
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    const fileA = write(root, `${realA}/index.js`, "module.exports = {};\n");
+    write(
+      root,
+      `${realB}/package.json`,
+      JSON.stringify({ name: "foo", version: "2.0.0" }),
+    );
+    const fileB = write(root, `${realB}/index.js`, "module.exports = {};\n");
+
+    const a = identifyModule(fileA);
+    const b = identifyModule(fileB);
+
+    expect(a.packageInstance).not.toBe(b.packageInstance);
+  });
+
+  it("(negative control, external) two node_modules symlinks to DIFFERENT external physical targets remain distinct instances", () => {
+    const workspaceRoot = tempProject();
+    const projectRoot = path.join(workspaceRoot, "app");
+    mkdirSync(projectRoot, { recursive: true });
+    write(
+      workspaceRoot,
+      "packages/foo-a/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    const fileA = write(
+      workspaceRoot,
+      "packages/foo-a/index.js",
+      "module.exports = {};\n",
+    );
+    write(
+      workspaceRoot,
+      "packages/foo-b/package.json",
+      JSON.stringify({ name: "foo", version: "2.0.0" }),
+    );
+    const fileB = write(
+      workspaceRoot,
+      "packages/foo-b/index.js",
+      "module.exports = {};\n",
+    );
+
+    const a = identifyModule(fileA, projectRoot);
+    const b = identifyModule(fileB, projectRoot);
+
+    expect(a.packageInstance).not.toBe(b.packageInstance);
+    expect(a.packageInstance).toBe(path.join(workspaceRoot, "packages/foo-a"));
+    expect(b.packageInstance).toBe(path.join(workspaceRoot, "packages/foo-b"));
+  });
+
+  it("(collapse) two DIFFERENT logical dependency-graph locations that are both symlinks to the SAME physical target canonicalize to the SAME PackageInstance", () => {
+    // Mirrors real Node.js module-cache semantics (without
+    // --preserve-symlinks): two logical names resolving to one physical
+    // file really do share one loaded module instance at runtime (VT-307c-
+    // fix-4 Part 12). This must not be confused with fix-1's own
+    // architecture, which still gives each logical DependencyNode its own
+    // independent buildFinding call -- only the packageInstance VALUE the
+    // two findings carry happens to coincide here.
+    const root = tempProject();
+    write(
+      root,
+      "packages/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    const target = path.join(root, "packages/foo");
+    write(root, "packages/foo/index.js", "module.exports = {};\n");
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(target, path.join(root, "node_modules/foo-a"), "dir");
+    symlinkSync(target, path.join(root, "node_modules/foo-b"), "dir");
+
+    const instanceA = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo-a"),
+    );
+    const instanceB = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo-b"),
+    );
+
+    expect(instanceA).toBe(instanceB);
+    expect(instanceA).toBe(canonicalizePackageInstancePath(target));
+  });
+
+  it("(scoped package, pnpm-style symlink) canonicalizes correctly and keeps its scoped name", () => {
+    const root = tempProject();
+    const real = "node_modules/.pnpm/@scope+pkg@1.0.0/node_modules/@scope/pkg";
+    write(
+      root,
+      `${real}/package.json`,
+      JSON.stringify({ name: "@scope/pkg", version: "1.0.0" }),
+    );
+    const file = write(root, `${real}/index.js`, "module.exports = {};\n");
+    mkdirSync(path.join(root, "node_modules/@scope"), { recursive: true });
+    symlinkSync(
+      path.join(root, real),
+      path.join(root, "node_modules/@scope/pkg"),
+      "dir",
+    );
+
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/@scope/pkg"),
+    );
+    const closureIdentity = identifyModule(file);
+
+    expect(closureIdentity.packageName).toBe("@scope/pkg");
+    expect(closureIdentity.packageInstance).toBe(findingInstance);
   });
 });

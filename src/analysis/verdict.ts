@@ -242,10 +242,11 @@ function phantomNode(resolvedFile: string, exportName: string): GraphNode {
 function graphPackageInstances(
   graph: CallGraph,
   packageName: string,
+  projectRoot: string,
 ): Map<string, Set<string>> {
   const byInstance = new Map<string, Set<string>>();
   for (const node of graph.nodes) {
-    const identity = identifyModule(node.module);
+    const identity = identifyModule(node.module, projectRoot);
     if (identity.packageName !== packageName || !identity.packageInstance) {
       continue;
     }
@@ -338,12 +339,13 @@ async function resolveTargetNodes(
   packageVersion: string | undefined,
   packageInstance: string | undefined,
   allowSyntheticNameOnlyTargetBinding: boolean,
+  projectRoot: string,
 ): Promise<{
   nodes: GraphNode[];
   unresolvedReason?: string;
   confirmedAbsentInstance?: boolean;
 }> {
-  const instances = graphPackageInstances(graph, target.module);
+  const instances = graphPackageInstances(graph, target.module, projectRoot);
 
   if (instances.size > 0) {
     let selected = [...instances.entries()];
@@ -623,6 +625,7 @@ async function checkReachability(
       packageVersion,
       packageInstance,
       allowSyntheticNameOnlyTargetBinding,
+      projectRoot,
     );
 
     if (unresolvedReason) {
