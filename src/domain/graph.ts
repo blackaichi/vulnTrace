@@ -72,7 +72,8 @@ export type DynamicCallReason =
   | "module_internal_load"
   | "vm_execution"
   | "worker_execution"
-  | "child_process_execution";
+  | "child_process_execution"
+  | "loader_hook_mutation";
 
 /**
  * Whether a {@link DynamicCallReason} widens the module-load closure --
@@ -180,6 +181,34 @@ export type DynamicCallReason =
  *   JavaScript module code, and are out of scope for a future decision
  *   rather than an oversight here.
  *
+ * VT-307c-fix-6's readiness review found five more authoritative Node
+ * `Module`-constructor-level loading primitives sharing `module_internal_load`
+ * (`Module.prototype.require`/`.prototype.load`, `module.constructor._load`,
+ * `require("module").Module._load`, an instance's own `.load(path)`) --
+ * see loader-constructs.ts's `resolvesToModuleConstructor` for the shared
+ * provenance check all five converge on -- generalized `child_process`
+ * coverage from `fork` alone to every authoritative launch API (`exec`,
+ * `execSync`, `execFile`, `execFileSync`, `spawn`, `spawnSync`, in addition
+ * to `fork`) under the explicit v0.1 policy that Node subprocess execution
+ * is in scope and command/argument payloads are never inspected to guess
+ * whether the child process is actually Node -- and adds one new reason:
+ * - `loader_hook_mutation`: `require.extensions[ext] = hook` /
+ *   `require.extensions.ext = hook` -- registering a custom compiler for
+ *   `require()`'s own module-extension dispatch table. Unlike every other
+ *   widening reason above, this is a MUTATION of the module-loading
+ *   mechanism itself, not a call/construct that can load one more module:
+ *   it changes what `require()` does for every SUBSEQUENT load of that
+ *   extension. `require` is matched by literal ambient identifier only
+ *   (the same VT-307b simplification already used for `module.require`),
+ *   never a same-file `obj.extensions` unrelated to Node's module system.
+ *   Deliberately closure-only (see `findClosureWideningConstructs`'s own
+ *   doc comment): `CallGraph`'s `CallEdge`/`UnresolvedEdge` types are both
+ *   inherently anchored to a call/construct SITE (`from: GraphNodeId`) --
+ *   an assignment statement has no such site, so there is no call-graph
+ *   edge shape this could ever populate without inventing a parallel,
+ *   non-call diagnostic concept purely for this one construct. This is a
+ *   deliberate, documented architectural boundary, not an oversight.
+ *
  * This partition is normative (see the audit doc's § 3.3/§ 12) and MUST
  * NOT be changed silently: every current consumer
  * (`resolveTargetNodes`'s `confirmedAbsentInstance` guard, src/analysis
@@ -204,6 +233,7 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "vm_execution":
     case "worker_execution":
     case "child_process_execution":
+    case "loader_hook_mutation":
       return true;
     case "unsupported_construct":
     case "dynamic_member_access":

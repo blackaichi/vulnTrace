@@ -220,6 +220,26 @@ function referencesBuiltinExport(
  * `Script` compiles but does not itself execute anything -- only calling
  * one of its own run methods does, handled separately by
  * {@link isVmScriptInstance} below.
+ *
+ * `module`'s `_load` export is likewise NOT listed here (VT-307c-fix-6): it
+ * is subsumed by {@link isModuleConstructorLoader}, which recognizes it
+ * through the SAME Node-`Module`-constructor provenance
+ * ({@link resolvesToModuleConstructor}) as `Module.prototype.require`/
+ * `.prototype.load` and `module.constructor._load` -- keeping one shared
+ * check for every spelling of "this is Node's Module constructor" rather
+ * than splitting `_load`'s provenance across two separate mechanisms.
+ *
+ * `child_process`'s launch APIs (VT-307c-fix-6 Part 9) are deliberately
+ * ALL of `fork`/`exec`/`execSync`/`execFile`/`execFileSync`/`spawn`/
+ * `spawnSync`, not just `fork`: each starts a genuinely separate execution
+ * context capable of running arbitrary Node code (`spawn(process.execPath,
+ * [file])` is `fork` in every way that matters here, just without the IPC
+ * channel `fork` also sets up), and this classifier deliberately never
+ * inspects the command/argument payload to decide whether Node is actually
+ * being launched -- the same "never resolve the string, always choose the
+ * safe answer" discipline the whole loader-widening partition already
+ * applies to `require(dynamicValue)`. See `child_process_execution`'s own
+ * doc comment in domain/graph.ts for the full policy statement.
  */
 const BUILTIN_MEMBER_REASONS: readonly (readonly [
   builtin: string,
@@ -231,9 +251,14 @@ const BUILTIN_MEMBER_REASONS: readonly (readonly [
   ["vm", "runInContext", "vm_execution"],
   ["vm", "compileFunction", "vm_execution"],
   ["module", "createRequire", "create_require"],
-  ["module", "_load", "module_internal_load"],
   ["worker_threads", "Worker", "worker_execution"],
   ["child_process", "fork", "child_process_execution"],
+  ["child_process", "exec", "child_process_execution"],
+  ["child_process", "execSync", "child_process_execution"],
+  ["child_process", "execFile", "child_process_execution"],
+  ["child_process", "execFileSync", "child_process_execution"],
+  ["child_process", "spawn", "child_process_execution"],
+  ["child_process", "spawnSync", "child_process_execution"],
 ];
 
 /** `vm.Script`'s own execution methods -- each compiles-then-runs (or just runs, for an already-compiled `Script`) arbitrary generated source (VT-307c-fix-5 Part 3/5). */
@@ -272,6 +297,175 @@ function isVmScriptInstance(
       referencesBuiltinExport(initializer.expression, "vm", "Script", context)
     );
   }
+  return false;
+}
+
+/**
+ * Whether `expr` provably resolves to Node's `Module` constructor itself
+ * (VT-307c-fix-6) -- the class every required CommonJS module is an
+ * instance of, and the class whose own static/prototype members
+ * (`_load`, `prototype.require`, `prototype.load`) ARE `require()`'s
+ * underlying implementation. Recognizes every ordinary way a file can
+ * reach it:
+ *
+ * - a whole-module reference to the `module`/`node:module` builtin
+ *   itself: Node's own `lib/internal/modules/cjs/loader.js` does
+ *   `Module.Module = Module; module.exports = Module;`, so
+ *   `require("module")` (or an ESM default/namespace import of it) IS
+ *   already the `Module` constructor, not a wrapper around it -- reuses
+ *   {@link resolveWholeModuleBuiltin} directly;
+ * - `<whole>.Module` -- the same self-reference accessed explicitly
+ *   (`require("module").Module`, or `M.Module` for a whole-module-bound
+ *   `M`), which real code sometimes writes even though it's redundant
+ *   with the point above;
+ * - `module.constructor` -- inside any CommonJS module, the ambient
+ *   `module` object's own `.constructor` IS the `Module` class. Matched
+ *   by literal identifier name only (`root === "module"`), the SAME
+ *   deliberate simplification already applied to `module.require`/
+ *   `process.mainModule.require`/`require.main.require` elsewhere in this
+ *   file -- `module` is an ambient CJS wrapper-scope variable, not
+ *   something reached through any import;
+ * - ONE `const`-alias hop from any of the above (`const Mod =
+ *   module.constructor;` / `const Mod = require("module").Module;`).
+ *
+ * Never matches an arbitrary same-file class/object that merely happens
+ * to be named `Module`, expose a `.Module` property, or have its own
+ * `.constructor` -- every branch above requires either real Node-builtin
+ * import provenance or the literal ambient `module` identifier, never a
+ * bare name/shape match (VT-307c-fix-6 Part 3/8's precision requirement;
+ * see this file's own precision-control tests).
+ */
+function resolvesToModuleConstructor(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  if (resolveWholeModuleBuiltin(expr, context) === "module") {
+    return true;
+  }
+
+  if (ts.isPropertyAccessExpression(expr) && expr.name.text === "Module") {
+    if (resolveWholeModuleBuiltin(expr.expression, context) === "module") {
+      return true;
+    }
+  }
+
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "constructor" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "module"
+  ) {
+    return true;
+  }
+
+  if (ts.isIdentifier(expr)) {
+    const initializer = resolveSingleAssignmentValue(
+      expr.text,
+      context.index.sourceFile,
+    );
+    return initializer !== undefined
+      ? resolvesToModuleConstructor(initializer, context)
+      : false;
+  }
+
+  return false;
+}
+
+/**
+ * `Module` instance methods that load/execute a module (VT-307c-fix-6
+ * Part 7) -- `new Module(id).load(filename)` is Node's own low-level
+ * primitive underneath `require()` itself.
+ */
+const MODULE_INSTANCE_METHODS: ReadonlySet<string> = new Set(["load"]);
+
+/**
+ * Whether `expr` is provably a `Module` instance (VT-307c-fix-6 Part 7) --
+ * either constructed inline (`new M.Module('x').load(path)`) or bound to a
+ * local `const` whose single initializer constructs one. Deliberately
+ * minimal, targeted provenance mirroring {@link isVmScriptInstance}'s own
+ * identical shape for `vm.Script` -- not a general object-type inference
+ * engine, just the one `new <ModuleConstructor-reference>(...)` pattern.
+ */
+function isModuleConstructorInstance(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  if (ts.isNewExpression(expr)) {
+    return resolvesToModuleConstructor(expr.expression, context);
+  }
+  if (ts.isIdentifier(expr)) {
+    const initializer = resolveSingleAssignmentValue(
+      expr.text,
+      context.index.sourceFile,
+    );
+    return (
+      initializer !== undefined &&
+      ts.isNewExpression(initializer) &&
+      resolvesToModuleConstructor(initializer.expression, context)
+    );
+  }
+  return false;
+}
+
+/**
+ * Strips a trailing `.call`/`.apply` from a property-access chain, so
+ * `Module.prototype.require.call(module, x)`'s callee
+ * (`Module.prototype.require.call`) and a plain, directly-bound
+ * `Module.prototype.require(x)` are recognized by the same underlying
+ * shape check (VT-307c-fix-6 Part 4). Only `Function.prototype`'s own
+ * `call`/`apply` are stripped -- an unrelated same-file method
+ * legitimately named `call`/`apply` on some other object is never reached
+ * here regardless, since {@link isModuleConstructorLoader} only accepts
+ * the result if what remains resolves to a real `Module.prototype` member.
+ */
+function stripCallApplySuffix(expr: ts.Expression): ts.Expression {
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    (expr.name.text === "call" || expr.name.text === "apply")
+  ) {
+    return expr.expression;
+  }
+  return expr;
+}
+
+/**
+ * Whether `expr` is one of Node's `Module`-constructor-level loading
+ * primitives (VT-307c-fix-6 Parts 4-6): `<ModuleCtor>._load(...)`,
+ * `<ModuleCtor>.prototype.require(...)`, or
+ * `<ModuleCtor>.prototype.load(...)` -- with or without an explicit
+ * `.call`/`.apply` thisArg. `<ModuleCtor>` is resolved via
+ * {@link resolvesToModuleConstructor}, so every spelling
+ * (`Module._load`, `module.constructor._load`,
+ * `require("module").Module._load`, `M.Module.prototype.require.call`,
+ * ...) converges on the same provenance check and the same reason.
+ */
+function isModuleConstructorLoader(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  const target = stripCallApplySuffix(expr);
+  if (!ts.isPropertyAccessExpression(target)) {
+    return false;
+  }
+
+  if (
+    target.name.text === "_load" &&
+    resolvesToModuleConstructor(target.expression, context)
+  ) {
+    return true;
+  }
+
+  if (target.name.text === "require" || target.name.text === "load") {
+    const owner = target.expression;
+    if (
+      ts.isPropertyAccessExpression(owner) &&
+      owner.name.text === "prototype" &&
+      resolvesToModuleConstructor(owner.expression, context)
+    ) {
+      return true;
+    }
+  }
+
   return false;
 }
 
@@ -329,6 +523,16 @@ export function classifyLoaderConstruct(
     if (referencesBuiltinExport(expr, builtin, exportName, context)) {
       return reason;
     }
+  }
+
+  // Node `Module`-constructor-level loading primitives (VT-307c-fix-6):
+  // `<ModuleCtor>._load(...)`, `<ModuleCtor>.prototype.require(...)`,
+  // `<ModuleCtor>.prototype.load(...)`, with or without an explicit
+  // `.call`/`.apply` thisArg. Checked here, before the per-shape branches
+  // below, for the same reason the shared table above is: it applies
+  // uniformly to whatever shape `expr` takes.
+  if (isModuleConstructorLoader(expr, context)) {
+    return "module_internal_load";
   }
 
   if (ts.isIdentifier(expr)) {
@@ -397,6 +601,18 @@ export function classifyLoaderConstruct(
       isVmScriptInstance(expr.expression, context)
     ) {
       return "vm_execution";
+    }
+
+    // `Module` instance's own `.load(filename)` (VT-307c-fix-6 Part 7) --
+    // `new M.Module('x').load(path)`, called directly on the instance
+    // (not via `.prototype.load.call`, which `isModuleConstructorLoader`
+    // above already handles). Same shape as the `vm.Script` check above:
+    // provenance is to the constructed VALUE, not a builtin export.
+    if (
+      MODULE_INSTANCE_METHODS.has(expr.name.text) &&
+      isModuleConstructorInstance(expr.expression, context)
+    ) {
+      return "module_internal_load";
     }
 
     // Ambient ECMAScript/Node globals (`module`, `process`, `require`,
@@ -507,6 +723,49 @@ export function classifyClosureWideningCall(
 }
 
 /**
+ * Whether `expr` is the ambient `require.extensions` object -- Node's own
+ * CommonJS compile-hook registry (VT-307c-fix-6 Part 11). Matched by
+ * literal identifier chain only (`require` is an ambient CJS wrapper-scope
+ * variable, the same deliberate simplification VT-307b already applies to
+ * `module.require`/`process.mainModule.require`/`require.main.require`
+ * elsewhere in this file) -- never a same-file `obj.extensions`, which has
+ * no relationship to Node's module system.
+ */
+function isRequireExtensionsObject(expr: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "extensions" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "require"
+  );
+}
+
+/**
+ * Whether `node` is an assignment that mutates Node's `require.extensions`
+ * compile-hook registry (VT-307c-fix-6 Part 11) --
+ * `require.extensions['.js'] = hook` or `require.extensions.js = hook`.
+ * Assigning into this registry installs a custom compiler for the given
+ * extension that runs on every SUBSEQUENT module of that extension
+ * `require()` loads -- a mutation of the module-LOADING MECHANISM itself,
+ * not a call/construct that merely reaches one more module, which is why
+ * this is detected as an assignment shape rather than folded into
+ * {@link classifyLoaderConstruct} (call/`new`-only).
+ */
+function isRequireExtensionsMutation(node: ts.BinaryExpression): boolean {
+  if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+    return false;
+  }
+  const target = node.left;
+  if (ts.isElementAccessExpression(target)) {
+    return isRequireExtensionsObject(target.expression);
+  }
+  if (ts.isPropertyAccessExpression(target)) {
+    return isRequireExtensionsObject(target.expression);
+  }
+  return false;
+}
+
+/**
  * Every closure-widening construct anywhere in `context`'s source file
  * (VT-307c-fix-3).
  *
@@ -527,6 +786,17 @@ export function classifyClosureWideningCall(
  * produce loader-shaped reasons anyway, and exists so a future
  * reclassification on either side can never silently let a non-widening
  * construct mark a closure incomplete.
+ *
+ * VT-307c-fix-6 adds ONE non-call construct to this same whole-file scan:
+ * a `require.extensions[...] = hook` assignment ({@link
+ * isRequireExtensionsMutation}) mutates `require()`'s own compile-hook
+ * dispatch table rather than calling anything, so it has no call/`new`
+ * node for {@link classifyClosureWideningCall} to ever see. This scanner
+ * -- already a generic AST walk over the whole file, not merely over
+ * calls -- is the natural, single place to also catch it; `CallGraph` has
+ * no equivalent edge shape for a non-call mutation (see
+ * `loader_hook_mutation`'s own doc comment in domain/graph.ts) and does
+ * not attempt to represent it.
  */
 export function findClosureWideningConstructs(
   context: LoaderClassificationContext,
@@ -535,17 +805,29 @@ export function findClosureWideningConstructs(
   const found: LoaderConstruct[] = [];
   const seen = new Set<string>();
 
+  function record(reason: DynamicCallReason, node: ts.Node): void {
+    if (!isClosureWideningReason(reason)) {
+      return;
+    }
+    const location = toSourceLocation(sourceFile, node);
+    const key = `${reason}|${location.line}:${location.column}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      found.push({ reason, location });
+    }
+  }
+
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       const reason = classifyClosureWideningCall(node, context);
-      if (reason !== undefined && isClosureWideningReason(reason)) {
-        const location = toSourceLocation(sourceFile, node);
-        const key = `${reason}|${location.line}:${location.column}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          found.push({ reason, location });
-        }
+      if (reason !== undefined) {
+        record(reason, node);
       }
+    } else if (
+      ts.isBinaryExpression(node) &&
+      isRequireExtensionsMutation(node)
+    ) {
+      record("loader_hook_mutation", node);
     }
     ts.forEachChild(node, visit);
   }
