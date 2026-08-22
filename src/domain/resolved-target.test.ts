@@ -8,11 +8,26 @@ import {
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import type { DependencyNode } from "./dependency.js";
 import {
+  buildKnownPackageRoots,
   buildResolvedTarget,
   canonicalizePackageInstancePath,
   identifyModule,
 } from "./resolved-target.js";
+
+/** A minimal synthetic DependencyNode, for building a test's own KnownPackageRoots (VT-307c-fix-4b). */
+function dependencyNode(name: string, location: string): DependencyNode {
+  return {
+    id: `${name}@0`,
+    name,
+    version: "0.0.0",
+    ecosystem: "npm",
+    direct: true,
+    locations: [location],
+    dependencyPaths: [],
+  };
+}
 
 const tempDirs: string[] = [];
 
@@ -451,12 +466,17 @@ describe("identifyModule: canonical PackageInstance identity across symlinks (VT
     const findingInstance = canonicalizePackageInstancePath(
       path.join(projectRoot, "node_modules/foo"),
     );
-    // Without `projectRoot`, this must NOT silently drop identity, but it
-    // has no way to escape the node_modules-segment assumption either --
-    // confirms the projectRoot-gated fallback is what actually recovers it.
+    // Without `knownPackageRoots`, this must NOT silently drop identity,
+    // but it has no way to escape the node_modules-segment assumption
+    // either -- confirms the registry-gated fallback is what actually
+    // recovers it (VT-307c-fix-4b: provenance, never mere containment).
     expect(identifyModule(file)).toEqual({ resolvedFile: file });
 
-    const closureIdentity = identifyModule(file, projectRoot);
+    const knownPackageRoots = buildKnownPackageRoots(
+      [dependencyNode("foo", "node_modules/foo")],
+      projectRoot,
+    );
+    const closureIdentity = identifyModule(file, knownPackageRoots);
 
     expect(closureIdentity.packageName).toBe("foo");
     expect(closureIdentity.packageInstance).toBe(findingInstance);
@@ -465,12 +485,73 @@ describe("identifyModule: canonical PackageInstance identity across symlinks (VT
     );
   });
 
+  it("(VT-307c-fix-4b Blocker A) an in-tree workspace symlink, scanned AT the monorepo root, still resolves to a stable PackageInstance", () => {
+    // The shape fix-4's own `projectRoot`-escape check silently missed: the
+    // physical target (packages/foo) is INSIDE projectRoot -- a workspace
+    // scanned from its own monorepo root has every member inside
+    // projectRoot by definition. Provenance must not depend on containment.
+    const root = tempProject();
+    write(
+      root,
+      "packages/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    const file = write(
+      root,
+      "packages/foo/lib/index.js",
+      "module.exports = {};\n",
+    );
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, "packages/foo"),
+      path.join(root, "node_modules/foo"),
+      "dir",
+    );
+
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo"),
+    );
+    const knownPackageRoots = buildKnownPackageRoots(
+      [dependencyNode("foo", "node_modules/foo")],
+      root,
+    );
+    const identity = identifyModule(file, knownPackageRoots);
+
+    expect(identity.packageName).toBe("foo");
+    expect(identity.packageInstance).toBe(findingInstance);
+    expect(identity.packageInstance).toBe(path.join(root, "packages/foo"));
+  });
+
   it("never attributes package identity to the scanned project's own source, even with no node_modules segment", () => {
     const root = tempProject();
     write(root, "package.json", JSON.stringify({ name: "app" }));
     const file = write(root, "src/index.js", "module.exports = {};\n");
 
-    const identity = identifyModule(file, root);
+    // Empty registry: the scanned project's own package.json is never a
+    // DependencyNode location, so it can never appear here regardless of
+    // containment (VT-307c-fix-4b).
+    const knownPackageRoots = buildKnownPackageRoots([], root);
+    const identity = identifyModule(file, knownPackageRoots);
+
+    expect(identity).toEqual({ resolvedFile: file });
+  });
+
+  it("(unknown in-tree package.json) an in-tree directory with its own package.json that is NOT a known dependency location gets no identity", () => {
+    const root = tempProject();
+    write(root, "package.json", JSON.stringify({ name: "app" }));
+    write(
+      root,
+      "internal/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    const file = write(root, "internal/foo/index.js", "module.exports = {};\n");
+
+    // `internal/foo` looks exactly like an installed package (its own
+    // package.json, a plausible name) but was never named by the
+    // dependency graph -- provenance, not "has a package.json", must be
+    // the deciding criterion (VT-307c-fix-4b Part 11).
+    const knownPackageRoots = buildKnownPackageRoots([], root);
+    const identity = identifyModule(file, knownPackageRoots);
 
     expect(identity).toEqual({ resolvedFile: file });
   });
@@ -522,9 +603,27 @@ describe("identifyModule: canonical PackageInstance identity across symlinks (VT
       "packages/foo-b/index.js",
       "module.exports = {};\n",
     );
+    mkdirSync(path.join(projectRoot, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(workspaceRoot, "packages/foo-a"),
+      path.join(projectRoot, "node_modules/foo-a"),
+      "dir",
+    );
+    symlinkSync(
+      path.join(workspaceRoot, "packages/foo-b"),
+      path.join(projectRoot, "node_modules/foo-b"),
+      "dir",
+    );
 
-    const a = identifyModule(fileA, projectRoot);
-    const b = identifyModule(fileB, projectRoot);
+    const knownPackageRoots = buildKnownPackageRoots(
+      [
+        dependencyNode("foo", "node_modules/foo-a"),
+        dependencyNode("foo", "node_modules/foo-b"),
+      ],
+      projectRoot,
+    );
+    const a = identifyModule(fileA, knownPackageRoots);
+    const b = identifyModule(fileB, knownPackageRoots);
 
     expect(a.packageInstance).not.toBe(b.packageInstance);
     expect(a.packageInstance).toBe(path.join(workspaceRoot, "packages/foo-a"));

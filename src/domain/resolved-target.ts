@@ -1,5 +1,6 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
+import type { DependencyNode } from "./dependency.js";
 
 /**
  * Identifies a concrete installed instance of a package on disk (see
@@ -90,6 +91,57 @@ export function canonicalizePackageInstancePath(rawPath: string): string {
 }
 
 /**
+ * Every installed dependency's canonical physical root, mapped to the
+ * package name the dependency graph/lockfile itself declares for it
+ * (VT-307c-fix-4b; see the VT-307d review's Blocker A follow-up).
+ *
+ * This is the DEPENDENCY-PROVENANCE authority a resolved file with no
+ * `node_modules` segment must be checked against before it can be
+ * attributed to any installed package instance -- see
+ * {@link identifyKnownPackageInstance}. A physical root's mere presence on
+ * disk, or having its own `package.json`, is NEVER sufficient by itself
+ * (that was VT-307c-fix-4's own now-superseded approach, which could not
+ * distinguish an npm workspace member from the scanned project's own
+ * source merely by asking "is this inside or outside projectRoot" -- both
+ * questions have nothing to do with whether the directory is actually an
+ * INSTALLED DEPENDENCY). Provenance -- "the dependency graph itself named
+ * this exact location as an install target" -- is the only question that
+ * can never misfire on ordinary project source: the scanned project's own
+ * `package.json` is never one of `DependencyNode.locations`, so it can
+ * never enter this map no matter how it's structured on disk.
+ */
+export type KnownPackageRoots = ReadonlyMap<PackageInstanceId, string>;
+
+/**
+ * Builds {@link KnownPackageRoots} from the full dependency graph
+ * (VT-307c-fix-4b) -- every `DependencyNode`'s every `location`,
+ * canonicalized through the exact same {@link canonicalizePackageInstancePath}
+ * formula `cli/scan.ts` already uses for a finding's own `packageInstance`,
+ * so the two sides are guaranteed to produce identical keys for the same
+ * physical install.
+ *
+ * Intended to be built exactly ONCE per scan (this does one `realpathSync`
+ * per install location, not per source file later checked against it) and
+ * threaded through as explicit context -- never rebuilt ad hoc, and never
+ * read from an implicit global/singleton (see this task's own Part 4).
+ */
+export function buildKnownPackageRoots(
+  nodes: readonly DependencyNode[],
+  projectRoot: string,
+): KnownPackageRoots {
+  const roots = new Map<string, string>();
+  for (const node of nodes) {
+    for (const location of node.locations) {
+      const canonicalRoot = canonicalizePackageInstancePath(
+        path.resolve(projectRoot, location),
+      );
+      roots.set(canonicalRoot, node.name);
+    }
+  }
+  return roots;
+}
+
+/**
  * Reads a package instance's own `package.json` `"name"` field, when
  * present and valid (VT-306, RWF-009). This is the authoritative package
  * *identity* for an npm-aliased install (`"semver-vulnerable":
@@ -154,16 +206,21 @@ function readInstalledPackageName(packageInstance: string): string | undefined {
  * though the two authorities are read from different files.
  *
  * Returns just `{ resolvedFile }` (no package identity) for a file with no
- * `node_modules` segment at all AND that lies inside `projectRoot` -- e.g.
- * the scanned project's own source, which has no installed-package
- * identity to derive. When `projectRoot` is supplied and the file
- * genuinely escapes it with no `node_modules` segment anywhere, falls back
- * to {@link identifyExternalPackageInstance} (VT-307c-fix-4 Part 9): an npm
- * workspace/`file:` link whose real physical target lives entirely outside
- * `node_modules` would otherwise silently lose its package identity, which
- * the VT-307d soundness review flagged as unsafe for a future absence
- * proof (an undiscoverable instance can never be confirmed absent OR
- * present).
+ * `node_modules` segment at all AND whose containing directory tree
+ * matches no entry in `knownPackageRoots` -- e.g. the scanned project's
+ * own source, which is never itself one of the dependency graph's own
+ * install locations no matter how its directories happen to be arranged.
+ * When `knownPackageRoots` is supplied, falls back to
+ * {@link identifyKnownPackageInstance} (VT-307c-fix-4b, superseding
+ * VT-307c-fix-4's own now-unsound `projectRoot`-containment check -- see
+ * that function's doc comment): an npm workspace member, a `file:`
+ * dependency, or any other linked install whose real physical target has
+ * no `node_modules` segment of its own would otherwise silently lose its
+ * package identity, unsound REGARDLESS of whether that physical target
+ * happens to live inside or outside the scanned project's own directory
+ * tree (the VT-307d review's Blocker A: an in-tree linked target, e.g. an
+ * npm workspace scanned from its own monorepo root, is the common case
+ * fix-4's `projectRoot`-escape check silently missed).
  *
  * `packageInstance` in both branches is always canonicalized via
  * {@link canonicalizePackageInstancePath} (VT-307c-fix-4): the raw,
@@ -176,13 +233,13 @@ function readInstalledPackageName(packageInstance: string): string | undefined {
  */
 export function identifyModule(
   resolvedFile: string,
-  projectRoot?: string,
+  knownPackageRoots?: KnownPackageRoots,
 ): ModuleIdentity {
   const lastIndex = resolvedFile.lastIndexOf(NODE_MODULES_SEGMENT);
   if (lastIndex === -1) {
     return (
-      (projectRoot &&
-        identifyExternalPackageInstance(resolvedFile, projectRoot)) || {
+      (knownPackageRoots &&
+        identifyKnownPackageInstance(resolvedFile, knownPackageRoots)) || {
         resolvedFile,
       }
     );
@@ -198,8 +255,8 @@ export function identifyModule(
 
   if (!pathDerivedName) {
     return (
-      (projectRoot &&
-        identifyExternalPackageInstance(resolvedFile, projectRoot)) || {
+      (knownPackageRoots &&
+        identifyKnownPackageInstance(resolvedFile, knownPackageRoots)) || {
         resolvedFile,
       }
     );
@@ -223,56 +280,53 @@ export function identifyModule(
 
 /**
  * Identifies the owning package instance for a resolved file that has NO
- * `node_modules` segment anywhere in its path (VT-307c-fix-4 Part 9) --
- * the shape of an npm workspace member or a `file:`/`npm link`-style
+ * `node_modules` segment anywhere in its path (VT-307c-fix-4b) -- the
+ * shape of an npm workspace member or a `file:`/`npm link`-style
  * dependency whose physical target lives entirely outside any
- * `node_modules` directory (e.g. a monorepo's sibling `packages/foo`,
- * reached only via a `node_modules/foo` symlink that TypeScript's resolver
- * already followed before this function ever sees the path).
+ * `node_modules` directory (e.g. a monorepo's sibling `packages/foo`, or
+ * an in-tree `vendor/foo`, reached only via a `node_modules/foo` symlink
+ * that TypeScript's resolver already followed before this function ever
+ * sees the path).
  *
- * Gated on `resolvedFile` genuinely escaping `projectRoot`'s own directory
- * tree -- never merely on "some ancestor happens to have a package.json"
- * -- specifically so this can NEVER misattribute package identity to the
- * scanned project's own source. An ordinary project file (`src/index.ts`)
- * is, by definition, always inside `projectRoot`; walking its ancestors
- * for a `package.json` would otherwise find the project's own manifest and
- * wrongly treat the whole project as "a package it depends on". A file
- * that has escaped `projectRoot` entirely, by contrast, can only have done
- * so through a real symlink/link the analyzed project's own dependency
- * tree established, which is exactly the case this exists to cover.
+ * Gated on DEPENDENCY PROVENANCE, never on filesystem containment or the
+ * mere presence of a `package.json`: walks up from `resolvedFile` looking
+ * for the nearest ancestor directory that is itself a key in
+ * `knownPackageRoots` -- i.e. a canonical root the dependency graph itself
+ * named as an install location (see {@link buildKnownPackageRoots}). This
+ * is what fix-4's own `projectRoot`-escape check got wrong: "is this
+ * inside or outside the scanned project's own directory" has nothing to
+ * do with "is this an installed dependency" -- an npm workspace scanned
+ * from its own monorepo root has every workspace member INSIDE
+ * `projectRoot`, which fix-4's check therefore silently refused to
+ * attribute (the VT-307d review's Blocker A). Provenance instead can never
+ * misfire on ordinary project source: the scanned project's own
+ * `package.json` is never a `DependencyNode` location, so it can never
+ * appear in `knownPackageRoots` regardless of where it physically sits.
  *
- * The nearest ancestor directory containing a `package.json`, walking up
- * from `resolvedFile`, is treated as the package root -- mirroring how a
- * real npm/Node package boundary is defined by convention, since there is
- * no `node_modules/<name>` segment here to read a name out of instead.
- * Returns `undefined` (no identity) if no such ancestor is found before
- * the filesystem root, or if `resolvedFile` never actually escapes
- * `projectRoot` in the first place.
+ * Walking up (rather than an exact-match-only lookup) is necessary because
+ * `resolvedFile` is usually a file WITHIN the package
+ * (`packages/foo/lib/deep/file.js`), not the package root itself. Stopping
+ * at the FIRST known root found also makes this most-specific-root-wins by
+ * construction: a nested known root (e.g. `packages/foo/node_modules/bar`)
+ * is always reached before its own less-specific ancestor (`packages/foo`)
+ * during the same upward walk, so a file under `bar` can never be
+ * misattributed to `foo`.
+ *
+ * Returns `undefined` (no identity) if no ancestor directory is a known
+ * root before the filesystem root is reached.
  */
-function identifyExternalPackageInstance(
+function identifyKnownPackageInstance(
   resolvedFile: string,
-  projectRoot: string,
+  knownPackageRoots: KnownPackageRoots,
 ): ModuleIdentity | undefined {
-  const canonicalProjectRoot = canonicalizePackageInstancePath(projectRoot);
   const canonicalResolvedFile = canonicalizePackageInstancePath(resolvedFile);
-
-  const relativeToProject = path.relative(
-    canonicalProjectRoot,
-    canonicalResolvedFile,
-  );
-  const isInsideProject =
-    relativeToProject === "" ||
-    (!relativeToProject.startsWith("..") &&
-      !path.isAbsolute(relativeToProject));
-  if (isInsideProject) {
-    return undefined;
-  }
 
   let dir = path.dirname(canonicalResolvedFile);
   let previous: string | undefined;
   while (dir !== previous) {
-    if (existsSync(path.join(dir, "package.json"))) {
-      const packageName = readInstalledPackageName(dir) ?? path.basename(dir);
+    const lockfileName = knownPackageRoots.get(dir);
+    if (lockfileName !== undefined) {
+      const packageName = readInstalledPackageName(dir) ?? lockfileName;
       return { packageName, packageInstance: dir, resolvedFile };
     }
     previous = dir;
@@ -294,10 +348,10 @@ export function buildResolvedTarget(
     readonly symbolId?: string;
     readonly packageVersion?: string;
     readonly resolutionEvidence?: readonly string[];
-    readonly projectRoot?: string;
+    readonly knownPackageRoots?: KnownPackageRoots;
   },
 ): ResolvedTarget {
-  const moduleId = identifyModule(resolvedFile, options?.projectRoot);
+  const moduleId = identifyModule(resolvedFile, options?.knownPackageRoots);
 
   return {
     packageName: moduleId.packageName,

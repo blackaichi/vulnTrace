@@ -6,6 +6,7 @@ import type { Entrypoint } from "../domain/entrypoint.js";
 import type { DynamicCallReason, SourceLocation } from "../domain/graph.js";
 import {
   identifyModule,
+  type KnownPackageRoots,
   type PackageInstanceId,
 } from "../domain/resolved-target.js";
 
@@ -136,17 +137,21 @@ export interface BuildModuleLoadClosureOptions {
   /** Bounds traversal (see docs/SDD.md § 26, § 28-29). Reaching it marks the closure incomplete, never silently partial. */
   readonly maxFiles?: number;
   /**
-   * The scanned project's own root (VT-307c-fix-4), passed through to
-   * `identifyModule` so a loaded file that escapes `node_modules`
-   * entirely -- an npm workspace/`file:` link whose physical target has no
-   * `node_modules` segment of its own -- can still be attributed to its
-   * owning package instance instead of silently losing identity. Optional
-   * only for backward compatibility with callers that predate this option
-   * (e.g. existing tests using synthetic paths); omitting it does not
-   * change behavior for any install shape that already has a
-   * `node_modules` segment.
+   * The scan's dependency-provenance registry (VT-307c-fix-4b), passed
+   * through to `identifyModule` so a loaded file with no `node_modules`
+   * segment of its own -- an npm workspace member, a `file:` dependency,
+   * or any other linked install whose physical target has no
+   * `node_modules` segment -- can still be attributed to its owning
+   * package instance instead of silently losing identity, PROVIDED that
+   * physical root is genuinely a dependency-graph install location (see
+   * `buildKnownPackageRoots`; never merely "has a package.json" or "lies
+   * outside the project root" -- VT-307c-fix-4's own now-superseded,
+   * unsound approach). Optional only for backward compatibility with
+   * callers that predate this option (e.g. existing tests using synthetic
+   * paths); omitting it does not change behavior for any install shape
+   * that already has a `node_modules` segment.
    */
-  readonly projectRoot?: string;
+  readonly knownPackageRoots?: KnownPackageRoots;
 }
 
 /**
@@ -178,7 +183,7 @@ export interface BuildModuleLoadClosureOptions {
 export async function buildModuleLoadClosure(
   options: BuildModuleLoadClosureOptions,
 ): Promise<ModuleLoadClosure> {
-  const { entrypoints, resolver, projectRoot } = options;
+  const { entrypoints, resolver, knownPackageRoots } = options;
   const maxFiles = options.maxFiles ?? Infinity;
 
   const rootFiles = [...new Set(entrypoints.map((e) => e.filePath))];
@@ -286,7 +291,7 @@ export async function buildModuleLoadClosure(
 
   const loadedPackageInstances = new Set<PackageInstanceId>();
   for (const file of loadedFiles) {
-    const instance = identifyModule(file, projectRoot).packageInstance;
+    const instance = identifyModule(file, knownPackageRoots).packageInstance;
     if (instance !== undefined) {
       loadedPackageInstances.add(instance);
     }

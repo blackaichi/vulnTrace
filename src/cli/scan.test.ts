@@ -1002,6 +1002,154 @@ describe("runScanCommand: symlinked installs canonicalize to the same PackageIns
   });
 });
 
+describe("runScanCommand: in-tree linked dependencies keep canonical PackageInstance identity (VT-307c-fix-4b)", () => {
+  // The VT-307d review's follow-up Blocker A: fix-4's `projectRoot`-
+  // containment check silently failed for a linked dependency whose
+  // physical target lives INSIDE projectRoot -- the common shape for an
+  // npm workspace scanned from its own monorepo root, or a `file:`
+  // dependency vendored in-tree. Reproduced directly against the pre-
+  // fix-4b code: ModuleLoadClosure.loadedPackageInstances omitted the
+  // genuinely-loaded instance entirely (a future VT-307d gate would have
+  // read that as a false NOT_AFFECTED). No verdict change is expected from
+  // THIS fix alone -- the current, pre-gate scan already reaches AFFECTED
+  // through Site B's independent re-resolution; these regressions exist to
+  // keep that positive result stable once VT-307d's closure-absence gate
+  // is eventually wired in.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  const FOO_GHSA: RawVulnerability = {
+    id: "GHSA-intree-0001",
+    aliases: [],
+    affected: [
+      {
+        package: { ecosystem: "npm", name: "foo" },
+        ranges: [
+          { type: "SEMVER", events: [{ introduced: "0" }, { fixed: "2.0.0" }] },
+        ],
+      },
+    ],
+    references: [],
+  };
+
+  function buildFixture(linkKind: "workspace" | "file"): {
+    root: string;
+    ghsaId: string;
+  } {
+    const root = mkdtempSync(
+      path.join(tmpdir(), `vulntrace-scan-intree-${linkKind}-`),
+    );
+    const physicalDir =
+      linkKind === "workspace" ? "packages/foo" : "vendor/foo";
+
+    write(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: {
+          foo: linkKind === "workspace" ? "1.0.0" : "file:./vendor/foo",
+        },
+        ...(linkKind === "workspace" ? { workspaces: ["packages/*"] } : {}),
+      }),
+    );
+    write(
+      root,
+      "package-lock.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": { name: "app", version: "1.0.0", dependencies: { foo: "1.0.0" } },
+          "node_modules/foo": { resolved: physicalDir, link: true },
+          [physicalDir]: { name: "foo", version: "1.0.0" },
+        },
+      }),
+    );
+
+    write(
+      root,
+      `${physicalDir}/package.json`,
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      `${physicalDir}/index.js`,
+      "function vulnerable(){ return 'BOOM'; }\nmodule.exports = { vulnerable };\n",
+    );
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, physicalDir),
+      path.join(root, "node_modules/foo"),
+      "dir",
+    );
+
+    write(
+      root,
+      "src/index.js",
+      "const foo = require('foo');\nfunction main(){ return foo.vulnerable(); }\nmodule.exports = { main };\n",
+    );
+    write(
+      root,
+      "vulntrace.yml",
+      "analysis:\n  entrypoints:\n    - src/index.js\nrules:\n  files:\n    - rules.yml\n",
+    );
+    write(
+      root,
+      "rules.yml",
+      "rules:\n" +
+        "  - id: GHSA-intree-0001\n" +
+        "    package:\n" +
+        "      name: foo\n" +
+        "    targets:\n" +
+        "      - module: foo\n" +
+        "        export: vulnerable\n" +
+        "        kind: function\n",
+    );
+
+    return { root, ghsaId: "GHSA-intree-0001" };
+  }
+
+  it.each([
+    ["npm workspace, scanned AT the monorepo root", "workspace" as const],
+    ["file: dependency vendored in-tree", "file" as const],
+  ])(
+    "keeps a directly-called vulnerable function AFFECTED for %s",
+    async (_label, linkKind) => {
+      const { root } = buildFixture(linkKind);
+      tmpDir = root;
+      const { io, stdout, stderr } = fakeIo();
+
+      const exitCode = await runScanCommand({
+        projectPathArg: root,
+        provider: fakeProvider({ foo: [FOO_GHSA] }),
+        noCache: true,
+        io,
+      });
+
+      expect(stderr).toEqual([]);
+      const output = JSON.parse(stdout.join(""));
+      const fooFindings = output.findings.filter(
+        (f: { vulnerability: string }) =>
+          f.vulnerability === "GHSA-intree-0001",
+      );
+
+      expect(fooFindings).toHaveLength(1);
+      expect(fooFindings[0].verdict).toBe("AFFECTED");
+      expect(exitCode).toBe(1);
+    },
+  );
+});
+
 describe("runScanCommand: error handling", () => {
   it("returns exit code 3 when package.json/package-lock.json are missing", async () => {
     const tmpDir = mkdtempSync(path.join(tmpdir(), "vulntrace-scan-empty-"));

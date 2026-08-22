@@ -43,11 +43,13 @@ export type {
 export { isCallResolved, isReachable } from "./graph.js";
 export type { Evidence } from "./evidence.js";
 export type {
+  KnownPackageRoots,
   ModuleIdentity,
   PackageInstanceId,
   ResolvedTarget,
 } from "./resolved-target.js";
 export {
+  buildKnownPackageRoots,
   buildResolvedTarget,
   canonicalizePackageInstancePath,
   identifyModule,

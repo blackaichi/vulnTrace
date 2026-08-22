@@ -11,8 +11,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
 import { createModuleResolver } from "../code-intelligence/module-resolver.js";
 import { loadTsProject } from "../code-intelligence/ts-project.js";
-import { canonicalizePackageInstancePath } from "../domain/resolved-target.js";
+import type { DependencyNode } from "../domain/dependency.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
+import {
+  buildKnownPackageRoots,
+  canonicalizePackageInstancePath,
+  type KnownPackageRoots,
+} from "../domain/resolved-target.js";
 import {
   buildModuleLoadClosure,
   closureContainsFile,
@@ -54,6 +59,19 @@ function entrypoint(filePath: string, symbol?: string): Entrypoint {
   };
 }
 
+/** A minimal synthetic DependencyNode, for building a test's own KnownPackageRoots (VT-307c-fix-4b). */
+function dependencyNode(name: string, location: string): DependencyNode {
+  return {
+    id: `${name}@0`,
+    name,
+    version: "0.0.0",
+    ecosystem: "npm",
+    direct: true,
+    locations: [location],
+    dependencyPaths: [],
+  };
+}
+
 /**
  * Builds the closure with a real resolver, exactly as a caller would.
  *
@@ -63,14 +81,18 @@ function entrypoint(filePath: string, symbol?: string): Entrypoint {
 async function closureFor(
   root: string,
   entryFiles: readonly string[],
-  options: { maxFiles?: number; symbol?: string; projectRoot?: string } = {},
+  options: {
+    maxFiles?: number;
+    symbol?: string;
+    knownPackageRoots?: KnownPackageRoots;
+  } = {},
 ): Promise<ModuleLoadClosure> {
   const project = loadTsProject(root);
   const resolver = createModuleResolver(project);
   return buildModuleLoadClosure({
     entrypoints: entryFiles.map((f) => entrypoint(f, options.symbol)),
     resolver,
-    projectRoot: options.projectRoot ?? root,
+    knownPackageRoots: options.knownPackageRoots,
     ...(options.maxFiles === undefined ? {} : { maxFiles: options.maxFiles }),
   });
 }
@@ -1088,7 +1110,7 @@ describe("ModuleLoadClosure: agrees with VT-307a module_load edges (VT-307c Part
   });
 });
 
-describe("ModuleLoadClosure: package-instance identity survives symlinked installs (VT-307c-fix-4, VT-307d review Blocker A)", () => {
+describe("ModuleLoadClosure: package-instance identity survives symlinked installs (VT-307c-fix-4/4b, VT-307d review Blocker A)", () => {
   it("(pnpm-style) closureContainsPackageInstance recognizes a package reached through a pnpm-store symlink, keyed by the canonicalized LOGICAL location", async () => {
     const root = tempProject();
     const real = "node_modules/.pnpm/foo@1.0.0/node_modules/foo";
@@ -1152,7 +1174,16 @@ describe("ModuleLoadClosure: package-instance identity survives symlinked instal
       "const foo = require('foo');\nfunction main(){ return foo.vulnerable(); }\nmodule.exports = { main };\n",
     );
 
-    const closure = await closureFor(projectRoot, [entry], { projectRoot });
+    // The scan's own dependency-provenance registry (VT-307c-fix-4b): the
+    // dependency graph names `node_modules/foo` as foo's install location,
+    // exactly as cli/scan.ts's own DependencyNode.locations would.
+    const knownPackageRoots = buildKnownPackageRoots(
+      [dependencyNode("foo", "node_modules/foo")],
+      projectRoot,
+    );
+    const closure = await closureFor(projectRoot, [entry], {
+      knownPackageRoots,
+    });
 
     const findingInstance = canonicalizePackageInstancePath(
       path.join(projectRoot, "node_modules/foo"),
@@ -1160,6 +1191,203 @@ describe("ModuleLoadClosure: package-instance identity survives symlinked instal
 
     expect(closure.complete).toBe(true);
     expect(closureContainsPackageInstance(closure, findingInstance)).toBe(true);
+  });
+
+  it("(in-tree workspace, scanned AT the monorepo root -- VT-307c-fix-4b Blocker A) closureContainsPackageInstance recognizes a linked package whose physical target lives INSIDE projectRoot", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "monorepo", workspaces: ["packages/*"] }),
+    );
+    write(
+      root,
+      "packages/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "packages/foo/index.js",
+      "module.exports = { vulnerable(){ return 1; } };\n",
+    );
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, "packages/foo"),
+      path.join(root, "node_modules/foo"),
+      "dir",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const foo = require('foo');\nfunction main(){ return foo.vulnerable(); }\nmodule.exports = { main };\n",
+    );
+
+    // This is exactly VT-307c-fix-4's own blind spot: the physical target
+    // (packages/foo) is INSIDE projectRoot, which fix-4's `projectRoot`-
+    // escape check silently refused to attribute. Provenance -- foo being
+    // a real dependency-graph location -- must not depend on containment.
+    const knownPackageRoots = buildKnownPackageRoots(
+      [dependencyNode("foo", "node_modules/foo")],
+      root,
+    );
+    const closure = await closureFor(root, [entry], { knownPackageRoots });
+
+    const findingInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo"),
+    );
+
+    expect(closure.complete).toBe(true);
+    expect(closureContainsPackageInstance(closure, findingInstance)).toBe(true);
+  });
+
+  it("(own-project negative control) never attributes the scanned project's own root package to a PackageInstance, even though it has its own package.json", async () => {
+    const root = tempProject();
+    write(root, "package.json", JSON.stringify({ name: "app" }));
+    const entry = write(
+      root,
+      "src/lib.js",
+      "function main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    // Empty registry: the scanned project's own package.json is never a
+    // DependencyNode location, so it can never appear here.
+    const knownPackageRoots = buildKnownPackageRoots([], root);
+    const closure = await closureFor(root, [entry], { knownPackageRoots });
+
+    expect(closure.complete).toBe(true);
+    expect(closure.loadedPackageInstances).toEqual([]);
+  });
+
+  it("(unknown in-tree package.json negative control) an in-tree directory with its own package.json that is NOT a known dependency location gets no PackageInstance", async () => {
+    const root = tempProject();
+    write(root, "package.json", JSON.stringify({ name: "app" }));
+    write(
+      root,
+      "internal/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "internal/foo/index.js",
+      "module.exports = { vulnerable(){ return 1; } };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const foo = require('../internal/foo');\nfunction main(){ return foo.vulnerable(); }\nmodule.exports = { main };\n",
+    );
+
+    // `internal/foo` is a real, package.json-bearing, in-tree directory --
+    // but it is NOT in the dependency-provenance registry (the registry is
+    // empty here), so it must not be attributed a PackageInstance merely
+    // because it looks like a package. This proves provenance, not
+    // "has a package.json", is the criterion (VT-307c-fix-4b Part 11).
+    const knownPackageRoots = buildKnownPackageRoots([], root);
+    const closure = await closureFor(root, [entry], { knownPackageRoots });
+
+    expect(closure.complete).toBe(true);
+    expect(closure.loadedPackageInstances).toEqual([]);
+  });
+
+  it("(most-specific-root wins) a source file under a nested known root resolves to that nested root, never a less-specific ancestor", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "packages/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "packages/foo/index.js",
+      "const bar = require('./node_modules/bar');\nmodule.exports = { use(){ return bar.vulnerable(); } };\n",
+    );
+    write(
+      root,
+      "packages/foo/node_modules/bar/package.json",
+      JSON.stringify({ name: "bar", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "packages/foo/node_modules/bar/index.js",
+      "module.exports = { vulnerable(){ return 1; } };\n",
+    );
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, "packages/foo"),
+      path.join(root, "node_modules/foo"),
+      "dir",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const foo = require('foo');\nfunction main(){ return foo.use(); }\nmodule.exports = { main };\n",
+    );
+
+    const knownPackageRoots = buildKnownPackageRoots(
+      [dependencyNode("foo", "node_modules/foo")],
+      root,
+    );
+    const closure = await closureFor(root, [entry], { knownPackageRoots });
+
+    // bar has its own node_modules segment (packages/foo/node_modules/bar),
+    // so it is identified through the ordinary node_modules-segment branch,
+    // not the registry -- proving foo's own registry entry never
+    // "swallows" a deeper, independently-identified nested install.
+    const fooInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo"),
+    );
+    const barInstance = path.join(root, "packages/foo/node_modules/bar");
+
+    expect(closure.complete).toBe(true);
+    expect(closureContainsPackageInstance(closure, fooInstance)).toBe(true);
+    expect(closureContainsPackageInstance(closure, barInstance)).toBe(true);
+  });
+
+  it("(prefix-collision safety) two known roots with one name a prefix of the other never collide", async () => {
+    const root = tempProject();
+    for (const name of ["foo", "foobar"]) {
+      write(
+        root,
+        `packages/${name}/package.json`,
+        JSON.stringify({ name, version: "1.0.0" }),
+      );
+      write(
+        root,
+        `packages/${name}/index.js`,
+        `module.exports = { vulnerable(){ return '${name}'; } };\n`,
+      );
+    }
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, "packages/foobar"),
+      path.join(root, "node_modules/foobar"),
+      "dir",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "const foobar = require('foobar');\nfunction main(){ return foobar.vulnerable(); }\nmodule.exports = { main };\n",
+    );
+
+    const knownPackageRoots = buildKnownPackageRoots(
+      [
+        dependencyNode("foo", "node_modules/foo"),
+        dependencyNode("foobar", "node_modules/foobar"),
+      ],
+      root,
+    );
+    const closure = await closureFor(root, [entry], { knownPackageRoots });
+
+    const fooInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foo"),
+    );
+    const foobarInstance = canonicalizePackageInstancePath(
+      path.join(root, "node_modules/foobar"),
+    );
+
+    expect(closure.complete).toBe(true);
+    expect(closureContainsPackageInstance(closure, foobarInstance)).toBe(true);
+    expect(closureContainsPackageInstance(closure, fooInstance)).toBe(false);
   });
 
   it("(negative control) an installed but never-imported symlinked package stays OUT of the closure", async () => {
