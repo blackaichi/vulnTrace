@@ -25,10 +25,20 @@ import {
  * must never make a closure incomplete. Two additional causes are specific
  * to closure traversal itself and have no call-edge equivalent:
  *
- * - `parse_failure`: a closure member could not be read/parsed, so its own
- *   imports (and therefore everything they would transitively load) are
- *   unknown. Previously invisible entirely -- the VT-307 soundness review
- *   called this out as a missing completeness signal.
+ * - `parse_failure`: a closure member could not be read, or could be read
+ *   but not soundly parsed (`SourceIndex.hasSyntaxErrors`, VT-307c-fix-2),
+ *   so its own imports (and therefore everything they would transitively
+ *   load) are unknown. Previously invisible entirely -- the VT-307
+ *   soundness review called this out as a missing completeness signal, and
+ *   found that TypeScript's own error-tolerant parser made it reachable
+ *   even without a read failure: given invalid syntax it still returns a
+ *   partial, silently-reshaped AST rather than throwing, so a member whose
+ *   `require`/`import` got parsed away by a syntax error looked completely
+ *   and soundly absent. This case is deliberately folded into the same
+ *   `parse_failure` reason as a read failure rather than getting its own
+ *   value: both mean exactly the same thing to a caller -- "this member's
+ *   imports could not be established" -- and nothing downstream needs to
+ *   tell them apart.
  * - `traversal_truncated`: a configured resource limit stopped traversal
  *   before the closure was exhausted, so the unvisited region's own
  *   imports are unknown. Deliberately distinct from the call graph's own
@@ -194,13 +204,30 @@ export async function buildModuleLoadClosure(
     // reason to pretend the file never loaded.
     loadedFiles.add(filePath);
 
-    let model;
+    let sourceIndex;
     try {
-      model = buildModuleModel(indexSourceFileFromDisk(filePath));
+      sourceIndex = indexSourceFileFromDisk(filePath);
     } catch {
       incompleteness.push({ reason: "parse_failure", importer: filePath });
       continue;
     }
+
+    if (sourceIndex.hasSyntaxErrors) {
+      // TypeScript's parser is error-tolerant: a syntax error never throws
+      // here, it produces a partial AST that may have silently dropped or
+      // reshaped the very imports this traversal depends on (VT-307c-fix-2
+      // -- e.g. an unterminated block comment or template literal can
+      // swallow a `require(...)` entirely). Trusting `model.imports` from
+      // that AST as a complete account of this file's loads is exactly the
+      // unsound inference the VT-307 soundness review flagged, so this
+      // member's imports are never even inspected: the closure must record
+      // incompleteness regardless of what the recovered AST does or does
+      // not contain.
+      incompleteness.push({ reason: "parse_failure", importer: filePath });
+      continue;
+    }
+
+    const model = buildModuleModel(sourceIndex);
 
     const seenSpecifiers = new Set<string>();
     for (const imp of model.imports) {
