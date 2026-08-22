@@ -1266,6 +1266,136 @@ describe("buildCallGraph: Node runtime loader/execution primitives (VT-307c-fix-
   );
 });
 
+describe("buildCallGraph: Node Module-constructor loading primitives and child_process API coverage (VT-307c-fix-6)", () => {
+  it.each([
+    [
+      "Module.prototype.require.call(module, name)",
+      "const Module = require('module');\nfunction main(){ Module.prototype.require.call(module, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "module.constructor._load(name)",
+      "function main(){ module.constructor._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "require('module').Module._load(name)",
+      "function main(){ require('module').Module._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "new M.Module('x').load(name)",
+      "const M = require('module');\nfunction main(){ new M.Module('x').load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "M.Module.prototype.load.call(modObj, name)",
+      "const M = require('node:module');\nconst modObj = new M.Module('y');\nfunction main(){ M.Module.prototype.load.call(modObj, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])("classifies %s as module_internal_load", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "module_internal_load",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "UserModule.prototype.require.call(...) -- no Node Module provenance",
+      "class UserModule { require(x){ return x; } }\nfunction main(){ UserModule.prototype.require.call({}, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "obj.constructor._load(...) -- root is not the ambient module",
+      "const obj = {};\nfunction main(){ obj.constructor._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "user.Module._load(...) -- user is not module-builtin-bound",
+      "const user = { Module: { _load(){} } };\nfunction main(){ user.Module._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "new UserModule().load(...) -- UserModule is not Node's Module",
+      "class UserModule { load(x){ return x; } }\nfunction main(){ new UserModule().load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "user.Module.prototype.load.call(...) -- no Node Module provenance",
+      "const user = { Module: { prototype: { load(){} } } };\nfunction main(){ user.Module.prototype.load.call({}, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "does NOT classify %s as module_internal_load (precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(
+        graph.edges.some(
+          (e) =>
+            e.resolution.kind === "unknown" &&
+            e.resolution.reason === "module_internal_load",
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    ["exec", "cp.exec(process.env.P);"],
+    ["execSync", "cp.execSync(process.env.P);"],
+    ["execFile", "cp.execFile(process.env.P);"],
+    ["execFileSync", "cp.execFileSync(process.env.P);"],
+    ["spawn", "cp.spawn(process.env.P);"],
+    ["spawnSync", "cp.spawnSync(process.env.P);"],
+    ["fork", "cp.fork(process.env.P);"],
+  ])(
+    "classifies cp.%s(...) as child_process_execution",
+    async (_label, statement) => {
+      const root = tempProject();
+      const entry = write(
+        root,
+        "src/index.js",
+        `const cp = require('child_process');\nfunction main(){ ${statement} }\nmodule.exports = { main };\n`,
+      );
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          resolution: {
+            kind: "unknown",
+            reason: "child_process_execution",
+            potentialTargets: [],
+          },
+        }),
+      );
+    },
+  );
+
+  it("does not classify a user-defined function coincidentally named exec/spawn as child_process_execution (precision control)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function exec(x){ return x; }\nconst spawn = (x) => x;\nfunction main(){ exec(process.env.P); spawn(process.env.P); }\nmodule.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(
+      graph.edges.some(
+        (e) =>
+          e.resolution.kind === "unknown" &&
+          e.resolution.reason === "child_process_execution",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
   it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();
