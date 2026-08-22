@@ -1396,6 +1396,162 @@ describe("buildCallGraph: Node Module-constructor loading primitives and child_p
   });
 });
 
+describe("buildCallGraph: remaining same-realm Node loader/execution spellings (VT-307c-fix-7)", () => {
+  it.each([
+    [
+      "module._compile(code, filename)",
+      "function main(){ module._compile(process.env.P, __filename); }\nmodule.exports = { main };\n",
+      "vm_execution",
+    ],
+    [
+      "module._compile.call(module, code, filename)",
+      "function main(){ module._compile.call(module, process.env.P, __filename); }\nmodule.exports = { main };\n",
+      "vm_execution",
+    ],
+    [
+      "new M.Module('x')._compile(code, filename)",
+      "const M = require('module');\nfunction main(){ new M.Module('x')._compile(process.env.P, __filename); }\nmodule.exports = { main };\n",
+      "vm_execution",
+    ],
+    [
+      "M.Module.prototype._compile.call(instance, code, filename)",
+      "const M = require('node:module');\nconst modObj = new M.Module('y');\nfunction main(){ M.Module.prototype._compile.call(modObj, process.env.P, __filename); }\nmodule.exports = { main };\n",
+      "vm_execution",
+    ],
+    [
+      "M.register(hookSpecifier)",
+      "const M = require('module');\nfunction main(){ M.register(process.env.P); }\nmodule.exports = { main };\n",
+      "loader_hook_mutation",
+    ],
+    [
+      "const { register } = require('module'); register(hookSpecifier)",
+      "const { register } = require('module');\nfunction main(){ register(process.env.P); }\nmodule.exports = { main };\n",
+      "loader_hook_mutation",
+    ],
+    [
+      "module.constructor.createRequire(filename)(name)",
+      "function main(){ module.constructor.createRequire(__filename)(process.env.P); }\nmodule.exports = { main };\n",
+      "create_require",
+    ],
+    [
+      "const r = module.constructor.createRequire(filename); r(name);",
+      "const r = module.constructor.createRequire(__filename);\nfunction main(){ r(process.env.P); }\nmodule.exports = { main };\n",
+      "create_require",
+    ],
+    [
+      "require.main.constructor._load(name)",
+      "function main(){ require.main.constructor._load(process.env.P); }\nmodule.exports = { main };\n",
+      "module_internal_load",
+    ],
+    [
+      "new vm.SourceTextModule(code).evaluate()",
+      "const vm = require('vm');\nasync function main(){ await new vm.SourceTextModule(process.env.P).evaluate(); }\nmodule.exports = { main };\n",
+      "vm_execution",
+    ],
+    [
+      "const mod = new vm.SourceTextModule(code); mod.evaluate();",
+      "const vm = require('vm');\nconst mod = new vm.SourceTextModule(process.env.P);\nasync function main(){ await mod.evaluate(); }\nmodule.exports = { main };\n",
+      "vm_execution",
+    ],
+  ])("classifies %s as %s", async (_label, source, reason) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason,
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "UserModule._compile(...) -- no Node Module provenance",
+      "class UserModule { _compile(c,f){ return c; } }\nfunction main(){ new UserModule()._compile(process.env.P, 'x'); }\nmodule.exports = { main };\n",
+      "vm_execution",
+    ],
+    [
+      "user.register(...) -- user is not module-builtin-bound",
+      "const user = { register(x){ return x; } };\nfunction main(){ user.register(process.env.P); }\nmodule.exports = { main };\n",
+      "loader_hook_mutation",
+    ],
+    [
+      "obj.constructor.createRequire(...) -- obj is not an ambient module instance",
+      "const obj = {};\nfunction main(){ obj.constructor.createRequire('x')(process.env.P); }\nmodule.exports = { main };\n",
+      "create_require",
+    ],
+    [
+      "obj.main.constructor._load(...) -- obj is not the ambient require",
+      "const obj = { main: {} };\nfunction main(){ obj.main.constructor._load(process.env.P); }\nmodule.exports = { main };\n",
+      "module_internal_load",
+    ],
+    [
+      "new SourceTextModule(code).evaluate() -- SourceTextModule is not Node's vm.SourceTextModule",
+      "class SourceTextModule { evaluate(){} }\nfunction main(){ new SourceTextModule(process.env.P).evaluate(); }\nmodule.exports = { main };\n",
+      "vm_execution",
+    ],
+  ])(
+    "does NOT classify %s as %s (precision control)",
+    async (_label, source, reason) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(
+        graph.edges.some(
+          (e) =>
+            e.resolution.kind === "unknown" && e.resolution.reason === reason,
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it("does NOT classify new vm.SourceTextModule(code) construction alone as vm_execution (never evaluated)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const vm = require('vm');\nfunction main(){ return new vm.SourceTextModule(process.env.P); }\nmodule.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(
+      graph.edges.some(
+        (e) =>
+          e.resolution.kind === "unknown" &&
+          e.resolution.reason === "vm_execution",
+      ),
+    ).toBe(false);
+  });
+
+  it("(Part 8 decision) does NOT classify mod.link(...) alone, without .evaluate(), as vm_execution", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const vm = require('vm');\nconst mod = new vm.SourceTextModule(process.env.P);\nfunction main(){ mod.link(function(){}); }\nmodule.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(
+      graph.edges.some(
+        (e) =>
+          e.resolution.kind === "unknown" &&
+          e.resolution.reason === "vm_execution",
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
   it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();
