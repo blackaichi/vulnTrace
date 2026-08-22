@@ -471,6 +471,126 @@ describe("ModuleLoadClosure: completeness is explicit (VT-307c Parts 5-7)", () =
     expect(reasonsOf(closure)).toContain(reason);
   });
 
+  it.each([
+    [
+      "(AC) vm.runInThisContext",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ vm.runInThisContext(process.env.C); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AD) vm.runInNewContext",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ vm.runInNewContext(process.env.C); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AE) vm.runInContext",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ vm.runInContext(process.env.C, {}); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AF) vm.compileFunction",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ vm.compileFunction(process.env.C); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AG) new vm.Script(...).runInThisContext()",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ new vm.Script(process.env.C).runInThisContext(); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AH) require('module').createRequire(...)(name) inline whole-module form",
+      "create_require",
+      "function main(){ const r = require('module').createRequire(__filename); r(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AI) require.main.require(name)",
+      "module_require",
+      "function main(){ require.main.require(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AJ) authoritative Module._load(name)",
+      "module_internal_load",
+      "const Module = require('module');\nfunction main(){ Module._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AK) Node Worker",
+      "worker_execution",
+      "const { Worker } = require('worker_threads');\nfunction main(){ new Worker(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "(AL) child_process.fork",
+      "child_process_execution",
+      "const cp = require('child_process');\nfunction main(){ cp.fork(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "%s makes the closure incomplete (VT-307c-fix-5)",
+    async (_label, reason, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain(reason);
+    },
+  );
+
+  it("(AG control) constructing a vm.Script alone, with no execution method ever called, does not make the closure incomplete", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const vm = require('vm');\nfunction main(){ return new vm.Script(process.env.C); }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    // Compiling doesn't execute anything until a run method is called --
+    // see loader-constructs.ts's own doc comment on `BUILTIN_MEMBER_REASONS`
+    // deliberately excluding vm's `Script` export.
+    expect(closure.complete).toBe(true);
+    expect(closure.incompleteness).toEqual([]);
+  });
+
+  it.each([
+    [
+      "a user-defined object named vm with its own runInThisContext method (precision control 1)",
+      "vm_execution",
+      "const vm = { runInThisContext(){ return 1; } };\nfunction main(){ vm.runInThisContext(process.env.C); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined object with its own _load method (precision control 2)",
+      "module_internal_load",
+      "const Module = { _load(){ return 1; } };\nfunction main(){ Module._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined function named fork (precision control 3)",
+      "child_process_execution",
+      "function fork(x){ return x; }\nfunction main(){ fork(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined class named Worker (precision control 4)",
+      "worker_execution",
+      "class Worker { constructor(x){ this.x = x; } }\nfunction main(){ new Worker(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined object named createRequire with no Node module relationship (precision control 5)",
+      "create_require",
+      "const module_ = { createRequire(){ return () => {}; } };\nfunction main(){ const r = module_.createRequire(__filename); r(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "stays complete for %s -- no import binding to the real Node builtin (VT-307c-fix-5 Part 16)",
+    async (_label, reason, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(reasonsOf(closure)).not.toContain(reason);
+    },
+  );
+
   it("stays complete for an ordinary non-widening unsupported construct (precision control)", async () => {
     const root = tempProject();
     const entry = write(

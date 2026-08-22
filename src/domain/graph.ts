@@ -68,7 +68,11 @@ export type DynamicCallReason =
   | "create_require"
   | "function_constructor"
   | "aliased_eval"
-  | "module_require";
+  | "module_require"
+  | "module_internal_load"
+  | "vm_execution"
+  | "worker_execution"
+  | "child_process_execution";
 
 /**
  * Whether a {@link DynamicCallReason} widens the module-load closure --
@@ -132,10 +136,49 @@ export type DynamicCallReason =
  * - `aliased_eval`: `const e = eval; e(x)` or `globalThis.eval(x)` --
  *   indirect eval is still eval.
  * - `module_require`: `module.require(x)` / `process.mainModule.require(x)`
- *   -- explicit alternate spellings of `require` reached through a
- *   property access on a known global, which the pre-VT-307b
- *   `KNOWN_GLOBAL_IDENTIFIERS` suppression let through with no edge at
- *   all (see call-graph.ts).
+ *   / `require.main.require(x)` -- explicit alternate spellings of
+ *   `require` reached through a property access on a known global, which
+ *   the pre-VT-307b `KNOWN_GLOBAL_IDENTIFIERS` suppression let through
+ *   with no edge at all (see call-graph.ts).
+ *
+ * VT-307c-fix-5 adds four more, all found by the VT-307d soundness
+ * review's own final pass over remaining Node runtime primitives that can
+ * load a module or execute generated code outside anything the graph
+ * discovers, each requiring real provenance to the specific Node builtin
+ * export it names (never a bare method/class name match -- see
+ * loader-constructs.ts's `referencesBuiltinExport`):
+ * - `module_internal_load`: `Module._load(x)` (`Module` provably bound to
+ *   the real `module`/`node:module` builtin) -- Node's own loader
+ *   primitive underneath `require()` itself, kept as its own reason rather
+ *   than folded into `module_require`: it bypasses the ordinary `require`
+ *   resolution machinery entirely, which is worth keeping visible in
+ *   diagnostics as a materially different route.
+ * - `vm_execution`: `vm.runInThisContext(code)` /
+ *   `vm.runInNewContext(code)` / `vm.runInContext(code)` /
+ *   `vm.compileFunction(code)` (`vm` provably bound to the real
+ *   `vm`/`node:vm` builtin), and the equivalent `Script`-based form
+ *   (`new vm.Script(code)` then `.runInThisContext()` /
+ *   `.runInNewContext()` / `.runInContext()` on that same value) -- all
+ *   compile and can execute arbitrary generated source, the same
+ *   capability `function_constructor` already covers for `Function(...)`.
+ *   Construction of a `vm.Script` alone is NOT widening (nothing executes
+ *   until one of its own run methods is called); only the execution step
+ *   is.
+ * - `worker_execution`: `new Worker(file)` (`Worker` provably bound to the
+ *   real `worker_threads`/`node:worker_threads` builtin) -- starts a
+ *   genuinely separate execution context that can run application/package
+ *   code VulnTrace does not model at all. A deliberate MVP product-scope
+ *   decision, not an oversight: until worker/child execution contexts are
+ *   modeled explicitly, a reachable one must prevent a confident
+ *   package-absence conclusion, the same as any other unmodeled code path.
+ * - `child_process_execution`: `child_process.fork(file)` (`fork` provably
+ *   bound to the real `child_process`/`node:child_process` builtin) --
+ *   the same execution-boundary reasoning as `worker_execution`. `exec`/
+ *   `spawn` are deliberately NOT included: VT-307c-fix-5 scoped this to
+ *   primitives that load and run a JavaScript FILE the way `fork` does;
+ *   `exec`/`spawn` run an arbitrary OS command, not specifically
+ *   JavaScript module code, and are out of scope for a future decision
+ *   rather than an oversight here.
  *
  * This partition is normative (see the audit doc's § 3.3/§ 12) and MUST
  * NOT be changed silently: every current consumer
@@ -157,6 +200,10 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "function_constructor":
     case "aliased_eval":
     case "module_require":
+    case "module_internal_load":
+    case "vm_execution":
+    case "worker_execution":
+    case "child_process_execution":
       return true;
     case "unsupported_construct":
     case "dynamic_member_access":
