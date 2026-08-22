@@ -1,13 +1,9 @@
+import { findClosureWideningConstructs } from "../code-intelligence/loader-constructs.js";
 import { buildModuleModel } from "../code-intelligence/module-model.js";
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
-import {
-  isClosureWideningReason,
-  type CallGraph,
-  type DynamicCallReason,
-  type SourceLocation,
-} from "../domain/graph.js";
+import type { DynamicCallReason, SourceLocation } from "../domain/graph.js";
 import {
   identifyModule,
   type PackageInstanceId,
@@ -96,6 +92,23 @@ export interface ClosureIncompleteness {
  * which is exactly the condition under which closure *absence* proves
  * nothing.
  *
+ * SOUNDNESS CONTRACT (VT-307c-fix-3). `complete === true` means exactly,
+ * and only, that within the configured closure limits:
+ *
+ * - every closure member was readable;
+ * - every closure member was syntactically valid (VT-307c-fix-2 --
+ *   a recovered partial AST is never trusted);
+ * - every static module load in every member resolved to a runtime file
+ *   or a Node builtin, or was recorded as incompleteness;
+ * - every closure-widening loader construct in every loaded member's
+ *   source was accounted for -- established by this closure's own
+ *   whole-file scan of each member (`findClosureWideningConstructs`),
+ *   NOT by anything the call graph did or did not walk;
+ * - this closure's own traversal was not truncated.
+ *
+ * It says nothing about semantic or type correctness, and it is not a
+ * statement about call reachability in either direction.
+ *
  * NOTE (VT-307c scope): this type is representation + diagnostics only. No
  * verdict logic consumes it yet -- wiring it into the RWF-002
  * NOT_AFFECTED gate is VT-307d's own, separately-reviewed task.
@@ -109,31 +122,6 @@ export interface ModuleLoadClosure {
   readonly incompleteness: readonly ClosureIncompleteness[];
 }
 
-/**
- * Loader-shaped closure-widening reasons the closure adopts from an
- * already-built {@link CallGraph} rather than re-deriving by its own AST
- * walk (VT-307b classified every one of these; see
- * `classifyLoaderConstruct` in code-intelligence/call-graph.ts).
- *
- * Deliberately excludes `unresolved_module` and
- * `declaration_only_resolution`, the two widening reasons closure
- * traversal detects itself while resolving each specifier: its own record
- * carries the actual specifier text, which the graph edge does not, so
- * taking both would double-report the same fact with strictly less
- * information on one copy.
- */
-const LOADER_REASONS_FROM_GRAPH: ReadonlySet<DynamicCallReason> =
-  new Set<DynamicCallReason>([
-    "dynamic_require",
-    "dynamic_import",
-    "eval",
-    "aliased_require",
-    "create_require",
-    "function_constructor",
-    "aliased_eval",
-    "module_require",
-  ]);
-
 export interface BuildModuleLoadClosureOptions {
   /**
    * Roots. Only each entrypoint's `filePath` is used: a `{file, symbol}`
@@ -145,16 +133,6 @@ export interface BuildModuleLoadClosureOptions {
    */
   readonly entrypoints: readonly Entrypoint[];
   readonly resolver: ModuleResolver;
-  /**
-   * An already-built call graph, used ONLY to adopt loader-shaped
-   * closure-widening blockers already classified during graph
-   * construction (see {@link LOADER_REASONS_FROM_GRAPH}). Closure
-   * *membership* never depends on it -- see {@link ModuleLoadClosure}.
-   * Required rather than optional: without it, a file containing
-   * `require(dynamicName)` would silently look like a complete closure,
-   * and "missing information" must never read as "complete".
-   */
-  readonly graph: CallGraph;
   /** Bounds traversal (see docs/SDD.md § 26, § 28-29). Reaching it marks the closure incomplete, never silently partial. */
   readonly maxFiles?: number;
 }
@@ -172,11 +150,23 @@ export interface BuildModuleLoadClosureOptions {
  *   the module that actually runs was never identified, so its own
  *   imports are unknown;
  * - `"unresolved"` -> incomplete, `unresolved_module`.
+ *
+ * Every loaded member is additionally scanned, in full, for
+ * closure-widening loader constructs
+ * ({@link findClosureWideningConstructs}) using the same classifier the
+ * call graph itself uses. This is deliberately self-contained: it takes no
+ * `CallGraph` at all, so closure completeness cannot depend on call-graph
+ * coverage even accidentally. Until VT-307c-fix-3 it did take one, and
+ * adopted the graph's already-classified loader edges -- which meant a
+ * call graph truncated before reaching a transitively loaded file never
+ * classified that file's top-level `require(dynamicName)`, and the closure
+ * called itself complete for a member it had never examined (the VT-307d
+ * review's Blocker 3).
  */
 export async function buildModuleLoadClosure(
   options: BuildModuleLoadClosureOptions,
 ): Promise<ModuleLoadClosure> {
-  const { entrypoints, resolver, graph } = options;
+  const { entrypoints, resolver } = options;
   const maxFiles = options.maxFiles ?? Infinity;
 
   const rootFiles = [...new Set(entrypoints.map((e) => e.filePath))];
@@ -229,6 +219,22 @@ export async function buildModuleLoadClosure(
 
     const model = buildModuleModel(sourceIndex);
 
+    // This file's OWN loader scan (VT-307c-fix-3). Runs over the whole
+    // file, and runs for every loaded member, so closure completeness is a
+    // property of the source this closure actually read -- never of how
+    // far some other traversal happened to get. See
+    // `findClosureWideningConstructs`.
+    for (const construct of findClosureWideningConstructs({
+      index: sourceIndex,
+      model,
+    })) {
+      incompleteness.push({
+        reason: construct.reason,
+        importer: filePath,
+        location: construct.location,
+      });
+    }
+
     const seenSpecifiers = new Set<string>();
     for (const imp of model.imports) {
       if (seenSpecifiers.has(imp.specifier)) {
@@ -264,40 +270,6 @@ export async function buildModuleLoadClosure(
         queue.push(resolution.resolvedFileName);
       }
     }
-  }
-
-  // Adopt loader-shaped widening blockers the call graph already
-  // classified, scoped to files this closure actually loads. Scoping
-  // matters: a dynamic require in code no entrypoint ever loads says
-  // nothing about THIS closure's completeness.
-  const moduleByNodeId = new Map(graph.nodes.map((n) => [n.id, n.module]));
-  const seenGraphBlockers = new Set<string>();
-  for (const edge of graph.edges) {
-    if (edge.resolution.kind !== "unknown") {
-      continue;
-    }
-    const { reason } = edge.resolution;
-    // Both gates deliberately: membership in the loader set says "this
-    // construct is a module loader", and `isClosureWideningReason` is the
-    // normative partition (domain/graph.ts). Requiring both means a future
-    // edit that reclassifies a reason on either side can never silently
-    // let a non-widening construct mark a closure incomplete.
-    if (
-      !LOADER_REASONS_FROM_GRAPH.has(reason) ||
-      !isClosureWideningReason(reason)
-    ) {
-      continue;
-    }
-    const importer = moduleByNodeId.get(edge.from);
-    if (importer === undefined || !loadedFiles.has(importer)) {
-      continue;
-    }
-    const key = `${reason}|${importer}|${edge.location?.line ?? "?"}:${edge.location?.column ?? "?"}`;
-    if (seenGraphBlockers.has(key)) {
-      continue;
-    }
-    seenGraphBlockers.add(key);
-    incompleteness.push({ reason, importer, location: edge.location });
   }
 
   const loadedPackageInstances = new Set<PackageInstanceId>();

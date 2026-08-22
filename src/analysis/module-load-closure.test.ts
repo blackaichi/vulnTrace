@@ -47,7 +47,12 @@ function entrypoint(filePath: string, symbol?: string): Entrypoint {
   };
 }
 
-/** Builds the real call graph and the closure over it, exactly as a caller would. */
+/**
+ * Builds the closure with a real resolver, exactly as a caller would.
+ *
+ * Takes no call graph: since VT-307c-fix-3 the closure classifies loader
+ * constructs itself, and depends on no other traversal's coverage.
+ */
 async function closureFor(
   root: string,
   entryFiles: readonly string[],
@@ -55,15 +60,9 @@ async function closureFor(
 ): Promise<ModuleLoadClosure> {
   const project = loadTsProject(root);
   const resolver = createModuleResolver(project);
-  const graph = await buildCallGraph({
-    entryFiles: [...entryFiles],
-    resolver,
-    project,
-  });
   return buildModuleLoadClosure({
     entrypoints: entryFiles.map((f) => entrypoint(f, options.symbol)),
     resolver,
-    graph,
     ...(options.maxFiles === undefined ? {} : { maxFiles: options.maxFiles }),
   });
 }
@@ -752,6 +751,144 @@ describe("ModuleLoadClosure: parse_failure precision -- syntax errors only, neve
   });
 });
 
+describe("ModuleLoadClosure: completeness is independent of call-graph coverage (VT-307c-fix-3, Regressions AA/AB)", () => {
+  const MID_DYNAMIC =
+    "const n = process.env.P;\nrequire(n);\nmodule.exports = { use(){ return 1; } };\n";
+  const MID_CLEAN =
+    "function helper(){ return 1; }\nmodule.exports = { use(){ return helper(); } };\n";
+  const ENTRY =
+    "const mid = require('./mid.js');\nfunction main(){ return mid.use(); }\nmodule.exports = { main };\n";
+
+  /**
+   * Builds a call graph truncated to `maxFiles`, purely to demonstrate
+   * that the closure's own answer does not move when it changes. The
+   * graph is deliberately NOT handed to the closure -- it cannot be, since
+   * VT-307c-fix-3 -- so this only establishes how little the call graph
+   * saw.
+   */
+  async function graphWalkedFiles(
+    root: string,
+    entry: string,
+    maxFiles: number,
+  ): Promise<string[]> {
+    const project = loadTsProject(root);
+    const resolver = createModuleResolver(project);
+    const graph = await buildCallGraph({
+      entryFiles: [entry],
+      resolver,
+      project,
+      maxFiles,
+    });
+    return [...new Set(graph.nodes.map((n) => n.module))];
+  }
+
+  it("(AA) stays incomplete for a transitively-loaded file's top-level dynamic require even when the call graph never walked it", async () => {
+    const root = tempProject();
+    const mid = write(root, "src/mid.js", MID_DYNAMIC);
+    const entry = write(root, "src/index.js", ENTRY);
+
+    // Establish that a truncated call graph really does miss `mid`
+    // entirely -- this is the precondition that used to make the closure
+    // silently complete (the VT-307d review's Blocker 3).
+    expect(await graphWalkedFiles(root, entry, 1)).not.toContain(mid);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toContain(mid);
+    expect(closure.complete).toBe(false);
+    expect(closure.incompleteness).toContainEqual(
+      expect.objectContaining({ reason: "dynamic_require", importer: mid }),
+    );
+  });
+
+  it("(AB) classifies a closure-loaded file the call graph never walked, rather than assuming it clean", async () => {
+    const root = tempProject();
+    // `mid` is loaded for side effects only, so NOTHING in it is ever
+    // call-reachable and no call graph, truncated or not, has any reason
+    // to walk into it -- yet its top-level eval can load anything.
+    const mid = write(
+      root,
+      "src/mid.js",
+      "eval(process.env.CODE);\nmodule.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('./mid.js');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toContain(mid);
+    expect(closure.complete).toBe(false);
+    expect(closure.incompleteness).toContainEqual(
+      expect.objectContaining({ reason: "eval", importer: mid }),
+    );
+  });
+
+  it("(AB) finds a loader inside a function of a loaded file that no entrypoint ever calls", async () => {
+    const root = tempProject();
+    // `neverCalled` is unreachable from the entrypoint, so the call graph
+    // never classifies its `require(n)`. Deciding it can't run is a CALL
+    // reachability question the closure deliberately does not answer, so
+    // the honest answer here is "unknown", not "clean".
+    const mid = write(
+      root,
+      "src/mid.js",
+      "const n = process.env.P;\n" +
+        "function neverCalled(){ return require(n); }\n" +
+        "module.exports = { use(){ return 1; } };\n",
+    );
+    const entry = write(root, "src/index.js", ENTRY);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toContain(mid);
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("dynamic_require");
+  });
+
+  it("(control) stays COMPLETE for a clean transitively-loaded file, however little of it the call graph walked", async () => {
+    const root = tempProject();
+    const mid = write(root, "src/mid.js", MID_CLEAN);
+    const entry = write(root, "src/index.js", ENTRY);
+
+    expect(await graphWalkedFiles(root, entry, 1)).not.toContain(mid);
+
+    const closure = await closureFor(root, [entry]);
+
+    // The closure read `mid` itself and found no loader in it. Call
+    // reachability was truncated to nothing, and that must NOT cost the
+    // closure its completeness -- otherwise the fix would trade one
+    // unsound answer for a useless one.
+    expect(closure.loadedFiles).toContain(mid);
+    expect(closure.complete).toBe(true);
+    expect(closure.incompleteness).toEqual([]);
+  });
+
+  it("(control) a dynamic loader in an installed but NEVER-LOADED file does not affect the closure", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/never-imported/package.json",
+      JSON.stringify({ name: "never-imported", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/never-imported/index.js",
+      "const n = process.env.P;\nrequire(n);\nmodule.exports = {};\n",
+    );
+    const entry = write(root, "src/index.js", MID_CLEAN);
+
+    const closure = await closureFor(root, [entry]);
+
+    // Scoping is still by closure MEMBERSHIP: a loader in code no
+    // entrypoint ever loads says nothing about this closure.
+    expect(closure.complete).toBe(true);
+    expect(closure.incompleteness).toEqual([]);
+  });
+});
+
 describe("ModuleLoadClosure: agrees with VT-307a module_load edges (VT-307c Part 13)", () => {
   it("every resolved module_load edge target is a closure member, and every non-root closure member is a module_load target", async () => {
     const root = tempProject();
@@ -795,7 +932,6 @@ describe("ModuleLoadClosure: agrees with VT-307a module_load edges (VT-307c Part
     const closure = await buildModuleLoadClosure({
       entrypoints: [entrypoint(entry)],
       resolver,
-      graph,
     });
 
     const moduleByNodeId = new Map(graph.nodes.map((n) => [n.id, n.module]));

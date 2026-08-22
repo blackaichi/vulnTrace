@@ -7,6 +7,14 @@ import type {
   GraphNodeId,
 } from "../domain/graph.js";
 import {
+  classifyClosureWideningCall,
+  isStaticRequireCall,
+} from "./loader-constructs.js";
+import {
+  isConstDeclaration,
+  resolveSingleAssignmentValue,
+} from "./local-aliases.js";
+import {
   buildModuleModel,
   mapExportsToFunctions,
   type ModuleModel,
@@ -25,6 +33,20 @@ import type { TsProject } from "./ts-project.js";
 function locationKey(location: { line?: number; column?: number }): string {
   return `${location.line ?? "?"}:${location.column ?? "?"}`;
 }
+
+/**
+ * The {@link CallEdge} `type` each loader-shaped reason produces. The
+ * two module-loading forms are `"import"` edges; every other loader
+ * construct is a `"direct"` call whose callee happens to be a route to
+ * arbitrary code. Only the edge SHAPE lives here -- the classification
+ * itself is loader-constructs.ts's (VT-307c-fix-3), shared with
+ * ModuleLoadClosure. Reasons absent from this map default to `"direct"`,
+ * which is why it lists only the two exceptions.
+ */
+const LOADER_EDGE_TYPE: Partial<Record<DynamicCallReason, CallEdge["type"]>> = {
+  dynamic_import: "import",
+  dynamic_require: "import",
+};
 
 /**
  * Ambient ECMAScript/Node.js globals that can never resolve to a tracked
@@ -382,48 +404,6 @@ async function resolveHigherOrderCallTarget(
   }
 
   return undefined;
-}
-
-function isConstDeclaration(decl: ts.VariableDeclaration): boolean {
-  const list = decl.parent;
-  return (
-    ts.isVariableDeclarationList(list) &&
-    (list.flags & ts.NodeFlags.Const) !== 0
-  );
-}
-
-/**
- * The initializer of a same-file `const name = <value>;` declaration, or
- * `undefined` when no such declaration exists. `const`-only: a `let`/`var`
- * could be reassigned elsewhere in the file, which this makes no attempt
- * to track (see {@link resolveLocalAlias}). Whole-file search,
- * first-match-wins on a shadowed name -- the same acceptable imprecision
- * {@link resolveHigherOrderCallTarget} (VT-210) and
- * {@link findLocalFunctionNodeId} already carry, both already shipped.
- */
-function resolveSingleAssignmentValue(
-  name: string,
-  sourceFile: ts.SourceFile,
-): ts.Expression | undefined {
-  let found: ts.Expression | undefined;
-  function visit(node: ts.Node): void {
-    if (found) {
-      return;
-    }
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name &&
-      node.initializer &&
-      isConstDeclaration(node)
-    ) {
-      found = node.initializer;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(sourceFile);
-  return found;
 }
 
 /** The value of an object literal's `propertyName` property (`{ propertyName: value }` or shorthand `{ propertyName }`), or `undefined`. Computed property names are intentionally not evaluated -- see module-model.ts's `unpackObjectLiteralExports` for the identical scoping decision on the export side. */
@@ -987,145 +967,6 @@ function resolvesToUnrelatedConstructor(
   );
 }
 
-/** Node's builtin `module` package's two valid specifier spellings. */
-const MODULE_BUILTIN_SPECIFIERS: ReadonlySet<string> = new Set([
-  "module",
-  "node:module",
-]);
-
-/**
- * Whether `localName` is this file's own binding for Node's
- * `createRequire` export, imported from the real `module`/`node:module`
- * builtin -- e.g. `const { createRequire } = require("module")` or
- * `import { createRequire } from "node:module"`. Guards
- * {@link classifyLoaderConstruct}'s createRequire detection: a same-file
- * function that merely happens to be named `createRequire`, with no real
- * relationship to Node's module system, must never be flagged (VT-307b
- * Part 7's precision requirement). Only the direct named-import/require
- * form is recognized -- `import * as mod from "module"; mod.createRequire`
- * is out of scope for VT-307b (see {@link classifyLoaderConstruct}'s own
- * doc comment).
- */
-function isCreateRequireImport(
-  localName: string,
-  prepared: FileGraphData,
-): boolean {
-  return prepared.model.imports.some(
-    (imp) =>
-      imp.localName === localName &&
-      imp.importedName === "createRequire" &&
-      MODULE_BUILTIN_SPECIFIERS.has(imp.specifier),
-  );
-}
-
-/**
- * Detects a call/construct whose CALLEE itself (not its arguments) is a
- * known route to loading an arbitrary module or executing arbitrary
- * generated code, regardless of how ordinary the syntax otherwise looks
- * (VT-307b; see docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md's VT-307
- * soundness review). Before this, every shape here fell into one of two
- * unsafe buckets: most became a plain `unsupported_construct` edge --
- * correctly *an* edge, but classified non-widening, when the construct can
- * in fact load code the graph never discovered -- and the property-access
- * forms rooted in a known global (`module.require`, `globalThis.eval`)
- * were swallowed entirely by {@link KNOWN_GLOBAL_IDENTIFIERS}, producing
- * no edge at all. Checked BEFORE `bindCallee`/the generic known-global
- * suppression in both {@link classifyCall} and {@link classifyNew}.
- *
- * Deliberately conservative rather than attempting real alias-aware static
- * resolution: `const r = require; r("./literal")` is classified exactly
- * the same as `const r = require; r(dynamicValue)` -- both
- * `"aliased_require"` -- even though the literal form could, in principle,
- * be resolved exactly like a direct `require("./literal")`. Building that
- * would mean re-deriving `bindCallee`'s own specifier-resolution behavior
- * behind an extra indirection layer; VT-307b scopes this task to
- * classification only and always chooses the safe (widening) answer over
- * a more precise one that risks resolving the alias incorrectly.
- *
- * `const`-only, mirroring {@link resolveSingleAssignmentValue}'s own
- * documented scope (a `let`/`var` alias could be reassigned between
- * declaration and call, so tracking it correctly needs real reassignment
- * analysis -- out of scope here, same as VT-214's identical restriction).
- * A `let r = require; r(x);` therefore still falls through to the generic
- * `unsupported_construct` fallback today -- a known, deliberate boundary,
- * not an oversight; closing it would require the same kind of general
- * alias-analysis redesign this function's own doc comment already declines
- * for the literal-argument case above.
- */
-function classifyLoaderConstruct(
-  expr: ts.Expression,
-  prepared: FileGraphData,
-): DynamicCallReason | undefined {
-  if (ts.isIdentifier(expr)) {
-    if (expr.text === "Function") {
-      return "function_constructor";
-    }
-
-    const initializer = resolveSingleAssignmentValue(
-      expr.text,
-      prepared.index.sourceFile,
-    );
-    if (!initializer) {
-      return undefined;
-    }
-    if (ts.isIdentifier(initializer)) {
-      if (initializer.text === "require") {
-        return "aliased_require";
-      }
-      if (initializer.text === "eval") {
-        return "aliased_eval";
-      }
-      return undefined;
-    }
-    if (
-      ts.isCallExpression(initializer) &&
-      ts.isIdentifier(initializer.expression) &&
-      isCreateRequireImport(initializer.expression.text, prepared)
-    ) {
-      return "create_require";
-    }
-    return undefined;
-  }
-
-  if (ts.isCallExpression(expr)) {
-    // createRequire(...)(...) called inline, no intermediate alias.
-    if (
-      ts.isIdentifier(expr.expression) &&
-      isCreateRequireImport(expr.expression.text, prepared)
-    ) {
-      return "create_require";
-    }
-    return undefined;
-  }
-
-  if (ts.isPropertyAccessExpression(expr)) {
-    const chain: string[] = [];
-    let current: ts.Expression = expr;
-    while (ts.isPropertyAccessExpression(current)) {
-      chain.unshift(current.name.text);
-      current = current.expression;
-    }
-    if (!ts.isIdentifier(current)) {
-      return undefined;
-    }
-    const root = current.text;
-    const propertyPath = chain.join(".");
-
-    if (root === "module" && propertyPath === "require") {
-      return "module_require";
-    }
-    if (root === "process" && propertyPath === "mainModule.require") {
-      return "module_require";
-    }
-    if (root === "globalThis" && propertyPath === "eval") {
-      return "aliased_eval";
-    }
-    return undefined;
-  }
-
-  return undefined;
-}
-
 /**
  * Classifies and (when possible) resolves one call expression into a
  * {@link CallEdge} (see docs/SDD.md § 18, § 3.1's VT-201 completeness
@@ -1150,65 +991,19 @@ async function classifyCall(
   const location = toSourceLocation(prepared.index.sourceFile, call);
   const callee = call.expression;
 
-  if (ts.isIdentifier(callee) && callee.text === "eval") {
-    return {
-      from,
-      type: "direct",
-      resolution: { kind: "unknown", reason: "eval", potentialTargets: [] },
-      location,
-    };
-  }
-
-  if (call.expression.kind === ts.SyntaxKind.ImportKeyword) {
-    // Dynamic import() is always treated as uncertain in this MVP, even
-    // when its argument happens to be a string literal — statically
-    // resolving it like a declaration-form import is not attempted here
-    // (see TASK-018 completion report).
-    return {
-      from,
-      type: "import",
-      resolution: {
-        kind: "unknown",
-        reason: "dynamic_import",
-        potentialTargets: [],
-      },
-      location,
-    };
-  }
-
-  if (
-    ts.isIdentifier(callee) &&
-    callee.text === "require" &&
-    call.arguments.length === 1
-  ) {
-    const [argument] = call.arguments;
-    if (argument && !ts.isStringLiteral(argument)) {
-      return {
-        from,
-        type: "import",
-        resolution: {
-          kind: "unknown",
-          reason: "dynamic_require",
-          potentialTargets: [],
-        },
-        location,
-      };
-    }
-    // A static require("literal") is import setup, already captured in
-    // the module model; it is not itself a meaningful "call into" target.
-    return undefined;
-  }
-
   // VT-307b: checked before bindCallee -- none of these shapes are
   // ordinary imports, and several are rooted in an identifier
   // (`module`, `process`, `globalThis`, `Function`) that the known-global
   // fallback further below would otherwise silently swallow with no edge
-  // at all. See classifyLoaderConstruct's own doc comment.
-  const loaderReason = classifyLoaderConstruct(callee, prepared);
+  // at all. Since VT-307c-fix-3 the classification itself lives in
+  // loader-constructs.ts, shared verbatim with ModuleLoadClosure's own
+  // per-file scan so the two layers can never disagree about what counts
+  // as a module loader; only the edge SHAPE is decided here.
+  const loaderReason = classifyClosureWideningCall(call, prepared);
   if (loaderReason) {
     return {
       from,
-      type: "direct",
+      type: LOADER_EDGE_TYPE[loaderReason] ?? "direct",
       resolution: {
         kind: "unknown",
         reason: loaderReason,
@@ -1216,6 +1011,12 @@ async function classifyCall(
       },
       location,
     };
+  }
+
+  if (isStaticRequireCall(call)) {
+    // A static require("literal") is import setup, already captured in
+    // the module model; it is not itself a meaningful "call into" target.
+    return undefined;
   }
 
   const binding = await bindCallee(
@@ -1468,9 +1269,11 @@ async function classifyNew(
   const callee = node.expression;
 
   // VT-307b: `new Function(...)` -- see classifyCall's identical check and
-  // classifyLoaderConstruct's own doc comment. Checked before bindCallee/
-  // the known-global fallback for the same reason.
-  const loaderReason = classifyLoaderConstruct(callee, prepared);
+  // classifyClosureWideningCall's own doc comment. Checked before
+  // bindCallee/the known-global fallback for the same reason. For a `new`
+  // expression the shared classifier skips its call-only forms entirely,
+  // so this stays exactly the `classifyLoaderConstruct` dispatch it was.
+  const loaderReason = classifyClosureWideningCall(node, prepared);
   if (loaderReason) {
     return {
       from,
