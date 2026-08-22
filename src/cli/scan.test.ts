@@ -1,4 +1,10 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -854,6 +860,144 @@ describe("runScanCommand: same package name+version installed at multiple locati
       .map((f: { verdict: string }) => f.verdict)
       .sort();
     expect(verdicts).toEqual(["AFFECTED", "NOT_AFFECTED"]);
+    expect(exitCode).toBe(1);
+  });
+});
+
+describe("runScanCommand: symlinked installs canonicalize to the same PackageInstance identity (VT-307c-fix-4)", () => {
+  // The VT-307d soundness review found that the finding side
+  // (dependency-graph/lockfile-derived, LOGICAL path) and the
+  // resolver/call-graph side (PHYSICAL, post-symlink path) disagreed for
+  // any symlinked install -- pnpm's content-addressed store, an npm
+  // workspace/`file:` link, `npm link`. Reproduced directly against the
+  // pre-fix code: this exact fixture returned a false NOT_AFFECTED
+  // (exit code 0) even though `vulnerable()` is genuinely, directly
+  // called -- a live production bug (VT-212/VT-300's own instance-matching
+  // logic), not merely prerequisite work for a future VT-307d gate.
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  const FOO_GHSA: RawVulnerability = {
+    id: "GHSA-pnpm-symlink-0001",
+    aliases: [],
+    affected: [
+      {
+        package: { ecosystem: "npm", name: "foo" },
+        ranges: [
+          { type: "SEMVER", events: [{ introduced: "0" }, { fixed: "2.0.0" }] },
+        ],
+      },
+    ],
+    references: [],
+  };
+
+  function buildFixture(): string {
+    const root = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-scan-pnpm-symlink-"),
+    );
+
+    write(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { foo: "1.0.0" },
+      }),
+    );
+    write(
+      root,
+      "package-lock.json",
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        requires: true,
+        packages: {
+          "": {
+            name: "app",
+            version: "1.0.0",
+            dependencies: { foo: "1.0.0" },
+          },
+          "node_modules/foo": { version: "1.0.0" },
+        },
+      }),
+    );
+
+    // pnpm-style physical layout: `node_modules/foo` is a SYMLINK into the
+    // content-addressed store, not a real directory -- lockfile-derived
+    // location and resolver-reported physical file therefore differ.
+    const real = "node_modules/.pnpm/foo@1.0.0/node_modules/foo";
+    write(
+      root,
+      `${real}/package.json`,
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      `${real}/index.js`,
+      "function vulnerable(){ return 'BOOM'; }\nmodule.exports = { vulnerable };\n",
+    );
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, real),
+      path.join(root, "node_modules/foo"),
+      "dir",
+    );
+
+    write(
+      root,
+      "src/index.js",
+      "const foo = require('foo');\nfunction main(){ return foo.vulnerable(); }\nmodule.exports = { main };\n",
+    );
+    write(
+      root,
+      "vulntrace.yml",
+      "analysis:\n  entrypoints:\n    - src/index.js\nrules:\n  files:\n    - rules.yml\n",
+    );
+    write(
+      root,
+      "rules.yml",
+      "rules:\n" +
+        "  - id: GHSA-pnpm-symlink-0001\n" +
+        "    package:\n" +
+        "      name: foo\n" +
+        "    targets:\n" +
+        "      - module: foo\n" +
+        "        export: vulnerable\n" +
+        "        kind: function\n",
+    );
+
+    return root;
+  }
+
+  it("keeps a directly-called vulnerable function AFFECTED when its install is a pnpm-store symlink", async () => {
+    const root = buildFixture();
+    tmpDir = root;
+    const { io, stdout, stderr } = fakeIo();
+
+    const exitCode = await runScanCommand({
+      projectPathArg: root,
+      provider: fakeProvider({ foo: [FOO_GHSA] }),
+      noCache: true,
+      io,
+    });
+
+    expect(stderr).toEqual([]);
+    const output = JSON.parse(stdout.join(""));
+    const fooFindings = output.findings.filter(
+      (f: { vulnerability: string }) =>
+        f.vulnerability === "GHSA-pnpm-symlink-0001",
+    );
+
+    expect(fooFindings).toHaveLength(1);
+    expect(fooFindings[0].verdict).toBe("AFFECTED");
     expect(exitCode).toBe(1);
   });
 });

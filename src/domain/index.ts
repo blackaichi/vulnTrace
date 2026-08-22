@@ -47,6 +47,10 @@ export type {
   PackageInstanceId,
   ResolvedTarget,
 } from "./resolved-target.js";
-export { buildResolvedTarget, identifyModule } from "./resolved-target.js";
+export {
+  buildResolvedTarget,
+  canonicalizePackageInstancePath,
+  identifyModule,
+} from "./resolved-target.js";
 export type { Finding, Verdict } from "./verdict.js";
 export type { Coverage, Diagnostic } from "./coverage.js";
