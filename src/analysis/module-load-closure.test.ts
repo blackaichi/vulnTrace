@@ -652,6 +652,106 @@ describe("ModuleLoadClosure: independence from call binding (VT-307c Parts 3, 11
   });
 });
 
+describe("ModuleLoadClosure: recovered-but-invalid syntax must not read as a complete closure (VT-307c-fix-2, Regression Z)", () => {
+  it("(Z1) an unterminated block comment that swallows a require() marks the closure incomplete with parse_failure", async () => {
+    const root = tempProject();
+    const brokenEntry = write(
+      root,
+      "src/broken.js",
+      "/* unterminated comment\nrequire('target')\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('./broken.js');\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    // The broken module really does load at runtime -- it must stay IN
+    // loadedFiles even though this analyzer cannot soundly parse it.
+    expect(closure.loadedFiles).toContain(brokenEntry);
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("parse_failure");
+  });
+
+  it("(Z2) an unterminated template literal that swallows a require() marks the closure incomplete with parse_failure", async () => {
+    const root = tempProject();
+    const brokenEntry = write(
+      root,
+      "src/broken.js",
+      "const x = `unterminated template\nrequire('target')\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('./broken.js');\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toContain(brokenEntry);
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("parse_failure");
+  });
+
+  it("(Z3, control) a syntax error that leaves an earlier require() intact in the recovered AST still marks the closure incomplete", async () => {
+    const root = tempProject();
+    // TypeScript's recovered AST for this file still contains the FIRST
+    // require() call intact -- the syntax error is further down. Naively
+    // trusting "imports extracted from the AST" would make this file look
+    // completely understood; the parse failure itself must be the
+    // authoritative signal regardless of what the partial AST contains.
+    const brokenEntry = write(
+      root,
+      "src/broken.js",
+      "require('target');\nfunction broken( {\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('./broken.js');\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toContain(brokenEntry);
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("parse_failure");
+  });
+});
+
+describe("ModuleLoadClosure: parse_failure precision -- syntax errors only, never semantic ones (VT-307c-fix-2 Part 8)", () => {
+  it("stays complete for valid-but-unusual JS syntax the parser fully supports", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "class Foo { #x = 1; static count = 0; static { Foo.count++; } getX(){ return this.#x; } }\n" +
+        "function main(){ return new Foo().getX(); }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(true);
+    expect(closure.incompleteness).toEqual([]);
+  });
+
+  it("stays complete for syntactically valid but type-invalid TypeScript (no parse_failure from type errors)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "const x: number = 'not a number';\nexport function main(){ return x; }\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(true);
+    expect(closure.incompleteness).toEqual([]);
+  });
+});
+
 describe("ModuleLoadClosure: agrees with VT-307a module_load edges (VT-307c Part 13)", () => {
   it("every resolved module_load edge target is a closure member, and every non-root closure member is a module_load target", async () => {
     const root = tempProject();
