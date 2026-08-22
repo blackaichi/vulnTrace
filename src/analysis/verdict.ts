@@ -14,7 +14,10 @@ import {
   type GraphNodeId,
 } from "../domain/graph.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
-import { identifyModule } from "../domain/resolved-target.js";
+import {
+  identifyModule,
+  type KnownPackageRoots,
+} from "../domain/resolved-target.js";
 import type {
   VulnerableSymbolRule,
   VulnerableSymbolTarget,
@@ -52,6 +55,19 @@ export interface BuildFindingOptions {
   readonly entrypoints: readonly Entrypoint[];
   readonly resolver: ModuleResolver;
   readonly projectRoot: string;
+  /**
+   * The scan's dependency-provenance registry (VT-307c-fix-4b; see
+   * `domain/resolved-target.ts`'s `buildKnownPackageRoots`) -- required for
+   * `identifyModule` to correctly attribute a linked dependency (an npm
+   * workspace member, a `file:` dependency, ...) whose physical target has
+   * no `node_modules` segment of its own, REGARDLESS of whether that
+   * target happens to live inside or outside `projectRoot` (VT-307c-fix-4's
+   * own now-superseded `projectRoot`-containment check silently failed for
+   * the common in-tree-workspace case). Optional so existing callers/tests
+   * that predate this option keep their current behavior for any install
+   * shape that already has a `node_modules` segment.
+   */
+  readonly knownPackageRoots?: KnownPackageRoots;
   /**
    * Whether call-graph construction was truncated by a configured resource
    * limit (`analysis.limits.maxFiles`/`maxGraphNodes`/`maxAnalysisSeconds`
@@ -242,11 +258,11 @@ function phantomNode(resolvedFile: string, exportName: string): GraphNode {
 function graphPackageInstances(
   graph: CallGraph,
   packageName: string,
-  projectRoot: string,
+  knownPackageRoots: KnownPackageRoots | undefined,
 ): Map<string, Set<string>> {
   const byInstance = new Map<string, Set<string>>();
   for (const node of graph.nodes) {
-    const identity = identifyModule(node.module, projectRoot);
+    const identity = identifyModule(node.module, knownPackageRoots);
     if (identity.packageName !== packageName || !identity.packageInstance) {
       continue;
     }
@@ -339,13 +355,17 @@ async function resolveTargetNodes(
   packageVersion: string | undefined,
   packageInstance: string | undefined,
   allowSyntheticNameOnlyTargetBinding: boolean,
-  projectRoot: string,
+  knownPackageRoots: KnownPackageRoots | undefined,
 ): Promise<{
   nodes: GraphNode[];
   unresolvedReason?: string;
   confirmedAbsentInstance?: boolean;
 }> {
-  const instances = graphPackageInstances(graph, target.module, projectRoot);
+  const instances = graphPackageInstances(
+    graph,
+    target.module,
+    knownPackageRoots,
+  );
 
   if (instances.size > 0) {
     let selected = [...instances.entries()];
@@ -590,6 +610,7 @@ async function checkReachability(
   packageVersion: string | undefined,
   packageInstance: string | undefined,
   allowSyntheticNameOnlyTargetBinding: boolean,
+  knownPackageRoots: KnownPackageRoots | undefined,
 ): Promise<{
   reachable?: ReachableEvidence;
   sawUnknown: boolean;
@@ -625,7 +646,7 @@ async function checkReachability(
       packageVersion,
       packageInstance,
       allowSyntheticNameOnlyTargetBinding,
-      projectRoot,
+      knownPackageRoots,
     );
 
     if (unresolvedReason) {
@@ -739,6 +760,7 @@ export async function buildFinding(
     entrypoints,
     resolver,
     projectRoot,
+    knownPackageRoots,
     graphTruncated = false,
     allowSyntheticNameOnlyTargetBinding = false,
   } = options;
@@ -771,6 +793,7 @@ export async function buildFinding(
       packageVersion,
       packageInstance,
       allowSyntheticNameOnlyTargetBinding,
+      knownPackageRoots,
     );
 
   if (reachable) {
