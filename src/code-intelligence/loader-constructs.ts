@@ -44,35 +44,235 @@ export interface LoaderConstruct {
   readonly location: SourceLocation;
 }
 
-/** Node's builtin `module` package's two valid specifier spellings. */
-const MODULE_BUILTIN_SPECIFIERS: ReadonlySet<string> = new Set([
-  "module",
-  "node:module",
+/**
+ * Node builtin module names this classifier grants provenance-checked
+ * access to, mapped to their two valid specifier spellings (bare and
+ * `node:`-prefixed) -- VT-307c-fix-5's generalization of the single
+ * `module`/`node:module` set VT-307b originally hardcoded for
+ * `createRequire` alone.
+ */
+const NODE_BUILTIN_SPECIFIERS: ReadonlyMap<
+  string,
+  ReadonlySet<string>
+> = new Map([
+  ["module", new Set(["module", "node:module"])],
+  ["vm", new Set(["vm", "node:vm"])],
+  ["worker_threads", new Set(["worker_threads", "node:worker_threads"])],
+  ["child_process", new Set(["child_process", "node:child_process"])],
 ]);
 
+/** The Node builtin `builtinModule` names, or `undefined` if `specifier` isn't one of its recognized spellings. */
+function builtinNameFromSpecifier(specifier: string): string | undefined {
+  for (const [name, specifiers] of NODE_BUILTIN_SPECIFIERS) {
+    if (specifiers.has(specifier)) {
+      return name;
+    }
+  }
+  return undefined;
+}
+
 /**
- * Whether `localName` is this file's own binding for Node's
- * `createRequire` export, imported from the real `module`/`node:module`
- * builtin -- e.g. `const { createRequire } = require("module")` or
- * `import { createRequire } from "node:module"`. Guards
- * {@link classifyLoaderConstruct}'s createRequire detection: a same-file
- * function that merely happens to be named `createRequire`, with no real
- * relationship to Node's module system, must never be flagged (VT-307b
- * Part 7's precision requirement). Only the direct named-import/require
- * form is recognized -- `import * as mod from "module"; mod.createRequire`
- * is out of scope for VT-307b (see {@link classifyLoaderConstruct}'s own
- * doc comment).
+ * Whether `localName` is bound, in this file, to the WHOLE value of Node
+ * builtin `builtin` -- `const whole = require("vm")`, `import whole from
+ * "node:vm"` (ESM default), or `import * as whole from "node:vm"` (ESM
+ * namespace). Never a named/destructured single export -- see
+ * {@link isNamedBuiltinBinding} for that.
  */
-function isCreateRequireImport(
+function wholeModuleBuiltinFor(
   localName: string,
+  context: LoaderClassificationContext,
+): string | undefined {
+  for (const imp of context.model.imports) {
+    if (imp.localName !== localName) {
+      continue;
+    }
+    // ModuleModel.ImportBinding already normalizes CJS and ESM onto one
+    // `kind` vocabulary (see module-model.ts's `toImportBinding`): a
+    // whole-module CJS bind (`const whole = require("vm")`, no
+    // destructure) collapses onto the SAME `"default"` kind an ESM
+    // default import produces, so no separate CJS-specific check is
+    // needed here.
+    if (imp.kind !== "default" && imp.kind !== "namespace") {
+      continue;
+    }
+    const builtin = builtinNameFromSpecifier(imp.specifier);
+    if (builtin) {
+      return builtin;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether `localName` is bound, in this file, to `exportName` specifically
+ * (not the whole module) of Node builtin `builtin` -- a named ESM import
+ * (`import { exportName } from "node:vm"`) or a CommonJS destructure
+ * (`const { exportName } = require("vm")`), including the aliased forms
+ * both allow (`import { exportName as localName } ...` /
+ * `const { exportName: localName } = ...`).
+ */
+function isNamedBuiltinBinding(
+  localName: string,
+  builtin: string,
+  exportName: string,
   context: LoaderClassificationContext,
 ): boolean {
   return context.model.imports.some(
     (imp) =>
       imp.localName === localName &&
-      imp.importedName === "createRequire" &&
-      MODULE_BUILTIN_SPECIFIERS.has(imp.specifier),
+      imp.importedName === exportName &&
+      imp.kind === "named" &&
+      builtinNameFromSpecifier(imp.specifier) === builtin,
   );
+}
+
+/**
+ * Resolves `expr` to the Node builtin module name it refers to as a WHOLE
+ * value, or `undefined` if it can't be traced to one. Handles the inline
+ * `require("vm")`/`require("node:vm")` call form directly (no local
+ * binding at all -- `require("module").createRequire`'s own root shape),
+ * a direct whole-module import/require binding
+ * ({@link wholeModuleBuiltinFor}), and ONE `const`-alias hop from such a
+ * binding (`const whole = require("vm"); const alias = whole;` -- the same
+ * single-hop scope {@link resolveSingleAssignmentValue} already documents
+ * elsewhere in this codebase).
+ */
+function resolveWholeModuleBuiltin(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): string | undefined {
+  if (ts.isCallExpression(expr) && isStaticRequireCall(expr)) {
+    const specifier = (expr.arguments[0] as ts.StringLiteral).text;
+    return builtinNameFromSpecifier(specifier);
+  }
+  if (ts.isIdentifier(expr)) {
+    const direct = wholeModuleBuiltinFor(expr.text, context);
+    if (direct) {
+      return direct;
+    }
+    const initializer = resolveSingleAssignmentValue(
+      expr.text,
+      context.index.sourceFile,
+    );
+    if (initializer) {
+      return resolveWholeModuleBuiltin(initializer, context);
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Whether `expr` provably refers to `exportName` of Node builtin
+ * `builtin`, through any of the ordinary ways a file can reach it (VT-307c-
+ * fix-5): a property access on a whole-module binding (`whole.exportName`,
+ * including the inline `require("vm").exportName` form, via
+ * {@link resolveWholeModuleBuiltin}), a direct named import/destructure of
+ * `exportName` itself used bare, or ONE `const`-alias hop from such a
+ * named binding used bare.
+ *
+ * This is the SAME provenance discipline VT-307b originally built only for
+ * `createRequire` (this function's VT-307c-fix-5 generalization of that
+ * original, `createRequire`-only check): a same-file object/function/class
+ * that merely happens to
+ * share a dangerous name (`vm`, `Worker`, `fork`, `_load`, `createRequire`)
+ * has no import binding at all, so every branch here returns `false` for
+ * it (see this file's precision-control tests) -- see this task's own
+ * Part 4/10/11 provenance requirement.
+ */
+function referencesBuiltinExport(
+  expr: ts.Expression,
+  builtin: string,
+  exportName: string,
+  context: LoaderClassificationContext,
+): boolean {
+  if (ts.isPropertyAccessExpression(expr) && expr.name.text === exportName) {
+    return resolveWholeModuleBuiltin(expr.expression, context) === builtin;
+  }
+
+  if (ts.isIdentifier(expr)) {
+    if (isNamedBuiltinBinding(expr.text, builtin, exportName, context)) {
+      return true;
+    }
+    const initializer = resolveSingleAssignmentValue(
+      expr.text,
+      context.index.sourceFile,
+    );
+    return (
+      initializer !== undefined &&
+      ts.isIdentifier(initializer) &&
+      isNamedBuiltinBinding(initializer.text, builtin, exportName, context)
+    );
+  }
+
+  return false;
+}
+
+/**
+ * Every (builtin, exportName) pair that is, on its own, a closure-widening
+ * loader/execution primitive when referenced directly (VT-307c-fix-5 Parts
+ * 3, 6-11) -- checked via {@link referencesBuiltinExport} against the
+ * callee/construct-target expression itself, so it applies uniformly
+ * whether that expression is a bare identifier (`fork(x)`, a named import)
+ * or a property access (`vm.runInThisContext(x)`, `Module._load(x)`,
+ * including the inline `require("vm").runInThisContext(x)` form).
+ *
+ * `vm`'s `Script` export is deliberately NOT listed here: constructing a
+ * `Script` compiles but does not itself execute anything -- only calling
+ * one of its own run methods does, handled separately by
+ * {@link isVmScriptInstance} below.
+ */
+const BUILTIN_MEMBER_REASONS: readonly (readonly [
+  builtin: string,
+  exportName: string,
+  reason: DynamicCallReason,
+])[] = [
+  ["vm", "runInThisContext", "vm_execution"],
+  ["vm", "runInNewContext", "vm_execution"],
+  ["vm", "runInContext", "vm_execution"],
+  ["vm", "compileFunction", "vm_execution"],
+  ["module", "createRequire", "create_require"],
+  ["module", "_load", "module_internal_load"],
+  ["worker_threads", "Worker", "worker_execution"],
+  ["child_process", "fork", "child_process_execution"],
+];
+
+/** `vm.Script`'s own execution methods -- each compiles-then-runs (or just runs, for an already-compiled `Script`) arbitrary generated source (VT-307c-fix-5 Part 3/5). */
+const VM_SCRIPT_EXECUTION_METHODS: ReadonlySet<string> = new Set([
+  "runInThisContext",
+  "runInNewContext",
+  "runInContext",
+]);
+
+/**
+ * Whether `expr` is provably a `vm.Script` instance (VT-307c-fix-5 Part 5)
+ * -- either constructed inline (`new vm.Script(code).runInThisContext()`)
+ * or bound to a local `const` whose single initializer constructs one
+ * (`const script = new vm.Script(code); script.runInThisContext();`).
+ * Deliberately minimal, targeted provenance -- not a general object-type
+ * inference engine: it recognizes exactly the `new <Script-reference>(...)`
+ * shape, reusing {@link referencesBuiltinExport} to confirm the
+ * constructor itself (`vm.Script`, or a bare `Script` from a named import)
+ * really is Node's `vm.Script`.
+ */
+function isVmScriptInstance(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  if (ts.isNewExpression(expr)) {
+    return referencesBuiltinExport(expr.expression, "vm", "Script", context);
+  }
+  if (ts.isIdentifier(expr)) {
+    const initializer = resolveSingleAssignmentValue(
+      expr.text,
+      context.index.sourceFile,
+    );
+    return (
+      initializer !== undefined &&
+      ts.isNewExpression(initializer) &&
+      referencesBuiltinExport(initializer.expression, "vm", "Script", context)
+    );
+  }
+  return false;
 }
 
 /**
@@ -108,11 +308,29 @@ function isCreateRequireImport(
  * not an oversight; closing it would require the same kind of general
  * alias-analysis redesign this function's own doc comment already declines
  * for the literal-argument case above.
+ *
+ * VT-307c-fix-5 adds a first, shared check against
+ * {@link BUILTIN_MEMBER_REASONS} (via {@link referencesBuiltinExport}):
+ * every builtin-provenance-checked form -- `vm.runInThisContext(...)`,
+ * `Module._load(...)`, `new Worker(...)`, `child_process.fork(...)`,
+ * `require("module").createRequire(...)` (including the previously-
+ * unhandled inline-property-access spelling) -- whether reached as a bare
+ * identifier (a named import used directly) or a property access on a
+ * whole-module binding, resolves through that ONE table rather than a
+ * second, near-identical switch. It runs before the per-shape branches
+ * below so it applies uniformly regardless of which branch `expr` would
+ * otherwise fall into.
  */
 export function classifyLoaderConstruct(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): DynamicCallReason | undefined {
+  for (const [builtin, exportName, reason] of BUILTIN_MEMBER_REASONS) {
+    if (referencesBuiltinExport(expr, builtin, exportName, context)) {
+      return reason;
+    }
+  }
+
   if (ts.isIdentifier(expr)) {
     if (expr.text === "Function") {
       return "function_constructor";
@@ -134,10 +352,18 @@ export function classifyLoaderConstruct(
       }
       return undefined;
     }
+    // `const r = require("module").createRequire(x); r(y)` / `const r =
+    // createRequire(x); r(y)` -- an alias of a createRequire CALL RESULT,
+    // distinct from the bare-`createRequire`-identifier case the shared
+    // table above already covers.
     if (
       ts.isCallExpression(initializer) &&
-      ts.isIdentifier(initializer.expression) &&
-      isCreateRequireImport(initializer.expression.text, context)
+      referencesBuiltinExport(
+        initializer.expression,
+        "module",
+        "createRequire",
+        context,
+      )
     ) {
       return "create_require";
     }
@@ -145,10 +371,17 @@ export function classifyLoaderConstruct(
   }
 
   if (ts.isCallExpression(expr)) {
-    // createRequire(...)(...) called inline, no intermediate alias.
+    // createRequire(...)(...) called inline, no intermediate alias --
+    // covers both a bare named-import `createRequire` and the inline
+    // `require("module").createRequire(...)` whole-module form, both via
+    // `referencesBuiltinExport`.
     if (
-      ts.isIdentifier(expr.expression) &&
-      isCreateRequireImport(expr.expression.text, context)
+      referencesBuiltinExport(
+        expr.expression,
+        "module",
+        "createRequire",
+        context,
+      )
     ) {
       return "create_require";
     }
@@ -156,6 +389,21 @@ export function classifyLoaderConstruct(
   }
 
   if (ts.isPropertyAccessExpression(expr)) {
+    // `vm.Script` instance execution methods (VT-307c-fix-5 Part 3/5) --
+    // provenance is to the `script` VALUE, not a builtin export, so this
+    // does not fit the shared table above.
+    if (
+      VM_SCRIPT_EXECUTION_METHODS.has(expr.name.text) &&
+      isVmScriptInstance(expr.expression, context)
+    ) {
+      return "vm_execution";
+    }
+
+    // Ambient ECMAScript/Node globals (`module`, `process`, `require`,
+    // `globalThis`) are always available regardless of any import, so no
+    // provenance check applies here -- matched by literal identifier name
+    // only, the same deliberate VT-307b simplification already documented
+    // for `module`/`process`/`globalThis` below.
     const chain: string[] = [];
     let current: ts.Expression = expr;
     while (ts.isPropertyAccessExpression(current)) {
@@ -172,6 +420,9 @@ export function classifyLoaderConstruct(
       return "module_require";
     }
     if (root === "process" && propertyPath === "mainModule.require") {
+      return "module_require";
+    }
+    if (root === "require" && propertyPath === "main.require") {
       return "module_require";
     }
     if (root === "globalThis" && propertyPath === "eval") {

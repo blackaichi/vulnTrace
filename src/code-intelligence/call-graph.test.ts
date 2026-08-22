@@ -1162,6 +1162,110 @@ describe("buildCallGraph: loader-shaped constructs are closure-widening (VT-307b
   });
 });
 
+describe("buildCallGraph: Node runtime loader/execution primitives (VT-307c-fix-5)", () => {
+  it.each([
+    [
+      "vm.runInThisContext",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ vm.runInThisContext(process.env.C); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "vm.compileFunction",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ vm.compileFunction(process.env.C); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "new vm.Script(...).runInThisContext() -- inline",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ new vm.Script(process.env.C).runInThisContext(); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "new vm.Script(...) assigned to a local, then .runInThisContext()",
+      "vm_execution",
+      "const vm = require('vm');\nfunction main(){ const s = new vm.Script(process.env.C); s.runInThisContext(); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "require('module').createRequire(...) inline (no intermediate named import)",
+      "create_require",
+      "function main(){ const r = require('module').createRequire(__filename); r(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "require.main.require(...)",
+      "module_require",
+      "function main(){ require.main.require(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "Module._load(...) via a whole-module const bind",
+      "module_internal_load",
+      "const Module = require('module');\nfunction main(){ Module._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "new Worker(...)",
+      "worker_execution",
+      "const { Worker } = require('worker_threads');\nfunction main(){ new Worker(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "child_process.fork(...)",
+      "child_process_execution",
+      "const cp = require('child_process');\nfunction main(){ cp.fork(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])("classifies %s as %s", async (_label, reason, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: { kind: "unknown", reason, potentialTargets: [] },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "a user-defined object named vm with its own runInThisContext method",
+      "vm_execution",
+      "const vm = { runInThisContext(){ return 1; } };\nfunction main(){ vm.runInThisContext(process.env.C); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined object with its own _load method",
+      "module_internal_load",
+      "const Module = { _load(){ return 1; } };\nfunction main(){ Module._load(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined function named fork",
+      "child_process_execution",
+      "function fork(x){ return x; }\nfunction main(){ fork(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined class named Worker",
+      "worker_execution",
+      "class Worker { constructor(x){ this.x = x; } }\nfunction main(){ new Worker(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined object named module with its own createRequire method",
+      "create_require",
+      "const module_ = { createRequire(){ return () => {}; } };\nfunction main(){ const r = module_.createRequire(__filename); r(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "does NOT classify %s as %s -- no import binding to the real Node builtin (precision control)",
+    async (_label, reason, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(
+        graph.edges.some(
+          (e) =>
+            e.resolution.kind === "unknown" && e.resolution.reason === reason,
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
   it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();
