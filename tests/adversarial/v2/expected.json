@@ -625,5 +625,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-058",
+    "dir": "adv2-058-dependency-toplevel-registerhooks-redirect",
+    "category": "58. VT-307c-fix-11 regression: Module.registerHooks(...) resolve-hook redirect in a DEPENDENCY's own module top-level scope",
+    "description": "Same shape as ADV2-050 through ADV2-057, but the widening construct is Module.registerHooks(...) -- Node's own synchronous, in-realm loader-hook registration API (stable since Node 22.15), the sibling of module.register(...)'s already-covered out-of-thread ESM hook (VT-307c-fix-7). The final VT-307d go/no-go audit reproduced this end-to-end as a genuine redirection attack: a resolve hook that short-circuits one specific, otherwise perfectly ordinary, statically-resolvable specifier to a different installed package's file silently redirects every subsequent require()/import of that specifier. Before VT-307c-fix-11, this construct was invisible entirely (not even an unsupported_construct edge), so this real resolution-redirection capability went completely undetected. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-057.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own Module.registerHooks(...) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), installs a resolve hook that can redirect a SUBSEQUENT, otherwise perfectly ordinary require() in that same module to an attacker-chosen installed package, including this exact instance. A human analyst cannot rule out reachability here merely because the redirection happens through an in-source loader hook rather than a plain require() call. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]

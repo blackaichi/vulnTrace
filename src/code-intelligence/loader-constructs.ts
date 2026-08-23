@@ -248,6 +248,23 @@ function referencesBuiltinExport(
  * of `require.extensions[...] = hook`'s CJS compile-hook mutation --
  * `loader_hook_mutation` reused rather than adding a near-identical reason,
  * per this task's Part 5 instruction.
+ *
+ * `module`'s `registerHooks` export (VT-307c-fix-11) is `register`'s
+ * synchronous, in-realm sibling (stable since Node 22.15): where
+ * `register` installs an OUT-OF-THREAD hook module for the ESM loader,
+ * `registerHooks` installs `resolve`/`load`/`resolveSync`/`loadSync`
+ * functions that run directly in the calling realm for CommonJS and ESM
+ * both -- reproduced end-to-end by the final VT-307d go/no-go audit: a
+ * `resolve` hook that short-circuits one specific, otherwise ordinarily
+ * resolvable specifier to a different installed package's file silently
+ * redirects every subsequent `require`/`import` of that specifier. Same
+ * `loader_hook_mutation` reason as `register` -- this is still "install a
+ * hook that changes what a SUBSEQUENT load resolves to", not a new hazard
+ * class. Deliberately distinct from an out-of-process `--experimental-
+ * loader`/external hook module, which remains a declared exclusion (see
+ * this file's own header doc): `registerHooks` runs the hook functions
+ * in-source, in this same realm, which is exactly the "authoritative
+ * in-source Node primitive" class every other entry in this table covers.
  */
 const BUILTIN_MEMBER_REASONS: readonly (readonly [
   builtin: string,
@@ -260,6 +277,7 @@ const BUILTIN_MEMBER_REASONS: readonly (readonly [
   ["vm", "compileFunction", "vm_execution"],
   ["module", "createRequire", "create_require"],
   ["module", "register", "loader_hook_mutation"],
+  ["module", "registerHooks", "loader_hook_mutation"],
   ["worker_threads", "Worker", "worker_execution"],
   ["child_process", "fork", "child_process_execution"],
   ["child_process", "exec", "child_process_execution"],
@@ -525,6 +543,22 @@ function stripCallApplySuffix(expr: ts.Expression): ts.Expression {
  * check as every other spelling, rather than needing their own separate
  * `module.constructor`-aware branch alongside the existing whole-module-
  * only {@link BUILTIN_MEMBER_REASONS} entry for `createRequire`).
+ *
+ * `_preloadModules` (VT-307c-fix-11) is Node's own direct module-loading
+ * primitive underneath `-r`/`--require`'s preload mechanism: it takes an
+ * array of specifiers and `require()`s each one immediately, in the
+ * calling realm -- reproduced end-to-end by the final VT-307d go/no-go
+ * audit (`Module._preloadModules(['vuln-lib'])` loaded and executed a
+ * separate, never-otherwise-imported package with no further call needed).
+ * `module_internal_load` (not `loader_hook_mutation`) because this DIRECTLY
+ * loads modules the moment it's called, the same immediate-effect shape as
+ * `_load` right above it, rather than mutating what some SUBSEQUENT
+ * `require()` does. Arguments are never inspected -- the same "never
+ * resolve the string, always choose the safe answer" discipline this
+ * classifier already applies to `require(dynamicValue)` and every other
+ * primitive in this file: a literal array of string literals gets the
+ * exact same treatment as a fully dynamic one, since the risk here is the
+ * PRIMITIVE itself being reachable, not what its arguments happen to say.
  */
 const MODULE_CONSTRUCTOR_STATIC_MEMBERS: ReadonlyMap<
   string,
@@ -532,6 +566,7 @@ const MODULE_CONSTRUCTOR_STATIC_MEMBERS: ReadonlyMap<
 > = new Map([
   ["_load", "module_internal_load"],
   ["createRequire", "create_require"],
+  ["_preloadModules", "module_internal_load"],
 ]);
 
 /**
@@ -1014,6 +1049,34 @@ function isModuleWrapperObject(
 }
 
 /**
+ * Whether `expr` is `<ModuleCtor>._pathCache` (VT-307c-fix-11) -- Node's
+ * OWN resolved-path memoization cache, keyed by a combination of the
+ * requested specifier and search paths (`Module._pathCache`, distinct
+ * from `Module._cache`/`require.cache`'s module-INSTANCE cache above).
+ * Pre-populating an entry for a specifier/search-path combination Node
+ * hasn't resolved yet (or overwriting an existing one) redirects the NEXT
+ * `require()`/resolution of that exact combination to the planted file
+ * path, without ever running the real resolution algorithm -- reproduced
+ * end-to-end by the final VT-307d go/no-go audit: poisoning the cache
+ * entry for an otherwise perfectly ordinary, statically-resolvable
+ * `require('safe-lib')` made it load a separate, never-imported
+ * `vuln-lib` instance instead. Unlike `_cache`, `_pathCache` has no
+ * `require`-namespaced alias of its own to fold in here (Node never
+ * exposes it as `require.pathCache`) -- only the `<ModuleCtor>` spellings
+ * {@link resolvesToModuleConstructor} already recognizes.
+ */
+function isModulePathCacheObject(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "_pathCache" &&
+    resolvesToModuleConstructor(expr.expression, context)
+  );
+}
+
+/**
  * Whether `expr` is one of the module system's own mutable registry
  * objects, under any of their aliasing names -- the compile-hook registry
  * (VT-307c-fix-6 Part 11 `require.extensions`; VT-307c-fix-7 Part 4
@@ -1021,15 +1084,16 @@ function isModuleWrapperObject(
  * comment for why these two are the same underlying object), the
  * module-instance cache (VT-307c-fix-9 Part 16 `require.cache`/
  * `<ModuleCtor>._cache`; see {@link isModuleCacheObject}'s doc comment for
- * the same relationship), and the source-wrapper array
- * (VT-307c-fix-10 `<ModuleCtor>.wrapper`; see
- * {@link isModuleWrapperObject}'s doc comment). Populating/replacing an
- * entry in any of these -- or replacing the registry object itself --
- * changes what a SUBSEQUENT `require()`/module compile actually does, the
- * same class of hazard for all three: this is deliberately one shared
- * check, not three, so any future spelling generalization (a new
- * provenance path onto any of these registries) benefits every consumer
- * at once.
+ * the same relationship), the source-wrapper array (VT-307c-fix-10
+ * `<ModuleCtor>.wrapper`; see {@link isModuleWrapperObject}'s doc
+ * comment), and the resolved-path cache (VT-307c-fix-11
+ * `<ModuleCtor>._pathCache`; see {@link isModulePathCacheObject}'s doc
+ * comment). Populating/replacing an entry in any of these -- or replacing
+ * the registry object itself -- changes what a SUBSEQUENT `require()`/
+ * module compile/resolution actually does, the same class of hazard for
+ * all four: this is deliberately one shared check, not four, so any
+ * future spelling generalization (a new provenance path onto any of these
+ * registries) benefits every consumer at once.
  */
 function isLoaderHookRegistryObject(
   expr: ts.Expression,
@@ -1040,7 +1104,8 @@ function isLoaderHookRegistryObject(
     isModuleExtensionsObject(expr, context) ||
     isRequireCacheObject(expr) ||
     isModuleCacheObject(expr, context) ||
-    isModuleWrapperObject(expr, context)
+    isModuleWrapperObject(expr, context) ||
+    isModulePathCacheObject(expr, context)
   );
 }
 
@@ -1069,7 +1134,28 @@ function isLoaderHookRegistryObject(
  * additional source into every module loaded afterward, the same hazard
  * class as replacing `_compile` itself
  * ({@link MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS} below), just
- * reached one level earlier in the same pipeline.
+ * reached one level earlier in the same pipeline. `_readPackage`
+ * (VT-307c-fix-11, from the final VT-307d go/no-go audit) is
+ * `_resolveFilename`'s own package-metadata reader: it parses a candidate
+ * directory's `package.json` and returns the parsed result (including
+ * `main`) to the resolution algorithm -- replacing it lets an attacker
+ * rewrite the `main` field Node resolves for an OTHERWISE ORDINARY,
+ * statically-resolvable `require()` of a real installed package,
+ * redirecting it to a different file entirely. Reproduced end-to-end: a
+ * plain `require('safe-lib')` -- with no dynamic construct anywhere on it
+ * -- loaded a separate, never-imported `vuln-lib` instance instead, once
+ * `Module._readPackage` had been replaced earlier in the same file.
+ *
+ * `Module._stat` (also considered during this fix's own nearby-mutation
+ * audit) is deliberately NOT included: it reports only a boolean
+ * existence code (file/directory/absent) for a candidate path the
+ * resolver itself already constructed -- it never supplies or redirects
+ * to a different path the way `_resolveFilename`/`_findPath`/
+ * `_resolveLookupPaths`/`_readPackage` all do. Reproduced directly: even
+ * an aggressive `_stat` override that unconditionally claims every probed
+ * path exists could not make resolution load a different real file --
+ * the candidate paths `_findPath` probes are unaffected by what `_stat`
+ * reports about them. Left out on this evidence, not by oversight.
  */
 const MODULE_CONSTRUCTOR_MUTABLE_STATIC_MEMBERS: ReadonlySet<string> = new Set([
   "_resolveFilename",
@@ -1077,6 +1163,7 @@ const MODULE_CONSTRUCTOR_MUTABLE_STATIC_MEMBERS: ReadonlySet<string> = new Set([
   "_findPath",
   "_resolveLookupPaths",
   "wrap",
+  "_readPackage",
 ]);
 
 /**
