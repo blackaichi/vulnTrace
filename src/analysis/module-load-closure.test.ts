@@ -2091,3 +2091,259 @@ describe("ModuleLoadClosure: re-export and TS import-equals static loads (VT-307
     expect(closure.complete).toBe(true);
   });
 });
+
+/**
+ * VT-307c-fix-9. The final VT-307d safety audit reproduced four families of
+ * in-source Node module-loader/resolution MUTATION end-to-end, each one
+ * leaving a genuinely-executed vulnerable package instance OUT of
+ * loadedPackageInstances while complete stayed true: reassigning
+ * Module._resolveFilename/Module._load (redirects require()'s own
+ * resolution for every subsequent load), reassigning
+ * Module.prototype.require (changes what loading any subsequently
+ * constructed module instance does), and mutating module.paths/
+ * require.main.paths (shadows an already-resolvable specifier with an
+ * attacker-chosen directory). A follow-up nearby-mutation audit (Part 16)
+ * found the same hazard for Module.wrap (the source-wrapping function
+ * every _compile call passes through) and require.cache/Module._cache
+ * (pre-populating an entry redirects the NEXT require() of that resolved
+ * file to a planted module object without ever loading the real one). All
+ * reuse the existing loader_hook_mutation reason -- no new DynamicCallReason
+ * value was needed.
+ */
+describe("ModuleLoadClosure: Node module-loader/resolution mutation (VT-307c-fix-9)", () => {
+  it.each([
+    [
+      "(A) Module._resolveFilename = fn",
+      "const Module = require('module');\nModule._resolveFilename = function(r,p){ return r; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(A2) require('module')._resolveFilename = fn (inline whole-module form)",
+      "require('module')._resolveFilename = function(r,p){ return r; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(A3) module.constructor._resolveFilename = fn (ambient .constructor form)",
+      "module.constructor._resolveFilename = function(r,p){ return r; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(C) Module._load = fn (assignment, distinct from the already-covered call form)",
+      "const Module = require('module');\nModule._load = function(r,p,m){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(3-Part3) Module._findPath = fn",
+      "const Module = require('module');\nModule._findPath = function(r,p){ return r; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(3-Part3) Module._resolveLookupPaths = fn",
+      "const Module = require('module');\nModule._resolveLookupPaths = function(r,p){ return []; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(B) Module.prototype.require = fn",
+      "const Module = require('module');\nModule.prototype.require = function(r){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part4) Module.prototype.load = fn",
+      "const Module = require('module');\nModule.prototype.load = function(f){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part4) Module.prototype._compile = fn",
+      "const Module = require('module');\nModule.prototype._compile = function(c,f){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part4) require.main.constructor.prototype.require = fn",
+      "require.main.constructor.prototype.require = function(r){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part5) Module._extensions = newRegistry (whole-object replacement)",
+      "const Module = require('module');\nModule._extensions = {};\nmodule.exports = {};\n",
+    ],
+    [
+      "(D) module.paths = [...] (whole-array replacement)",
+      "module.paths = [process.env.X];\nmodule.exports = {};\n",
+    ],
+    [
+      "(E) require.main.paths = [...] (whole-array replacement)",
+      "require.main.paths = [process.env.X];\nmodule.exports = {};\n",
+    ],
+    [
+      "(D-call) module.paths.unshift(dir)",
+      "module.paths.unshift(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "(E-call) require.main.paths.push(dir)",
+      "require.main.paths.push(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part7) module.paths.splice(0, 0, dir)",
+      "module.paths.splice(0, 0, process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part7) module.paths.pop()",
+      "module.paths.pop();\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part7) module.paths.shift()",
+      "module.paths.shift();\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part7) module.paths.sort()",
+      "module.paths.sort();\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part7) module.paths.reverse()",
+      "module.paths.reverse();\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part7) module.paths.copyWithin(0, 1)",
+      "module.paths.copyWithin(0, 1);\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part7) module.paths.fill(process.env.X)",
+      "module.paths.fill(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part16) Module.wrap = fn",
+      "const Module = require('module');\nModule.wrap = function(s){ return s; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part16) module.constructor.wrap = fn (ambient .constructor form)",
+      "module.constructor.wrap = function(s){ return s; };\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part16) require.cache[x] = fakeModule (element mutation)",
+      "require.cache[require.resolve('./index.js')] = { exports: {} };\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part16) require.cache = {} (whole-object replacement)",
+      "require.cache = {};\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part16) Module._cache[x] = fakeModule (element mutation)",
+      "const Module = require('module');\nModule._cache[require.resolve('./index.js')] = { exports: {} };\nmodule.exports = {};\n",
+    ],
+    [
+      "(Part16) Module._cache = {} (whole-object replacement)",
+      "const Module = require('module');\nModule._cache = {};\nmodule.exports = {};\n",
+    ],
+  ])("%s makes the closure incomplete", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it.each([
+    [
+      "1 UserModule._resolveFilename = fn -- no Node Module provenance",
+      "class UserModule {}\nUserModule._resolveFilename = function(r){ return r; };\nmodule.exports = {};\n",
+    ],
+    [
+      "2 UserModule._load = fn -- no Node Module provenance",
+      "class UserModule {}\nUserModule._load = function(){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "3 UserModule.prototype.require = fn -- no Node Module provenance",
+      "class UserModule {}\nUserModule.prototype.require = function(){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "4 obj.paths.unshift(x) -- obj is not the ambient module/require.main",
+      "const obj = { paths: [] };\nobj.paths.unshift(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "5 obj.main.paths.unshift(x) -- obj is not the ambient require",
+      "const obj = { main: { paths: [] } };\nobj.main.paths.unshift(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "6 user.Module._extensions = ... -- user is not module-builtin-bound",
+      "const user = { Module: {} };\nuser.Module._extensions = {};\nmodule.exports = {};\n",
+    ],
+    [
+      "7 obj.paths = [...] -- obj is not the ambient module/require.main",
+      "const obj = { paths: [] };\nobj.paths = [process.env.X];\nmodule.exports = {};\n",
+    ],
+    [
+      "8 UserModule.wrap = fn -- no Node Module provenance",
+      "class UserModule {}\nUserModule.wrap = function(s){ return s; };\nmodule.exports = {};\n",
+    ],
+    [
+      "9 user.cache[x] = ... -- user is not the ambient require",
+      "const user = { cache: {} };\nuser.cache['x'] = {};\nmodule.exports = {};\n",
+    ],
+    [
+      "10 obj._cache[x] = ... -- obj is not Node's Module constructor",
+      "const obj = { _cache: {} };\nobj._cache['x'] = {};\nmodule.exports = {};\n",
+    ],
+    [
+      "11 read-only module.paths.slice()/includes() -- non-mutating array methods must never flag",
+      "const copy = module.paths.slice();\nconst has = module.paths.includes('x');\nmodule.exports = { copy, has };\n",
+    ],
+    [
+      "12 read-only require.cache[x] access -- reading an entry is not mutation",
+      "const m = require.cache[require.resolve('./index.js')];\nmodule.exports = { m };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-fix-9 precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("(Part 13) a Module._resolveFilename mutation in a file reached ONLY through a re-export still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "src/hidden.js",
+      "const Module = require('module');\nModule._resolveFilename = function(r){ return r; };\nmodule.exports.x = 1;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export * from "./hidden.js";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, path.join(root, "src/hidden.js"))).toBe(
+      true,
+    );
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it("(transitive dependency) a module.paths.unshift(...) call in a loaded dependency's own module scope still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/foo/index.js",
+      "module.paths.unshift(process.env.X);\nmodule.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('foo');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+});
