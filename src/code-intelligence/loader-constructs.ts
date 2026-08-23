@@ -858,6 +858,27 @@ export function classifyLoaderConstruct(
     if (root === "globalThis" && propertyPath === "eval") {
       return "aliased_eval";
     }
+
+    // VT-307c-capability-floor Part 3/6: every check above this point in
+    // the property-access branch is a NAMED, precise construct. If none
+    // matched and the receiver reaches an authoritative loader capability
+    // ({@link isAuthoritativeCapabilityReceiver} -- directly, or through
+    // the one named `.prototype` hop), an unrecognized member call on it
+    // must fail closed rather than silently stay unclassified -- unless
+    // it is in the narrow, explicitly-reviewed safe-call allowlist (which
+    // only ever applies to the direct `Module.<member>` form).
+    // Deliberately no deeper: `module.exports.foo()` (calling something
+    // off your OWN exports) has receiver `module.exports`, not `module`
+    // or `module.prototype`, and is correctly untouched by this check.
+    if (resolvesToModuleConstructor(expr.expression, context)) {
+      return MODULE_CONSTRUCTOR_SAFE_CALLS.has(expr.name.text)
+        ? undefined
+        : "loader_capability_escape";
+    }
+    if (isAuthoritativeCapabilityReceiver(expr.expression, context)) {
+      return "loader_capability_escape";
+    }
+
     return undefined;
   }
 
@@ -933,7 +954,43 @@ export function classifyClosureWideningCall(
     }
   }
 
-  return classifyLoaderConstruct(node.expression, context);
+  const preciseReason = classifyLoaderConstruct(node.expression, context);
+  if (preciseReason !== undefined) {
+    return preciseReason;
+  }
+
+  // VT-307c-capability-floor Part 7A/9/13/19: the callee itself isn't a
+  // recognized construct. Two remaining CALL-SHAPED soundness-floor
+  // checks, kept in this SHARED function (not the closure-only whole-file
+  // scanner) specifically so CallGraph gets the same
+  // `unknown(loader_capability_escape)` edge ModuleLoadClosure does --
+  // both are ordinary call/`new` sites, unlike the assignment/return/
+  // export-shaped escape forms `findClosureWideningConstructs` handles on
+  // its own (see that function's own doc comment for why those have no
+  // CallGraph edge shape to populate):
+  //
+  // - a reflection-API mutation of the capability itself
+  //   (`Object.assign(Module, ...)`, `Reflect.set(Module, ...)`, ...);
+  // - an authoritative capability passed as an ARGUMENT to a callee that
+  //   isn't itself an already-modeled construct (`configure(Module)`,
+  //   `run(require)`). Checked only here, after `preciseReason` above
+  //   already came back empty, so a call already flagged through its own
+  //   callee (`Module._load(x, module, false)`, where `module` is
+  //   `_load`'s own legitimate second argument) is never ALSO flagged for
+  //   that same argument.
+  if (
+    ts.isCallExpression(node) &&
+    isCapabilityMutationViaReflectionCall(node, context)
+  ) {
+    return "loader_capability_escape";
+  }
+  for (const argument of node.arguments ?? []) {
+    if (isAuthoritativeCapabilityValue(argument, context)) {
+      return "loader_capability_escape";
+    }
+  }
+
+  return undefined;
 }
 
 /**
@@ -1182,6 +1239,260 @@ const MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS: ReadonlySet<string> =
   new Set(["require", "load", "_compile"]);
 
 /**
+ * VT-307c-capability-floor. Every check above this point answers "is this
+ * ONE SPECIFIC, NAMED construct dangerous?" -- an enumeration that, per
+ * the final VT-307d architecture review, silently preserves
+ * `complete: true` for anything it doesn't yet name, and for an
+ * already-modeled capability whose provenance is lost once it is passed,
+ * stored, returned, or exported. The functions below are the resulting
+ * SOUNDNESS FLOOR: instead of asking "is this a known dangerous
+ * interaction with `Module`/`module`/`require`?", they ask "is this an
+ * authoritative loader capability at all, interacted with or lost track
+ * of in a way nothing above already proved safe?" -- and default to
+ * `loader_capability_escape` when the answer isn't a proven "yes, safe."
+ * Every named reason above still fires FIRST (see this file's
+ * `classifyLoaderConstruct`/`isModuleLoaderAssignmentMutation`/
+ * `findClosureWideningConstructs` for the exact precedence): these
+ * functions are consulted only once a specific, precise classification
+ * has already had its chance to match and did not.
+ */
+
+/**
+ * Whether `expr` is the ambient `require` FUNCTION VALUE itself (VT-307c-
+ * capability-floor) -- the bare identifier, used as a value rather than as
+ * the callee of `require(...)` or the base of an already-modeled
+ * property-access chain (`require.main`, `require.cache`,
+ * `require.extensions`, `require.resolve`, ...). Matched by literal
+ * identifier only, the same deliberate ambient-global simplification this
+ * file already applies to `module`/`process`/`require` elsewhere -- never
+ * a same-file `require` shadowed by a local variable of that name.
+ */
+function isAmbientRequireFunctionIdentifier(expr: ts.Expression): boolean {
+  return ts.isIdentifier(expr) && expr.text === "require";
+}
+
+/**
+ * Whether `expr` is a receiver with authoritative Node loader-capability
+ * provenance (VT-307c-capability-floor) -- Node's `Module` constructor
+ * ({@link resolvesToModuleConstructor}), an ambient `Module` INSTANCE
+ * ({@link isAmbientModuleInstance}), or `<ModuleCtor>.prototype` itself
+ * (the one named, precedented two-hop exception: every OTHER known
+ * prototype member in this file -- `.prototype.require`/`.prototype.load`/
+ * `.prototype._compile`, both as calls and as mutable-member assignments
+ * -- already reaches through this exact same `.prototype` hop, so an
+ * UNRECOGNIZED `.prototype.<member>` interaction must fail closed the
+ * same way a direct `Module.<member>` one does; explicitly requested by
+ * name in the capability-floor task's own Part 3 example list). This is
+ * the receiver-side half of the capability floor: consulted when
+ * classifying a CALL or a WRITE whose target reaches one of these, to
+ * decide whether an otherwise-unrecognized member interaction must fail
+ * closed. Deliberately excludes the ambient `require` FUNCTION and
+ * `createRequire(...)` results here -- neither exposes meaningful mutable
+ * object state of its own beyond the handful of properties (`.main`,
+ * `.cache`, `.extensions`, `.resolve`) this file already models
+ * exhaustively, so there is no unknown-member surface on `require` itself
+ * worth failing closed on; `require`'s own capability-floor role is
+ * entirely on the ESCAPE side (see {@link isAuthoritativeCapabilityValue}),
+ * not the receiver side. Deliberately does NOT walk any further/deeper
+ * chain than this one named `.prototype` exception -- a genuinely
+ * unknown, arbitrarily-nested property off `Module` (`Module._foo.bar`)
+ * is out of this task's scope (see this file's header doc on
+ * interprocedural/general-alias-engine scope) and remains a documented
+ * boundary, not an oversight.
+ */
+function isAuthoritativeCapabilityReceiver(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  if (
+    resolvesToModuleConstructor(expr, context) ||
+    isAmbientModuleInstance(expr)
+  ) {
+    return true;
+  }
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "prototype" &&
+    resolvesToModuleConstructor(expr.expression, context)
+  );
+}
+
+/**
+ * Whether `expr` is (or, through a same-file `const` alias chain of
+ * unbounded depth, resolves to) an authoritative Node loader-capability
+ * VALUE (VT-307c-capability-floor Part 1): Node's `Module` constructor, an
+ * ambient `Module` instance, the ambient `require` function, or the
+ * result of calling `createRequire(...)` inline. This is the VALUE-side
+ * half of the capability floor -- used everywhere a capability can ESCAPE
+ * this classifier's provenance tracking by appearing in a position other
+ * than the receiver of an already-modeled call/mutation: a call argument,
+ * an assignment's right-hand side, a `return`, or an ESM export. Once a
+ * capability value is found in one of those positions, the closure must
+ * go incomplete regardless of what the receiving position does with it --
+ * this function deliberately does NOT attempt to follow the value past
+ * that point (see this file's own header doc on interprocedural scope).
+ *
+ * Local `const` aliasing remains fully precise and is NOT itself treated
+ * as an escape (VT-307c-capability-floor Part 8): `const M = require(
+ * "module"); const M2 = M; const M3 = M2;` still resolves all the way
+ * through, the same unbounded-depth chain {@link resolvesToModuleConstructor}
+ * already supports for the `Module`-constructor case -- this function
+ * extends that same recursive alias resolution uniformly to every
+ * capability kind, including the ambient-instance and bare-`require`
+ * cases {@link resolvesToModuleConstructor} alone does not cover.
+ */
+function isAuthoritativeCapabilityValue(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  if (resolvesToModuleConstructor(expr, context)) {
+    return true;
+  }
+  if (isAmbientModuleInstance(expr)) {
+    return true;
+  }
+  if (isAmbientRequireFunctionIdentifier(expr)) {
+    return true;
+  }
+  if (
+    ts.isCallExpression(expr) &&
+    resolvesToCreateRequireExport(expr.expression, context)
+  ) {
+    return true;
+  }
+  if (ts.isIdentifier(expr)) {
+    const initializer = resolveSingleAssignmentValue(
+      expr.text,
+      context.index.sourceFile,
+    );
+    return (
+      initializer !== undefined &&
+      isAuthoritativeCapabilityValue(initializer, context)
+    );
+  }
+  return false;
+}
+
+/**
+ * The narrow, explicitly-reviewed set of `<ModuleCtor>.<member>(...)`
+ * calls proven read-only/non-loading (VT-307c-capability-floor Part 4) --
+ * the ONLY calls on Node's `Module` constructor this classifier accepts
+ * as safe without a specific widening classification above. Each was
+ * individually verified, not assumed:
+ *
+ * - `isBuiltin(name)`: a pure predicate over Node's own fixed builtin-name
+ *   list: reads nothing resolution-related, loads nothing.
+ * - `findPackageJSON(specifier, base)` (Node 22.14+): parses and returns
+ *   the nearest `package.json` for a specifier -- a read-only lookup, the
+ *   same operation `_readPackage` performs internally, but returned to
+ *   the CALLER rather than consulted BY the resolution algorithm itself;
+ *   it cannot redirect what any subsequent `require()` resolves to.
+ * - `getCompileCacheDir()`: returns the configured compile-cache
+ *   directory path, or `undefined` -- pure state read, no loading effect.
+ * - `stripTypeScriptTypes(code, options)`: a pure string-transform
+ *   (returns type-stripped source text); it does not compile, execute, or
+ *   load anything -- the caller decides what (if anything) to do with the
+ *   returned string.
+ *
+ * Deliberately NOT a general "read-only member" heuristic: every member
+ * NOT in this set -- including any future Node addition -- fails closed
+ * (`loader_capability_escape`) rather than silently joining this list.
+ */
+const MODULE_CONSTRUCTOR_SAFE_CALLS: ReadonlySet<string> = new Set([
+  "isBuiltin",
+  "findPackageJSON",
+  "getCompileCacheDir",
+  "stripTypeScriptTypes",
+]);
+
+/**
+ * The narrow set of ambient `Module`-INSTANCE (`module`/`require.main`/
+ * `process.mainModule`) property WRITES proven safe (VT-307c-capability-
+ * floor Part 4) -- `exports` alone: `module.exports = ...` is the single
+ * most common statement in all of CommonJS, an ordinary data assignment
+ * with no relationship to loader/resolution state. No other ambient-
+ * instance property is safe-listed for writes: `.paths` mutation is
+ * already precisely modeled above ({@link isAmbientModulePathsArray}/
+ * {@link isModuleLoaderPathArrayMutatingCall}) and therefore never reaches
+ * this fallback at all (precedence); everything else (`.id`, `.filename`,
+ * `.loaded`, `.parent`, `.children`, `.path`, `.isPreloading`, or any
+ * future member) is rare enough in ordinary code, and unproven enough to
+ * be safe, that an unrecognized write to it fails closed.
+ */
+const AMBIENT_MODULE_INSTANCE_SAFE_WRITES: ReadonlySet<string> = new Set([
+  "exports",
+]);
+
+/**
+ * Whether `node` is `Object.assign(target, ...)` / `Object.defineProperty(
+ * target, ...)` / `Object.defineProperties(target, ...)` /
+ * `Object.setPrototypeOf(target, ...)` / `Reflect.set(target, ...)` /
+ * `Reflect.defineProperty(target, ...)` / `Reflect.deleteProperty(target,
+ * ...)` / `Reflect.setPrototypeOf(target, ...)` where `target` (the first
+ * argument) is an authoritative loader-capability receiver (VT-307c-
+ * capability-floor Part 5) -- the reflection-API mutation primitives that
+ * rewrite/redefine/remove a property on an object WITHOUT going through
+ * an ordinary `target.member = value` assignment expression at all, so
+ * {@link isModuleLoaderAssignmentMutation}'s own BinaryExpression-shaped
+ * detection can never see them. Property NAMES are never inspected here
+ * (the same "never resolve the string, choose the safe answer" discipline
+ * this whole classifier already applies elsewhere) -- ANY reflection-API
+ * mutation targeting the capability itself fails closed, regardless of
+ * which property it names.
+ */
+function isCapabilityMutationViaReflectionCall(
+  node: ts.CallExpression,
+  context: LoaderClassificationContext,
+): boolean {
+  const callee = node.expression;
+  if (
+    !ts.isPropertyAccessExpression(callee) ||
+    !ts.isIdentifier(callee.expression)
+  ) {
+    return false;
+  }
+  const owner = callee.expression.text;
+  const member = callee.name.text;
+  const isReflectionMutator =
+    (owner === "Object" &&
+      (member === "assign" ||
+        member === "defineProperty" ||
+        member === "defineProperties" ||
+        member === "setPrototypeOf")) ||
+    (owner === "Reflect" &&
+      (member === "set" ||
+        member === "defineProperty" ||
+        member === "deleteProperty" ||
+        member === "setPrototypeOf"));
+  if (!isReflectionMutator) {
+    return false;
+  }
+  const target = node.arguments[0];
+  return (
+    target !== undefined && isAuthoritativeCapabilityReceiver(target, context)
+  );
+}
+
+/**
+ * Whether `node` is `delete <capability>.<member>` (VT-307c-capability-
+ * floor Part 5) -- Node's own `delete` operator applied directly to an
+ * authoritative loader capability's own property surface, the one
+ * mutation shape that is neither a `BinaryExpression` assignment nor a
+ * call. The member name is never inspected -- same discipline as
+ * {@link isCapabilityMutationViaReflectionCall}.
+ */
+function isCapabilityDeleteMutation(
+  node: ts.DeleteExpression,
+  context: LoaderClassificationContext,
+): boolean {
+  const target = node.expression;
+  return (
+    ts.isPropertyAccessExpression(target) &&
+    isAuthoritativeCapabilityReceiver(target.expression, context)
+  );
+}
+
+/**
  * Whether `expr` is `<ModuleCtor>.<staticMember>` for one of
  * {@link MODULE_CONSTRUCTOR_MUTABLE_STATIC_MEMBERS} (VT-307c-fix-9) --
  * reuses {@link resolvesToModuleConstructor} for the same provenance
@@ -1334,50 +1645,86 @@ function isModuleLoaderPathArrayMutatingCall(expr: ts.Expression): boolean {
  * SUBSEQUENT load, not a call/construct that merely reaches one more
  * module -- which is why all of them are detected as an assignment shape
  * rather than folded into {@link classifyLoaderConstruct} (call/`new`-only).
+ *
+ * VT-307c-capability-floor adds one final fallback branch (Part 3/5),
+ * consulted only once every named check above has already had its chance
+ * to match and did not: an assignment TARGET that directly (one hop)
+ * reaches an authoritative loader capability
+ * ({@link isAuthoritativeCapabilityReceiver}) through a member this
+ * classifier does not otherwise recognize -- `Module.someUnknownThing =
+ * fn`, `module.someUnknownThing = fn`, `Module[dynamicKey] = fn` -- fails
+ * closed (`loader_capability_escape`) rather than silently staying
+ * unclassified, EXCEPT the one explicitly-reviewed safe write
+ * (`module.exports = ...`, see {@link AMBIENT_MODULE_INSTANCE_SAFE_WRITES}).
+ * Returns the specific `DynamicCallReason` now (not a bare boolean), so a
+ * precise match and the generic fallback remain distinguishable to the
+ * caller.
  */
 function isModuleLoaderAssignmentMutation(
   node: ts.BinaryExpression,
   context: LoaderClassificationContext,
-): boolean {
+): DynamicCallReason | undefined {
   if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
-    return false;
+    return undefined;
   }
   const target = node.left;
 
   if (ts.isElementAccessExpression(target)) {
-    return isLoaderHookRegistryObject(target.expression, context);
+    if (isLoaderHookRegistryObject(target.expression, context)) {
+      return "loader_hook_mutation";
+    }
+    if (isAuthoritativeCapabilityReceiver(target.expression, context)) {
+      return "loader_capability_escape";
+    }
+    return undefined;
   }
 
   if (!ts.isPropertyAccessExpression(target)) {
-    return false;
+    return undefined;
   }
 
   // Element/property mutation INTO the registry (require.extensions.js =
   // .../ Module._extensions.js = ...) -- the registry object itself is
   // `target.expression`, one level up from the assignment target.
   if (isLoaderHookRegistryObject(target.expression, context)) {
-    return true;
+    return "loader_hook_mutation";
   }
 
   // Whole-OBJECT replacement of the registry itself, or of an ambient
   // Module instance's own `.paths` array -- here `target` ITSELF is the
   // thing being replaced, not something reached through it.
   if (isLoaderHookRegistryObject(target, context)) {
-    return true;
+    return "loader_hook_mutation";
   }
   if (isAmbientModulePathsArray(target)) {
-    return true;
+    return "loader_hook_mutation";
   }
 
   // Module-constructor-level loader/resolution member replacement.
   if (isModuleConstructorMutableStaticMember(target, context)) {
-    return true;
+    return "loader_hook_mutation";
   }
   if (isModuleConstructorMutablePrototypeMember(target, context)) {
-    return true;
+    return "loader_hook_mutation";
   }
 
-  return false;
+  // VT-307c-capability-floor fallback: an unrecognized WRITE into an
+  // authoritative capability's own member surface (directly, or through
+  // the one named `.prototype` hop {@link isAuthoritativeCapabilityReceiver}
+  // recognizes) -- unless it is the one explicitly-reviewed safe write
+  // (`module.exports = ...`, which only applies to the direct ambient-
+  // instance form, never `.prototype.exports`, which isn't a real member).
+  if (
+    isAmbientModuleInstance(target.expression) &&
+    AMBIENT_MODULE_INSTANCE_SAFE_WRITES.has(target.name.text)
+  ) {
+    return undefined;
+  }
+  if (isAuthoritativeCapabilityReceiver(target.expression, context)) {
+    return "loader_capability_escape";
+  }
+
+  return undefined;
 }
 
 /**
@@ -1422,6 +1769,40 @@ function isModuleLoaderAssignmentMutation(
  * classified through {@link classifyLoaderConstruct} instead and DOES
  * automatically get a `CallGraph` `unknown(loader_hook_mutation)` edge,
  * same as any other call-shaped loader construct.
+ *
+ * VT-307c-capability-floor adds the SOUNDNESS-FLOOR fallback's remaining,
+ * NON-call-shaped pieces to this same whole-file scan -- the CALL-shaped
+ * pieces (an authoritative capability passed as a call/`new` argument to
+ * an unmodeled callee, and reflection-API mutation calls like
+ * `Object.assign(Module, ...)`) live INSIDE
+ * {@link classifyClosureWideningCall} itself, shared with `CallGraph`, so
+ * this scanner needs no separate logic for those -- it inherits both for
+ * free through the ordinary `classifyClosureWideningCall(node, context)`
+ * call already made for every visited call/`new` below. What genuinely
+ * has no call/`new` node, and therefore belongs here instead:
+ *
+ * - a capability as the right-hand side of an assignment whose TARGET
+ *   isn't itself a recognized mutation (`registry.loader = Module`,
+ *   `exports.loader = Module`, a bare `let`-reassignment) -- checked only
+ *   when {@link isModuleLoaderAssignmentMutation} found no target-side
+ *   reason, so `module.exports = Module` correctly reports the escape via
+ *   its RHS (this branch) rather than a spurious mutation flag on
+ *   `.exports` itself (which stays safe-listed on the target side);
+ * - `return <capability>;`
+ * - `export default <capability>;` / TypeScript's `export = <capability>;`
+ * - `export { localName };` (a same-file named re-export of a local
+ *   capability-bound identifier; deliberately NOT `export { x } from
+ *   "pkg"`, which re-exports something from elsewhere, not this file's
+ *   own value)
+ * - `delete <capability>.<member>;` ({@link isCapabilityDeleteMutation}) --
+ *   the one mutation shape that is neither a `BinaryExpression` nor a
+ *   call at all.
+ *
+ * Once a capability escapes into any of these positions, this scanner
+ * does not attempt to follow it further (no interprocedural analysis of
+ * what a callee/consumer does with it) -- soundness over precision, per
+ * the architecture review's own explicit instruction: the closure simply
+ * goes incomplete at the escape site itself.
  */
 export function findClosureWideningConstructs(
   context: LoaderClassificationContext,
@@ -1444,15 +1825,53 @@ export function findClosureWideningConstructs(
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+      // VT-307c-capability-floor: reflection-API mutation calls and
+      // argument-position capability escapes are both handled INSIDE
+      // classifyClosureWideningCall itself (shared with CallGraph -- see
+      // that function's own doc comment), so this scanner needs no
+      // separate logic for either; it inherits both automatically.
       const reason = classifyClosureWideningCall(node, context);
       if (reason !== undefined) {
         record(reason, node);
       }
+    } else if (ts.isBinaryExpression(node)) {
+      const targetReason = isModuleLoaderAssignmentMutation(node, context);
+      if (targetReason !== undefined) {
+        record(targetReason, node);
+      } else if (
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        isAuthoritativeCapabilityValue(node.right, context)
+      ) {
+        record("loader_capability_escape", node.right);
+      }
     } else if (
-      ts.isBinaryExpression(node) &&
-      isModuleLoaderAssignmentMutation(node, context)
+      ts.isReturnStatement(node) &&
+      node.expression &&
+      isAuthoritativeCapabilityValue(node.expression, context)
     ) {
-      record("loader_hook_mutation", node);
+      record("loader_capability_escape", node.expression);
+    } else if (
+      ts.isExportAssignment(node) &&
+      isAuthoritativeCapabilityValue(node.expression, context)
+    ) {
+      record("loader_capability_escape", node.expression);
+    } else if (
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier === undefined &&
+      node.exportClause !== undefined &&
+      ts.isNamedExports(node.exportClause)
+    ) {
+      for (const specifier of node.exportClause.elements) {
+        const localName = specifier.propertyName ?? specifier.name;
+        if (isAuthoritativeCapabilityValue(localName, context)) {
+          record("loader_capability_escape", specifier);
+        }
+      }
+    } else if (
+      ts.isDeleteExpression(node) &&
+      isCapabilityDeleteMutation(node, context)
+    ) {
+      record("loader_capability_escape", node);
     }
     ts.forEachChild(node, visit);
   }
