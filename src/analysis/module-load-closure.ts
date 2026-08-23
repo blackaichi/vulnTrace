@@ -99,8 +99,12 @@ export interface ClosureIncompleteness {
  * - every closure member was readable;
  * - every closure member was syntactically valid (VT-307c-fix-2 --
  *   a recovered partial AST is never trusted);
- * - every static module load in every member resolved to a runtime file
- *   or a Node builtin, or was recorded as incompleteness;
+ * - every static module load in every member -- an `import`/`require`
+ *   binding AND a re-export declaration with a source specifier
+ *   (`export * from "x"`, `export { a } from "x"`, `export * as ns from
+ *   "x"`, `export { default } from "x"`, TypeScript's
+ *   `import a = require("x")`; VT-307c-fix-8) -- resolved to a runtime
+ *   file or a Node builtin, or was recorded as incompleteness;
  * - every closure-widening loader construct in every loaded member's
  *   source was accounted for -- established by this closure's own
  *   whole-file scan of each member (`findClosureWideningConstructs`),
@@ -167,6 +171,22 @@ export interface BuildModuleLoadClosureOptions {
  *   the module that actually runs was never identified, so its own
  *   imports are unknown;
  * - `"unresolved"` -> incomplete, `unresolved_module`.
+ *
+ * Applied uniformly to every specifier a member statically,
+ * unconditionally loads -- not just `ModuleModel.imports`, but also every
+ * `ModuleModel.exports` entry of `kind === "re-export"` that carries a
+ * source `specifier` (VT-307c-fix-8; see the final VT-307d readiness
+ * review, which found `export * from "pkg"` and its sibling forms were
+ * indexed as *exports* -- correctly, for symbol-binding purposes -- but
+ * never fed into this traversal at all, so a genuinely-loaded re-exported
+ * dependency could be OUT of the closure while `complete` stayed `true`).
+ * `export`/`import` here is a binding-direction distinction, not a
+ * loading-or-not distinction: re-exporting a module loads it exactly as
+ * unconditionally as importing it does, whether or not the re-exported
+ * name is ever itself imported downstream. A file reached ONLY through a
+ * re-export is traversed and whole-file-scanned for widening constructs
+ * (`findClosureWideningConstructs`) exactly like a file reached through an
+ * ordinary import -- there is no separate, weaker code path for it.
  *
  * Every loaded member is additionally scanned, in full, for
  * closure-widening loader constructs
@@ -252,14 +272,44 @@ export async function buildModuleLoadClosure(
       });
     }
 
+    // Every specifier this file statically, unconditionally loads at module
+    // scope -- both `import`/`require` bindings AND re-export declarations
+    // with a source specifier (VT-307c-fix-8). `export * from "pkg"`,
+    // `export { x } from "pkg"`, `export { x as y } from "pkg"`,
+    // `export * as ns from "pkg"`, and `export { default } from "pkg"` all
+    // execute exactly the same runtime module load as `import "pkg"` --
+    // whether or not any re-exported symbol is ever imported downstream, or
+    // even resolvable at all (docs/SDD.md's own imports/exports split
+    // records re-exports as *exports*, since that's their binding
+    // direction, but a re-export's specifier is still a load this file
+    // itself performs -- ModuleModel's exports/imports split is about
+    // where a name comes FROM, not about what loading this file executes).
+    // Deliberately reuses the exact same resolution dispatch as an
+    // ordinary import below: a specifier means the same thing regardless of
+    // which declaration form referenced it.
+    const staticLoads: { specifier: string; location: SourceLocation }[] = [
+      ...model.imports.map((imp) => ({
+        specifier: imp.specifier,
+        location: imp.location,
+      })),
+      ...model.exports
+        .filter(
+          (exp) => exp.kind === "re-export" && exp.specifier !== undefined,
+        )
+        .map((exp) => ({
+          specifier: exp.specifier as string,
+          location: exp.location,
+        })),
+    ];
+
     const seenSpecifiers = new Set<string>();
-    for (const imp of model.imports) {
-      if (seenSpecifiers.has(imp.specifier)) {
+    for (const load of staticLoads) {
+      if (seenSpecifiers.has(load.specifier)) {
         continue;
       }
-      seenSpecifiers.add(imp.specifier);
+      seenSpecifiers.add(load.specifier);
 
-      const resolution = await resolver.resolve(imp.specifier, filePath);
+      const resolution = await resolver.resolve(load.specifier, filePath);
 
       if (resolution.kind === "builtin") {
         continue;
@@ -268,8 +318,8 @@ export async function buildModuleLoadClosure(
         incompleteness.push({
           reason: "unresolved_module",
           importer: filePath,
-          specifier: imp.specifier,
-          location: imp.location,
+          specifier: load.specifier,
+          location: load.location,
         });
         continue;
       }
@@ -277,8 +327,8 @@ export async function buildModuleLoadClosure(
         incompleteness.push({
           reason: "declaration_only_resolution",
           importer: filePath,
-          specifier: imp.specifier,
-          location: imp.location,
+          specifier: load.specifier,
+          location: load.location,
         });
         continue;
       }

@@ -426,6 +426,40 @@ function extractRequireBindings(
   ];
 }
 
+/**
+ * Extracts `import lib = require("pkg");` — TypeScript's CommonJS-import
+ * syntax — as a first-class static module load, same as a plain
+ * `require()` binding (VT-307c-fix-8). Only the external-module-reference
+ * form is a module load at all: `import q = A.B;` (an alias to another
+ * local/namespace declaration, `moduleReference` is an `EntityName`, not an
+ * `ExternalModuleReference`) resolves nothing at runtime and is correctly
+ * excluded — same reasoning `isRequireCall` already applies to a `require`
+ * call whose argument isn't a literal. `import type lib = require("pkg")`
+ * is erased at compile time (mirrors the `import type`/type-only-named
+ * exclusions elsewhere in this file) and is excluded via `isTypeOnly`.
+ */
+function extractImportEqualsRequire(
+  sourceFile: ts.SourceFile,
+  node: ts.ImportEqualsDeclaration,
+): IndexedImport[] {
+  if (
+    node.isTypeOnly ||
+    !ts.isExternalModuleReference(node.moduleReference) ||
+    !ts.isStringLiteralLike(node.moduleReference.expression)
+  ) {
+    return [];
+  }
+
+  return [
+    {
+      specifier: node.moduleReference.expression.text,
+      bindingKind: "commonjs",
+      localName: node.name.text,
+      location: toSourceLocation(sourceFile, node),
+    },
+  ];
+}
+
 function extractEsmImport(
   sourceFile: ts.SourceFile,
   node: ts.ImportDeclaration,
@@ -563,6 +597,32 @@ function extractExportDeclaration(
     return results;
   }
 
+  if (
+    node.exportClause &&
+    ts.isNamespaceExport(node.exportClause) &&
+    specifier
+  ) {
+    // export * as ns from "./x"; -- always has a specifier (the syntax
+    // requires `from`), unlike the bare-namespace-import case. Previously
+    // fell through unhandled (neither the NamedExports branch above nor
+    // the no-exportClause branch below matches a NamespaceExport clause),
+    // so this form was silently dropped from SourceIndex.exports entirely
+    // -- invisible not just to ModuleLoadClosure's traversal but to any
+    // other consumer of the exports list (VT-307c-fix-8). Re-export
+    // *chasing* remains out of scope here exactly as for every other
+    // re-export kind (see mapExportsToFunctions's own re-export skip) --
+    // this only makes the specifier itself visible, which is what a
+    // module-load consumer needs.
+    return [
+      {
+        bindingKind: "re-export",
+        exportedName: node.exportClause.name.text,
+        specifier,
+        location: toSourceLocation(sourceFile, node.exportClause),
+      },
+    ];
+  }
+
   if (!node.exportClause && specifier) {
     // export * from "./x";
     return [
@@ -660,6 +720,8 @@ function buildIndex(sourceFile: ts.SourceFile): SourceIndex {
       imports.push(...extractEsmImport(sourceFile, node));
     } else if (isRequireCall(node)) {
       imports.push(...extractRequireBindings(sourceFile, node));
+    } else if (ts.isImportEqualsDeclaration(node)) {
+      imports.push(...extractImportEqualsRequire(sourceFile, node));
     } else if (ts.isExportDeclaration(node)) {
       exportsList.push(...extractExportDeclaration(sourceFile, node));
     } else if (ts.isExportAssignment(node)) {
