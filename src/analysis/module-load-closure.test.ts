@@ -3213,3 +3213,273 @@ describe("ModuleLoadClosure: authoritative loader-capability escape fallback (VT
     expect(reasonsOf(closure)).toEqual(["module_internal_load"]);
   });
 });
+
+/**
+ * VT-307c-capability-flow. The final invariant review found that
+ * VT-307c-capability-floor's own escape detection was still an
+ * ENUMERATION OF SYNTACTIC POSITIONS (call argument, assignment RHS,
+ * return, export) rather than a genuine value-flow analysis -- so a
+ * capability wrapped in an object literal, an array literal, a concise
+ * arrow body, a default parameter, or a `throw` sailed through every one
+ * of those checks untouched, reproduced end-to-end (real Node execution +
+ * a gate-eligible, complete closure + the exact package OUT) with NO
+ * unknown API name involved anywhere. This adds a generic value-container
+ * walker (`containsEscapingLoaderCapabilityValue`) consulted at every
+ * value-flowing anchor point, plus one receiver-provenance closure step
+ * (`Module.prototype.constructor` IS `Module`, by JS's own invariant).
+ */
+describe("ModuleLoadClosure: value-oriented loader-capability escape analysis (VT-307c-capability-flow)", () => {
+  it.each([
+    // --- Part 4: object literal escape ---
+    [
+      "object literal property: const registry = { loader: Module }",
+      "const Module = require('module');\nconst registry = { loader: Module };\nmodule.exports = { registry };\n",
+    ],
+    // --- Part 4: nested object literal escape ---
+    [
+      "nested object literal: const cfg = { deep: { loader: Module } }",
+      "const Module = require('module');\nconst cfg = { deep: { loader: Module } };\nmodule.exports = { cfg };\n",
+    ],
+    // --- Part 5: array/container escape ---
+    [
+      "array literal: const arr = [Module]",
+      "const Module = require('module');\nconst arr = [Module];\nmodule.exports = { arr };\n",
+    ],
+    [
+      "new Set([Module])",
+      "const Module = require('module');\nconst s = new Set([Module]);\nmodule.exports = { s };\n",
+    ],
+    [
+      "new Map([['loader', Module]])",
+      "const Module = require('module');\nconst m = new Map([['loader', Module]]);\nmodule.exports = { m };\n",
+    ],
+    // --- Part 6: concise-return / function-body escape ---
+    [
+      "concise arrow returning Module: const get = () => Module",
+      "const Module = require('module');\nconst get = () => Module;\nmodule.exports = { get };\n",
+    ],
+    // --- Part 7: default parameter escape ---
+    [
+      "default parameter: function f(x = Module)",
+      "const Module = require('module');\nfunction f(x = Module){ return x; }\nmodule.exports = { f };\n",
+    ],
+    // --- Part 8: throw escape ---
+    [
+      "throw Module",
+      "const Module = require('module');\nfunction f(){ throw Module; }\nmodule.exports = { f };\n",
+    ],
+    // --- Part 9: CJS composite export escape ---
+    [
+      "module.exports = { loader: Module } (CJS composite export)",
+      "const Module = require('module');\nmodule.exports = { loader: Module };\n",
+    ],
+    ["exports.x = { loader: require }", "exports.x = { loader: require };\n"],
+    // --- Part 10: spread/destructuring composite value ---
+    [
+      "object spread: const o = { ...base, loader: Module }",
+      "const Module = require('module');\nconst o = { ...{}, loader: Module };\nmodule.exports = { o };\n",
+    ],
+    [
+      "array spread: const arr = [...[], Module]",
+      "const Module = require('module');\nconst arr = [...[], Module];\nmodule.exports = { arr };\n",
+    ],
+    // --- Part 14: require container escapes ---
+    [
+      "object literal containing require: const h = { r: require }",
+      "const h = { r: require };\nmodule.exports = { h };\n",
+    ],
+    [
+      "array literal containing require: const a = [require]",
+      "const a = [require];\nmodule.exports = { a };\n",
+    ],
+    [
+      "concise arrow returning require: const get = () => require",
+      "const get = () => require;\nmodule.exports = { get };\n",
+    ],
+    // --- Part 12/13: Module.prototype.constructor provenance + unknown member ---
+    [
+      "Module.prototype.constructor.someFuture(...) -- unknown member via reflexive identity",
+      "const Module = require('module');\nModule.prototype.constructor.someFuture(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "module.constructor.prototype.constructor.someFuture(...) -- ambient .constructor + reflexive identity",
+      "module.constructor.prototype.constructor.someFuture(process.env.X);\nmodule.exports = {};\n",
+    ],
+  ])("%s makes the closure incomplete", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it.each([
+    [
+      "Module.prototype.constructor._load(...) -- reflexive identity resolves to the SPECIFIC reason",
+      "const Module = require('module');\nModule.prototype.constructor._load(process.env.X, module, false);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "Module.prototype.constructor._preloadModules([...]) -- reflexive identity, specific reason",
+      "const Module = require('module');\nModule.prototype.constructor._preloadModules(['vuln-lib']);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "module.constructor.prototype.constructor._load(...) -- ambient .constructor + reflexive identity",
+      "module.constructor.prototype.constructor._load(process.env.X, module, false);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "require.main.constructor.prototype.constructor._load(...)",
+      "require.main.constructor.prototype.constructor._load(process.env.X, module, false);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+  ])(
+    "%s produces the correct specific reason, not the generic fallback",
+    async (_label, source, expectedReason) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toEqual([expectedReason]);
+    },
+  );
+
+  it.each([
+    // --- Precision: ordinary, capability-free composite values ---
+    [
+      "object literal with ordinary values",
+      "const o = { a: 1, b: 'x', c: [1, 2, 3] };\nmodule.exports = { o };\n",
+    ],
+    [
+      "nested object literal with ordinary values",
+      "const o = { deep: { a: 1 } };\nmodule.exports = { o };\n",
+    ],
+    [
+      "array literal with ordinary values",
+      "const arr = [1, 'x', { a: 1 }];\nmodule.exports = { arr };\n",
+    ],
+    [
+      "concise arrow returning an ordinary value",
+      "const get = () => ({ a: 1 });\nmodule.exports = { get };\n",
+    ],
+    [
+      "default parameter with an ordinary object literal",
+      "function f(x = { a: 1 }){ return x; }\nmodule.exports = { f };\n",
+    ],
+    [
+      "throw an ordinary Error",
+      "function f(){ throw new Error('x'); }\nmodule.exports = { f };\n",
+    ],
+    [
+      "new Set([1,2,3]) / new Map([['a',1]]) with ordinary values",
+      "const s = new Set([1, 2, 3]);\nconst m = new Map([['a', 1]]);\nmodule.exports = { s, m };\n",
+    ],
+    [
+      "object spread of an ordinary object",
+      "const a = { x: 1 };\nconst b = { ...a, y: 2 };\nmodule.exports = { b };\n",
+    ],
+    [
+      "own exports array element write -- module.exports.someArray[k] = value",
+      "module.exports = { someArray: [] };\nmodule.exports.someArray[process.env.K] = process.env.V;\nvoid 0;\n",
+    ],
+    [
+      "destructuring an ordinary object",
+      "const { a, b } = { a: 1, b: 2 };\nmodule.exports = { a, b };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-capability-flow precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("Module.prototype.constructor stays IDENTICAL to Module -- an unbounded-depth const alias off it remains precise", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nconst A = Module.prototype.constructor;\nconst B = A;\nB._load(process.env.X, module, false);\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["module_internal_load"]);
+  });
+
+  it("an object-literal escape in a never-called function still makes the closure incomplete (whole-file semantics)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nfunction neverCalled(){ const registry = { loader: Module }; return registry; }\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("an object-literal escape in a loaded dependency's own module scope still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/foo/index.js",
+      "const Module = require('module');\nconst registry = { loader: Module };\nmodule.exports = { registry };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('foo');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("a default-parameter escape in a file reached ONLY through a re-export still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "src/hidden.js",
+      "const Module = require('module');\nfunction f(x = Module){ return x; }\nmodule.exports.f = f;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export * from "./hidden.js";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, path.join(root, "src/hidden.js"))).toBe(
+      true,
+    );
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+});
