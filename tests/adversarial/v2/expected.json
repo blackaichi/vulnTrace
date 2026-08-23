@@ -647,5 +647,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-060",
+    "dir": "adv2-060-dependency-toplevel-value-escape",
+    "category": "60. VT-307c-capability-flow regression: authoritative loader-capability value escape (configure({ loader: Module })) in a DEPENDENCY's own module top-level scope",
+    "description": "Same shape as ADV2-059, but the escape is NESTED inside a composite call argument rather than a bare one: vt2-holder wraps Node's own Module constructor in an object literal and passes it directly to a local, ordinary-looking configure(...) function (configure({ loader: Module })). VT-307c-capability-floor's own argument-escape check recognized a BARE capability argument (configure(Module), ADV2-059) but not one nested inside a composite value -- an object literal, the single most idiomatic container expression in all of JavaScript, sailed through that check untouched, reproduced end-to-end by the final VT-307d invariant review with NO unknown Node API name involved anywhere. VT-307c-capability-flow closes this with a generic value-container walker that recurses through object/array literals, spreads, conditionals, and concise-arrow bodies looking for an authoritative capability nested at any depth, rather than enumerating one more argument shape. Before that fix this construct was invisible entirely (not even an unsupported_construct edge). The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-059.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own configure({ loader: Module }) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), hands Node's own Module constructor -- nested inside an ordinary object literal -- to a function this analyzer cannot prove does nothing dangerous with it. A human analyst cannot rule out reachability here merely because the capability escaped through a composite argument rather than a bare one. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]
