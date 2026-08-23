@@ -323,16 +323,29 @@ function isVmConstructedInstance(
 }
 
 /**
- * Whether `expr` is one of the two ambient references to a real `Module`
+ * Whether `expr` is one of the three ambient references to a real `Module`
  * INSTANCE every CommonJS file already has, with no `new` or import
- * involved (VT-307c-fix-7 Parts 3/7): the current file's own `module`, or
- * `require.main` -- Node's reference to the process's entry module, which
- * is itself a real `Module` instance (not a wrapper around one), the same
- * way `module` is. Matched by literal identifier chain only -- the same
- * deliberate ambient-global simplification already applied throughout this
- * file to `module.require`/`require.main.require`/`process.mainModule.
- * require` -- never something reached through an import, and never a
- * same-file `require` shadowed by a local variable of that name.
+ * involved (VT-307c-fix-7 Parts 3/7; VT-307c-fix-10 adds the third): the
+ * current file's own `module`; `require.main`; or `process.mainModule` --
+ * Node's historical, still-supported alias for the exact same entry-module
+ * object `require.main` refers to (both are the same real `Module`
+ * instance, not two different ones). Every one of these is a real `Module`
+ * instance, not a wrapper around one, the same way `module` is. The final
+ * VT-307d go/no-go audit found this a genuine gap, not merely a missed
+ * spelling: `classifyLoaderConstruct` already recognized
+ * `process.mainModule.require` as `module_require` (see the bare
+ * property-chain check near the bottom of that function), but
+ * `isAmbientModuleInstance` -- which backs every OTHER ambient-instance
+ * check in this file, including `.constructor` resolution
+ * ({@link resolvesToModuleConstructor}) and the `.paths`-array checks
+ * ({@link isAmbientModulePathsArray}) -- did not, leaving
+ * `process.mainModule.constructor._resolveFilename = fn` and
+ * `process.mainModule.paths.unshift(dir)` both invisible even though the
+ * `require.main` spelling of the identical attack was already caught.
+ * Matched by literal identifier chain only -- the same deliberate
+ * ambient-global simplification already applied throughout this file --
+ * never something reached through an import, and never a same-file
+ * `require`/`process` shadowed by a local variable of that name.
  */
 function isAmbientModuleInstance(expr: ts.Expression): boolean {
   if (ts.isIdentifier(expr) && expr.text === "module") {
@@ -343,6 +356,14 @@ function isAmbientModuleInstance(expr: ts.Expression): boolean {
     expr.name.text === "main" &&
     ts.isIdentifier(expr.expression) &&
     expr.expression.text === "require"
+  ) {
+    return true;
+  }
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "mainModule" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "process"
   ) {
     return true;
   }
@@ -964,19 +985,51 @@ function isModuleCacheObject(
 }
 
 /**
+ * Whether `expr` is `<ModuleCtor>.wrapper` (VT-307c-fix-10) -- the two-
+ * element array (`["(function (exports, require, module, __filename,
+ * __dirname) { ", "\n});"]`) Node's CJS loader wraps every module's raw
+ * source in before compiling it. Mutating either element -- or replacing
+ * the array outright -- injects attacker-chosen source into the wrapper
+ * function EVERY SUBSEQUENTLY loaded CommonJS module runs inside,
+ * reproduced end-to-end by the final VT-307d go/no-go audit
+ * (`Module.wrapper[0] = Module.wrapper[0] + "require('vuln-lib');"` made a
+ * separate, never-imported package execute on the very next `require()`).
+ * Same object-mutation shape as {@link isModuleExtensionsObject}/
+ * {@link isModuleCacheObject} -- an array rather than a plain object, but
+ * `require()`'s element-access assignment (`Module.wrapper[0] = ...`) and
+ * whole-value replacement (`Module.wrapper = [...]`) are exactly the two
+ * mutation shapes {@link isLoaderHookRegistryObject}'s existing callers
+ * already handle for every other registry, so no new mutation-detection
+ * code is needed beyond recognizing this object.
+ */
+function isModuleWrapperObject(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "wrapper" &&
+    resolvesToModuleConstructor(expr.expression, context)
+  );
+}
+
+/**
  * Whether `expr` is one of the module system's own mutable registry
  * objects, under any of their aliasing names -- the compile-hook registry
  * (VT-307c-fix-6 Part 11 `require.extensions`; VT-307c-fix-7 Part 4
  * `<ModuleCtor>._extensions`; see {@link isModuleExtensionsObject}'s doc
- * comment for why these two are the same underlying object) and the
+ * comment for why these two are the same underlying object), the
  * module-instance cache (VT-307c-fix-9 Part 16 `require.cache`/
  * `<ModuleCtor>._cache`; see {@link isModuleCacheObject}'s doc comment for
- * the same relationship). Populating/replacing an entry in either registry
- * -- or replacing the registry object itself -- changes what a SUBSEQUENT
- * `require()` of a matching key actually does, the same class of hazard
- * for both: this is deliberately one shared check, not two, so any future
- * spelling generalization (a new provenance path onto either registry)
- * benefits every consumer at once.
+ * the same relationship), and the source-wrapper array
+ * (VT-307c-fix-10 `<ModuleCtor>.wrapper`; see
+ * {@link isModuleWrapperObject}'s doc comment). Populating/replacing an
+ * entry in any of these -- or replacing the registry object itself --
+ * changes what a SUBSEQUENT `require()`/module compile actually does, the
+ * same class of hazard for all three: this is deliberately one shared
+ * check, not three, so any future spelling generalization (a new
+ * provenance path onto any of these registries) benefits every consumer
+ * at once.
  */
 function isLoaderHookRegistryObject(
   expr: ts.Expression,
@@ -986,7 +1039,8 @@ function isLoaderHookRegistryObject(
     isRequireExtensionsObject(expr) ||
     isModuleExtensionsObject(expr, context) ||
     isRequireCacheObject(expr) ||
-    isModuleCacheObject(expr, context)
+    isModuleCacheObject(expr, context) ||
+    isModuleWrapperObject(expr, context)
   );
 }
 
