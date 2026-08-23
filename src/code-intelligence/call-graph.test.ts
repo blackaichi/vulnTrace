@@ -1552,6 +1552,86 @@ describe("buildCallGraph: remaining same-realm Node loader/execution spellings (
   });
 });
 
+/**
+ * VT-307c-fix-9. Only the CALL-shaped half of this fix is representable
+ * here: `module.paths.unshift(dir)`/`.push(dir)`/etc. are ordinary
+ * CallExpression nodes, so they flow through the same
+ * `classifyLoaderConstruct` dispatch every other call-shaped loader
+ * construct in this file already does, and automatically get an
+ * `unknown(loader_hook_mutation)` edge with no call-graph.ts change at
+ * all. The ASSIGNMENT-shaped half (`Module._resolveFilename = fn`,
+ * `Module.prototype.require = fn`, `module.paths = [...]`,
+ * `Module._extensions = newRegistry`, `require.cache[x] = fakeModule`, ...)
+ * has no CallGraph edge shape to represent a non-call mutation -- the SAME
+ * pre-existing architectural boundary `require.extensions[...] = hook`
+ * (VT-307c-fix-6 Part 11) already established and that this file has never
+ * tested for that reason; `ModuleLoadClosure` is the sole place that
+ * records those (see module-load-closure.test.ts's own VT-307c-fix-9
+ * describe block for the full assignment-shaped coverage).
+ */
+describe("buildCallGraph: module.paths/require.main.paths mutating-method calls (VT-307c-fix-9)", () => {
+  it.each([
+    [
+      "module.paths.unshift(dir)",
+      "function main(){ module.paths.unshift(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "module.paths.push(dir)",
+      "function main(){ module.paths.push(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "require.main.paths.unshift(dir)",
+      "function main(){ require.main.paths.unshift(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "module.paths.splice(0, 0, dir)",
+      "function main(){ module.paths.splice(0, 0, process.env.P); }\nmodule.exports = { main };\n",
+    ],
+  ])("classifies %s as loader_hook_mutation", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: "loader_hook_mutation",
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "obj.paths.unshift(x) -- obj is not the ambient module/require.main",
+      "const obj = { paths: [] };\nfunction main(){ obj.paths.unshift(process.env.P); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "module.paths.slice() -- non-mutating array method",
+      "function main(){ return module.paths.slice(); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "does NOT classify %s as loader_hook_mutation (precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(
+        graph.edges.some(
+          (e) =>
+            e.resolution.kind === "unknown" &&
+            e.resolution.reason === "loader_hook_mutation",
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
   it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();

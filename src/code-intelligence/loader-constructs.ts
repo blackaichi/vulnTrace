@@ -763,6 +763,16 @@ export function classifyLoaderConstruct(
       }
     }
 
+    // Mutating-array-method calls on an ambient Module instance's own
+    // `.paths` (VT-307c-fix-9 Part 6/7): `module.paths.unshift(dir)` /
+    // `require.main.paths.push(dir)` and friends. Provenance is to the
+    // ambient VALUE (`module`/`require.main`), same shape as the vm/Module
+    // instance-method checks above -- see
+    // {@link isModuleLoaderPathArrayMutatingCall}.
+    if (isModuleLoaderPathArrayMutatingCall(expr)) {
+      return "loader_hook_mutation";
+    }
+
     // Ambient ECMAScript/Node globals (`module`, `process`, `require`,
     // `globalThis`) are always available regardless of any import, so no
     // provenance check applies here -- matched by literal identifier name
@@ -911,34 +921,280 @@ function isModuleExtensionsObject(
 }
 
 /**
- * Whether `expr` is the compile-hook registry object itself, under any of
- * its two aliasing names (VT-307c-fix-6 Part 11 `require.extensions`;
- * VT-307c-fix-7 Part 4 `<ModuleCtor>._extensions`) -- see
- * {@link isModuleExtensionsObject}'s doc comment for why these are the
- * same underlying object, not two registries.
+ * Whether `expr` is the ambient `require.cache` object -- Node's own
+ * module-instance cache, keyed by resolved filename (VT-307c-fix-9 Part
+ * 16's own nearby-mutation audit). Populating an entry for a filename Node
+ * hasn't loaded yet (or overwriting an existing one) makes the NEXT
+ * `require()` of that resolved file return the planted object instead of
+ * ever reading/compiling/executing the real file -- reproduced end-to-end:
+ * pre-seeding `require.cache[require.resolve('safe-lib')]` with a module
+ * object whose `exports` come from a separate, never-otherwise-imported
+ * package silently redirects every subsequent `require('safe-lib')`.
+ * Matched by literal identifier chain only, the same deliberate
+ * ambient-global simplification `isRequireExtensionsObject` above already
+ * applies to `require.extensions`.
+ */
+function isRequireCacheObject(expr: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "cache" &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "require"
+  );
+}
+
+/**
+ * Whether `expr` is `<ModuleCtor>._cache` (VT-307c-fix-9 Part 16) --
+ * `Module._cache`, `module.constructor._cache`, or any other spelling
+ * {@link resolvesToModuleConstructor} recognizes. Node's CJS loader
+ * defines `Module._cache` and `require.cache` as the exact SAME object
+ * (`Module._cache = require.cache = {}` in `lib/internal/modules/cjs/
+ * loader.js`), the same relationship {@link isModuleExtensionsObject}'s
+ * doc comment already describes for `_extensions`/`require.extensions`.
+ */
+function isModuleCacheObject(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "_cache" &&
+    resolvesToModuleConstructor(expr.expression, context)
+  );
+}
+
+/**
+ * Whether `expr` is one of the module system's own mutable registry
+ * objects, under any of their aliasing names -- the compile-hook registry
+ * (VT-307c-fix-6 Part 11 `require.extensions`; VT-307c-fix-7 Part 4
+ * `<ModuleCtor>._extensions`; see {@link isModuleExtensionsObject}'s doc
+ * comment for why these two are the same underlying object) and the
+ * module-instance cache (VT-307c-fix-9 Part 16 `require.cache`/
+ * `<ModuleCtor>._cache`; see {@link isModuleCacheObject}'s doc comment for
+ * the same relationship). Populating/replacing an entry in either registry
+ * -- or replacing the registry object itself -- changes what a SUBSEQUENT
+ * `require()` of a matching key actually does, the same class of hazard
+ * for both: this is deliberately one shared check, not two, so any future
+ * spelling generalization (a new provenance path onto either registry)
+ * benefits every consumer at once.
  */
 function isLoaderHookRegistryObject(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): boolean {
   return (
-    isRequireExtensionsObject(expr) || isModuleExtensionsObject(expr, context)
+    isRequireExtensionsObject(expr) ||
+    isModuleExtensionsObject(expr, context) ||
+    isRequireCacheObject(expr) ||
+    isModuleCacheObject(expr, context)
   );
 }
 
 /**
- * Whether `node` is an assignment that mutates Node's compile-hook
- * registry (VT-307c-fix-6 Part 11; VT-307c-fix-7 Part 4) --
- * `require.extensions['.js'] = hook`, `require.extensions.js = hook`,
- * `Module._extensions['.js'] = hook`, or `module.constructor._extensions
- * ['.js'] = hook`. Assigning into this registry installs a custom compiler
- * for the given extension that runs on every SUBSEQUENT module of that
- * extension `require()` loads -- a mutation of the module-LOADING
- * MECHANISM itself, not a call/construct that merely reaches one more
- * module, which is why this is detected as an assignment shape rather than
- * folded into {@link classifyLoaderConstruct} (call/`new`-only).
+ * `<ModuleCtor>.<staticMember>` names whose REASSIGNMENT redirects/subverts
+ * `require()`'s own resolution algorithm for every SUBSEQUENT load
+ * (VT-307c-fix-9, from the final VT-307d safety audit's reproduced
+ * blockers A/C): `_resolveFilename` is the function that turns a bare
+ * specifier into a resolved file path -- replacing it lets an attacker
+ * redirect ANY subsequent `require(anything)` to a file of their choosing
+ * regardless of what the specifier says (reproduced end-to-end: a
+ * `require('safe-lib')` redirected to execute a separate, never-imported
+ * `vuln-lib` instance). `_load` is `require()`'s own top-level entry point
+ * (its CALL form is already `module_internal_load` via
+ * {@link MODULE_CONSTRUCTOR_STATIC_MEMBERS} -- this is the separate
+ * ASSIGNMENT form, reproduced the same way). `_findPath` and
+ * `_resolveLookupPaths` are `_resolveFilename`'s own two lookup primitives
+ * (file-existence probing and search-path enumeration respectively) --
+ * replacing either has the same practical effect as replacing
+ * `_resolveFilename` itself, just at a different layer of the same
+ * algorithm. `wrap` (VT-307c-fix-9 Part 16's own nearby-mutation audit,
+ * reproduced end-to-end the same way) is the function that wraps a loaded
+ * file's raw source in the function wrapper Node compiles and executes --
+ * every subsequent module's `_compile` call passes its source through
+ * `Module.wrap` first, so replacing it lets an attacker inject arbitrary
+ * additional source into every module loaded afterward, the same hazard
+ * class as replacing `_compile` itself
+ * ({@link MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS} below), just
+ * reached one level earlier in the same pipeline.
  */
-function isLoaderHookRegistryMutation(
+const MODULE_CONSTRUCTOR_MUTABLE_STATIC_MEMBERS: ReadonlySet<string> = new Set([
+  "_resolveFilename",
+  "_load",
+  "_findPath",
+  "_resolveLookupPaths",
+  "wrap",
+]);
+
+/**
+ * `<ModuleCtor>.prototype.<protoMember>` names whose REASSIGNMENT changes
+ * what loading ANY subsequently-constructed module instance actually does
+ * (VT-307c-fix-9, reproduced blocker B): every CommonJS module Node loads
+ * is a `Module` instance, and `.require`/`.load`/`._compile` are the
+ * INSTANCE methods `require()` itself calls to resolve, read, and execute
+ * each one -- replacing any of them on the shared prototype redirects that
+ * behavior for every module loaded afterward, the same way replacing the
+ * static members above does for resolution. Their CALL forms are already
+ * `MODULE_CONSTRUCTOR_PROTOTYPE_MEMBERS` above; this is the separate
+ * ASSIGNMENT form.
+ */
+const MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS: ReadonlySet<string> =
+  new Set(["require", "load", "_compile"]);
+
+/**
+ * Whether `expr` is `<ModuleCtor>.<staticMember>` for one of
+ * {@link MODULE_CONSTRUCTOR_MUTABLE_STATIC_MEMBERS} (VT-307c-fix-9) --
+ * reuses {@link resolvesToModuleConstructor} for the same provenance
+ * discipline every other Module-constructor check in this file applies:
+ * a same-file class/object that merely happens to be named `Module` or
+ * expose a same-named static member is never matched (see this file's
+ * precision-control tests).
+ */
+function isModuleConstructorMutableStaticMember(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    MODULE_CONSTRUCTOR_MUTABLE_STATIC_MEMBERS.has(expr.name.text) &&
+    resolvesToModuleConstructor(expr.expression, context)
+  );
+}
+
+/**
+ * Whether `expr` is `<ModuleCtor>.prototype.<protoMember>` for one of
+ * {@link MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS} (VT-307c-fix-9) --
+ * mirrors {@link isModuleConstructorLoader}'s own `.prototype`-owner
+ * shape/provenance check exactly, applied to the assignment target instead
+ * of a call callee.
+ */
+function isModuleConstructorMutablePrototypeMember(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  if (
+    !ts.isPropertyAccessExpression(expr) ||
+    !MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS.has(expr.name.text)
+  ) {
+    return false;
+  }
+  const owner = expr.expression;
+  return (
+    ts.isPropertyAccessExpression(owner) &&
+    owner.name.text === "prototype" &&
+    resolvesToModuleConstructor(owner.expression, context)
+  );
+}
+
+/**
+ * Whether `expr` is an ambient Module instance's own `.paths` array
+ * (VT-307c-fix-9, reproduced blockers D/E) -- `module.paths` or
+ * `require.main.paths`, Node's own ordered list of directories `require()`
+ * searches for a bare (non-relative, non-builtin) specifier. Reuses
+ * {@link isAmbientModuleInstance}, the same ambient-reference provenance
+ * every other `module`/`require.main` check in this file applies -- never
+ * a same-file `obj.paths`/`obj.main.paths` that merely happens to share the
+ * name (see this file's precision-control tests).
+ */
+function isAmbientModulePathsArray(expr: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "paths" &&
+    isAmbientModuleInstance(expr.expression)
+  );
+}
+
+/**
+ * `Array.prototype`'s own COMPLETE set of in-place-mutating method names
+ * (VT-307c-fix-9 Part 7) -- every method that can alter an array's contents
+ * or ordering, as opposed to a non-mutating method (`slice`, `indexOf`,
+ * `includes`, `map`, `forEach`, ...) that leaves it untouched. Called on
+ * `module.paths`/`require.main.paths`, any of these can change which
+ * directory `require()`'s bare-specifier resolution searches, and in what
+ * order, for a SUBSEQUENT load: `unshift`/`push` add a new, attacker-chosen
+ * search directory (the final VT-307d safety audit reproduced `unshift`
+ * end-to-end as a genuine shadowing attack against an otherwise-resolvable
+ * specifier); `splice` can do both at once; `sort`/`reverse` change
+ * resolution PRIORITY among the existing directories without adding
+ * anything, which can just as well expose an already-installed instance
+ * that would otherwise have been shadowed by a nearer one; `pop`/`shift`
+ * remove an entry, which can likewise expose a farther, already-installed
+ * instance that a nearer entry was previously shadowing; `copyWithin`/
+ * `fill` are the two remaining ways to overwrite array contents in place.
+ * Deliberately this small, fully-enumerated method-name set -- never "any
+ * method call on `.paths`" -- so a genuinely read-only inspection
+ * (`module.paths.slice()`, `.includes(x)`, `.indexOf(x)`) is never flagged
+ * (see this file's precision-control tests).
+ */
+const ARRAY_MUTATING_METHODS: ReadonlySet<string> = new Set([
+  "push",
+  "pop",
+  "shift",
+  "unshift",
+  "splice",
+  "sort",
+  "reverse",
+  "copyWithin",
+  "fill",
+]);
+
+/**
+ * Whether `expr` is a mutating-array-method CALL on an ambient Module
+ * instance's own `.paths` (VT-307c-fix-9) -- e.g.
+ * `module.paths.unshift(dir)`, `require.main.paths.push(dir)`. This is a
+ * CALL-shaped construct (unlike every other check in this section, which
+ * detects an assignment), so it is consulted from
+ * {@link classifyLoaderConstruct} rather than from
+ * {@link isModuleLoaderAssignmentMutation} below -- see that call site's
+ * own comment.
+ */
+function isModuleLoaderPathArrayMutatingCall(expr: ts.Expression): boolean {
+  return (
+    ts.isPropertyAccessExpression(expr) &&
+    ARRAY_MUTATING_METHODS.has(expr.name.text) &&
+    isAmbientModulePathsArray(expr.expression)
+  );
+}
+
+/**
+ * Whether `node` is an assignment that mutates Node's own module-loading/
+ * resolution machinery (VT-307c-fix-6 Part 11; VT-307c-fix-7 Part 4;
+ * VT-307c-fix-9 generalizes this considerably further, per the final
+ * VT-307d safety audit's four reproduced loaded-but-OUT blockers):
+ *
+ * - compile-hook/module-cache registry ELEMENT/PROPERTY mutation:
+ *   `require.extensions['.js'] = hook`, `require.extensions.js = hook`,
+ *   `Module._extensions['.js'] = hook`, `module.constructor._extensions
+ *   ['.js'] = hook` (unchanged from VT-307c-fix-6/7) -- installs a custom
+ *   compiler for one extension; and, sharing the exact same check
+ *   (`isLoaderHookRegistryObject` now also recognizes `require.cache`/
+ *   `<ModuleCtor>._cache`, VT-307c-fix-9 Part 16), `require.cache[resolved]
+ *   = fakeModule` -- plants a poisoned module object that the NEXT
+ *   `require()` of that resolved file returns without ever loading the
+ *   real one (reproduced end-to-end);
+ * - compile-hook/module-cache registry WHOLE-OBJECT replacement
+ *   (VT-307c-fix-9 Part 5, Part 16): `Module._extensions = newRegistry` /
+ *   `require.cache = {}` -- replaces the ENTIRE table, not merely one
+ *   entry in it -- a genuinely distinct assignment SHAPE the
+ *   element/property check above cannot see, since here the registry
+ *   object itself is the assignment TARGET rather than something the
+ *   target is reached THROUGH;
+ * - Module CONSTRUCTOR loader/resolution member replacement
+ *   (VT-307c-fix-9 Part 3, reproduced blockers A/C):
+ *   {@link isModuleConstructorMutableStaticMember};
+ * - Module PROTOTYPE loader member replacement (VT-307c-fix-9 Part 4,
+ *   reproduced blocker B): {@link isModuleConstructorMutablePrototypeMember};
+ * - ambient Module instance PATH-ARRAY whole-array replacement
+ *   (VT-307c-fix-9 Part 6, reproduced blockers D/E):
+ *   `module.paths = [...]`, `require.main.paths = [...]` -- the
+ *   assignment-shaped sibling of {@link isModuleLoaderPathArrayMutatingCall}
+ *   above, which handles the CALL-shaped mutating-method forms instead.
+ *
+ * Every one of these mutates the module-LOADING MECHANISM itself for every
+ * SUBSEQUENT load, not a call/construct that merely reaches one more
+ * module -- which is why all of them are detected as an assignment shape
+ * rather than folded into {@link classifyLoaderConstruct} (call/`new`-only).
+ */
+function isModuleLoaderAssignmentMutation(
   node: ts.BinaryExpression,
   context: LoaderClassificationContext,
 ): boolean {
@@ -946,12 +1202,40 @@ function isLoaderHookRegistryMutation(
     return false;
   }
   const target = node.left;
+
   if (ts.isElementAccessExpression(target)) {
     return isLoaderHookRegistryObject(target.expression, context);
   }
-  if (ts.isPropertyAccessExpression(target)) {
-    return isLoaderHookRegistryObject(target.expression, context);
+
+  if (!ts.isPropertyAccessExpression(target)) {
+    return false;
   }
+
+  // Element/property mutation INTO the registry (require.extensions.js =
+  // .../ Module._extensions.js = ...) -- the registry object itself is
+  // `target.expression`, one level up from the assignment target.
+  if (isLoaderHookRegistryObject(target.expression, context)) {
+    return true;
+  }
+
+  // Whole-OBJECT replacement of the registry itself, or of an ambient
+  // Module instance's own `.paths` array -- here `target` ITSELF is the
+  // thing being replaced, not something reached through it.
+  if (isLoaderHookRegistryObject(target, context)) {
+    return true;
+  }
+  if (isAmbientModulePathsArray(target)) {
+    return true;
+  }
+
+  // Module-constructor-level loader/resolution member replacement.
+  if (isModuleConstructorMutableStaticMember(target, context)) {
+    return true;
+  }
+  if (isModuleConstructorMutablePrototypeMember(target, context)) {
+    return true;
+  }
+
   return false;
 }
 
@@ -977,17 +1261,26 @@ function isLoaderHookRegistryMutation(
  * reclassification on either side can never silently let a non-widening
  * construct mark a closure incomplete.
  *
- * VT-307c-fix-6 adds ONE non-call construct to this same whole-file scan:
- * a `require.extensions[...] = hook` / `Module._extensions[...] = hook`
- * assignment ({@link isLoaderHookRegistryMutation}, generalized in
- * VT-307c-fix-7 Part 4 to also cover the `Module._extensions` spelling)
- * mutates `require()`'s own compile-hook dispatch table rather than
- * calling anything, so it has no call/`new` node for
+ * VT-307c-fix-6 adds non-call constructs to this same whole-file scan:
+ * assignments that mutate Node's own module-loading/resolution machinery
+ * ({@link isModuleLoaderAssignmentMutation} -- originally just
+ * `require.extensions[...] = hook` / `Module._extensions[...] = hook`,
+ * considerably generalized by VT-307c-fix-7 Part 4 and VT-307c-fix-9 to
+ * also cover whole-object `_extensions` replacement, Module-constructor
+ * static/prototype loader-member replacement, and ambient `.paths`-array
+ * replacement) mutate `require()`'s own machinery rather than calling
+ * anything, so they have no call/`new` node for
  * {@link classifyClosureWideningCall} to ever see. This scanner -- already
  * a generic AST walk over the whole file, not merely over calls -- is the
- * natural, single place to also catch it; `CallGraph` has no equivalent
+ * natural, single place to also catch them; `CallGraph` has no equivalent
  * edge shape for a non-call mutation (see `loader_hook_mutation`'s own doc
- * comment in domain/graph.ts) and does not attempt to represent it.
+ * comment in domain/graph.ts) and does not attempt to represent it. The
+ * CALL-shaped sibling of the `.paths`-array case
+ * ({@link isModuleLoaderPathArrayMutatingCall}, e.g.
+ * `module.paths.unshift(dir)`) IS an ordinary call/`new` node, so it is
+ * classified through {@link classifyLoaderConstruct} instead and DOES
+ * automatically get a `CallGraph` `unknown(loader_hook_mutation)` edge,
+ * same as any other call-shaped loader construct.
  */
 export function findClosureWideningConstructs(
   context: LoaderClassificationContext,
@@ -1016,7 +1309,7 @@ export function findClosureWideningConstructs(
       }
     } else if (
       ts.isBinaryExpression(node) &&
-      isLoaderHookRegistryMutation(node, context)
+      isModuleLoaderAssignmentMutation(node, context)
     ) {
       record("loader_hook_mutation", node);
     }
