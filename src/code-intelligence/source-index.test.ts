@@ -388,6 +388,36 @@ describe("indexSourceFile: CommonJS require", () => {
   });
 });
 
+describe("indexSourceFile: TypeScript import-equals (VT-307c-fix-8)", () => {
+  it('indexes `import lib = require("pkg")` as a commonjs module load', () => {
+    const index = indexSourceFile("a.ts", 'import lib = require("pkg");\n');
+    expect(index.imports).toEqual([
+      {
+        specifier: "pkg",
+        bindingKind: "commonjs",
+        localName: "lib",
+        location: { file: "a.ts", line: 1, column: 1 },
+      },
+    ]);
+  });
+
+  it('excludes `import type lib = require("pkg")` (erased at compile time)', () => {
+    const index = indexSourceFile(
+      "a.ts",
+      'import type lib = require("pkg");\n',
+    );
+    expect(index.imports).toEqual([]);
+  });
+
+  it("does not treat a non-external import-equals (`import q = A.B;`) as a module load", () => {
+    const index = indexSourceFile(
+      "a.ts",
+      "namespace A { export const B = 1; }\nimport q = A.B;\n",
+    );
+    expect(index.imports).toEqual([]);
+  });
+});
+
 describe("indexSourceFile: ESM exports", () => {
   it("indexes an exported function declaration", () => {
     const index = indexSourceFile("a.ts", "export function foo() {}\n");
@@ -478,6 +508,29 @@ describe("indexSourceFile: ESM exports", () => {
   it("excludes type-only exports", () => {
     const index = indexSourceFile("a.ts", "export type { Foo };\n");
     expect(index.exports).toEqual([]);
+  });
+
+  it("indexes `export * from` with its source specifier and no local name (VT-307c-fix-8)", () => {
+    const index = indexSourceFile("a.ts", 'export * from "./other";\n');
+    expect(index.exports).toEqual([
+      {
+        bindingKind: "re-export",
+        specifier: "./other",
+        location: { file: "a.ts", line: 1, column: 1 },
+      },
+    ]);
+  });
+
+  it("indexes `export * as ns from` as a re-export with its namespace name (VT-307c-fix-8, previously dropped entirely)", () => {
+    const index = indexSourceFile("a.ts", 'export * as ns from "./other";\n');
+    expect(index.exports).toEqual([
+      {
+        bindingKind: "re-export",
+        exportedName: "ns",
+        specifier: "./other",
+        location: { file: "a.ts", line: 1, column: 8 },
+      },
+    ]);
   });
 });
 

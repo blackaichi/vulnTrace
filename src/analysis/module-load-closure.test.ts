@@ -1757,3 +1757,337 @@ describe("ModuleLoadClosure: remaining same-realm Node loader/execution spelling
     expect(reasonsOf(closure)).toContain("vm_execution");
   });
 });
+
+/**
+ * VT-307c-fix-8. The final VT-307d readiness review found that a re-export
+ * declaration with a source specifier (`export * from "pkg"`, `export { x }
+ * from "pkg"`, ...) is a static, unconditional module load exactly like
+ * `import "pkg"` -- Node really does load and execute `pkg`'s top-level
+ * code, whether or not any re-exported name is ever itself imported
+ * downstream -- but ModuleLoadClosure only ever traversed `model.imports`,
+ * so a genuinely-loaded re-exported package instance could be entirely
+ * OUT of `loadedPackageInstances` while `complete` stayed `true`. The same
+ * review found TypeScript's `import x = require("pkg")` indexed nowhere at
+ * all. Both are now first-class static loads, dispatched through the exact
+ * same resolver/incompleteness handling as an ordinary import.
+ */
+describe("ModuleLoadClosure: re-export and TS import-equals static loads (VT-307c-fix-8)", () => {
+  it.each([
+    ["(A) export * from package", 'export * from "pkg";\n'],
+    ["(B) export { thing } from package", 'export { thing } from "pkg";\n'],
+    [
+      "(C) export { thing as renamed } from package",
+      'export { thing as renamed } from "pkg";\n',
+    ],
+    ["(D) export * as ns from package", 'export * as ns from "pkg";\n'],
+    ["(E) export { default } from package", 'export { default } from "pkg";\n'],
+  ])("%s puts the package IN the closure", async (_label, source) => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0", type: "module" }),
+    );
+    const pkgEntry = write(
+      root,
+      "node_modules/pkg/index.js",
+      "export function thing(){ return 1; }\nexport default thing;\n",
+    );
+    const entry = write(root, "src/index.mjs", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, pkgEntry)).toBe(true);
+    expect(
+      closureContainsPackageInstance(
+        closure,
+        path.join(root, "node_modules/pkg"),
+      ),
+    ).toBe(true);
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(F) a relative re-export makes the closure visit the re-exported FILE", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const hidden = write(root, "src/hidden.mjs", "export const x = 1;\n");
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export * from "./hidden.mjs";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, hidden)).toBe(true);
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(G) a widening construct in a file reached ONLY through a re-export still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "src/hidden.mjs",
+      "import { createRequire } from 'node:module';\nconst req = createRequire(import.meta.url);\nexport const x = req(process.env.ANYTHING);\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export * from "./hidden.mjs";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("create_require");
+  });
+
+  it('(H) TypeScript `import lib = require("pkg")` puts the package IN the closure', async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0" }),
+    );
+    const pkgEntry = write(
+      root,
+      "node_modules/pkg/index.js",
+      "module.exports.thing = function(){ return 1; };\n",
+    );
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import lib = require("pkg");\nexport function main(){ return lib.thing(); }\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, pkgEntry)).toBe(true);
+    expect(
+      closureContainsPackageInstance(
+        closure,
+        path.join(root, "node_modules/pkg"),
+      ),
+    ).toBe(true);
+    expect(closure.complete).toBe(true);
+  });
+
+  it('(I) TypeScript `import lib = require("unresolved-pkg")` makes the closure incomplete', async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import lib = require("unresolved-pkg");\nexport function main(){ return lib.thing(); }\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("unresolved_module");
+  });
+
+  it("(J) TypeScript `import q = A.B;` (non-external, no ExternalModuleReference) is NOT a module load", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "namespace A { export const B = { x: 1 }; }\nimport q = A.B;\nexport function main(){ return q.x; }\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toEqual([entry]);
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(K) a re-export of a Node builtin is handled without local traversal, and the closure stays complete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export { readFileSync } from "node:fs";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.loadedFiles).toEqual([entry]);
+    expect(closure.complete).toBe(true);
+  });
+
+  it("(L) a re-export that resolves only to a TypeScript declaration file makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/types-only/package.json",
+      JSON.stringify({
+        name: "types-only",
+        version: "1.0.0",
+        types: "index.d.ts",
+      }),
+    );
+    write(
+      root,
+      "node_modules/types-only/index.d.ts",
+      "export declare function f(): void;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export { f } from "types-only";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("declaration_only_resolution");
+  });
+
+  it("an unresolved re-export specifier makes the closure incomplete (Part 8's dispatch-D sibling)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export { f } from "totally-does-not-exist";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("unresolved_module");
+  });
+
+  it("(Part 9) a workspace-linked package reached ONLY through a re-export still resolves to its correct canonical PackageInstance", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "app",
+        type: "module",
+        workspaces: ["packages/*"],
+      }),
+    );
+    const libRoot = write(
+      root,
+      "packages/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      root,
+      "packages/vuln-lib/index.js",
+      "export function dangerousOp(){ return 1; }\n",
+    );
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, "packages/vuln-lib"),
+      path.join(root, "node_modules/vuln-lib"),
+      "dir",
+    );
+    const entry = write(root, "src/index.mjs", 'export * from "vuln-lib";\n');
+    const knownPackageRoots = buildKnownPackageRoots(
+      [dependencyNode("vuln-lib", path.dirname(libRoot))],
+      root,
+    );
+
+    const closure = await closureFor(root, [entry], { knownPackageRoots });
+
+    expect(
+      closureContainsPackageInstance(
+        closure,
+        canonicalizePackageInstancePath(path.dirname(libRoot)),
+      ),
+    ).toBe(true);
+  });
+
+  it("(Part 10) a top-level re-export loads even when the configured {file, symbol} entrypoint symbol doesn't reference it", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/vuln-lib/index.js",
+      "export function dangerousOp(){ return 1; }\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export * from "vuln-lib";\nexport function unrelated(){ return 42; }\n',
+    );
+
+    const closure = await closureFor(root, [entry], { symbol: "unrelated" });
+
+    expect(
+      closureContainsPackageInstance(
+        closure,
+        path.join(root, "node_modules/vuln-lib"),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not resolve the same specifier twice when a file both imports and re-exports it", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0", type: "module" }),
+    );
+    const pkgEntry = write(
+      root,
+      "node_modules/pkg/index.js",
+      "export function thing(){ return 1; }\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'import { thing } from "pkg";\nexport { thing } from "pkg";\nexport function main(){ return thing(); }\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, pkgEntry)).toBe(true);
+    expect(closure.loadedFiles.filter((f) => f === pkgEntry)).toHaveLength(1);
+    expect(closure.complete).toBe(true);
+  });
+});
