@@ -2858,3 +2858,358 @@ describe("ModuleLoadClosure: Module._pathCache/registerHooks/_preloadModules/_re
     expect(reasonsOf(closure)).toContain("loader_hook_mutation");
   });
 });
+
+/**
+ * VT-307c-capability-floor. The final VT-307d architecture review found
+ * that fixes 5-11's named reasons, however thorough, are still an
+ * enumeration: an unrecognized member on an authoritative loader
+ * capability, or the capability itself escaping into a position this
+ * classifier cannot re-derive provenance from, both silently preserved
+ * `complete: true` -- reproduced end-to-end with NO unknown API name at
+ * all (`registry.loader = Module; registry.loader._load(...)` executed a
+ * genuinely-installed OUT package through members every earlier fix
+ * already modeled). `loader_capability_escape` is the resulting
+ * soundness-floor reason, consulted only as a LAST RESORT after every
+ * precise, named classification above has already had its chance to
+ * match.
+ */
+describe("ModuleLoadClosure: authoritative loader-capability escape fallback (VT-307c-capability-floor)", () => {
+  it.each([
+    // --- Part 15: unknown-member regressions ---
+    [
+      "Module.someFutureLoader(...) -- unknown static call",
+      "const Module = require('module');\nModule.someFutureLoader(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "Module.someFutureLoader = fn -- unknown static write",
+      "const Module = require('module');\nModule.someFutureLoader = function(){};\nmodule.exports = {};\n",
+    ],
+    [
+      "Module.prototype.someFutureLoader = fn -- unknown prototype write",
+      "const Module = require('module');\nModule.prototype.someFutureLoader = function(){};\nmodule.exports = {};\n",
+    ],
+    [
+      "Module.prototype.someFutureLoader(...) -- unknown prototype call",
+      "const Module = require('module');\nModule.prototype.someFutureLoader(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "module.constructor.someFutureLoader(...) -- ambient .constructor form",
+      "module.constructor.someFutureLoader(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "module.someFutureThing(...) -- unknown call directly on ambient module instance",
+      "module.someFutureThing(process.env.X);\nmodule.exports = {};\n",
+    ],
+    // --- Part 5: reflection-API / delete mutation fallback ---
+    [
+      "Object.assign(Module, {...}) -- reflection-API mutation of the capability itself",
+      "const Module = require('module');\nObject.assign(Module, { someFutureLoader: function(){} });\nmodule.exports = {};\n",
+    ],
+    [
+      "Object.defineProperty(Module, 'x', {...})",
+      "const Module = require('module');\nObject.defineProperty(Module, 'someFutureLoader', { value: function(){} });\nmodule.exports = {};\n",
+    ],
+    [
+      "Reflect.set(Module, 'x', fn)",
+      "const Module = require('module');\nReflect.set(Module, 'someFutureLoader', function(){});\nmodule.exports = {};\n",
+    ],
+    [
+      "delete Module.someProp",
+      "const Module = require('module');\ndelete Module.someProp;\nmodule.exports = {};\n",
+    ],
+    // --- Part 10: property-store blocker (the exact architecture-review regression) ---
+    [
+      "registry.loader = Module; registry.loader._load(...) -- property-store escape",
+      "const Module = require('module');\nconst registry = {};\nregistry.loader = Module;\nregistry.loader._load(process.env.X, module, false);\nmodule.exports = {};\n",
+    ],
+    // --- Part 11: parameter escape blocker ---
+    [
+      "function configure(x){ x._load(...); } configure(Module) -- argument escape",
+      "const Module = require('module');\nfunction configure(x){ x._load(process.env.X, module, false); }\nconfigure(Module);\nmodule.exports = {};\n",
+    ],
+    // --- Part 13: require escape ---
+    [
+      "function run(r){ r('vuln'); } run(require) -- ambient require escapes as argument",
+      "function run(r){ r(process.env.X); }\nrun(require);\nmodule.exports = {};\n",
+    ],
+    [
+      "obj.r = require -- ambient require stored on a property",
+      "const obj = {};\nobj.r = require;\nmodule.exports = { obj };\n",
+    ],
+    // --- Part 7C: collection escape ---
+    [
+      "arr.push(Module) -- capability into a collection",
+      "const Module = require('module');\nconst arr = [];\narr.push(Module);\nmodule.exports = { arr };\n",
+    ],
+    // --- Part 7D: return escape ---
+    [
+      "function getLoader(){ return Module; } -- capability returned",
+      "const Module = require('module');\nfunction getLoader(){ return Module; }\nmodule.exports = { getLoader };\n",
+    ],
+    // --- Part 7E: export escape ---
+    [
+      "module.exports.loader = Module -- capability escapes via CJS export",
+      "const Module = require('module');\nmodule.exports.loader = Module;\n",
+    ],
+  ])("%s makes the closure incomplete", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("export default Module -- capability escapes via ESM default export", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nconst Module = require('module');\nexport default Module;\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("export { Module } -- capability escapes via ESM named export of a local binding", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nconst Module = require('module');\nexport { Module };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("cross-file export blocker (Part 12): capability escapes at the EXPORT site, independent of how the consumer uses it", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "src/holder.js",
+      "const Module = require('module');\nmodule.exports.loader = Module;\n",
+    );
+    write(
+      root,
+      "src/cfg.js",
+      "const m = require('./holder.js');\nm.loader._load(process.env.X, module, false);\nmodule.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('./holder.js');\nrequire('./cfg.js');\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, path.join(root, "src/holder.js"))).toBe(
+      true,
+    );
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("createRequire-result escape remains incomplete (Part 14): escaping its returned loader cannot restore completeness", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const { createRequire } = require('module');\nfunction configure(r){ return r; }\nconfigure(createRequire(__filename));\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    // Already widening via create_require at the createRequire(...) call
+    // itself; the escape fallback must not somehow "undo" or replace that.
+    expect(reasonsOf(closure)).toContain("create_require");
+  });
+
+  it.each([
+    // --- Part 15: precision controls -- provenance remains mandatory ---
+    [
+      "user.Module.someFutureLoader(...) -- user.Module is not module-builtin-bound",
+      "const user = { Module: { someFutureLoader(){} } };\nuser.Module.someFutureLoader(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "obj.constructor.someFutureLoader(...) -- obj is not a real Module instance",
+      "class Foo { static someFutureLoader(){} }\nconst obj = new Foo();\nobj.constructor.someFutureLoader(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "user.Module.someFutureLoader = fn -- user.Module is not module-builtin-bound",
+      "const user = { Module: {} };\nuser.Module.someFutureLoader = function(){};\nmodule.exports = {};\n",
+    ],
+    // --- Part 16: safe-interaction controls ---
+    [
+      "module.exports = {...} object literal",
+      "module.exports = { a: 1, b: 2 };\nvoid 0;\n",
+    ],
+    [
+      "module.exports.foo = fn -- ordinary CJS export write",
+      "module.exports.foo = function(){ return 1; };\nvoid 0;\n",
+    ],
+    [
+      "module.exports.someArray[0] = x -- own exported array element write",
+      "module.exports = { someArray: [] };\nmodule.exports.someArray[0] = process.env.X;\nvoid 0;\n",
+    ],
+    [
+      "Object.assign(module.exports, {...}) -- own exports, not the capability",
+      "Object.assign(module.exports, { a: 1 });\nvoid 0;\n",
+    ],
+    [
+      "delete module.exports.foo -- own exports, not the capability",
+      "module.exports = { foo: 1 };\ndelete module.exports.foo;\nvoid 0;\n",
+    ],
+    [
+      "registry.push(plugin) -- ordinary local object, not a capability",
+      "const registry = [];\nconst plugin = { name: 'x' };\nregistry.push(plugin);\nmodule.exports = { registry };\n",
+    ],
+    [
+      "return { a: 1 } -- ordinary function return",
+      "function make(){ return { a: 1 }; }\nmodule.exports = { make };\n",
+    ],
+    [
+      "Module.isBuiltin('fs') -- explicit safe-call allowlist",
+      "const Module = require('module');\nconst b = Module.isBuiltin('fs');\nmodule.exports = { b };\n",
+    ],
+    [
+      "Module.builtinModules.includes('fs') -- explicit safe-call allowlist, read-only property",
+      "const Module = require('module');\nconst b = Module.builtinModules.includes('fs');\nmodule.exports = { b };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-capability-floor precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("a Module._pathCache poisoning known-mutation stays classified as loader_hook_mutation, not the generic fallback (precedence, Part 17)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nModule._pathCache[process.env.K] = process.env.V;\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["loader_hook_mutation"]);
+  });
+
+  it("Module.registerHooks(...) stays classified as loader_hook_mutation, not the generic fallback (precedence, Part 17)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nModule.registerHooks({ resolve(s,c,n){ return n(s,c); } });\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["loader_hook_mutation"]);
+  });
+
+  it("a capability escape in a never-called function still makes the closure incomplete (whole-file semantics, Part 18)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nfunction neverCalled(){ const registry = {}; registry.loader = Module; }\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("a capability escape in a loaded dependency's own module scope still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/foo/index.js",
+      "const Module = require('module');\nconst registry = {};\nregistry.loader = Module;\nmodule.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('foo');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("a capability escape in a file reached ONLY through a re-export still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "src/hidden.js",
+      "const Module = require('module');\nconst registry = {};\nregistry.loader = Module;\nmodule.exports.x = 1;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export * from "./hidden.js";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, path.join(root, "src/hidden.js"))).toBe(
+      true,
+    );
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("preserves the local const-alias chain as precise, not an escape (Part 8): unbounded-depth chain still resolves to the specific reason", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nconst A = Module;\nconst B = A;\nconst C = B;\nC._load(process.env.X, module, false);\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["module_internal_load"]);
+  });
+});

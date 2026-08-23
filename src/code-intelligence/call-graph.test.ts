@@ -1784,6 +1784,89 @@ describe("buildCallGraph: Module.registerHooks/_preloadModules calls (VT-307c-fi
   );
 });
 
+/**
+ * VT-307c-capability-floor. Unknown authoritative-loader calls and
+ * argument-position capability escapes are both ordinary call/`new`
+ * sites, so they flow through the same `classifyClosureWideningCall`
+ * dispatch every other call-shaped loader construct in this file already
+ * does, with no call-graph.ts change at all. Property-store/write-side
+ * escapes have no CallGraph edge shape to represent, under the same
+ * pre-existing architectural boundary documented in the fix-9/10/11
+ * describe blocks above; `ModuleLoadClosure` is the sole place that
+ * records those (see module-load-closure.test.ts's own
+ * VT-307c-capability-floor describe block).
+ */
+describe("buildCallGraph: authoritative loader-capability escape fallback (VT-307c-capability-floor)", () => {
+  it.each([
+    [
+      "Module.someFutureLoader(...) -- unknown call on Module constructor",
+      "loader_capability_escape",
+      "function main(){ const Module = require('module'); Module.someFutureLoader(process.env.X); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "module.constructor.someFutureLoader(...) -- ambient .constructor form",
+      "loader_capability_escape",
+      "function main(){ module.constructor.someFutureLoader(process.env.X); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure(Module) -- capability escapes as a call argument",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure(Module); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "run(require) -- ambient require escapes as a call argument",
+      "loader_capability_escape",
+      "function run(r){ return r; }\nfunction main(){ run(require); }\nmodule.exports = { main };\n",
+    ],
+  ])("classifies %s as %s", async (_label, expectedReason, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: expectedReason,
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "user.Module.someFutureLoader(...) -- user.Module is not module-builtin-bound",
+      "function main(){ const user = { Module: { someFutureLoader(){} } }; user.Module.someFutureLoader(process.env.X); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "registry.push(plugin) -- ordinary local object, not a capability",
+      "function main(){ const registry = []; const plugin = { name: 'x' }; registry.push(plugin); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "Module.isBuiltin('fs') -- explicit safe-call allowlist",
+      "function main(){ const Module = require('module'); return Module.isBuiltin('fs'); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "does NOT classify %s as loader_capability_escape (precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(
+        graph.edges.some(
+          (e) =>
+            e.resolution.kind === "unknown" &&
+            e.resolution.reason === "loader_capability_escape",
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
   it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();

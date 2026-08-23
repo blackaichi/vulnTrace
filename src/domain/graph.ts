@@ -73,7 +73,8 @@ export type DynamicCallReason =
   | "vm_execution"
   | "worker_execution"
   | "child_process_execution"
-  | "loader_hook_mutation";
+  | "loader_hook_mutation"
+  | "loader_capability_escape";
 
 /**
  * Whether a {@link DynamicCallReason} widens the module-load closure --
@@ -209,6 +210,26 @@ export type DynamicCallReason =
  *   non-call diagnostic concept purely for this one construct. This is a
  *   deliberate, documented architectural boundary, not an oversight.
  *
+ * The final VT-307d architecture review (VT-307c-capability-floor) found
+ * that fixes 5-11's named reasons, however thorough, are still an
+ * ENUMERATION: an authoritative loader capability (Node's `Module`
+ * constructor, an ambient `module`/`require.main`/`process.mainModule`
+ * instance, the ambient `require` function, or a `createRequire(...)`
+ * result) used through a member this classifier does not yet name, or
+ * passed/stored/returned/exported into a position where its provenance is
+ * lost, silently preserved `complete: true` -- reproduced end-to-end with
+ * NO unknown API name at all (`registry.loader = Module; registry.loader.
+ * _load(...)` executed a genuinely-installed OUT package through members
+ * every earlier fix already modeled). `loader_capability_escape` is the
+ * resulting SOUNDNESS-FLOOR reason: "an authoritative loader capability
+ * was used or lost track of in a way this classifier cannot prove safe."
+ * It is deliberately the LAST-RESORT fallback, never the first match --
+ * every named reason above still fires first and stays the precise,
+ * diagnosable answer when the construct is one this classifier already
+ * understands (see loader-constructs.ts's own capability-floor doc
+ * comments for the exact precedence and the narrow read-only allowlist
+ * that keeps ordinary, harmless `node:module` introspection quiet).
+ *
  * This partition is normative (see the audit doc's § 3.3/§ 12) and MUST
  * NOT be changed silently: every current consumer
  * (`resolveTargetNodes`'s `confirmedAbsentInstance` guard, src/analysis
@@ -234,6 +255,7 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "worker_execution":
     case "child_process_execution":
     case "loader_hook_mutation":
+    case "loader_capability_escape":
       return true;
     case "unsupported_construct":
     case "dynamic_member_access":
