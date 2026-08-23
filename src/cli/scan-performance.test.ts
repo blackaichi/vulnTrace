@@ -186,3 +186,106 @@ describe("performance baseline: medium (~300 file) synthetic project", () => {
     REGRESSION_THRESHOLD_MS + 5_000,
   );
 });
+
+/**
+ * Performance baseline: ONE large file with many local declarations and
+ * call sites (VT-307c-capability-flow's own performance regression).
+ *
+ * The medium-project baseline above is a deliberately WIDE shape (many
+ * small files) -- it never exercised the pathology this test guards
+ * against, which is specific to a single, DEEP file: before
+ * `resolveSingleAssignmentValue` (local-aliases.ts) was memoized per
+ * `SourceFile`, every call to it re-walked the WHOLE file from scratch,
+ * and VT-307c-capability-floor/flow's own escape-detection fallback
+ * calls it from many more classification sites per file than any earlier
+ * fix did (every call argument, variable initializer, `return`, `throw`,
+ * export, and default parameter). On a single real-world ~17,000-line
+ * file (lodash.js, tests/validation/fixtures/lodash-4.17.15-*) this
+ * measured taking 40-60+ SECONDS -- effectively quadratic in file size --
+ * severe enough that the wall-clock cost alone made live network calls
+ * sharing the same event loop (tests/validation's real OSV lookups) look
+ * like they were failing outright, a purely algorithmic problem
+ * masquerading as a network one. This synthetic fixture reproduces the
+ * SAME shape (one large file, many `const` declarations, many call sites
+ * each passing several arguments) at a scale deliberately smaller than
+ * lodash.js but still easily large enough to make an O(n^2) regression
+ * fail this threshold by a wide margin, while a correctly-memoized O(n)
+ * implementation clears it in well under a second.
+ */
+describe("performance baseline: single large file with many local declarations/calls", () => {
+  const SINGLE_FILE_THRESHOLD_MS = 3_000;
+  const DECLARATION_COUNT = 3_000;
+
+  let tmpDir: string | undefined;
+
+  afterEach(() => {
+    if (tmpDir) {
+      rmSync(tmpDir, { recursive: true, force: true });
+      tmpDir = undefined;
+    }
+  });
+
+  it(
+    `completes within the ${SINGLE_FILE_THRESHOLD_MS}ms regression threshold`,
+    async () => {
+      tmpDir = mkdtempSync(path.join(tmpdir(), "vulntrace-perf-single-file-"));
+      write(
+        tmpDir,
+        "package.json",
+        JSON.stringify({ name: "single-file-fixture", version: "1.0.0" }),
+      );
+      write(
+        tmpDir,
+        "package-lock.json",
+        JSON.stringify({
+          name: "single-file-fixture",
+          version: "1.0.0",
+          lockfileVersion: 3,
+          packages: { "": { name: "single-file-fixture", version: "1.0.0" } },
+        }),
+      );
+
+      const lines: string[] = [];
+      for (let i = 0; i < DECLARATION_COUNT; i++) {
+        // Each iteration contributes several distinct local names and a
+        // call passing a few of them as arguments -- the exact shape
+        // that multiplies `resolveSingleAssignmentValue` call sites
+        // (VT-307c-capability-floor/flow's own new anchor points: the
+        // variable initializer itself, plus each call argument).
+        lines.push(
+          `const value${i} = { a: ${i}, b: "x${i}" };`,
+          `const helper${i} = () => value${i};`,
+          `doWork(value${i}, helper${i}, ${i});`,
+        );
+      }
+      const body =
+        `function doWork(a, b, c) { return a && b && c; }\n` +
+        lines.join("\n") +
+        `\nmodule.exports = { doWork };\n`;
+      write(tmpDir, "src/index.js", body);
+
+      const configPath = path.join(tmpDir, "vulntrace.yml");
+      writeFileSync(
+        configPath,
+        "analysis:\n  entrypoints:\n    - src/index.js\n",
+      );
+      const { io, stdout, stderr } = fakeIo();
+
+      const wallClockStart = Date.now();
+      const exitCode = await runScanCommand({
+        projectPathArg: tmpDir,
+        configPathOverride: configPath,
+        provider: fakeProvider(),
+        noCache: true,
+        io,
+      });
+      const wallClockMs = Date.now() - wallClockStart;
+
+      expect(stderr).toEqual([]);
+      expect(exitCode).toBe(0);
+      expect(wallClockMs).toBeLessThan(SINGLE_FILE_THRESHOLD_MS);
+      expect(JSON.parse(stdout.join("")).coverage.files).toBe(1);
+    },
+    SINGLE_FILE_THRESHOLD_MS + 5_000,
+  );
+});

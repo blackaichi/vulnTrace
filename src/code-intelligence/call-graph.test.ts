@@ -1867,6 +1867,81 @@ describe("buildCallGraph: authoritative loader-capability escape fallback (VT-30
   );
 });
 
+/**
+ * VT-307c-capability-flow. The argument-escape check inside
+ * classifyClosureWideningCall (shared with ModuleLoadClosure) now walks
+ * composite argument values, not just bare capability arguments, and the
+ * receiver-provenance closure over `Module.prototype.constructor`
+ * benefits every consumer of `resolvesToModuleConstructor` -- including
+ * `isModuleConstructorLoader`'s call-shaped dispatch -- for free.
+ */
+describe("buildCallGraph: composite-value capability escapes (VT-307c-capability-flow)", () => {
+  it.each([
+    [
+      "configure({ loader: Module }) -- capability nested in an object-literal argument",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure({ loader: Module }); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure([Module]) -- capability nested in an array-literal argument",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure([Module]); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "Module.prototype.constructor._preloadModules([...]) -- reflexive identity, specific reason",
+      "module_internal_load",
+      "function main(){ const Module = require('module'); Module.prototype.constructor._preloadModules(['vuln-lib']); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "Module.prototype.constructor.someFuture(...) -- reflexive identity, unknown member",
+      "loader_capability_escape",
+      "function main(){ const Module = require('module'); Module.prototype.constructor.someFuture(process.env.X); }\nmodule.exports = { main };\n",
+    ],
+  ])("classifies %s as %s", async (_label, expectedReason, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: expectedReason,
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "configure({ a: 1 }) -- ordinary object-literal argument, no capability",
+      "function configure(x){ return x; }\nfunction main(){ configure({ a: 1 }); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure([1, 2, 3]) -- ordinary array-literal argument",
+      "function configure(x){ return x; }\nfunction main(){ configure([1, 2, 3]); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "does NOT classify %s as loader_capability_escape (precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(
+        graph.edges.some(
+          (e) =>
+            e.resolution.kind === "unknown" &&
+            e.resolution.reason === "loader_capability_escape",
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
   it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();

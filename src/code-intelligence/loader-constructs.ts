@@ -443,6 +443,31 @@ function resolvesToModuleConstructor(
     return true;
   }
 
+  // VT-307c-capability-flow Part 12: `<X>.prototype.constructor` IS `<X>`
+  // itself, by JS's own `Fn.prototype.constructor === Fn` invariant -- a
+  // provenance-PRESERVING identity step, not a new spelling to enumerate.
+  // Closing this over the SAME `resolvesToModuleConstructor` recursion
+  // every other branch here already uses means it composes for free with
+  // every existing spelling (`Module.prototype.constructor`,
+  // `module.constructor.prototype.constructor`, ...) and with the
+  // existing unknown-member receiver fallback: once
+  // `Module.prototype.constructor` resolves as the Module constructor,
+  // `Module.prototype.constructor._preloadModules(...)` converges on the
+  // exact same `MODULE_CONSTRUCTOR_STATIC_MEMBERS` dispatch as
+  // `Module._preloadModules(...)`, and `Module.prototype.constructor.
+  // someFutureThing(...)` converges on the same unknown-member
+  // `loader_capability_escape` fallback as `Module.someFutureThing(...)` --
+  // with zero new logic beyond this one identity-closure step.
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "constructor" &&
+    ts.isPropertyAccessExpression(expr.expression) &&
+    expr.expression.name.text === "prototype" &&
+    resolvesToModuleConstructor(expr.expression.expression, context)
+  ) {
+    return true;
+  }
+
   if (ts.isIdentifier(expr)) {
     const initializer = resolveSingleAssignmentValue(
       expr.text,
@@ -973,11 +998,14 @@ export function classifyClosureWideningCall(
   //   (`Object.assign(Module, ...)`, `Reflect.set(Module, ...)`, ...);
   // - an authoritative capability passed as an ARGUMENT to a callee that
   //   isn't itself an already-modeled construct (`configure(Module)`,
-  //   `run(require)`). Checked only here, after `preciseReason` above
-  //   already came back empty, so a call already flagged through its own
-  //   callee (`Module._load(x, module, false)`, where `module` is
-  //   `_load`'s own legitimate second argument) is never ALSO flagged for
-  //   that same argument.
+  //   `run(require)`, and -- VT-307c-capability-flow -- `configure({
+  //   loader: Module })`/`configure([Module])`, via
+  //   {@link isEscapingCapabilityUse}'s composite-containment check).
+  //   Checked only here, after `preciseReason` above already came back
+  //   empty, so a call already flagged through its own callee
+  //   (`Module._load(x, module, false)`, where `module` is `_load`'s own
+  //   legitimate second argument) is never ALSO flagged for that same
+  //   argument (VT-307c-capability-floor Part 15).
   if (
     ts.isCallExpression(node) &&
     isCapabilityMutationViaReflectionCall(node, context)
@@ -985,7 +1013,7 @@ export function classifyClosureWideningCall(
     return "loader_capability_escape";
   }
   for (const argument of node.arguments ?? []) {
-    if (isAuthoritativeCapabilityValue(argument, context)) {
+    if (isEscapingCapabilityUse(argument, context)) {
       return "loader_capability_escape";
     }
   }
@@ -1371,6 +1399,156 @@ function isAuthoritativeCapabilityValue(
     );
   }
   return false;
+}
+
+/**
+ * VT-307c-capability-flow. The final invariant review found that
+ * VT-307c-capability-floor's own escape detection, however sound in
+ * principle, was still built as an ENUMERATION OF SYNTACTIC POSITIONS
+ * (call argument, assignment right-hand side, `return`, export) rather
+ * than a genuine value-flow analysis -- so a capability wrapped in an
+ * object literal (`{ loader: Module }`), an array literal (`[Module]`),
+ * a concise arrow body (`() => Module`), a default parameter, or a
+ * `throw` argument sailed through every one of those checks untouched,
+ * reproduced end-to-end (real Node execution + a gate-eligible, complete
+ * closure + the exact installed package OUT) with NO unknown API name
+ * involved anywhere. The fix is architectural, not another position to
+ * enumerate: {@link containsEscapingLoaderCapabilityValue} recursively
+ * walks the value-CONTAINER shapes JavaScript actually has (object/array
+ * literals, spreads, conditionals, parenthesization, TS type-wrapping,
+ * concise-body arrow functions, and the `new Set([...])`/`new Map([...])`
+ * literal-constructor forms), so a capability nested at ANY depth inside
+ * one of these is found the same way regardless of which specific
+ * composite shape wraps it -- closing the position-enumeration failure
+ * mode the same way {@link isAuthoritativeCapabilityValue}'s own
+ * unbounded-depth `const`-alias recursion already closed simple aliasing.
+ */
+function containsEscapingLoaderCapabilityValue(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  if (isAuthoritativeCapabilityValue(expr, context)) {
+    return true;
+  }
+  if (ts.isParenthesizedExpression(expr)) {
+    return containsEscapingLoaderCapabilityValue(expr.expression, context);
+  }
+  if (
+    ts.isAsExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isTypeAssertionExpression(expr)
+  ) {
+    // TS type-only wrapping forms (`x as T`, `x satisfies T`, `x!`,
+    // `<T>x`) never change what value flows at runtime -- unwrap to the
+    // underlying value expression.
+    return containsEscapingLoaderCapabilityValue(expr.expression, context);
+  }
+  if (ts.isConditionalExpression(expr)) {
+    return (
+      containsEscapingLoaderCapabilityValue(expr.whenTrue, context) ||
+      containsEscapingLoaderCapabilityValue(expr.whenFalse, context)
+    );
+  }
+  if (ts.isObjectLiteralExpression(expr)) {
+    return expr.properties.some((property) => {
+      if (ts.isPropertyAssignment(property)) {
+        return containsEscapingLoaderCapabilityValue(
+          property.initializer,
+          context,
+        );
+      }
+      if (ts.isShorthandPropertyAssignment(property)) {
+        return isAuthoritativeCapabilityValue(property.name, context);
+      }
+      if (ts.isSpreadAssignment(property)) {
+        return containsEscapingLoaderCapabilityValue(
+          property.expression,
+          context,
+        );
+      }
+      return false;
+    });
+  }
+  if (ts.isArrayLiteralExpression(expr)) {
+    return expr.elements.some((element) =>
+      ts.isSpreadElement(element)
+        ? containsEscapingLoaderCapabilityValue(element.expression, context)
+        : containsEscapingLoaderCapabilityValue(element, context),
+    );
+  }
+  if (ts.isArrowFunction(expr) && !ts.isBlock(expr.body)) {
+    // A concise-body arrow (`() => Module`) is exactly a `return Module;`
+    // in disguise -- its body IS the returned value.
+    return containsEscapingLoaderCapabilityValue(expr.body, context);
+  }
+  if (
+    ts.isNewExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    (expr.expression.text === "Set" || expr.expression.text === "Map") &&
+    expr.arguments !== undefined &&
+    expr.arguments.length === 1
+  ) {
+    const [soleArgument] = expr.arguments;
+    // `new Set([...])`/`new Map([...])` literal-constructor forms (Part
+    // 5) -- the array-literal branch above already recurses through
+    // `Map`'s own `[key, value]` tuple entries correctly, since each
+    // entry is itself an ArrayLiteralExpression.
+    if (
+      soleArgument !== undefined &&
+      ts.isArrayLiteralExpression(soleArgument)
+    ) {
+      return containsEscapingLoaderCapabilityValue(soleArgument, context);
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether `expr`, used in a VALUE-FLOWING position (an assignment's
+ * right-hand side, a `return`/`throw` operand, an export, or a call
+ * argument not belonging to an already-modeled primitive), constitutes a
+ * capability escape -- either because `expr` itself directly denotes an
+ * authoritative capability (the pre-existing VT-307c-capability-floor
+ * bare-value check), or because a composite value CONTAINS one nested
+ * inside it (the new VT-307c-capability-flow check). Every caller of this
+ * function is a position where a bare capability reference was ALREADY
+ * being treated as an escape before this task -- this only widens what
+ * counts as "the capability is here" at each of those same positions, it
+ * never changes which positions are checked.
+ */
+function isEscapingCapabilityUse(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  return (
+    isAuthoritativeCapabilityValue(expr, context) ||
+    containsEscapingLoaderCapabilityValue(expr, context)
+  );
+}
+
+/**
+ * Whether a variable's initializer `expr` is a capability escape, EXCLUDING
+ * the one case that must stay safe: `expr` itself being a bare, direct
+ * capability reference (`const alias = Module;` -- alias creation, VT-307c-
+ * capability-floor Part 8). A COMPOSITE initializer that contains the
+ * capability nested inside it (`const registry = { loader: Module };`)
+ * is still an escape. Used only for `VariableDeclaration` initializers,
+ * where "bare reference" and "the capability is somewhere in this value"
+ * are genuinely different questions -- every OTHER value-flowing position
+ * this file checks (assignment RHS, return, throw, export, call argument)
+ * treats a bare reference as an escape too, via {@link isEscapingCapabilityUse}
+ * directly, since none of those positions create a trackable alias the
+ * way a `VariableDeclaration` does.
+ */
+function isNonAliasCapabilityEscape(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  if (isAuthoritativeCapabilityValue(expr, context)) {
+    return false;
+  }
+  return containsEscapingLoaderCapabilityValue(expr, context);
 }
 
 /**
@@ -1825,8 +2003,9 @@ export function findClosureWideningConstructs(
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
-      // VT-307c-capability-floor: reflection-API mutation calls and
-      // argument-position capability escapes are both handled INSIDE
+      // VT-307c-capability-floor/flow: reflection-API mutation calls and
+      // argument-position capability escapes (including a capability
+      // nested in a composite argument) are both handled INSIDE
       // classifyClosureWideningCall itself (shared with CallGraph -- see
       // that function's own doc comment), so this scanner needs no
       // separate logic for either; it inherits both automatically.
@@ -1840,19 +2019,61 @@ export function findClosureWideningConstructs(
         record(targetReason, node);
       } else if (
         node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        isAuthoritativeCapabilityValue(node.right, context)
+        isEscapingCapabilityUse(node.right, context)
       ) {
         record("loader_capability_escape", node.right);
       }
     } else if (
+      // VT-307c-capability-flow Part 4/5/10: a variable's INITIALIZER is
+      // the one value-flowing position where a BARE capability reference
+      // must stay safe (`const alias = Module` is alias creation, per
+      // VT-307c-capability-floor Part 8) while a COMPOSITE one containing
+      // the capability nested inside it (`const registry = { loader:
+      // Module }`, `const arr = [Module]`, `const get = () => Module`)
+      // must not. `isNonAliasCapabilityEscape`'s own name says exactly
+      // that: it excludes the bare-alias case and only fires on
+      // composite containment. Applied to `const`/`let`/`var` alike --
+      // the composite-containment hazard is identical regardless of
+      // which declaration keyword introduced the binding.
+      ts.isVariableDeclaration(node) &&
+      node.initializer !== undefined &&
+      isNonAliasCapabilityEscape(node.initializer, context)
+    ) {
+      record("loader_capability_escape", node.initializer);
+    } else if (
+      // VT-307c-capability-flow Part 7: a default parameter value
+      // (`function f(x = Module)` / `function f(x = { loader: Module })`)
+      // is the same value-flowing hazard as a variable initializer, but a
+      // parameter's default is never itself an "alias" in any sense this
+      // classifier tracks further (there is no `resolveSingleAssignmentValue`
+      // equivalent for parameters) -- so even a BARE capability default
+      // is an escape here, matching every other non-declaration
+      // value-flowing position (`isEscapingCapabilityUse`, not the
+      // alias-exempting `isNonAliasCapabilityEscape` used for variable
+      // declarations above).
+      ts.isParameter(node) &&
+      node.initializer !== undefined &&
+      isEscapingCapabilityUse(node.initializer, context)
+    ) {
+      record("loader_capability_escape", node.initializer);
+    } else if (
       ts.isReturnStatement(node) &&
       node.expression &&
-      isAuthoritativeCapabilityValue(node.expression, context)
+      isEscapingCapabilityUse(node.expression, context)
+    ) {
+      record("loader_capability_escape", node.expression);
+    } else if (
+      // VT-307c-capability-flow Part 8: `throw Module;` -- the capability
+      // leaves this file's own tracked control flow entirely (caught,
+      // rethrown, or logged arbitrarily far away), the same
+      // "provenance lost" hazard as every other escape position here.
+      ts.isThrowStatement(node) &&
+      isEscapingCapabilityUse(node.expression, context)
     ) {
       record("loader_capability_escape", node.expression);
     } else if (
       ts.isExportAssignment(node) &&
-      isAuthoritativeCapabilityValue(node.expression, context)
+      isEscapingCapabilityUse(node.expression, context)
     ) {
       record("loader_capability_escape", node.expression);
     } else if (

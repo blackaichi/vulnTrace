@@ -328,6 +328,16 @@ describe("ModuleLoadClosure differential Node oracle (VT-307c-capability-floor)"
       },
     },
     {
+      // VT-307c-capability-flow Part 17: deliberately uses
+      // `_preloadModules(['vuln'])` -- a loader primitive whose arguments
+      // contain NO authoritative capability -- rather than `_load('vuln',
+      // module, false)`. The `module` second argument `_load` legitimately
+      // takes is ITSELF a capability, so an oracle case built on `_load`
+      // gets flagged for that argument regardless of whether the
+      // parameter-escape container shape under test is actually detected;
+      // this masked five real violations in the prior task's own
+      // round-trip check. `_preloadModules` genuinely isolates the
+      // container/escape shape being tested.
       label: "Module passed as a parameter, callee loads vuln via it",
       vulnInstanceRelPath: "node_modules/vuln",
       setup: (root) => {
@@ -335,7 +345,7 @@ describe("ModuleLoadClosure differential Node oracle (VT-307c-capability-floor)"
         return write(
           root,
           "src/index.js",
-          "const Module = require('module');\nfunction configure(x){ x._load('vuln', module, false); }\nconfigure(Module);\n",
+          "const Module = require('module');\nfunction configure(x){ x._preloadModules(['vuln']); }\nconfigure(Module);\n",
         );
       },
     },
@@ -347,7 +357,7 @@ describe("ModuleLoadClosure differential Node oracle (VT-307c-capability-floor)"
         return write(
           root,
           "src/index.js",
-          "const Module = require('module');\nconst registry = {};\nregistry.loader = Module;\nregistry.loader._load('vuln', module, false);\n",
+          "const Module = require('module');\nconst registry = {};\nregistry.loader = Module;\nregistry.loader._preloadModules(['vuln']);\n",
         );
       },
     },
@@ -365,7 +375,7 @@ describe("ModuleLoadClosure differential Node oracle (VT-307c-capability-floor)"
         write(
           root,
           "src/consumer.js",
-          "const m = require('./holder.js');\nm.loader._load('vuln', module, false);\nmodule.exports = {};\n",
+          "const m = require('./holder.js');\nm.loader._preloadModules(['vuln']);\nmodule.exports = {};\n",
         );
         return write(
           root,
@@ -518,6 +528,200 @@ describe("ModuleLoadClosure differential Node oracle (VT-307c-capability-floor)"
           root,
           "src/index.js",
           "const path = require('path');\nmodule.paths.unshift(path.join(__dirname, '..', 'shadow'));\nrequire('vuln');\n",
+        );
+      },
+    },
+
+    // ---------------------------------------------------------------
+    // VALUE-POSITION capability-flow grammar (VT-307c-capability-flow
+    // Part 18) -- every case uses Module._preloadModules(['vuln']), a
+    // loader primitive whose arguments contain NO authoritative
+    // capability, so the container/escape shape under test is genuinely
+    // isolated rather than incidentally masked by an argument (Part 17).
+    // ---------------------------------------------------------------
+    {
+      label: "1. object literal Module: registry.loader._preloadModules([...])",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nconst registry = { loader: Module };\nregistry.loader._preloadModules(['vuln']);\n",
+        );
+      },
+    },
+    {
+      label: "2. nested object literal Module",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nconst cfg = { deep: { loader: Module } };\ncfg.deep.loader._preloadModules(['vuln']);\n",
+        );
+      },
+    },
+    {
+      label: "3. array literal Module: arr[0]._preloadModules([...])",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nconst arr = [Module];\narr[0]._preloadModules(['vuln']);\n",
+        );
+      },
+    },
+    {
+      label: "4. concise arrow returning Module: get()._preloadModules([...])",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nconst get = () => Module;\nget()._preloadModules(['vuln']);\n",
+        );
+      },
+    },
+    {
+      label:
+        "5. default parameter Module: function f(x = Module){ x._preloadModules([...]) }",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nfunction f(x = Module){ x._preloadModules(['vuln']); }\nf();\n",
+        );
+      },
+    },
+    {
+      label: "6. throw Module, caught and used to load vuln",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nfunction f(){ throw Module; }\ntry { f(); } catch (e) { e._preloadModules(['vuln']); }\n",
+        );
+      },
+    },
+    {
+      label:
+        "7. CJS object export containing Module, consumer loads vuln via it",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        write(
+          root,
+          "src/holder.js",
+          "const Module = require('module');\nmodule.exports = { loader: Module };\n",
+        );
+        write(
+          root,
+          "src/consumer.js",
+          "const h = require('./holder.js');\nh.loader._preloadModules(['vuln']);\nmodule.exports = {};\n",
+        );
+        return write(
+          root,
+          "src/index.js",
+          "require('./holder.js');\nrequire('./consumer.js');\n",
+        );
+      },
+    },
+    {
+      label: "8. object literal require: h.r('vuln')",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const h = { r: require };\nh.r('vuln');\n",
+        );
+      },
+    },
+    {
+      label: "9. array literal require: a[0]('vuln')",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const a = [require];\na[0]('vuln');\n",
+        );
+      },
+    },
+    {
+      label: "10. concise arrow returning require: get()('vuln')",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const get = () => require;\nget()('vuln');\n",
+        );
+      },
+    },
+    {
+      label:
+        "11. Module.prototype.constructor loader use (reflexive identity, real execution)",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nModule.prototype.constructor._preloadModules(['vuln']);\n",
+        );
+      },
+    },
+    {
+      label:
+        "12. unknown member through Module.prototype.constructor (real, unmodeled, non-loading API -- no execution expected)",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        // _readPackage is a REAL Node internal (pure read, no loading
+        // effect on its own) that this classifier does NOT model as a
+        // call-form member (only as an assignment target) -- calling it
+        // through the reflexive Module.prototype.constructor chain must
+        // still fail closed via the generic fallback, while genuinely not
+        // executing vuln (a pure read cannot execute anything), so this
+        // case exercises "closure incomplete, no real violation possible"
+        // rather than a reproducible exploit.
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nconst dir = require('path').join(__dirname, 'node_modules', 'vuln');\nif (Module.prototype.constructor._readPackage) { Module.prototype.constructor._readPackage(dir); }\n",
+        );
+      },
+    },
+    {
+      label: "13. direct safe require stays precise (no false positive)",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(root, "src/index.js", "require('vuln');\n");
+      },
+    },
+    {
+      label: "14. safe const-alias chain stays precise (no false positive)",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          "const Module = require('module');\nconst A = Module;\nconst B = A;\nB._preloadModules(['vuln']);\n",
         );
       },
     },
