@@ -19,6 +19,7 @@ import {
   type KnownPackageRoots,
 } from "../domain/resolved-target.js";
 import {
+  buildGateEligibleModuleLoadClosure,
   buildModuleLoadClosure,
   closureContainsFile,
   closureContainsPackageInstance,
@@ -2345,5 +2346,261 @@ describe("ModuleLoadClosure: Node module-loader/resolution mutation (VT-307c-fix
 
     expect(closure.complete).toBe(false);
     expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+});
+
+/**
+ * VT-307c-fix-10. The final VT-307d go/no-go audit reproduced two remaining
+ * ambient-Module gaps: process.mainModule (a third literal ambient reference
+ * to a real Node Module instance, alongside module and require.main) was not
+ * recognized by the shared isAmbientModuleInstance provenance helper, so
+ * mutating process.mainModule.constructor.* or process.mainModule.paths went
+ * undetected even though the equivalent module.constructor.* / module.paths
+ * and require.main.constructor.* / require.main.paths forms were already
+ * covered by fix-9. Separately, Module.wrapper (the two-element
+ * source-wrapping array every _compile call consults, distinct from the
+ * already-covered Module.wrap function) was not recognized as one of the
+ * module system's own mutable registry objects. Both gaps are closed by
+ * generalizing existing shared helpers -- isAmbientModuleInstance gained a
+ * process.mainModule branch, and isLoaderHookRegistryObject gained a
+ * Module.wrapper branch via the new isModuleWrapperObject predicate -- so no
+ * new mutation-detection logic was needed beyond the two provenance
+ * generalizations. Both reuse the existing loader_hook_mutation reason.
+ */
+describe("ModuleLoadClosure: process.mainModule and Module.wrapper mutation (VT-307c-fix-10)", () => {
+  it.each([
+    [
+      "process.mainModule.constructor._resolveFilename = fn",
+      "process.mainModule.constructor._resolveFilename = function(r){ return r; };\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.constructor._load = fn",
+      "process.mainModule.constructor._load = function(r){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.constructor._findPath = fn",
+      "process.mainModule.constructor._findPath = function(r){ return r; };\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.constructor._resolveLookupPaths = fn",
+      "process.mainModule.constructor._resolveLookupPaths = function(r){ return []; };\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.constructor.prototype.require = fn",
+      "process.mainModule.constructor.prototype.require = function(r){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.paths = [...] (whole-array replacement)",
+      "process.mainModule.paths = [process.env.X];\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.paths.push(dir)",
+      "process.mainModule.paths.push(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.paths.unshift(dir)",
+      "process.mainModule.paths.unshift(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.paths.sort()",
+      "process.mainModule.paths.sort();\nmodule.exports = {};\n",
+    ],
+    [
+      "Module.wrapper[0] = injected (element mutation)",
+      "const Module = require('module');\nModule.wrapper[0] = Module.wrapper[0] + process.env.X;\nmodule.exports = {};\n",
+    ],
+    [
+      "Module.wrapper = [...] (whole-array replacement)",
+      "const Module = require('module');\nModule.wrapper = [process.env.X, process.env.Y];\nmodule.exports = {};\n",
+    ],
+    [
+      "require('module').wrapper[0] = ... (inline whole-module form)",
+      "require('module').wrapper[0] = process.env.X;\nmodule.exports = {};\n",
+    ],
+    [
+      "module.constructor.wrapper = [...] (ambient .constructor form)",
+      "module.constructor.wrapper = [process.env.X, process.env.Y];\nmodule.exports = {};\n",
+    ],
+    [
+      "require.main.constructor.wrapper[1] = ...",
+      "require.main.constructor.wrapper[1] = process.env.X;\nmodule.exports = {};\n",
+    ],
+  ])("%s makes the closure incomplete", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it.each([
+    [
+      "obj.mainModule.paths.unshift(x) -- obj is not the ambient process",
+      "const obj = { mainModule: { paths: [] } };\nobj.mainModule.paths.unshift(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "obj.mainModule.constructor._load = fn -- obj is not the ambient process",
+      "const obj = { mainModule: {} };\nobj.mainModule.constructor = { _load(){} };\nobj.mainModule.constructor._load = function(){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "processLike.mainModule.paths.unshift(x) -- processLike is not the ambient process",
+      "const processLike = { mainModule: { paths: [] } };\nprocessLike.mainModule.paths.unshift(process.env.X);\nmodule.exports = {};\n",
+    ],
+    [
+      "user.Module.wrapper[0] = ... -- user is not module-builtin-bound",
+      "const user = { Module: { wrapper: [] } };\nuser.Module.wrapper[0] = process.env.X;\nmodule.exports = {};\n",
+    ],
+    [
+      "obj.wrapper[0] = ... -- obj is not Node's Module constructor",
+      "const obj = { wrapper: [] };\nobj.wrapper[0] = process.env.X;\nmodule.exports = {};\n",
+    ],
+    [
+      "obj.wrapper = [...] -- obj is not Node's Module constructor",
+      "const obj = { wrapper: [] };\nobj.wrapper = [process.env.X, process.env.Y];\nmodule.exports = {};\n",
+    ],
+    [
+      "obj.mainModule.constructor._resolveFilename -- fabricated provenance, no ambient process reference at all",
+      "const obj = {};\nobj.mainModule = {};\nobj.mainModule.constructor = { _resolveFilename(){} };\nobj.mainModule.constructor._resolveFilename = function(r){ return r; };\nmodule.exports = {};\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-fix-10 precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("a process.mainModule.paths.unshift(...) call in a never-called function still makes the closure incomplete", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function neverCalled(){ process.mainModule.paths.unshift(process.env.X); }\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it("a Module.wrapper[0] mutation in a file reached ONLY through a re-export still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "src/hidden.js",
+      "const Module = require('module');\nModule.wrapper[0] = Module.wrapper[0] + process.env.X;\nmodule.exports.x = 1;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export * from "./hidden.js";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, path.join(root, "src/hidden.js"))).toBe(
+      true,
+    );
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it("a process.mainModule.constructor._load mutation in a loaded dependency's own module scope still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/foo/index.js",
+      "process.mainModule.constructor._load = function(r){ return {}; };\nmodule.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('foo');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+});
+
+/**
+ * VT-307c-fix-10 (Part 9/14). buildGateEligibleModuleLoadClosure is
+ * preparation for VT-307d's future gate-eligibility rule: a closure built
+ * from zero entrypoints has rootFiles.length === 0 by construction, so
+ * "this package instance was never observed in the closure" carries no
+ * evidentiary weight -- there was no traversal for it to have been observed
+ * in. This function must never hand back such a closure to a caller that
+ * would treat it as positive absence proof. It has no verdict-facing caller
+ * yet; this test only exercises the function itself.
+ */
+describe("buildGateEligibleModuleLoadClosure: zero-entrypoint eligibility (VT-307c-fix-10)", () => {
+  it("returns undefined when entrypoints is empty, even though the project has a genuinely vulnerable dependency present", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0" }),
+    );
+    write(root, "node_modules/vuln-lib/index.js", "module.exports = {};\n");
+    write(root, "package.json", JSON.stringify({ name: "app" }));
+
+    const project = loadTsProject(root);
+    const resolver = createModuleResolver(project);
+    const knownPackageRoots = buildKnownPackageRoots(
+      [dependencyNode("vuln-lib", path.join(root, "node_modules/vuln-lib"))],
+      root,
+    );
+
+    const closure = await buildGateEligibleModuleLoadClosure({
+      entrypoints: [],
+      resolver,
+      knownPackageRoots,
+    });
+
+    expect(closure).toBeUndefined();
+  });
+
+  it("returns the closure unchanged when entrypoints is non-empty and rootFiles ends up non-empty", async () => {
+    const root = tempProject();
+    write(root, "package.json", JSON.stringify({ name: "app" }));
+    const entry = write(
+      root,
+      "src/index.js",
+      "function main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const project = loadTsProject(root);
+    const resolver = createModuleResolver(project);
+    const knownPackageRoots = buildKnownPackageRoots([], root);
+
+    const closure = await buildGateEligibleModuleLoadClosure({
+      entrypoints: [entrypoint(entry)],
+      resolver,
+      knownPackageRoots,
+    });
+
+    expect(closure).toBeDefined();
+    expect(closure?.rootFiles).toEqual([entry]);
+    expect(closure?.complete).toBe(true);
   });
 });

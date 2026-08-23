@@ -614,5 +614,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-057",
+    "dir": "adv2-057-dependency-toplevel-mainmodule-paths-mutation",
+    "category": "57. VT-307c-fix-10 regression: process.mainModule.paths.unshift(...) in a DEPENDENCY's own module top-level scope",
+    "description": "Same shape as ADV2-056, but the widening construct is process.mainModule.paths.unshift(pluginDir) instead of module.paths.unshift(pluginDir) -- the same real bare-specifier search-path shadowing hazard, reached through process.mainModule (Node's own reference to the entrypoint's Module instance) rather than the ambient module binding. Before VT-307c-fix-10, process.mainModule was not recognized by the shared isAmbientModuleInstance provenance helper at all, so this construct was invisible entirely (not even an unsupported_construct edge), even though the equivalent module.paths/require.main.paths forms were already covered by VT-307c-fix-9. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-056.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own process.mainModule.paths.unshift(pluginDir) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), can redirect a SUBSEQUENT bare require() in that same module to an attacker-chosen installed package, including this exact instance. A human analyst cannot rule out reachability here merely because the redirection happens through process.mainModule rather than the plain module binding. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]

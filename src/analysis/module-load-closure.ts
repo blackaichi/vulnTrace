@@ -356,6 +356,88 @@ export async function buildModuleLoadClosure(
   };
 }
 
+/**
+ * Options for {@link buildGateEligibleModuleLoadClosure} (VT-307c-fix-10) --
+ * deliberately stricter than {@link BuildModuleLoadClosureOptions}:
+ * `knownPackageRoots` is REQUIRED here, never optional. The final VT-307d
+ * readiness review found that a closure built WITHOUT it silently loses
+ * identity for every workspace/`file:`-linked package with no
+ * `node_modules` segment of its own -- such a package can be genuinely
+ * loaded and still report zero `loadedPackageInstances`, exactly the
+ * false-absence shape a future negative-proof gate must never be able to
+ * observe. Requiring the field HERE, rather than trusting a caller
+ * convention or an optional caller-set "I promise this is eligible"
+ * boolean, is what actually prevents that: TypeScript refuses to compile a
+ * call site that omits it.
+ */
+export interface BuildGateEligibleModuleLoadClosureOptions extends Omit<
+  BuildModuleLoadClosureOptions,
+  "knownPackageRoots"
+> {
+  readonly knownPackageRoots: KnownPackageRoots;
+}
+
+/**
+ * Builds a {@link ModuleLoadClosure} suitable for VT-307d's own,
+ * separately-reviewed negative-absence-proof gate -- NOT the gate itself.
+ * This is preparation only (VT-307c-fix-10): its sole job is to guarantee
+ * the two structural preconditions the final VT-307d readiness review found
+ * missing, and to make it structurally impossible for a caller to obtain
+ * something claiming eligibility without actually satisfying them --
+ * "structural" in the sense that this is the ONLY function that can hand
+ * back an eligible closure at all, never a boolean flag a caller could set
+ * incorrectly on an otherwise-ordinary one:
+ *
+ * 1. `knownPackageRoots` was genuinely supplied -- enforced by TYPE (see
+ *    {@link BuildGateEligibleModuleLoadClosureOptions}), not by convention.
+ * 2. The closure is rooted at least one real entrypoint file --
+ *    `entrypoints` (and therefore `rootFiles`) is non-empty. The same
+ *    review reproduced the alternative directly: a project where
+ *    entrypoint discovery finds nothing (a real, already-diagnosed
+ *    production state -- see cli/scan.ts's own "no entrypoints were
+ *    discovered" diagnostic, added after a real regression) yields
+ *    `rootFiles: []`, `loadedFiles: []`, `loadedPackageInstances: []`,
+ *    `incompleteness: []`, `complete: true` -- a VACUOUSLY complete
+ *    closure in which every installed package instance is OUT. A gate
+ *    that could not distinguish this from a genuine, exhaustively-
+ *    traversed absence proof would return a false `NOT_AFFECTED` for
+ *    EVERY finding on exactly the projects where nothing could be
+ *    analyzed at all.
+ *
+ * Returns `undefined` -- never a closure claiming eligibility it doesn't
+ * have -- when `entrypoints` is empty (checked before doing any work) or,
+ * defensively, if the resulting closure's own `rootFiles` still ends up
+ * empty. This is a RUNTIME check deliberately layered on top of the
+ * TYPE-level `knownPackageRoots` requirement above: a production
+ * `entrypoints` array comes from entrypoint discovery's own
+ * `readonly Entrypoint[]` return, which TypeScript cannot statically prove
+ * non-empty at any call site, so the emptiness check has to happen here,
+ * at construction time, not merely be assumed by the type signature.
+ *
+ * Deliberately does NOT introduce a separate `GateEligibleModuleLoadClosure`
+ * type distinct from {@link ModuleLoadClosure}: the returned value's own
+ * SHAPE is identical either way -- the only thing that actually needs
+ * guaranteeing is that this function is the sole path capable of producing
+ * one, which VT-307d's own gate is written to call exclusively. This
+ * function intentionally has no verdict-facing caller yet: wiring it into
+ * `cli/scan.ts`/`verdict.ts` is VT-307d's own, separately-reviewed task.
+ */
+export async function buildGateEligibleModuleLoadClosure(
+  options: BuildGateEligibleModuleLoadClosureOptions,
+): Promise<ModuleLoadClosure | undefined> {
+  if (options.entrypoints.length === 0) {
+    return undefined;
+  }
+
+  const closure = await buildModuleLoadClosure(options);
+
+  if (closure.rootFiles.length === 0) {
+    return undefined;
+  }
+
+  return closure;
+}
+
 /** Whether `filePath` is guaranteed to be loaded from the closure's entrypoint roots. */
 export function closureContainsFile(
   closure: ModuleLoadClosure,
