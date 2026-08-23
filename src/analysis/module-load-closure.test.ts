@@ -2604,3 +2604,257 @@ describe("buildGateEligibleModuleLoadClosure: zero-entrypoint eligibility (VT-30
     expect(closure?.complete).toBe(true);
   });
 });
+
+/**
+ * VT-307c-fix-11. The final VT-307d go/no-go audit reproduced four more
+ * concrete in-source escapes end-to-end, each leaving a genuinely-executed
+ * vulnerable package instance OUT of a gate-eligible closure's
+ * loadedPackageInstances while complete stayed true: mutating
+ * Module._pathCache (Node's resolved-PATH memoization cache, distinct from
+ * Module._cache's module-INSTANCE cache) redirects the next resolution of
+ * an otherwise ordinary, statically-resolvable specifier to a planted
+ * file; Module.registerHooks(...) is register(...)'s synchronous,
+ * in-realm sibling (stable since Node 22.15) -- a resolve hook can
+ * short-circuit one specific specifier to a different installed package;
+ * Module._preloadModules([...]) is a direct module-loading primitive,
+ * distinct from every mutation-shaped construct above it; and
+ * Module._readPackage reassignment can rewrite the "main" field Node
+ * resolves for an otherwise perfectly ordinary require() of a real
+ * installed package. All four reuse existing reasons
+ * (loader_hook_mutation for the first three, module_internal_load for
+ * _preloadModules, matching _load's own call-shaped reason) -- no new
+ * DynamicCallReason value was needed. Module._stat was also considered
+ * (the previous audit suggested it defensively) but is deliberately NOT
+ * covered: reproduced directly, even an aggressive _stat override that
+ * unconditionally claims every probed path exists could not redirect
+ * resolution to a different real file -- _stat reports only a boolean
+ * existence code for a candidate path the resolver itself already
+ * constructed, never supplies or redirects to a different path.
+ */
+describe("ModuleLoadClosure: Module._pathCache/registerHooks/_preloadModules/_readPackage (VT-307c-fix-11)", () => {
+  it.each([
+    [
+      "Module._pathCache[key] = plantedPath (element mutation)",
+      "const Module = require('module');\nModule._pathCache[process.env.K] = process.env.V;\nmodule.exports = {};\n",
+    ],
+    [
+      "Module._pathCache = {} (whole-object replacement)",
+      "const Module = require('module');\nModule._pathCache = {};\nmodule.exports = {};\n",
+    ],
+    [
+      "require('module')._pathCache[key] = ... (inline whole-module form)",
+      "require('module')._pathCache[process.env.K] = process.env.V;\nmodule.exports = {};\n",
+    ],
+    [
+      "module.constructor._pathCache = {} (ambient .constructor form)",
+      "module.constructor._pathCache = {};\nmodule.exports = {};\n",
+    ],
+    [
+      "require.main.constructor._pathCache[key] = ...",
+      "require.main.constructor._pathCache[process.env.K] = process.env.V;\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.constructor._pathCache = {}",
+      "process.mainModule.constructor._pathCache = {};\nmodule.exports = {};\n",
+    ],
+    [
+      "Module.registerHooks({ resolve(...) {...} })",
+      "const Module = require('module');\nModule.registerHooks({ resolve(s,c,n){ return n(s,c); } });\nmodule.exports = {};\n",
+    ],
+    [
+      "require('module').registerHooks({...}) (inline whole-module form)",
+      "require('module').registerHooks({ resolve(s,c,n){ return n(s,c); } });\nmodule.exports = {};\n",
+    ],
+    [
+      "require('node:module').registerHooks({...})",
+      "require('node:module').registerHooks({ resolve(s,c,n){ return n(s,c); } });\nmodule.exports = {};\n",
+    ],
+    [
+      "const { registerHooks } = require('module'); registerHooks({...}) (CJS destructuring)",
+      "const { registerHooks } = require('module');\nregisterHooks({ resolve(s,c,n){ return n(s,c); } });\nmodule.exports = {};\n",
+    ],
+    [
+      "Module._readPackage = fn",
+      "const Module = require('module');\nModule._readPackage = function(p,b){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "module.constructor._readPackage = fn (ambient .constructor form)",
+      "module.constructor._readPackage = function(p,b){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "require.main.constructor._readPackage = fn",
+      "require.main.constructor._readPackage = function(p,b){ return {}; };\nmodule.exports = {};\n",
+    ],
+    [
+      "process.mainModule.constructor._readPackage = fn",
+      "process.mainModule.constructor._readPackage = function(p,b){ return {}; };\nmodule.exports = {};\n",
+    ],
+  ])("%s makes the closure incomplete", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it.each([
+    [
+      "Module._preloadModules(['vuln-lib']) -- module_internal_load, not loader_hook_mutation",
+      "const Module = require('module');\nModule._preloadModules(['vuln-lib']);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "module.constructor._preloadModules(['vuln-lib']) (ambient .constructor form)",
+      "module.constructor._preloadModules(['vuln-lib']);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "require.main.constructor._preloadModules(['vuln-lib'])",
+      "require.main.constructor._preloadModules(['vuln-lib']);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "process.mainModule.constructor._preloadModules(['vuln-lib'])",
+      "process.mainModule.constructor._preloadModules(['vuln-lib']);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+  ])(
+    "%s produces the correct specific reason",
+    async (_label, source, expectedReason) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toEqual([expectedReason]);
+    },
+  );
+
+  it.each([
+    [
+      "1 user.Module._pathCache -- user is not module-builtin-bound",
+      "const user = { Module: { _pathCache: {} } };\nuser.Module._pathCache[process.env.K] = process.env.V;\nmodule.exports = {};\n",
+    ],
+    [
+      "2 obj._pathCache -- obj is not Node's Module constructor",
+      "const obj = { _pathCache: {} };\nobj._pathCache[process.env.K] = process.env.V;\nmodule.exports = {};\n",
+    ],
+    [
+      "3 user._pathCache (no Module at all) -- no provenance",
+      "const user = {};\nuser._pathCache = {};\nuser._pathCache[process.env.K] = process.env.V;\nmodule.exports = {};\n",
+    ],
+    [
+      "4 user.registerHooks() -- user is not the module/node:module builtin",
+      "const user = { registerHooks(){} };\nuser.registerHooks({ resolve(){} });\nmodule.exports = {};\n",
+    ],
+    [
+      "5 user.Module.registerHooks() -- user.Module is not module-builtin-bound",
+      "const user = { Module: { registerHooks(){} } };\nuser.Module.registerHooks({ resolve(){} });\nmodule.exports = {};\n",
+    ],
+    [
+      "6 user.Module._preloadModules() -- user.Module is not module-builtin-bound",
+      "const user = { Module: { _preloadModules(){} } };\nuser.Module._preloadModules(['x']);\nmodule.exports = {};\n",
+    ],
+    [
+      "7 obj.constructor._preloadModules() -- obj is not a real Module instance",
+      "class Foo { static _preloadModules(){} }\nconst obj = new Foo();\nobj.constructor._preloadModules(['x']);\nmodule.exports = {};\n",
+    ],
+    [
+      "8 user.Module._readPackage -- user.Module is not module-builtin-bound",
+      "const user = { Module: { _readPackage(){} } };\nuser.Module._readPackage = function(){ return {}; };\nmodule.exports = {};\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-fix-11 precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("a Module._pathCache poisoning in a never-called function still makes the closure incomplete", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "function neverCalled(){ const Module = require('module'); Module._pathCache[process.env.K] = process.env.V; }\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it("a Module.registerHooks(...) call in a file reached ONLY through a re-export still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(
+      root,
+      "src/hidden.js",
+      "const Module = require('module');\nModule.registerHooks({ resolve(s,c,n){ return n(s,c); } });\nmodule.exports.x = 1;\n",
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      'export * from "./hidden.js";\n',
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closureContainsFile(closure, path.join(root, "src/hidden.js"))).toBe(
+      true,
+    );
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it("a Module._preloadModules([...]) call in a loaded dependency's own module scope still makes the closure incomplete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/foo/package.json",
+      JSON.stringify({ name: "foo", version: "1.0.0" }),
+    );
+    write(
+      root,
+      "node_modules/foo/index.js",
+      "const Module = require('module');\nModule._preloadModules(['vuln-lib']);\nmodule.exports = {};\n",
+    );
+    const entry = write(
+      root,
+      "src/index.js",
+      "require('foo');\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("module_internal_load");
+  });
+
+  it("a Module._readPackage reassignment at entrypoint top-level makes the closure incomplete", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nModule._readPackage = function(p,b){ return {}; };\nfunction main(){ return 1; }\nmodule.exports = { main };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+});

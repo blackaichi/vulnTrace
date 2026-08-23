@@ -1704,6 +1704,86 @@ describe("buildCallGraph: process.mainModule.paths mutating-method calls (VT-307
   );
 });
 
+/**
+ * VT-307c-fix-11. Two of the four newly-covered constructs are CALL-shaped
+ * (`Module.registerHooks(...)`, `Module._preloadModules(...)`), so they
+ * flow through the same `classifyLoaderConstruct` dispatch every other
+ * call-shaped loader construct in this file already does, with no
+ * call-graph.ts change at all. The other two (`Module._pathCache`
+ * mutation, `Module._readPackage` reassignment) are ASSIGNMENT-shaped and
+ * have no CallGraph edge shape to represent, under the same pre-existing
+ * architectural boundary documented in the fix-9/fix-10 describe blocks
+ * above; `ModuleLoadClosure` is the sole place that records those (see
+ * module-load-closure.test.ts's own VT-307c-fix-11 describe block).
+ */
+describe("buildCallGraph: Module.registerHooks/_preloadModules calls (VT-307c-fix-11)", () => {
+  it.each([
+    [
+      "Module.registerHooks({ resolve(...) {...} })",
+      "loader_hook_mutation",
+      "function main(){ const Module = require('module'); Module.registerHooks({ resolve(s,c,n){ return n(s,c); } }); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "require('node:module').registerHooks({...})",
+      "loader_hook_mutation",
+      "function main(){ require('node:module').registerHooks({ resolve(s,c,n){ return n(s,c); } }); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "Module._preloadModules(['vuln-lib'])",
+      "module_internal_load",
+      "function main(){ const Module = require('module'); Module._preloadModules(['vuln-lib']); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "module.constructor._preloadModules(['vuln-lib'])",
+      "module_internal_load",
+      "function main(){ module.constructor._preloadModules(['vuln-lib']); }\nmodule.exports = { main };\n",
+    ],
+  ])("classifies %s as %s", async (_label, expectedReason, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: expectedReason,
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "user.registerHooks() -- user is not the module/node:module builtin",
+      "function main(){ const user = { registerHooks(){} }; user.registerHooks({}); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "user.Module._preloadModules() -- user.Module is not module-builtin-bound",
+      "function main(){ const user = { Module: { _preloadModules(){} } }; user.Module._preloadModules(['x']); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "does NOT classify %s as a widening reason (precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(
+        graph.edges.some(
+          (e) =>
+            e.resolution.kind === "unknown" &&
+            (e.resolution.reason === "loader_hook_mutation" ||
+              e.resolution.reason === "module_internal_load"),
+        ),
+      ).toBe(false);
+    },
+  );
+});
+
 describe("buildCallGraph: completeness invariant (VT-201)", () => {
   it("resolves a call through a locally-bound parameter to the real function passed at the call site (VT-210)", async () => {
     const root = tempProject();
