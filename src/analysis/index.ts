@@ -5,10 +5,12 @@ export {
   discoverEntrypoints,
 } from "./entrypoints.js";
 export {
+  type BuildGateEligibleModuleLoadClosureOptions,
   type BuildModuleLoadClosureOptions,
   type ClosureIncompleteness,
   type ClosureIncompletenessReason,
   type ModuleLoadClosure,
+  buildGateEligibleModuleLoadClosure,
   buildModuleLoadClosure,
   closureContainsFile,
   closureContainsPackageInstance,
