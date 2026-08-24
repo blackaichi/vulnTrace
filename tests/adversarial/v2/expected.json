@@ -669,5 +669,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-062",
+    "dir": "adv2-062-dependency-toplevel-prototype-alias-escape",
+    "category": "62. VT-307c-provenance-closure regression: Module.prototype held in a const, then used through an alias to reach a static loading primitive, in a DEPENDENCY's own module top-level scope",
+    "description": "Pins the PROVENANCE-RESOLUTION defect class the final invariant certification found, distinct from every prior VT-307c-capability-flow/floor container-spelling regression (ADV2-050 through ADV2-061): the classifier's alias-EXEMPTION relation (which decided a `const proto = Module.prototype;` declaration was safe to leave untouched, since it merely creates an alias) was BROADER than what the classifier's OWN use-site resolvers could resolve `proto` back to. `Module.prototype` was neither a recognized capability VALUE (so it never escaped at its own declaration) nor a resolvable RECEIVER through an alias (so `proto.constructor` was never recognized as reaching the Module constructor again) -- it fell between both layers. vt2-holder's own module does `const proto = Module.prototype; proto.constructor._preloadModules(['vt2-vuln-lib']);` at its own top level -- built from two spellings (`Module.prototype`, `.constructor`, `_preloadModules`) the classifier had separately understood since VT-307c-fix-6, just never composed through this one alias hop. Reproduced end-to-end by the final certification with NO unknown Node API name and NO novel value-container syntax involved anywhere. VT-307c-provenance-closure closes this by making `Module.prototype` a first-class, independently resolvable capability kind in a single shared relation every receiver/value/callee check in the classifier now consults. Before that fix this construct was invisible entirely (not even an unsupported_construct edge). The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-061.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `const proto = Module.prototype; proto.constructor._preloadModules(['vt2-vuln-lib']);`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), directly loads a package by name using Node's own module-loading primitive, reached through an aliased `Module.prototype`. A human analyst cannot rule out reachability here merely because the constructor was reached through a stored `.prototype` alias rather than a direct `Module.<member>` spelling. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]

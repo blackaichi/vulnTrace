@@ -130,20 +130,49 @@ function isNamedBuiltinBinding(
 }
 
 /**
+ * The maximum number of `const`-alias hops any recursive resolver in this
+ * file will follow before giving up (VT-307c-provenance-closure Part 7).
+ * A cyclic alias -- `const a = b; const b = a;`, or any longer cycle a
+ * naive same-NAME whole-file search can produce (see
+ * {@link resolveSingleAssignmentValue}'s own "first-match-wins,
+ * no-scope-awareness" doc comment: two unrelated `const`s in different
+ * scopes that happen to share a name can look like a genuine mutual
+ * reference to this lookup even when the real runtime data flow is
+ * unrelated) -- previously caused UNBOUNDED recursion here, a real
+ * `RangeError: Maximum call stack size exceeded` crash reproduced
+ * end-to-end at VT-307c-value-flow-closure's own base commit. 40 is far
+ * beyond any depth a real alias chain in this codebase's own test suite
+ * or the real-world validation corpus ever reaches (the deepest
+ * legitimate chain tested is 3 hops), so it never truncates genuine
+ * resolution, while still terminating orders of magnitude before any
+ * real stack-overflow risk.
+ */
+const MAX_ALIAS_RESOLUTION_DEPTH = 40;
+
+/**
  * Resolves `expr` to the Node builtin module name it refers to as a WHOLE
  * value, or `undefined` if it can't be traced to one. Handles the inline
  * `require("vm")`/`require("node:vm")` call form directly (no local
  * binding at all -- `require("module").createRequire`'s own root shape),
  * a direct whole-module import/require binding
- * ({@link wholeModuleBuiltinFor}), and ONE `const`-alias hop from such a
- * binding (`const whole = require("vm"); const alias = whole;` -- the same
- * single-hop scope {@link resolveSingleAssignmentValue} already documents
- * elsewhere in this codebase).
+ * ({@link wholeModuleBuiltinFor}), and an UNBOUNDED-depth `const`-alias
+ * chain from such a binding (`const whole = require("vm"); const a2 =
+ * whole; const a3 = a2; ...`), cycle/excessive-depth protected via
+ * {@link MAX_ALIAS_RESOLUTION_DEPTH} -- VT-307c-provenance-closure widens
+ * this from the single-hop scope earlier revisions of this file
+ * documented: a `require`-alias chain of depth 2+ was one of the final
+ * certification's reproduced blockers (Family D), and this function's own
+ * unbounded self-recursion, with no depth guard at all, was separately
+ * the exact site of the certification's reproduced crash.
  */
 function resolveWholeModuleBuiltin(
   expr: ts.Expression,
   context: LoaderClassificationContext,
+  depth = 0,
 ): string | undefined {
+  if (depth > MAX_ALIAS_RESOLUTION_DEPTH) {
+    return undefined;
+  }
   if (ts.isCallExpression(expr) && isStaticRequireCall(expr)) {
     const specifier = (expr.arguments[0] as ts.StringLiteral).text;
     return builtinNameFromSpecifier(specifier);
@@ -158,7 +187,7 @@ function resolveWholeModuleBuiltin(
       context.index.sourceFile,
     );
     if (initializer) {
-      return resolveWholeModuleBuiltin(initializer, context);
+      return resolveWholeModuleBuiltin(initializer, context, depth + 1);
     }
   }
   return undefined;
@@ -392,96 +421,313 @@ function isAmbientModuleInstance(expr: ts.Expression): boolean {
 }
 
 /**
- * Whether `expr` provably resolves to Node's `Module` constructor itself
- * (VT-307c-fix-6) -- the class every required CommonJS module is an
- * instance of, and the class whose own static/prototype members
- * (`_load`, `prototype.require`, `prototype.load`) ARE `require()`'s
- * underlying implementation. Recognizes every ordinary way a file can
- * reach it:
- *
- * - a whole-module reference to the `module`/`node:module` builtin
- *   itself: Node's own `lib/internal/modules/cjs/loader.js` does
- *   `Module.Module = Module; module.exports = Module;`, so
- *   `require("module")` (or an ESM default/namespace import of it) IS
- *   already the `Module` constructor, not a wrapper around it -- reuses
- *   {@link resolveWholeModuleBuiltin} directly;
- * - `<whole>.Module` -- the same self-reference accessed explicitly
- *   (`require("module").Module`, or `M.Module` for a whole-module-bound
- *   `M`), which real code sometimes writes even though it's redundant
- *   with the point above;
- * - `<ambient-instance>.constructor` -- any real `Module` instance's own
- *   `.constructor` IS the `Module` class, whether that instance is the
- *   ambient `module` or `require.main` ({@link isAmbientModuleInstance},
- *   VT-307c-fix-7 Part 7 generalizes this branch from `module.constructor`
- *   alone to also cover `require.main.constructor`);
- * - ONE `const`-alias hop from any of the above (`const Mod =
- *   module.constructor;` / `const Mod = require("module").Module;`).
- *
- * Never matches an arbitrary same-file class/object that merely happens
- * to be named `Module`, expose a `.Module` property, or have its own
- * `.constructor` -- every branch above requires either real Node-builtin
- * import provenance or one of the two literal ambient module-instance
- * references, never a bare name/shape match (VT-307c-fix-6 Part 3/8's
- * precision requirement; see this file's own precision-control tests).
+ * Whether `localName` is bound, in this file, as an ESM NAMESPACE import
+ * (`import * as localName from "..."`) of Node builtin `builtin` -- the
+ * receiver-side half of the `.default` self-reference check below
+ * ({@link resolveLoaderCapability}'s Family-A namespace case).
  */
-function resolvesToModuleConstructor(
-  expr: ts.Expression,
+function isNamespaceBuiltinBinding(
+  localName: string,
+  builtin: string,
   context: LoaderClassificationContext,
 ): boolean {
-  if (resolveWholeModuleBuiltin(expr, context) === "module") {
-    return true;
+  return context.model.imports.some(
+    (imp) =>
+      imp.localName === localName &&
+      imp.kind === "namespace" &&
+      builtinNameFromSpecifier(imp.specifier) === builtin,
+  );
+}
+
+/**
+ * What {@link resolveLoaderCapability} can determine an expression denotes:
+ * either one of the five BASE authoritative-capability shapes this
+ * classifier has always modeled (the `Module` constructor itself, a real
+ * `Module` INSTANCE, `Module.prototype`, the ambient `require` FUNCTION,
+ * or the RESULT of calling `createRequire(...)`), a MEMBER value read off
+ * the constructor or its prototype (`Module._preloadModules`,
+ * `Module.prototype.require`, ... -- present whether that member is
+ * itself dangerous, safe, or unrecognized; the reason tables this
+ * classifier already maintains decide that, not this relation), the
+ * ambient `eval` identifier (tracked here only so alias-chasing it is the
+ * SAME mechanism as `require`'s, not a parallel one), or `"ambiguous"`
+ * (resolution hit {@link MAX_ALIAS_RESOLUTION_DEPTH} -- a cycle, or a
+ * chain too deep to safely keep following -- and must not be silently
+ * treated as "no capability here").
+ */
+type ResolvedLoaderCapability =
+  | { readonly kind: "module_constructor" }
+  | { readonly kind: "module_instance" }
+  | { readonly kind: "module_prototype" }
+  | { readonly kind: "ambient_require" }
+  | { readonly kind: "ambient_eval" }
+  | { readonly kind: "create_require_result" }
+  | { readonly kind: "module_constructor_member"; readonly member: string }
+  | { readonly kind: "module_prototype_member"; readonly member: string }
+  | { readonly kind: "ambiguous" };
+
+/**
+ * VT-307c-provenance-closure. The final invariant certification found 12
+ * end-to-end violations (real Node execution + a gate-eligible, complete
+ * closure + the exact installed package OUT), all instances of ONE
+ * property, not twelve spellings: THE ALIAS-EXEMPTION RELATION WAS
+ * BROADER THAN THE PROVENANCE-RESOLUTION RELATION. A `const <id> = <capability
+ * expr>` declaration was exempted from escape (per
+ * {@link isNonAliasCapabilityEscape}) on the promise that the SAME
+ * capability would be recognized again wherever `<id>` was later USED --
+ * but the five resolvers doing that recognition (this function's
+ * predecessor `resolvesToModuleConstructor`, {@link isAuthoritativeCapabilityReceiver},
+ * {@link isModuleConstructorLoader}, {@link resolvesToCreateRequireExport},
+ * and `classifyLoaderConstruct`'s own identifier branch) each independently
+ * resolved LESS than the exemption assumed: one hop instead of unbounded
+ * depth for `require`; identifier-only instead of stored PROPERTY VALUES
+ * for named exports; purely syntactic (never alias-resolving) for the
+ * `.prototype` receiver case; non-recursive for the `<whole>.Module`
+ * self-reference, unlike its own `.constructor` sibling; and no
+ * consultation of {@link isNamedBuiltinBinding} at all for ESM named
+ * imports of `Module` itself. Wherever the promise wasn't kept, the
+ * capability vanished in BOTH directions at once: no escape recorded at
+ * the declaration, no provenance recognized at the use.
+ *
+ * The fix is architectural, not five patches: THIS function is now the
+ * SINGLE relation every one of those five call sites consults (each
+ * reduced to a thin wrapper below), so "what capability does this
+ * declaration's initializer denote" and "what capability does this USE
+ * SITE'S expression denote" are answered by the literal same code, not by
+ * two hand-maintained checks that can drift apart again. The alias
+ * exemption ({@link isNonAliasCapabilityEscape}) is unchanged in its OWN
+ * logic -- it still asks "does `isAuthoritativeCapabilityValue` hold for
+ * this initializer" -- but `isAuthoritativeCapabilityValue` itself is now
+ * `resolveLoaderCapability(expr) !== undefined`, so the exemption is the
+ * exact inverse of resolution BY CONSTRUCTION, not by two authors keeping
+ * two functions in sync by hand.
+ *
+ * Recognizes every ordinary way a file can reach an authoritative
+ * capability, UNBOUNDED-depth and cycle-safe throughout (every recursive
+ * call below threads `depth`, checked once at the top against
+ * {@link MAX_ALIAS_RESOLUTION_DEPTH}):
+ *
+ * - a whole-module reference to the `module`/`node:module` builtin
+ *   itself IS the `Module` constructor (`require("module")`, or an ESM
+ *   default/namespace import of it) -- {@link resolveWholeModuleBuiltin};
+ * - a NAMED/destructured `Module` export binding (`import { Module } from
+ *   "module"`, `const { Module } = require("module")`, including aliased
+ *   forms) -- reuses {@link isNamedBuiltinBinding}, the SAME mechanism
+ *   already modeling every other named builtin export, rather than a
+ *   parallel one;
+ * - an ESM NAMESPACE import's `.default` property, which Node's CJS-ESM
+ *   interop sets to the whole `module.exports` value (`import * as M from
+ *   "module"; M.default`);
+ * - `<X>.Module` -- the self-reference Node's own loader sets up
+ *   (`Module.Module = Module`) -- recognized through the SAME recursive
+ *   call this function makes for every other shape, so
+ *   `Module.Module.Module...` converges at any depth with no per-depth
+ *   branch, unlike the non-recursive check this replaces;
+ * - `<X>.prototype` off the constructor -- `Module.prototype` -- is now a
+ *   first-class capability kind of its own (`module_prototype`), not
+ *   merely a syntactic pattern `.prototype.<member>` had to spell out
+ *   inline; this is what lets `const proto = Module.prototype;` alone
+ *   carry full provenance, aliased or not;
+ * - `<X>.constructor` off a `Module` INSTANCE (ambient `module`,
+ *   `require.main`, `process.mainModule`, or an ALIAS of any of them) OR
+ *   off `Module.prototype` IS the `Module` constructor -- by definition
+ *   for the former, by JS's own `Fn.prototype.constructor === Fn`
+ *   invariant for the latter;
+ * - any OTHER member off the constructor or its prototype is a
+ *   resolvable MEMBER VALUE (`Module._preloadModules`,
+ *   `Module.createRequire`, `Module.prototype.require`, ...) --
+ *   deliberately member-NAME-agnostic: this relation answers "what does
+ *   this expression denote", never "is this specific member dangerous"
+ *   (that remains {@link MODULE_CONSTRUCTOR_STATIC_MEMBERS}/
+ *   {@link MODULE_CONSTRUCTOR_PROTOTYPE_MEMBERS}/
+ *   {@link MODULE_CONSTRUCTOR_SAFE_CALLS}'s job, applied at the
+ *   classification site);
+ * - `new <ctor>(...)` where `<ctor>` resolves to the constructor produces
+ *   a `Module` INSTANCE;
+ * - a call whose callee resolves to the constructor's own `createRequire`
+ *   member produces a createRequire RESULT;
+ * - an UNBOUNDED-depth same-file `const`-alias chain from any of the
+ *   above, cycle-safe via the shared depth budget.
+ *
+ * Never matches an arbitrary same-file class/object that merely happens
+ * to be named `Module`, expose a `.Module`/`.prototype` property, or have
+ * its own `.constructor` -- every branch requires either real Node-builtin
+ * import provenance or one of the ambient module-instance references,
+ * never a bare name/shape match (see this file's own precision-control
+ * tests).
+ */
+function resolveLoaderCapability(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+  depth = 0,
+): ResolvedLoaderCapability | undefined {
+  if (depth > MAX_ALIAS_RESOLUTION_DEPTH) {
+    return { kind: "ambiguous" };
   }
 
-  if (ts.isPropertyAccessExpression(expr) && expr.name.text === "Module") {
-    if (resolveWholeModuleBuiltin(expr.expression, context) === "module") {
-      return true;
+  // Ambient globals, matched by literal identifier chain only -- no
+  // provenance check applies, the same deliberate simplification this
+  // file already applies to `module`/`require`/`process` elsewhere.
+  if (isAmbientModuleInstance(expr)) {
+    return { kind: "module_instance" };
+  }
+  if (isAmbientRequireFunctionIdentifier(expr)) {
+    return { kind: "ambient_require" };
+  }
+  if (ts.isIdentifier(expr) && expr.text === "eval") {
+    return { kind: "ambient_eval" };
+  }
+
+  // Whole-module reference to the `module`/`node:module` builtin IS the
+  // Module constructor (Node's own loader does `module.exports = Module`).
+  if (resolveWholeModuleBuiltin(expr, context, depth) === "module") {
+    return { kind: "module_constructor" };
+  }
+
+  // Named/destructured `Module` export binding (Family A).
+  if (
+    ts.isIdentifier(expr) &&
+    isNamedBuiltinBinding(expr.text, "module", "Module", context)
+  ) {
+    return { kind: "module_constructor" };
+  }
+
+  // ESM namespace import's `.default` property IS the whole default
+  // export (Family A namespace case).
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    expr.name.text === "default" &&
+    ts.isIdentifier(expr.expression) &&
+    isNamespaceBuiltinBinding(expr.expression.text, "module", context)
+  ) {
+    return { kind: "module_constructor" };
+  }
+
+  if (ts.isPropertyAccessExpression(expr)) {
+    const receiverKind = resolveLoaderCapability(
+      expr.expression,
+      context,
+      depth + 1,
+    );
+
+    // `<X>.Module` self-reference off an already-resolved constructor
+    // (Family B) -- recurses through this SAME function, so arbitrary-
+    // depth self-reference chains converge with no per-depth logic.
+    if (
+      expr.name.text === "Module" &&
+      receiverKind?.kind === "module_constructor"
+    ) {
+      return { kind: "module_constructor" };
+    }
+
+    // `<X>.prototype` off the constructor -> Module.prototype, a
+    // first-class capability kind (Family C).
+    if (
+      expr.name.text === "prototype" &&
+      receiverKind?.kind === "module_constructor"
+    ) {
+      return { kind: "module_prototype" };
+    }
+
+    // `<X>.constructor` off a Module instance OR off Module.prototype IS
+    // the Module constructor.
+    if (
+      expr.name.text === "constructor" &&
+      (receiverKind?.kind === "module_instance" ||
+        receiverKind?.kind === "module_prototype")
+    ) {
+      return { kind: "module_constructor" };
+    }
+
+    // Any other member off the constructor or its prototype is a
+    // resolvable member value (Family C/D), whether reached directly or
+    // through an arbitrary alias chain.
+    if (receiverKind?.kind === "module_constructor") {
+      return { kind: "module_constructor_member", member: expr.name.text };
+    }
+    if (receiverKind?.kind === "module_prototype") {
+      return { kind: "module_prototype_member", member: expr.name.text };
+    }
+
+    if (receiverKind?.kind === "ambiguous") {
+      return { kind: "ambiguous" };
     }
   }
 
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "constructor" &&
-    isAmbientModuleInstance(expr.expression)
-  ) {
-    return true;
+  // `new <ctor>(...)` where `<ctor>` resolves to the constructor produces
+  // a Module instance.
+  if (ts.isNewExpression(expr)) {
+    const ctorKind = resolveLoaderCapability(
+      expr.expression,
+      context,
+      depth + 1,
+    );
+    if (ctorKind?.kind === "module_constructor") {
+      return { kind: "module_instance" };
+    }
+    if (ctorKind?.kind === "ambiguous") {
+      return { kind: "ambiguous" };
+    }
   }
 
-  // VT-307c-capability-flow Part 12: `<X>.prototype.constructor` IS `<X>`
-  // itself, by JS's own `Fn.prototype.constructor === Fn` invariant -- a
-  // provenance-PRESERVING identity step, not a new spelling to enumerate.
-  // Closing this over the SAME `resolvesToModuleConstructor` recursion
-  // every other branch here already uses means it composes for free with
-  // every existing spelling (`Module.prototype.constructor`,
-  // `module.constructor.prototype.constructor`, ...) and with the
-  // existing unknown-member receiver fallback: once
-  // `Module.prototype.constructor` resolves as the Module constructor,
-  // `Module.prototype.constructor._preloadModules(...)` converges on the
-  // exact same `MODULE_CONSTRUCTOR_STATIC_MEMBERS` dispatch as
-  // `Module._preloadModules(...)`, and `Module.prototype.constructor.
-  // someFutureThing(...)` converges on the same unknown-member
-  // `loader_capability_escape` fallback as `Module.someFutureThing(...)` --
-  // with zero new logic beyond this one identity-closure step.
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "constructor" &&
-    ts.isPropertyAccessExpression(expr.expression) &&
-    expr.expression.name.text === "prototype" &&
-    resolvesToModuleConstructor(expr.expression.expression, context)
-  ) {
-    return true;
+  // A call whose callee resolves to the constructor's own `createRequire`
+  // member -- directly or through an alias -- produces a createRequire
+  // RESULT (Family D).
+  if (ts.isCallExpression(expr)) {
+    const calleeKind = resolveLoaderCapability(
+      expr.expression,
+      context,
+      depth + 1,
+    );
+    if (
+      calleeKind?.kind === "module_constructor_member" &&
+      calleeKind.member === "createRequire"
+    ) {
+      return { kind: "create_require_result" };
+    }
+    if (calleeKind?.kind === "ambiguous") {
+      return { kind: "ambiguous" };
+    }
   }
 
+  // Same-file `const`-alias chain, unbounded depth (bounded only by the
+  // shared budget above), cycle-safe.
   if (ts.isIdentifier(expr)) {
     const initializer = resolveSingleAssignmentValue(
       expr.text,
       context.index.sourceFile,
     );
-    return initializer !== undefined
-      ? resolvesToModuleConstructor(initializer, context)
-      : false;
+    if (initializer !== undefined) {
+      return resolveLoaderCapability(initializer, context, depth + 1);
+    }
   }
 
-  return false;
+  return undefined;
+}
+
+/**
+ * Whether `expr` provably resolves to Node's `Module` constructor itself
+ * -- a thin wrapper over {@link resolveLoaderCapability}, kept under this
+ * name since it is still the most-called single check in this file
+ * (VT-307c-fix-6 through VT-307c-value-flow-closure all reference it by
+ * name); every one of its many existing call sites (the `_extensions`/
+ * `_cache`/`wrapper`/`_pathCache` registry checks,
+ * {@link isModuleConstructorMutableStaticMember}, ...) now benefits from
+ * the shared relation's full resolving power with no edit of its own.
+ */
+function resolvesToModuleConstructor(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  return resolveLoaderCapability(expr, context)?.kind === "module_constructor";
+}
+
+/** Whether `expr` provably resolves to `Module.prototype` itself -- a thin wrapper over {@link resolveLoaderCapability}. */
+function resolvesToModulePrototype(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  return resolveLoaderCapability(expr, context)?.kind === "module_prototype";
 }
 
 /**
@@ -506,40 +752,22 @@ const MODULE_INSTANCE_METHOD_REASONS: ReadonlyMap<string, DynamicCallReason> =
   ]);
 
 /**
- * Whether `expr` is provably a `Module` instance (VT-307c-fix-6 Part 7;
- * VT-307c-fix-7 Part 3/7 extends this from ONLY explicit `new
- * <ModuleConstructor>(...)` construction to also recognize the two ambient
- * Module-instance references every CommonJS file already has --
- * {@link isAmbientModuleInstance} -- since `module._compile(...)` and
- * `require.main._compile(...)`/`.load(...)` never go through `new` at
- * all). Otherwise either constructed inline (`new M.Module('x').load(path)`)
- * or bound to a local `const` whose single initializer constructs one.
- * Deliberately minimal, targeted provenance mirroring
- * {@link isVmConstructedInstance}'s own identical shape for `vm.Script`/
- * `vm.SourceTextModule` -- not a general object-type inference engine.
+ * Whether `expr` is provably a `Module` instance -- a thin wrapper over
+ * {@link resolveLoaderCapability}, which recognizes the ambient instances
+ * (`module`/`require.main`/`process.mainModule`), `new <ctor>(...)`
+ * construction where `<ctor>` resolves to the `Module` constructor, and
+ * an UNBOUNDED-depth `const`-alias chain from either -- strictly more
+ * powerful than this function's predecessor, which only followed ONE
+ * alias hop and only for the `new`-construction case (an ambient-instance
+ * ALIAS, `const mod = module;`, previously round-tripped through
+ * {@link isAuthoritativeCapabilityValue}'s own separate identifier-alias
+ * branch but not through this specific check).
  */
 function isModuleConstructorInstance(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): boolean {
-  if (isAmbientModuleInstance(expr)) {
-    return true;
-  }
-  if (ts.isNewExpression(expr)) {
-    return resolvesToModuleConstructor(expr.expression, context);
-  }
-  if (ts.isIdentifier(expr)) {
-    const initializer = resolveSingleAssignmentValue(
-      expr.text,
-      context.index.sourceFile,
-    );
-    return (
-      initializer !== undefined &&
-      ts.isNewExpression(initializer) &&
-      resolvesToModuleConstructor(initializer.expression, context)
-    );
-  }
-  return false;
+  return resolveLoaderCapability(expr, context)?.kind === "module_instance";
 }
 
 /**
@@ -615,67 +843,70 @@ const MODULE_CONSTRUCTOR_PROTOTYPE_MEMBERS: ReadonlyMap<
 
 /**
  * The closure-widening reason for `expr` if it is one of Node's
- * `Module`-constructor-level loading primitives (VT-307c-fix-6 Parts 4-6;
- * VT-307c-fix-7 Parts 3/6): `<ModuleCtor>._load(...)`,
+ * `Module`-constructor-level loading primitives: `<ModuleCtor>._load(...)`,
  * `<ModuleCtor>.createRequire(...)`, `<ModuleCtor>.prototype.require(...)`,
  * `<ModuleCtor>.prototype.load(...)`, or `<ModuleCtor>.prototype._compile
- * (...)` -- with or without an explicit `.call`/`.apply` thisArg.
- * `<ModuleCtor>` is resolved via {@link resolvesToModuleConstructor}, so
- * every spelling (`Module._load`, `module.constructor._load`,
- * `require("module").Module._load`, `M.Module.prototype.require.call`,
- * `require.main.constructor._load`, ...) converges on the same provenance
- * check and the same reason. Returns `undefined` (not `false`) when `expr`
- * is not one of these members at all, so callers can distinguish "not a
- * Module-constructor-level primitive" from any specific reason.
+ * (...)` -- with or without an explicit `.call`/`.apply` thisArg, reached
+ * DIRECTLY or through an arbitrary `const`-alias chain
+ * (VT-307c-provenance-closure: `const pre = Module._preloadModules; pre(
+ * ['vuln'])` and `const proto = Module.prototype; proto.constructor.
+ * _preloadModules(...)` were both reproduced end-to-end blockers of the
+ * predecessor of this function, which required `expr` to be SYNTACTICALLY
+ * a property access and so never saw either aliased form).
+ *
+ * `expr` (after `.call`/`.apply` stripping) is resolved as a single
+ * expression through {@link resolveLoaderCapability} -- the SAME relation
+ * every other receiver/value check in this file now shares -- so a bare
+ * alias of a static/prototype member resolves through the identical
+ * "member off constructor/prototype" step a DIRECT `Module.<member>`
+ * access does, with no separate logic for the two forms. Returns
+ * `undefined` (not `false`) when `expr` is not one of these members at
+ * all, so callers can distinguish "not a Module-constructor-level
+ * primitive" from any specific reason.
  */
 function isModuleConstructorLoader(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): DynamicCallReason | undefined {
   const target = stripCallApplySuffix(expr);
-  if (!ts.isPropertyAccessExpression(target)) {
+  const capability = resolveLoaderCapability(target, context);
+  if (capability === undefined) {
     return undefined;
   }
-
-  const staticReason = MODULE_CONSTRUCTOR_STATIC_MEMBERS.get(target.name.text);
-  if (staticReason && resolvesToModuleConstructor(target.expression, context)) {
-    return staticReason;
+  if (capability.kind === "module_constructor_member") {
+    return MODULE_CONSTRUCTOR_STATIC_MEMBERS.get(capability.member);
   }
-
-  const prototypeReason = MODULE_CONSTRUCTOR_PROTOTYPE_MEMBERS.get(
-    target.name.text,
-  );
-  if (prototypeReason) {
-    const owner = target.expression;
-    if (
-      ts.isPropertyAccessExpression(owner) &&
-      owner.name.text === "prototype" &&
-      resolvesToModuleConstructor(owner.expression, context)
-    ) {
-      return prototypeReason;
-    }
+  if (capability.kind === "module_prototype_member") {
+    return MODULE_CONSTRUCTOR_PROTOTYPE_MEMBERS.get(capability.member);
   }
-
   return undefined;
 }
 
 /**
  * Whether `expr` provably resolves to Node's `createRequire` export of the
- * `module` builtin (VT-307c-fix-7 Part 6) -- either the ordinary
- * whole-module-bound/named-import forms {@link referencesBuiltinExport}
- * already covers, or the `module.constructor.createRequire`/`require.main.
- * constructor.createRequire` forms only {@link isModuleConstructorLoader}
- * recognizes (a same-file `module.constructor` is never itself a builtin
- * EXPORT, so `referencesBuiltinExport` alone can't see it). Both converge
- * on the same `"create_require"` reason regardless of which check matched.
+ * `module` builtin -- either the ordinary whole-module-bound/named-import
+ * forms {@link referencesBuiltinExport} already covers, or a reference to
+ * the constructor's own `createRequire` MEMBER via
+ * {@link resolveLoaderCapability} (VT-307c-provenance-closure: this now
+ * resolves through an arbitrary alias chain, not just the direct
+ * `Module.createRequire`/`module.constructor.createRequire` forms --
+ * `const cr = require('module').createRequire;`/`const cr = Module.
+ * createRequire;`, each later called as `cr(__filename)`, were both
+ * reproduced end-to-end blockers of the narrower check this replaces).
+ * Both converge on the same `"create_require"` reason regardless of which
+ * check matched.
  */
 function resolvesToCreateRequireExport(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): boolean {
+  if (referencesBuiltinExport(expr, "module", "createRequire", context)) {
+    return true;
+  }
+  const capability = resolveLoaderCapability(expr, context);
   return (
-    referencesBuiltinExport(expr, "module", "createRequire", context) ||
-    isModuleConstructorLoader(expr, context) === "create_require"
+    capability?.kind === "module_constructor_member" &&
+    capability.member === "createRequire"
   );
 }
 
@@ -752,34 +983,51 @@ export function classifyLoaderConstruct(
       return "function_constructor";
     }
 
-    const initializer = resolveSingleAssignmentValue(
-      expr.text,
-      context.index.sourceFile,
-    );
-    if (!initializer) {
+    // VT-307c-provenance-closure: resolved through the SAME shared
+    // relation every other check in this file now uses, so an identifier
+    // aliasing `require`/`eval` at ANY depth (`const r1 = require; const
+    // r2 = r1; ...`, both reproduced end-to-end blockers of the
+    // single-hop check this replaces), a stored createRequire RESULT, or
+    // a stored Module-constructor/prototype MEMBER value
+    // (`const pre = Module._preloadModules; pre(['vuln'])`, also a
+    // reproduced blocker) all converge on the identical classification a
+    // direct, non-aliased reference to the same capability would get.
+    const capability = resolveLoaderCapability(expr, context);
+    if (capability === undefined) {
       return undefined;
     }
-    if (ts.isIdentifier(initializer)) {
-      if (initializer.text === "require") {
+    switch (capability.kind) {
+      case "ambient_require":
         return "aliased_require";
-      }
-      if (initializer.text === "eval") {
+      case "ambient_eval":
         return "aliased_eval";
+      case "create_require_result":
+        return "create_require";
+      case "module_constructor_member": {
+        const reason = MODULE_CONSTRUCTOR_STATIC_MEMBERS.get(capability.member);
+        if (reason) {
+          return reason;
+        }
+        return MODULE_CONSTRUCTOR_SAFE_CALLS.has(capability.member)
+          ? undefined
+          : "loader_capability_escape";
       }
-      return undefined;
+      case "module_prototype_member": {
+        const reason = MODULE_CONSTRUCTOR_PROTOTYPE_MEMBERS.get(
+          capability.member,
+        );
+        return reason ?? "loader_capability_escape";
+      }
+      case "ambiguous":
+        return "loader_capability_escape";
+      default:
+        // `module_constructor`/`module_instance`/`module_prototype` used
+        // BARE as a callee (`Module()`, `module()`) is not a real Node
+        // scenario -- calling the class/instance/prototype object itself
+        // throws -- so no reason applies here; every meaningful case is a
+        // MEMBER of one of these, already handled above.
+        return undefined;
     }
-    // `const r = require("module").createRequire(x); r(y)` / `const r =
-    // createRequire(x); r(y)` / `const r = module.constructor.
-    // createRequire(x); r(y)` -- an alias of a createRequire CALL RESULT,
-    // distinct from the bare-`createRequire`-identifier case the shared
-    // table above already covers.
-    if (
-      ts.isCallExpression(initializer) &&
-      resolvesToCreateRequireExport(initializer.expression, context)
-    ) {
-      return "create_require";
-    }
-    return undefined;
   }
 
   if (ts.isCallExpression(expr)) {
@@ -1304,104 +1552,91 @@ function isAmbientRequireFunctionIdentifier(expr: ts.Expression): boolean {
 
 /**
  * Whether `expr` is a receiver with authoritative Node loader-capability
- * provenance (VT-307c-capability-floor) -- Node's `Module` constructor
- * ({@link resolvesToModuleConstructor}), an ambient `Module` INSTANCE
- * ({@link isAmbientModuleInstance}), or `<ModuleCtor>.prototype` itself
- * (the one named, precedented two-hop exception: every OTHER known
- * prototype member in this file -- `.prototype.require`/`.prototype.load`/
- * `.prototype._compile`, both as calls and as mutable-member assignments
- * -- already reaches through this exact same `.prototype` hop, so an
- * UNRECOGNIZED `.prototype.<member>` interaction must fail closed the
- * same way a direct `Module.<member>` one does; explicitly requested by
- * name in the capability-floor task's own Part 3 example list). This is
- * the receiver-side half of the capability floor: consulted when
- * classifying a CALL or a WRITE whose target reaches one of these, to
- * decide whether an otherwise-unrecognized member interaction must fail
- * closed. Deliberately excludes the ambient `require` FUNCTION and
- * `createRequire(...)` results here -- neither exposes meaningful mutable
- * object state of its own beyond the handful of properties (`.main`,
- * `.cache`, `.extensions`, `.resolve`) this file already models
- * exhaustively, so there is no unknown-member surface on `require` itself
- * worth failing closed on; `require`'s own capability-floor role is
- * entirely on the ESCAPE side (see {@link isAuthoritativeCapabilityValue}),
- * not the receiver side. Deliberately does NOT walk any further/deeper
- * chain than this one named `.prototype` exception -- a genuinely
- * unknown, arbitrarily-nested property off `Module` (`Module._foo.bar`)
- * is out of this task's scope (see this file's header doc on
- * interprocedural/general-alias-engine scope) and remains a documented
- * boundary, not an oversight.
+ * provenance -- Node's `Module` constructor, an ambient `Module`
+ * INSTANCE, or `Module.prototype` itself -- consulted when classifying a
+ * CALL or a WRITE whose target reaches one of these, to decide whether an
+ * otherwise-unrecognized member interaction must fail closed. A thin
+ * wrapper over {@link resolveLoaderCapability} (VT-307c-provenance-
+ * closure): every one of these three receiver kinds now resolves through
+ * an UNBOUNDED-depth alias chain, not just the `Module`-constructor case
+ * the predecessor of this function alone alias-resolved -- `const proto =
+ * Module.prototype; proto.require = hook;` (a reproduced end-to-end
+ * blocker: it silently redirects an ordinary, statically-resolvable
+ * `require()`) reaches this check via its WRITE-target's receiver, and an
+ * aliased ambient instance (`const mod = module;`) now round-trips here
+ * exactly as it already did for {@link isAuthoritativeCapabilityValue}.
+ * `"ambiguous"` (a cycle/excessive-depth resolution) is treated as a
+ * receiver too -- an unresolvable alias chain must fail closed, not
+ * silently pass. Deliberately excludes the ambient `require` FUNCTION and
+ * `createRequire(...)` results -- neither exposes meaningful mutable
+ * object state of its own beyond the handful of properties this file
+ * already models exhaustively, so there is no unknown-member surface on
+ * `require` itself worth failing closed on; `require`'s own capability-
+ * floor role is entirely on the ESCAPE side (see
+ * {@link isAuthoritativeCapabilityValue}), not the receiver side.
  */
 function isAuthoritativeCapabilityReceiver(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): boolean {
-  if (
-    resolvesToModuleConstructor(expr, context) ||
-    isAmbientModuleInstance(expr)
-  ) {
-    return true;
-  }
+  const capability = resolveLoaderCapability(expr, context);
   return (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "prototype" &&
-    resolvesToModuleConstructor(expr.expression, context)
+    capability?.kind === "module_constructor" ||
+    capability?.kind === "module_instance" ||
+    capability?.kind === "module_prototype" ||
+    capability?.kind === "ambiguous"
   );
 }
 
 /**
  * Whether `expr` is (or, through a same-file `const` alias chain of
- * unbounded depth, resolves to) an authoritative Node loader-capability
- * VALUE (VT-307c-capability-floor Part 1): Node's `Module` constructor, an
- * ambient `Module` instance, the ambient `require` function, or the
- * result of calling `createRequire(...)` inline. This is the VALUE-side
- * half of the capability floor -- used everywhere a capability can ESCAPE
- * this classifier's provenance tracking by appearing in a position other
- * than the receiver of an already-modeled call/mutation: a call argument,
- * an assignment's right-hand side, a `return`, or an ESM export. Once a
+ * UNBOUNDED depth, resolves to) an authoritative Node loader-capability
+ * VALUE: Node's `Module` constructor, an ambient `Module` instance,
+ * `Module.prototype` itself, the ambient `require`/`eval` functions, the
+ * result of calling `createRequire(...)`, or a MEMBER of the constructor
+ * or its prototype (`Module._preloadModules`, `Module.createRequire`,
+ * `Module.prototype.require`, ...). This is the VALUE-side half of the
+ * capability floor -- used everywhere a capability can ESCAPE this
+ * classifier's provenance tracking by appearing in a position other than
+ * the receiver of an already-modeled call/mutation: a call argument, an
+ * assignment's right-hand side, a `return`, or an ESM export. Once a
  * capability value is found in one of those positions, the closure must
  * go incomplete regardless of what the receiving position does with it --
  * this function deliberately does NOT attempt to follow the value past
- * that point (see this file's own header doc on interprocedural scope).
+ * that point.
  *
- * Local `const` aliasing remains fully precise and is NOT itself treated
- * as an escape (VT-307c-capability-floor Part 8): `const M = require(
- * "module"); const M2 = M; const M3 = M2;` still resolves all the way
- * through, the same unbounded-depth chain {@link resolvesToModuleConstructor}
- * already supports for the `Module`-constructor case -- this function
- * extends that same recursive alias resolution uniformly to every
- * capability kind, including the ambient-instance and bare-`require`
- * cases {@link resolvesToModuleConstructor} alone does not cover.
+ * A thin wrapper over {@link resolveLoaderCapability}
+ * (VT-307c-provenance-closure): TRUE for ANY resolvable capability kind,
+ * including `"ambiguous"` (a cycle/excessive-depth resolution must fail
+ * closed, not silently be treated as "no capability here"). Every
+ * resolvable capability now shares the identical unbounded-depth,
+ * cycle-safe alias-chase this function's predecessor only performed for
+ * itself -- the whole point of routing every escape/receiver check
+ * through one relation is that this function's own definition no longer
+ * needs to independently re-implement that traversal.
  */
 function isAuthoritativeCapabilityValue(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): boolean {
-  if (resolvesToModuleConstructor(expr, context)) {
-    return true;
-  }
-  if (isAmbientModuleInstance(expr)) {
-    return true;
-  }
-  if (isAmbientRequireFunctionIdentifier(expr)) {
-    return true;
-  }
-  if (
-    ts.isCallExpression(expr) &&
-    resolvesToCreateRequireExport(expr.expression, context)
-  ) {
-    return true;
-  }
-  if (ts.isIdentifier(expr)) {
-    const initializer = resolveSingleAssignmentValue(
-      expr.text,
-      context.index.sourceFile,
-    );
-    return (
-      initializer !== undefined &&
-      isAuthoritativeCapabilityValue(initializer, context)
-    );
-  }
-  return false;
+  const capability = resolveLoaderCapability(expr, context);
+  // Deliberate exclusion: `"ambient_eval"` is tracked in the shared
+  // relation ONLY so an aliased-callee chain (`const e1 = eval; const e2 =
+  // e1; e2(...)`) resolves at the SAME unbounded depth `require`'s
+  // identical chain now does (via `classifyLoaderConstruct`'s identifier
+  // branch, the only consumer that switches on this specific kind) --
+  // not so that `eval` participates in the broader VALUE-escape sweep
+  // this function backs. Widening this check to also flag `eval` merely
+  // being STORED in a composite (an object literal, an array, ...) was
+  // tried and reverted: it fired on `get-intrinsic` -- an extremely
+  // widely-depended-on real-world package (a transitive dependency of
+  // `qs` and much of the ecosystem) whose `INTRINSICS['%eval%'] = eval`
+  // lookup-table entry never itself calls `eval`, exec's nothing, and was
+  // never part of any of this task's certified blockers. `eval` was never
+  // an authoritative capability VALUE before this task either (see this
+  // function's own history) -- this exclusion restores exactly that prior
+  // scope while still gaining the unbounded-depth CALLEE fix.
+  return capability !== undefined && capability.kind !== "ambient_eval";
 }
 
 /**
@@ -2079,26 +2314,25 @@ function isModuleConstructorMutableStaticMember(
 
 /**
  * Whether `expr` is `<ModuleCtor>.prototype.<protoMember>` for one of
- * {@link MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS} (VT-307c-fix-9) --
- * mirrors {@link isModuleConstructorLoader}'s own `.prototype`-owner
- * shape/provenance check exactly, applied to the assignment target instead
- * of a call callee.
+ * {@link MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS}, reached DIRECTLY
+ * or through an arbitrary `const`-alias chain of the `.prototype` value
+ * itself (VT-307c-provenance-closure: `const proto = Module.prototype;
+ * proto.require = hook;` was a reproduced end-to-end blocker -- it
+ * silently redirects an ordinary, statically-resolvable `require()` --
+ * that the predecessor of this function, requiring the assignment target
+ * to be SYNTACTICALLY `<X>.prototype.<member>`, could never see). Mirrors
+ * {@link isModuleConstructorLoader}'s own owner-resolution exactly,
+ * applied to the assignment target instead of a call callee -- both now
+ * resolve the owner expression through {@link resolveLoaderCapability}.
  */
 function isModuleConstructorMutablePrototypeMember(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): boolean {
-  if (
-    !ts.isPropertyAccessExpression(expr) ||
-    !MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS.has(expr.name.text)
-  ) {
-    return false;
-  }
-  const owner = expr.expression;
   return (
-    ts.isPropertyAccessExpression(owner) &&
-    owner.name.text === "prototype" &&
-    resolvesToModuleConstructor(owner.expression, context)
+    ts.isPropertyAccessExpression(expr) &&
+    MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS.has(expr.name.text) &&
+    resolvesToModulePrototype(expr.expression, context)
   );
 }
 
@@ -2277,14 +2511,19 @@ function isModuleLoaderAssignmentMutation(
     return "loader_hook_mutation";
   }
 
-  // VT-307c-capability-floor fallback: an unrecognized WRITE into an
-  // authoritative capability's own member surface (directly, or through
-  // the one named `.prototype` hop {@link isAuthoritativeCapabilityReceiver}
-  // recognizes) -- unless it is the one explicitly-reviewed safe write
-  // (`module.exports = ...`, which only applies to the direct ambient-
-  // instance form, never `.prototype.exports`, which isn't a real member).
+  // Soundness-floor fallback: an unrecognized WRITE into an authoritative
+  // capability's own member surface (directly, or through any alias
+  // {@link isAuthoritativeCapabilityReceiver} recognizes) -- unless it is
+  // the one explicitly-reviewed safe write (`module.exports = ...`, which
+  // applies to the ambient-instance form -- direct OR aliased
+  // (VT-307c-provenance-closure: `const mod = module; mod.exports = ...`
+  // must stay exempt too, matching direct `module.exports = ...`, now
+  // that {@link isAuthoritativeCapabilityReceiver} below resolves an
+  // ambient-instance ALIAS as a receiver where it previously didn't --
+  // never `.prototype.exports`, which isn't a real member).
   if (
-    isAmbientModuleInstance(target.expression) &&
+    resolveLoaderCapability(target.expression, context)?.kind ===
+      "module_instance" &&
     AMBIENT_MODULE_INSTANCE_SAFE_WRITES.has(target.name.text)
   ) {
     return undefined;

@@ -3382,3 +3382,106 @@ describe("buildCallGraph: closed-by-default value-flow argument escapes (VT-307c
     },
   );
 });
+
+/**
+ * VT-307c-provenance-closure. The shared provenance relation
+ * (`resolveLoaderCapability` in loader-constructs.ts) backs the CALL-
+ * shaped classification path too (`isModuleConstructorLoader`,
+ * `classifyLoaderConstruct`'s identifier branch), so a capability reached
+ * through any of the four reproduced-blocker families still produces the
+ * correct `unknown(reason)` CallGraph edge -- either the SPECIFIC reason
+ * a direct, non-aliased spelling of the same primitive would get, or
+ * `loader_capability_escape` when only the receiver/provenance is known
+ * and the specific member is not.
+ */
+describe("buildCallGraph: shared loader-capability provenance relation (VT-307c-provenance-closure)", () => {
+  it.each([
+    [
+      "ESM named import of Module, called directly",
+      "module_internal_load",
+      "import { Module } from 'module';\nfunction main(){ Module._preloadModules(['vuln-lib']); }\nmodule.exports = { main };\n",
+      "src/index.mjs",
+      true,
+    ],
+    [
+      "Module.Module.Module (recursive self-reference, depth 2)",
+      "module_internal_load",
+      "function main(){ const Module = require('module'); Module.Module.Module._preloadModules(['vuln-lib']); }\nmodule.exports = { main };\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "const proto = Module.prototype; proto.constructor._preloadModules(...)",
+      "module_internal_load",
+      "function main(){ const Module = require('module'); const proto = Module.prototype; proto.constructor._preloadModules(['vuln-lib']); }\nmodule.exports = { main };\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "require alias depth 2: const r1 = require; const r2 = r1; r2(...)",
+      "aliased_require",
+      "function main(){ const r1 = require; const r2 = r1; r2('vuln-lib'); }\nmodule.exports = { main };\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "stored _preloadModules member value: const pre = Module._preloadModules; pre(...)",
+      "module_internal_load",
+      "function main(){ const Module = require('module'); const pre = Module._preloadModules; pre(['vuln-lib']); }\nmodule.exports = { main };\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "stored createRequire member value: const cr = Module.createRequire; cr(...)(...)",
+      "create_require",
+      "function main(){ const Module = require('module'); const cr = Module.createRequire; const r = cr(__filename); r('vuln-lib'); }\nmodule.exports = { main };\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "Module.prototype held in a const, unknown member call fails closed",
+      "loader_capability_escape",
+      "function main(){ const Module = require('module'); const proto = Module.prototype; if (proto.someFuture) { proto.someFuture(1); } }\nmodule.exports = { main };\n",
+      "src/index.js",
+      false,
+    ],
+  ])(
+    "classifies %s as %s",
+    async (_label, expectedReason, source, entryRel, esm) => {
+      const root = tempProject();
+      if (esm) {
+        write(
+          root,
+          "package.json",
+          JSON.stringify({ name: "app", type: "module" }),
+        );
+      }
+      const entry = write(root, entryRel, source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(graph.edges).toContainEqual(
+        expect.objectContaining({
+          resolution: {
+            kind: "unknown",
+            reason: expectedReason,
+            potentialTargets: [],
+          },
+        }),
+      );
+    },
+  );
+
+  it("never crashes building a call graph over a cyclic const alias (VT-307c-provenance-closure Part 7)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const a = b;\nconst b = a;\nfunction main(){ a._preloadModules(['vuln-lib']); }\nmodule.exports = { main };\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph).toBeDefined();
+  });
+});
