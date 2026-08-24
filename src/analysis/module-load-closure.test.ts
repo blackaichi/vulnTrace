@@ -3794,3 +3794,388 @@ describe("ModuleLoadClosure: closed-by-default value-flow traversal (VT-307c-val
     expect(reasonsOf(closure)).toContain("loader_capability_escape");
   });
 });
+
+/**
+ * VT-307c-provenance-closure. The final invariant certification found
+ * that the value-flow layer VT-307c-value-flow-closure had already made
+ * fail-closed by construction was undermined by a SEPARATE, one-layer-up
+ * defect: the ALIAS-EXEMPTION relation (which decides "does this
+ * `const <id> = <capability-expr>` declaration escape at all") was
+ * BROADER than what every USE-SITE resolver could actually resolve `<id>`
+ * back to later -- so a capability could be exempted at its declaration
+ * and then never recognized again where it was actually used, vanishing
+ * in both directions at once. Twelve end-to-end reproductions
+ * (real Node execution + a gate-eligible, complete closure + the exact
+ * installed package OUT + an EMPTY incompleteness array) came out of that
+ * one property, across four families:
+ *
+ * - Family A: ESM named/namespace bindings of the self-referential
+ *   `Module` export (`import { Module } from 'module'`, ...);
+ * - Family B: `<X>.Module` self-reference resolved non-recursively while
+ *   its own `.constructor` sibling resolved recursively;
+ * - Family C: `Module.prototype` held in a `const` -- neither a
+ *   recognized capability VALUE nor a resolvable RECEIVER before this
+ *   task, so it fell between both layers;
+ * - Family D: `require`-alias chains beyond one hop, and Module-
+ *   constructor MEMBER values (`createRequire`, `_preloadModules`)
+ *   stored in a `const` and used elsewhere.
+ *
+ * The fix (`resolveLoaderCapability` in loader-constructs.ts) is a SINGLE
+ * relation every receiver/value/callee check in that file now consults,
+ * so the exemption is the exact inverse of resolution BY CONSTRUCTION.
+ * These tests prove all twelve close through that one mechanism, prove
+ * the controls that already worked keep working, and prove the analyzer
+ * no longer crashes on a cyclic alias (a separate, pre-existing latent
+ * bug this task's own widened recursion made far more reachable).
+ */
+describe("ModuleLoadClosure: shared loader-capability provenance relation (VT-307c-provenance-closure)", () => {
+  it.each([
+    // --- Family A: ESM named/namespace bindings of `Module` ---
+    [
+      "A1. ESM named import: import { Module } from 'module'",
+      "import { Module } from 'module';\nModule._preloadModules(['vuln']);\n",
+      "src/index.mjs",
+      true,
+    ],
+    [
+      "A2. ESM named+aliased import: import { Module as M } from 'node:module'",
+      "import { Module as M } from 'node:module';\nM._preloadModules(['vuln']);\n",
+      "src/index.mjs",
+      true,
+    ],
+    [
+      "A3. ESM namespace .default: import * as M from 'module'; M.default",
+      "import * as M from 'module';\nM.default._preloadModules(['vuln']);\n",
+      "src/index.mjs",
+      true,
+    ],
+    [
+      "A4. CJS destructure: const { Module } = require('module')",
+      "const { Module } = require('module');\nModule._preloadModules(['vuln']);\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "A5. CJS destructure aliased: const { Module: M } = require('module')",
+      "const { Module: M } = require('module');\nM._preloadModules(['vuln']);\n",
+      "src/index.js",
+      false,
+    ],
+    // --- Family B: recursive `.Module` self-reference ---
+    [
+      "B1. Module.Module.Module",
+      "const Module = require('module');\nModule.Module.Module._preloadModules(['vuln']);\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "B2. require('module').Module.prototype.constructor.Module",
+      "require('module').Module.prototype.constructor.Module._preloadModules(['vuln']);\n",
+      "src/index.js",
+      false,
+    ],
+    // --- Family C: Module.prototype held in a const ---
+    [
+      "C1. const proto = Module.prototype; proto.constructor._preloadModules(...)",
+      "const Module = require('module');\nconst proto = Module.prototype;\nproto.constructor._preloadModules(['vuln']);\n",
+      "src/index.js",
+      false,
+    ],
+    // C2 (the prototype-member WRITE form) is covered separately below,
+    // since it needs a `require('safe')` sink rather than `_preloadModules`.
+    // --- Family D: alias depth and stored member values ---
+    [
+      "D1. require alias depth 2: const r1 = require; const r2 = r1; r2('vuln')",
+      "const r1 = require;\nconst r2 = r1;\nr2('vuln');\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "D2. require alias depth 3",
+      "const r1 = require;\nconst r2 = r1;\nconst r3 = r2;\nr3('vuln');\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "D3. stored createRequire value: const cr = require('module').createRequire",
+      "const cr = require('module').createRequire;\nconst r = cr(__filename);\nr('vuln');\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "D4. stored createRequire value via Module: const cr = Module.createRequire",
+      "const Module = require('module');\nconst cr = Module.createRequire;\nconst r = cr(__filename);\nr('vuln');\n",
+      "src/index.js",
+      false,
+    ],
+    [
+      "D5. stored _preloadModules value: const pre = Module._preloadModules",
+      "const Module = require('module');\nconst pre = Module._preloadModules;\npre(['vuln']);\n",
+      "src/index.js",
+      false,
+    ],
+  ])("goes incomplete for %s", async (_label, source, entryRel, esm) => {
+    const root = tempProject();
+    if (esm) {
+      write(
+        root,
+        "package.json",
+        JSON.stringify({ name: "app", type: "module" }),
+      );
+    }
+    write(
+      root,
+      "node_modules/vuln/package.json",
+      JSON.stringify({ name: "vuln", version: "1.0.0", main: "index.js" }),
+    );
+    write(root, "node_modules/vuln/index.js", "module.exports = {};\n");
+    const entry = write(root, entryRel, source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure).length).toBeGreaterThan(0);
+  });
+
+  it("C2. Module.prototype held in a const, then a prototype-member WRITE redirects require()", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/safe/package.json",
+      JSON.stringify({ name: "safe", version: "1.0.0", main: "index.js" }),
+    );
+    write(root, "node_modules/safe/index.js", "module.exports = {};\n");
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nconst proto = Module.prototype;\nconst orig = proto.require;\nproto.require = function(id){ return orig.call(this, id === 'safe' ? 'vuln' : id); };\nrequire('safe');\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it("keeps the followable const-alias exemption at unbounded depth -- controls that already worked still work", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nconst A = Module;\nconst B = A;\nconst C = B;\nC._load(process.env.X, module, false);\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["module_internal_load"]);
+  });
+
+  it("keeps a depth-5 legitimate alias chain fully resolvable (the cycle-protection budget never truncates real chains)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nconst A=Module;\nconst B=A;\nconst C=B;\nconst D=C;\nconst E=D;\nE._preloadModules(['vuln']);\nmodule.exports={};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["module_internal_load"]);
+  });
+
+  it.each([
+    [
+      "Module.prototype.constructor.prototype.constructor",
+      "const Module = require('module');\nModule.prototype.constructor.prototype.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "Module.registerHooks({...}) stays loader_hook_mutation",
+      "const Module = require('module');\nif(Module.registerHooks){Module.registerHooks({resolve(s,c,n){return n(s,c);}});}\nmodule.exports={};\n",
+      "loader_hook_mutation",
+    ],
+    [
+      "Module.someFutureThing(x) stays the generic fallback, not a specific reason",
+      "const Module = require('module');\nif(Module.someFutureThing){Module.someFutureThing(1);}\nmodule.exports={};\n",
+      "loader_capability_escape",
+    ],
+  ])(
+    "precise-reason precedence holds for %s",
+    async (_label, source, expectedReason) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toEqual([expectedReason]);
+    },
+  );
+
+  it("Module.prototype.require = hook (direct, no alias) stays loader_hook_mutation for the WRITE, and separately module_internal_load for the saved-original alias's own genuine require call", async () => {
+    // Two DISTINCT, both-correct classifications coexist here: the
+    // `Module.prototype.require = hook` WRITE is `loader_hook_mutation`
+    // (unchanged from before this task); `orig` -- the alias saving the
+    // ORIGINAL implementation before overwriting it -- resolves via
+    // VT-307c-provenance-closure's shared relation to the SAME
+    // `module_prototype_member{member:"require"}` capability a direct
+    // `Module.prototype.require(...)` call would, so `orig.call(this, id)`
+    // (genuinely invoking Node's real require implementation) correctly
+    // also reports `module_internal_load` -- it IS that primitive, calling
+    // through a saved alias rather than the property access spelling
+    // doesn't change what actually executes.
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nconst orig=Module.prototype.require;\nModule.prototype.require=function(id){return orig.call(this,id);};\nmodule.exports={};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(
+      expect.arrayContaining(["loader_hook_mutation", "module_internal_load"]),
+    );
+  });
+
+  it.each([
+    [
+      "cyclic const alias: const a = b; const b = a;",
+      "const a = b;\nconst b = a;\nmodule.exports = {};\n",
+    ],
+    [
+      "3-cycle: const a = b; const b = c; const c = a;",
+      "const a = b;\nconst b = c;\nconst c = a;\nmodule.exports = {};\n",
+    ],
+    ["self-cycle: const a = a;", "const a = a;\nmodule.exports = {};\n"],
+  ])(
+    "never crashes on %s (VT-307c-provenance-closure Part 7 -- previously a RangeError in resolveWholeModuleBuiltin)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      // The invariant under test is simply that this resolves at all --
+      // a pre-fix run throws RangeError: Maximum call stack size
+      // exceeded before ever reaching an assertion.
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure).toBeDefined();
+      expect(closure.complete).toBe(true);
+    },
+  );
+
+  it("a cyclic alias used as a call TARGET fails closed (ambiguous resolution is treated as a capability, not silently ignored)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const a = b;\nconst b = a;\na._preloadModules(['vuln']);\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it("eval used bare as a callee is still classified as eval, unchanged", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "eval('1');\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["eval"]);
+  });
+
+  it.each([
+    [
+      "eval stored in a lookup table stays complete (real-world precision: get-intrinsic's INTRINSICS['%eval%'] = eval)",
+      "const INTRINSICS = { '%eval%': eval, '%Array%': Array };\nmodule.exports = { INTRINSICS };\n",
+    ],
+    [
+      "const mod = module; mod.exports = {...} stays exempt (aliased ambient-instance safe write)",
+      "const mod = module;\nmod.exports = { a: 1 };\n",
+    ],
+    [
+      "ordinary property access chain unrelated to any capability",
+      "const cfg = { a: { b: { c: 1 } } };\nconst x = cfg.a.b.c;\nmodule.exports = { x };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-provenance-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("aliased eval callee resolves at unbounded depth (const e1 = eval; const e2 = e1; e2(...))", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const e1 = eval;\nconst e2 = e1;\ne2('1');\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("aliased_eval");
+  });
+
+  it("finds a Family-A ESM named-import escape in a never-called function of a transitively loaded dependency (whole-file semantics)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/dep/package.json",
+      JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        main: "index.mjs",
+        type: "module",
+      }),
+    );
+    write(
+      root,
+      "node_modules/dep/index.mjs",
+      "import { Module } from 'module';\nfunction neverCalled(){ Module._preloadModules(['vuln']); }\nexport { neverCalled };\n",
+    );
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const entry = write(root, "src/index.mjs", "import 'dep';\n");
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure).length).toBeGreaterThan(0);
+  });
+
+  it("finds a Family-C escape inside a class definition (whole-file semantics)", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nclass Holder {\n  static proto = Module.prototype;\n  static go(){ this.proto.constructor._preloadModules(['vuln']); }\n}\nmodule.exports = { Holder };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure).length).toBeGreaterThan(0);
+  });
+});
