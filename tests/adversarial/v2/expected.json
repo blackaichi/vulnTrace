@@ -658,5 +658,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-061",
+    "dir": "adv2-061-dependency-toplevel-logical-value-escape",
+    "category": "61. VT-307c-value-flow-closure regression: authoritative loader-capability escape through a LOGICAL-OPERATOR value container in a DEPENDENCY's own module top-level scope",
+    "description": "Same shape as ADV2-059/ADV2-060, but this fixture pins the DEFECT CLASS rather than a container spelling. VT-307c-capability-flow replaced VT-307c-capability-floor's enumeration of syntactic POSITIONS with a value-oriented walker -- but that walker was itself still an ENUMERATION, this time of container NODE KINDS (object literal, array literal, conditional, spread, concise arrow, Set/Map), so any value-producing form missing from the list failed OPEN. The final VT-307d go/no-go invariant review reproduced SEVEN end-to-end violations from that single structural fact (real Node execution + a gate-eligible closure + complete=true + the exact installed package OUT + an EMPTY incompleteness array), and VT-307c-value-flow-closure's own pre-implementation sweep found thirteen more -- among them the logical operators (||, ??, &&), the direct value-selecting siblings of the ternary the walker already handled. vt2-holder here composes TWO value forms at once -- a logical-OR default whose fallback is an object literal holding Node's own Module constructor (configure(process.env.VT_LOADER_OVERRIDE || { loader: Module })) -- so that catching it requires the generic, closed-by-default traversal rather than a patch for either shape alone. Before VT-307c-value-flow-closure this construct was invisible entirely (not even an unsupported_construct edge). The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-060.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own configure(process.env.VT_LOADER_OVERRIDE || { loader: Module }) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), hands Node's own Module constructor to a function this analyzer cannot prove does nothing dangerous with it. A human analyst cannot rule out reachability here merely because the capability reached that argument through a logical-OR default rather than a bare reference or a plain object literal. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]

@@ -735,3 +735,269 @@ describe("ModuleLoadClosure differential Node oracle (VT-307c-capability-floor)"
     20000,
   );
 });
+
+/**
+ * VT-307c-value-flow-closure's redesign of the oracle's CASE SELECTION
+ * (this task's Parts 16-19).
+ *
+ * The invariant asserted by `runOracleCase` was never the problem, and is
+ * unchanged. The problem was how cases got INTO the suite: they were
+ * hand-written, one per defect someone had already thought of. That makes
+ * the oracle structurally incapable of catching the one failure mode this
+ * classifier keeps producing -- a value container nobody enumerated --
+ * and it showed: the final go/no-go review found the suite reporting
+ * 35/35 green while SEVEN live end-to-end violations sat in exactly that
+ * blind spot, because not one of the missing container families
+ * (destructuring defaults, class fields, logical operators) had a case.
+ *
+ * So the cases below are not written, they are DERIVED: a small
+ * declarative grammar of the two things that actually vary --
+ *
+ *   capability SEED   x   value CONTAINER form
+ *
+ * -- with the suite being their cross product. Adding a container form
+ * to the table adds it for every seed at once, and a container form the
+ * table is missing is a visible, reviewable hole in a 30-row list rather
+ * than an invisible absence among hundreds of lines of bespoke setup
+ * functions. Every one of this task's twenty reproduced blockers is a
+ * row here, and so are the shapes that already worked -- the point is to
+ * pin the CLOSURE of the abstraction, not to accumulate spellings.
+ *
+ * Each generated program is exactly three parts: the seed's preamble, one
+ * container form storing the capability, and the seed's own loader sink
+ * applied to the expression that retrieves it back. The sink is always
+ * capability-FREE (`_preloadModules(['vuln'])` takes an array of string
+ * literals; `heldRequire('vuln')` takes one string literal), so the
+ * container form under test is the only widening signal in the program --
+ * the self-masking lesson from VT-307c-capability-flow, where cases built
+ * on `_load('vuln', module, false)` were silently proving nothing because
+ * that call's own `module` argument tripped the argument-escape check
+ * regardless of the container being tested.
+ */
+interface CapabilitySeed {
+  readonly name: string;
+  /** Lines establishing the capability, if it is not already ambient. */
+  readonly preamble: string;
+  /** The expression text denoting the capability itself. */
+  readonly capability: string;
+  /** A capability-FREE loader call on the retrieved value. */
+  readonly sink: (retrieved: string) => string;
+}
+
+const CAPABILITY_SEEDS: readonly CapabilitySeed[] = [
+  {
+    name: "Module",
+    preamble: "const Module = require('module');\n",
+    capability: "Module",
+    sink: (retrieved) => `${retrieved}._preloadModules(['vuln']);\n`,
+  },
+  {
+    name: "require",
+    preamble: "",
+    capability: "require",
+    sink: (retrieved) => `${retrieved}('vuln');\n`,
+  },
+];
+
+interface ContainerForm {
+  readonly name: string;
+  /** Source that puts `capability` into this container. */
+  readonly store: (capability: string) => string;
+  /** Expression text that retrieves the capability back at runtime. */
+  readonly retrieve: string;
+}
+
+/**
+ * The value-container grammar. Every row is a way JavaScript can carry a
+ * value from one place to another; the classifier must not lose the
+ * capability through any of them.
+ */
+const CONTAINER_FORMS: readonly ContainerForm[] = [
+  {
+    name: "direct const alias",
+    store: (c) => `const held = ${c};\n`,
+    retrieve: "held",
+  },
+  { name: "let binding", store: (c) => `let held = ${c};\n`, retrieve: "held" },
+  { name: "var binding", store: (c) => `var held = ${c};\n`, retrieve: "held" },
+  {
+    name: "object property",
+    store: (c) => `const box = { l: ${c} };\n`,
+    retrieve: "box.l",
+  },
+  {
+    name: "nested object property",
+    store: (c) => `const box = { a: { l: ${c} } };\n`,
+    retrieve: "box.a.l",
+  },
+  {
+    name: "array element",
+    store: (c) => `const box = [${c}];\n`,
+    retrieve: "box[0]",
+  },
+  {
+    name: "object spread of composite",
+    store: (c) => `const inner = { l: ${c} };\nconst box = { ...inner };\n`,
+    retrieve: "box.l",
+  },
+  {
+    name: "array spread of composite",
+    store: (c) => `const inner = [${c}];\nconst box = [...inner];\n`,
+    retrieve: "box[0]",
+  },
+  {
+    name: "conditional",
+    store: (c) => `const held = process.env.VT_NEVER_SET ? null : ${c};\n`,
+    retrieve: "held",
+  },
+  {
+    name: "logical OR",
+    store: (c) => `const held = process.env.VT_NEVER_SET || ${c};\n`,
+    retrieve: "held",
+  },
+  {
+    name: "logical AND",
+    store: (c) => `const held = 1 && ${c};\n`,
+    retrieve: "held",
+  },
+  {
+    name: "nullish coalescing",
+    store: (c) => `const held = process.env.VT_NEVER_SET ?? ${c};\n`,
+    retrieve: "held",
+  },
+  {
+    name: "logical assignment",
+    store: (c) => `let held;\nheld ||= ${c};\n`,
+    retrieve: "held",
+  },
+  {
+    name: "sequence expression",
+    store: (c) => `const held = (0, ${c});\n`,
+    retrieve: "held",
+  },
+  {
+    name: "nested logical + conditional + array",
+    store: (c) =>
+      `const box = process.env.VT_NEVER_SET || [process.env.VT_NEVER_SET ? null : ${c}];\n`,
+    retrieve: "box[0]",
+  },
+  {
+    name: "concise arrow return",
+    store: (c) => `const get = () => ${c};\n`,
+    retrieve: "get()",
+  },
+  {
+    name: "explicit function return",
+    store: (c) => `function get() { return ${c}; }\n`,
+    retrieve: "get()",
+  },
+  {
+    name: "object destructuring default",
+    store: (c) => `const { l = ${c} } = {};\n`,
+    retrieve: "l",
+  },
+  {
+    name: "array destructuring default",
+    store: (c) => `const [ l = ${c} ] = [];\n`,
+    retrieve: "l",
+  },
+  {
+    name: "nested destructuring default",
+    store: (c) => `const { a: { l = ${c} } = {} } = {};\n`,
+    retrieve: "l",
+  },
+  {
+    name: "function parameter default",
+    store: (c) => `function get(x = ${c}) { return x; }\n`,
+    retrieve: "get()",
+  },
+  {
+    name: "parameter destructuring default",
+    store: (c) => `function get({ l = ${c} } = {}) { return l; }\n`,
+    retrieve: "get()",
+  },
+  {
+    name: "class instance field",
+    store: (c) => `class Holder { l = ${c}; }\n`,
+    retrieve: "new Holder().l",
+  },
+  {
+    name: "class static field",
+    store: (c) => `class Holder { static l = ${c}; }\n`,
+    retrieve: "Holder.l",
+  },
+  {
+    name: "computed-name class field",
+    store: (c) => `const k = 'l';\nclass Holder { [k] = ${c}; }\n`,
+    retrieve: "new Holder().l",
+  },
+  {
+    name: "class field holding composite",
+    store: (c) => `class Holder { l = { m: ${c} }; }\n`,
+    retrieve: "new Holder().l.m",
+  },
+  {
+    name: "Set literal",
+    store: (c) => `const box = new Set([${c}]);\n`,
+    retrieve: "[...box][0]",
+  },
+  {
+    name: "Map literal",
+    store: (c) => `const box = new Map([['k', ${c}]]);\n`,
+    retrieve: "box.get('k')",
+  },
+  {
+    name: "throw / catch",
+    store: (c) =>
+      `function raise() { throw ${c}; }\nlet held;\ntry { raise(); } catch (e) { held = e; }\n`,
+    retrieve: "held",
+  },
+  {
+    name: "generator yield",
+    store: (c) => `function* gen() { yield ${c}; }\n`,
+    retrieve: "gen().next().value",
+  },
+  {
+    name: "for-of over array literal",
+    store: (c) => `let held;\nfor (const m of [${c}]) { held = m; }\n`,
+    retrieve: "held",
+  },
+  {
+    name: "tagged template substitution",
+    store: (c) =>
+      `function tag(strings, value) { return value; }\nconst held = tag\`\${${c}}\`;\n`,
+    retrieve: "held",
+  },
+  {
+    name: "CommonJS composite export property",
+    store: (c) => `exports.box = { l: ${c} };\n`,
+    retrieve: "exports.box.l",
+  },
+];
+
+describe("ModuleLoadClosure differential Node oracle: value-container grammar (VT-307c-value-flow-closure)", () => {
+  const generated: OracleCase[] = CAPABILITY_SEEDS.flatMap((seed) =>
+    CONTAINER_FORMS.map((form) => ({
+      label: `${seed.name} via ${form.name}`,
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root: string) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          seed.preamble +
+            form.store(seed.capability) +
+            seed.sink(form.retrieve),
+        );
+      },
+    })),
+  );
+
+  it.each(generated.map((c) => [c.label, c] as const))(
+    "%s: complete=true never coexists with a real, unaccounted-for execution",
+    async (_label, oracleCase) => {
+      await runOracleCase(oracleCase);
+    },
+    20000,
+  );
+});

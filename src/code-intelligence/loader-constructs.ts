@@ -4,7 +4,10 @@ import {
   type DynamicCallReason,
   type SourceLocation,
 } from "../domain/graph.js";
-import { resolveSingleAssignmentValue } from "./local-aliases.js";
+import {
+  isConstDeclaration,
+  resolveSingleAssignmentValue,
+} from "./local-aliases.js";
 import type { ModuleModel } from "./module-model.js";
 import { toSourceLocation, type SourceIndex } from "./source-index.js";
 
@@ -1402,26 +1405,345 @@ function isAuthoritativeCapabilityValue(
 }
 
 /**
- * VT-307c-capability-flow. The final invariant review found that
- * VT-307c-capability-floor's own escape detection, however sound in
- * principle, was still built as an ENUMERATION OF SYNTACTIC POSITIONS
- * (call argument, assignment right-hand side, `return`, export) rather
- * than a genuine value-flow analysis -- so a capability wrapped in an
- * object literal (`{ loader: Module }`), an array literal (`[Module]`),
- * a concise arrow body (`() => Module`), a default parameter, or a
- * `throw` argument sailed through every one of those checks untouched,
- * reproduced end-to-end (real Node execution + a gate-eligible, complete
- * closure + the exact installed package OUT) with NO unknown API name
- * involved anywhere. The fix is architectural, not another position to
- * enumerate: {@link containsEscapingLoaderCapabilityValue} recursively
- * walks the value-CONTAINER shapes JavaScript actually has (object/array
- * literals, spreads, conditionals, parenthesization, TS type-wrapping,
- * concise-body arrow functions, and the `new Set([...])`/`new Map([...])`
- * literal-constructor forms), so a capability nested at ANY depth inside
- * one of these is found the same way regardless of which specific
- * composite shape wraps it -- closing the position-enumeration failure
- * mode the same way {@link isAuthoritativeCapabilityValue}'s own
- * unbounded-depth `const`-alias recursion already closed simple aliasing.
+ * ECMAScript binary operators whose result is a freshly-produced
+ * PRIMITIVE -- arithmetic, string concatenation, bitwise, shift,
+ * comparison, `instanceof`/`in`, and the compound-arithmetic assignments
+ * (`+=`, `&=`, ...). A loader capability used as an operand of any of
+ * these provably cannot survive into the RESULT value: `Module + 1` is a
+ * string, `Module === x` is a boolean, `x += Module` stores a string.
+ * That is a semantic guarantee of the operators themselves, not an
+ * assumption about how the code is written.
+ *
+ * Deliberately enumerated as the SAFE set rather than as its complement,
+ * per this task's Part 8: an operator MISSING from this list -- including
+ * a future one this codebase has never seen -- falls through to
+ * {@link binaryValueOperandsOf}'s final branch and recurses into BOTH
+ * operands, i.e. fails closed. The list of things that stop the
+ * traversal is the enumerated one; the list of things that continue it
+ * is open.
+ *
+ * This governs capability VALUE PROPAGATION only. An unmodeled direct
+ * USE of a capability is a separate question, answered by separate
+ * checks these exclusions never reach: an unrecognized member call or
+ * write on a capability receiver still fails closed via
+ * {@link classifyLoaderConstruct}/{@link isModuleLoaderAssignmentMutation},
+ * and a capability handed to an unmodeled callee still fails closed via
+ * {@link classifyClosureWideningCall}'s own argument check.
+ */
+const PRIMITIVE_RESULT_BINARY_OPERATORS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.PlusToken,
+  ts.SyntaxKind.MinusToken,
+  ts.SyntaxKind.AsteriskToken,
+  ts.SyntaxKind.AsteriskAsteriskToken,
+  ts.SyntaxKind.SlashToken,
+  ts.SyntaxKind.PercentToken,
+  ts.SyntaxKind.LessThanLessThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken,
+  ts.SyntaxKind.AmpersandToken,
+  ts.SyntaxKind.BarToken,
+  ts.SyntaxKind.CaretToken,
+  ts.SyntaxKind.LessThanToken,
+  ts.SyntaxKind.LessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanToken,
+  ts.SyntaxKind.GreaterThanEqualsToken,
+  ts.SyntaxKind.EqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsToken,
+  ts.SyntaxKind.EqualsEqualsEqualsToken,
+  ts.SyntaxKind.ExclamationEqualsEqualsToken,
+  ts.SyntaxKind.InstanceOfKeyword,
+  ts.SyntaxKind.InKeyword,
+  ts.SyntaxKind.PlusEqualsToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+]);
+
+/**
+ * Assignment operators that store their RIGHT operand as-is, so the
+ * assigned value (and the assignment expression's own result) can BE a
+ * capability: plain `=` and the three logical assignments `||=`/`&&=`/
+ * `??=`. The compound ARITHMETIC assignments (`+=`, `&=`, ...) are
+ * deliberately absent -- they store a computed primitive, and live in
+ * {@link PRIMITIVE_RESULT_BINARY_OPERATORS} instead.
+ *
+ * Shared by {@link binaryValueOperandsOf} (value propagation) and by
+ * {@link isModuleLoaderAssignmentMutation}/
+ * {@link findClosureWideningConstructs} (the assignment POSITION checks),
+ * so `Module._resolveFilename ||= hook` and `registry.loader ??= Module`
+ * are treated exactly like their plain-`=` spellings rather than
+ * silently slipping past an `EqualsToken`-only guard -- `x ||= Module`
+ * was one of this task's own reproduced blockers.
+ */
+const CAPABILITY_STORING_ASSIGNMENT_OPERATORS: ReadonlySet<ts.SyntaxKind> =
+  new Set([
+    ts.SyntaxKind.EqualsToken,
+    ts.SyntaxKind.BarBarEqualsToken,
+    ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+    ts.SyntaxKind.QuestionQuestionEqualsToken,
+  ]);
+
+/** Whether `kind` is an assignment operator that stores its right operand unchanged. */
+function isCapabilityStoringAssignmentOperator(kind: ts.SyntaxKind): boolean {
+  return CAPABILITY_STORING_ASSIGNMENT_OPERATORS.has(kind);
+}
+
+/**
+ * The operands of a binary expression whose own values can become its
+ * result value, or `undefined` when the result provably cannot be either
+ * operand ({@link PRIMITIVE_RESULT_BINARY_OPERATORS}).
+ */
+function binaryValueOperandsOf(
+  expr: ts.BinaryExpression,
+): readonly ts.Expression[] | undefined {
+  const operator = expr.operatorToken.kind;
+
+  if (
+    operator === ts.SyntaxKind.AmpersandAmpersandToken ||
+    operator === ts.SyntaxKind.CommaToken
+  ) {
+    // `a && b` evaluates TO `a` only when `a` is FALSY, and every
+    // authoritative loader capability is a live function/object -- never
+    // falsy -- so a capability on the left can never be `&&`'s result.
+    // `(a, b)` evaluates TO `b` outright; `a` is evaluated and discarded.
+    // Either way only the RIGHT operand can carry the capability out.
+    return [expr.right];
+  }
+
+  if (isCapabilityStoringAssignmentOperator(operator)) {
+    // An assignment expression evaluates to the value assigned.
+    return [expr.right];
+  }
+
+  if (PRIMITIVE_RESULT_BINARY_OPERATORS.has(operator)) {
+    return undefined;
+  }
+
+  // `||`, `??`, and any operator not named above (a future addition
+  // included): either operand may be the result -- recurse into both.
+  return [expr.left, expr.right];
+}
+
+/**
+ * The value-carrying operands of an object literal: each property's own
+ * value expression. Accessors and methods are deliberately absent -- see
+ * {@link valueFlowOperandsOf}'s Exclusion 4 for why a function body is a
+ * statement-level question the whole-file scanner answers instead (this
+ * task's own sweep confirmed every getter/setter/method/static-block
+ * form is already flagged through that route). An unrecognized future
+ * property kind falls through to the final branch and recurses into all
+ * of its expression children, so it fails closed.
+ */
+function objectLiteralValueOperandsOf(
+  expr: ts.ObjectLiteralExpression,
+): readonly ts.Expression[] {
+  const operands: ts.Expression[] = [];
+  for (const property of expr.properties) {
+    if (ts.isPropertyAssignment(property)) {
+      operands.push(property.initializer);
+    } else if (ts.isShorthandPropertyAssignment(property)) {
+      operands.push(property.name);
+    } else if (ts.isSpreadAssignment(property)) {
+      operands.push(property.expression);
+    } else if (
+      !ts.isMethodDeclaration(property) &&
+      !ts.isGetAccessorDeclaration(property) &&
+      !ts.isSetAccessorDeclaration(property)
+    ) {
+      ts.forEachChild(property, (child) => {
+        if (!ts.isTypeNode(child)) {
+          operands.push(child as ts.Expression);
+        }
+      });
+    }
+  }
+  return operands;
+}
+
+/**
+ * The operands of `expr` whose own runtime values can BECOME, or be
+ * reachable from, `expr`'s runtime value -- or `undefined` when `expr` is
+ * value-OPAQUE: its result provably cannot be (or contain) an
+ * authoritative loader capability, whatever its children are.
+ *
+ * `undefined` is the ONLY way {@link containsEscapingLoaderCapabilityValue}'s
+ * traversal stops. Each one below is an entry in this task's explicit
+ * exclusion policy and is justified where it appears. Everything else --
+ * INCLUDING every node kind this function never mentions -- reaches the
+ * final branch and recurses into its expression children, so an
+ * unrecognized or future value container fails closed by construction.
+ * That inversion is the whole point of VT-307c-value-flow-closure: the
+ * enumerated list is now the list of things proven SAFE to stop at,
+ * not the list of containers remembered as dangerous.
+ */
+function valueFlowOperandsOf(
+  expr: ts.Expression,
+): readonly ts.Expression[] | undefined {
+  // --- Exclusion 1: member access. -------------------------------------
+  // `x.y` / `x[k]` produce a MEMBER of the receiver, never the receiver
+  // itself. Member INTERACTIONS with a capability are governed by
+  // receiver-side precedence instead (`classifyLoaderConstruct` for
+  // calls, `isModuleLoaderAssignmentMutation` for writes -- both of
+  // which already fail closed on an unrecognized member), and the member
+  // READS that are themselves a capability (`module.constructor`,
+  // `require.main`, `Module.prototype.constructor`, `<whole>.Module`)
+  // are already recognized by `isAuthoritativeCapabilityValue`'s base
+  // case before this function is ever consulted. Recursing here would
+  // instead flag the `module.exports` in every CommonJS file ever
+  // written, for no soundness gain at all.
+  if (
+    ts.isPropertyAccessExpression(expr) ||
+    ts.isElementAccessExpression(expr)
+  ) {
+    return undefined;
+  }
+
+  // --- Exclusion 2: call results. --------------------------------------
+  // A call's value is whatever the callee returns -- never one of the
+  // operands by construction, and not statically knowable here. The one
+  // call whose result IS a capability (`createRequire(...)`) is already
+  // an `isAuthoritativeCapabilityValue` base case. Capability ARGUMENTS
+  // are not dropped by this exclusion, only checked at the right layer:
+  // `classifyClosureWideningCall` checks them with proper precedence (so
+  // `Module._load(x, module, false)`'s own legitimate `module` argument
+  // is not double-flagged) and `findClosureWideningConstructs` checks a
+  // tagged template's substitutions. Recursing here would flag an
+  // ordinary `const ok = Module.isBuiltin('fs')`.
+  if (
+    ts.isCallExpression(expr) ||
+    ts.isNewExpression(expr) ||
+    ts.isTaggedTemplateExpression(expr)
+  ) {
+    return undefined;
+  }
+
+  // --- Exclusion 3: operators with a primitive result. ------------------
+  // `typeof x`, `void x`, `delete x.y`, a template literal, and the
+  // prefix/postfix unary operators each produce a fresh string, boolean,
+  // number, or `undefined` -- the capability cannot survive as the
+  // result. `typeof module === 'object'` and `` `${module.id}` `` are
+  // ordinary, ubiquitous code. (`delete <capability>.<member>` is a
+  // MUTATION, not a value flow, and is still caught as such by
+  // {@link isCapabilityDeleteMutation}.)
+  if (
+    ts.isTypeOfExpression(expr) ||
+    ts.isVoidExpression(expr) ||
+    ts.isDeleteExpression(expr) ||
+    ts.isTemplateExpression(expr) ||
+    ts.isPrefixUnaryExpression(expr) ||
+    ts.isPostfixUnaryExpression(expr)
+  ) {
+    return undefined;
+  }
+
+  // --- Exclusion 4: function and class VALUES. --------------------------
+  // The value of a `function`/`class` expression is the function or class
+  // itself, never a capability its body happens to close over. What the
+  // body DOES with a captured capability is a statement-level question,
+  // and every statement-level escape position inside it -- `return`,
+  // `throw`, `yield`, an assignment, a declaration -- is visited
+  // independently by `findClosureWideningConstructs`'s own whole-file
+  // walk, which does not depend on anything reaching the body from here.
+  // This task's pre-implementation sweep confirmed that empirically:
+  // object getters, class getters, class methods, object method
+  // shorthand, static blocks, and IIFEs were ALL already flagged through
+  // that route. A concise-body arrow is the one exception -- its body IS
+  // its returned value (`() => Module` is `return Module;` in disguise),
+  // so it recurses.
+  if (ts.isFunctionExpression(expr) || ts.isClassExpression(expr)) {
+    return undefined;
+  }
+  if (ts.isArrowFunction(expr)) {
+    return ts.isBlock(expr.body) ? undefined : [expr.body];
+  }
+
+  // --- Exclusion 5 (and the value-SELECTING operators). -----------------
+  if (ts.isBinaryExpression(expr)) {
+    return binaryValueOperandsOf(expr);
+  }
+
+  // A conditional evaluates to one of its two branches.
+  if (ts.isConditionalExpression(expr)) {
+    return [expr.whenTrue, expr.whenFalse];
+  }
+
+  // Composite literals: every element/property value is reachable from
+  // the resulting object, at any nesting depth. Array elements include
+  // `SpreadElement`s and holes, both of which the final branch below
+  // handles correctly once recursed into.
+  if (ts.isObjectLiteralExpression(expr)) {
+    return objectLiteralValueOperandsOf(expr);
+  }
+  if (ts.isArrayLiteralExpression(expr)) {
+    return expr.elements;
+  }
+
+  // --- DEFAULT: closed by construction. ---------------------------------
+  // Everything not named above -- parenthesization, the TS type-wrapping
+  // forms (`x as T`, `x satisfies T`, `x!`, `<T>x`), `await`, `yield`,
+  // spreads, and any syntax added to the language after this was written
+  // -- recurses into its expression children. Type nodes are skipped
+  // because they carry no runtime value at all; nothing else is.
+  const operands: ts.Expression[] = [];
+  ts.forEachChild(expr, (child) => {
+    if (!ts.isTypeNode(child)) {
+      operands.push(child as ts.Expression);
+    }
+  });
+  return operands;
+}
+
+/**
+ * VT-307c-value-flow-closure. VT-307c-capability-flow had already
+ * replaced VT-307c-capability-floor's enumeration of syntactic POSITIONS
+ * with a value-oriented walker -- but that walker was itself still an
+ * ENUMERATION, this time of container NODE KINDS (object literal, array
+ * literal, conditional, parenthesization, TS type-wrapping, concise
+ * arrow, `new Set`/`new Map`), so any value-producing form missing from
+ * the list failed OPEN. The final go/no-go invariant review reproduced
+ * SEVEN end-to-end violations from that one structural fact -- real Node
+ * execution, a gate-eligible closure, `complete: true`, the exact
+ * installed package OUT, and an EMPTY `incompleteness` array -- every one
+ * an ordinary JavaScript value form the list simply did not name:
+ * `const { l = Module } = {}`, `const [ l = Module ] = []`,
+ * `const x = (0, Module)`, `class H { loader = Module }`,
+ * `class H { static loader = Module }`, `const x = a || Module`, and
+ * `const x = a ?? Module`. This task's own pre-implementation sweep found
+ * THIRTEEN more of the same family (`a && Module`, `x ||= Module`,
+ * `await Module`, `let`/`var` alias bindings, the composite variants of
+ * the destructuring and class-field forms, `for (const m of [Module])`,
+ * `yield Module`, a computed-name class field, and a tagged-template
+ * substitution) -- confirming that the defect was the enumeration
+ * ITSELF, not the twenty spellings it happened to omit. Adding those
+ * twenty would only have restarted the loop.
+ *
+ * So the traversal is INVERTED here. It no longer asks "is this one of
+ * the container kinds we remembered?", stopping at everything else; it
+ * asks "what does this expression's runtime value consist of?" and
+ * recurses into every operand that can contribute to it, with the
+ * DEFAULT for an unnamed node kind being to recurse
+ * ({@link valueFlowOperandsOf}'s final branch). The safety property now
+ * rests on the explicitly enumerated, individually justified list of
+ * value-OPAQUE forms -- expressions whose result provably cannot be the
+ * capability -- rather than on a list of dangerous containers that new
+ * or overlooked syntax can fall outside of.
+ *
+ * Deliberately does NOT resolve an identifier through its alias
+ * initializer looking for composites (`const inner = { l: Module };
+ * const outer = inner;` does not re-flag at `outer`): `inner`'s OWN
+ * declaration is already an escape, so the file is already incomplete,
+ * and not following aliases into composites keeps this walk a simple
+ * tree traversal with no cycle risk (`const a = [a];`). Bare-capability
+ * alias chains are still fully resolved, by
+ * {@link isAuthoritativeCapabilityValue}'s own base case.
  */
 function containsEscapingLoaderCapabilityValue(
   expr: ts.Expression,
@@ -1430,78 +1752,13 @@ function containsEscapingLoaderCapabilityValue(
   if (isAuthoritativeCapabilityValue(expr, context)) {
     return true;
   }
-  if (ts.isParenthesizedExpression(expr)) {
-    return containsEscapingLoaderCapabilityValue(expr.expression, context);
+  const operands = valueFlowOperandsOf(expr);
+  if (operands === undefined) {
+    return false;
   }
-  if (
-    ts.isAsExpression(expr) ||
-    ts.isSatisfiesExpression(expr) ||
-    ts.isNonNullExpression(expr) ||
-    ts.isTypeAssertionExpression(expr)
-  ) {
-    // TS type-only wrapping forms (`x as T`, `x satisfies T`, `x!`,
-    // `<T>x`) never change what value flows at runtime -- unwrap to the
-    // underlying value expression.
-    return containsEscapingLoaderCapabilityValue(expr.expression, context);
-  }
-  if (ts.isConditionalExpression(expr)) {
-    return (
-      containsEscapingLoaderCapabilityValue(expr.whenTrue, context) ||
-      containsEscapingLoaderCapabilityValue(expr.whenFalse, context)
-    );
-  }
-  if (ts.isObjectLiteralExpression(expr)) {
-    return expr.properties.some((property) => {
-      if (ts.isPropertyAssignment(property)) {
-        return containsEscapingLoaderCapabilityValue(
-          property.initializer,
-          context,
-        );
-      }
-      if (ts.isShorthandPropertyAssignment(property)) {
-        return isAuthoritativeCapabilityValue(property.name, context);
-      }
-      if (ts.isSpreadAssignment(property)) {
-        return containsEscapingLoaderCapabilityValue(
-          property.expression,
-          context,
-        );
-      }
-      return false;
-    });
-  }
-  if (ts.isArrayLiteralExpression(expr)) {
-    return expr.elements.some((element) =>
-      ts.isSpreadElement(element)
-        ? containsEscapingLoaderCapabilityValue(element.expression, context)
-        : containsEscapingLoaderCapabilityValue(element, context),
-    );
-  }
-  if (ts.isArrowFunction(expr) && !ts.isBlock(expr.body)) {
-    // A concise-body arrow (`() => Module`) is exactly a `return Module;`
-    // in disguise -- its body IS the returned value.
-    return containsEscapingLoaderCapabilityValue(expr.body, context);
-  }
-  if (
-    ts.isNewExpression(expr) &&
-    ts.isIdentifier(expr.expression) &&
-    (expr.expression.text === "Set" || expr.expression.text === "Map") &&
-    expr.arguments !== undefined &&
-    expr.arguments.length === 1
-  ) {
-    const [soleArgument] = expr.arguments;
-    // `new Set([...])`/`new Map([...])` literal-constructor forms (Part
-    // 5) -- the array-literal branch above already recurses through
-    // `Map`'s own `[key, value]` tuple entries correctly, since each
-    // entry is itself an ArrayLiteralExpression.
-    if (
-      soleArgument !== undefined &&
-      ts.isArrayLiteralExpression(soleArgument)
-    ) {
-      return containsEscapingLoaderCapabilityValue(soleArgument, context);
-    }
-  }
-  return false;
+  return operands.some((operand) =>
+    containsEscapingLoaderCapabilityValue(operand, context),
+  );
 }
 
 /**
@@ -1528,18 +1785,29 @@ function isEscapingCapabilityUse(
 }
 
 /**
- * Whether a variable's initializer `expr` is a capability escape, EXCLUDING
- * the one case that must stay safe: `expr` itself being a bare, direct
- * capability reference (`const alias = Module;` -- alias creation, VT-307c-
- * capability-floor Part 8). A COMPOSITE initializer that contains the
- * capability nested inside it (`const registry = { loader: Module };`)
- * is still an escape. Used only for `VariableDeclaration` initializers,
- * where "bare reference" and "the capability is somewhere in this value"
- * are genuinely different questions -- every OTHER value-flowing position
- * this file checks (assignment RHS, return, throw, export, call argument)
- * treats a bare reference as an escape too, via {@link isEscapingCapabilityUse}
- * directly, since none of those positions create a trackable alias the
- * way a `VariableDeclaration` does.
+ * Whether an initializer `expr` is a capability escape, EXCLUDING the one
+ * case that must stay safe: `expr` itself being a bare, direct capability
+ * reference (`const alias = Module;` -- alias creation, VT-307c-
+ * capability-floor Part 8). A COMPOSITE initializer that merely CONTAINS
+ * the capability (`const registry = { loader: Module };`) is still an
+ * escape.
+ *
+ * Applied only where the binding being created is one this classifier can
+ * actually FOLLOW ({@link isFollowableAliasDeclaration}). VT-307c-value-
+ * flow-closure narrowed that from "any variable declaration" to exactly
+ * `const <identifier> = ...`, because the exemption's entire
+ * justification is that {@link resolveSingleAssignmentValue} can resolve
+ * the alias back to the capability later -- and that function has always
+ * been `const`-and-identifier-only. A `let`/`var` binding got the
+ * exemption without the resolution, so `let x = Module; x._preloadModules
+ * (['vuln']);` lost the capability in BOTH directions at once: no escape
+ * recorded at the declaration, and no provenance at the call. Both
+ * `let` and `var` spellings were reproduced end-to-end as genuine
+ * blockers (real Node execution + complete closure + the package OUT)
+ * during this task's own pre-implementation sweep. Every other
+ * value-flowing position treats a bare reference as an escape too, via
+ * {@link isEscapingCapabilityUse} directly, since none of them creates a
+ * followable alias.
  */
 function isNonAliasCapabilityEscape(
   expr: ts.Expression,
@@ -1549,6 +1817,125 @@ function isNonAliasCapabilityEscape(
     return false;
   }
   return containsEscapingLoaderCapabilityValue(expr, context);
+}
+
+/**
+ * Whether `node` declares a binding whose value this classifier can
+ * resolve back to later -- exactly `const <identifier> = <value>`, the
+ * shape {@link resolveSingleAssignmentValue} looks up. This is the ONLY
+ * declaration form that earns the bare-capability alias exemption
+ * described on {@link isNonAliasCapabilityEscape}: for every other
+ * declaration form (a `let`/`var` binding, a destructuring pattern, a
+ * parameter or binding-element default, a class field, an enum member)
+ * the capability's provenance is genuinely lost at the declaration, so a
+ * bare capability there is an escape like any other.
+ */
+function isFollowableAliasDeclaration(node: ts.Node): boolean {
+  return (
+    ts.isVariableDeclaration(node) &&
+    ts.isIdentifier(node.name) &&
+    isConstDeclaration(node)
+  );
+}
+
+/**
+ * One position where a value LEAVES the expression tree that computed it,
+ * with the expression whose value it is.
+ */
+interface ConsumedValuePosition {
+  readonly expression: ts.Expression;
+  /** Whether this position creates a binding {@link resolveSingleAssignmentValue} can follow. */
+  readonly aliasFollowable: boolean;
+}
+
+/**
+ * The value `node` consumes out of the expression tree that produced it,
+ * or `undefined` when `node` is not such a position at all.
+ *
+ * VT-307c-value-flow-closure's answer to this task's Part 7. Where
+ * VT-307c-capability-flow enumerated individual node kinds here
+ * (`VariableDeclaration`, `Parameter`, `ReturnStatement`,
+ * `ThrowStatement`, `ExportAssignment`) -- and thereby missed
+ * `BindingElement`, `PropertyDeclaration`, `EnumMember`,
+ * `YieldExpression`, and the `for`-loop iterables, ALL of which this
+ * task reproduced end-to-end -- this collapses them into three SEMANTIC
+ * categories, only one of which is even node-kind-aware:
+ *
+ * 1. **Stored under a name.** Duck-typed on the AST's own `initializer`
+ *    field rather than enumerated by kind, so every declaration form
+ *    TypeScript has (and every one it gains later) is covered the moment
+ *    it carries an initializer: variable declarations, parameters,
+ *    binding elements (destructuring defaults, at any nesting depth),
+ *    class instance and static fields, object-literal property
+ *    assignments, enum members. The one non-expression `initializer` in
+ *    the AST -- a `for` statement's `VariableDeclarationList` -- is
+ *    excluded explicitly; its declarations are visited on their own.
+ * 2. **Handed out of the current computation.** `return`, `throw`,
+ *    `yield`, and the `export =`/`export default` assignment forms: in
+ *    each the value leaves this function/module entirely, and nothing
+ *    here tracks where it lands.
+ * 3. **Iterated.** `for (const m of <expr>)` / `for (const k in <expr>)`
+ *    -- the iterable is consumed to produce the loop bindings, so a
+ *    capability inside it (`for (const m of [Module])`, a reproduced
+ *    blocker) escapes into the loop body.
+ *
+ * Only category 1 can be alias-followable, and only for the one
+ * declaration shape {@link isFollowableAliasDeclaration} names.
+ *
+ * Assignments and call/`new` arguments are deliberately NOT handled here:
+ * both have precedence interactions of their own (a target-side mutation
+ * reason must win over the right-hand side; a precisely-classified callee
+ * must suppress its own legitimate capability arguments), so they keep
+ * their dedicated checks in {@link findClosureWideningConstructs} and
+ * {@link classifyClosureWideningCall} respectively.
+ */
+function consumedValuePositionOf(
+  node: ts.Node,
+): ConsumedValuePosition | undefined {
+  // Category 1: stored under a name.
+  const initializer = (node as { readonly initializer?: ts.Node }).initializer;
+  if (initializer !== undefined && !ts.isVariableDeclarationList(initializer)) {
+    return {
+      expression: initializer as ts.Expression,
+      aliasFollowable: isFollowableAliasDeclaration(node),
+    };
+  }
+
+  // Category 2: handed out of the current computation.
+  if (
+    ts.isReturnStatement(node) ||
+    ts.isThrowStatement(node) ||
+    ts.isYieldExpression(node) ||
+    ts.isExportAssignment(node)
+  ) {
+    return node.expression === undefined
+      ? undefined
+      : { expression: node.expression, aliasFollowable: false };
+  }
+
+  // Category 3: iterated.
+  if (ts.isForOfStatement(node) || ts.isForInStatement(node)) {
+    return { expression: node.expression, aliasFollowable: false };
+  }
+
+  return undefined;
+}
+
+/**
+ * The substitution expressions of a tagged template -- `tag`${Module}``'s
+ * `Module`. A tagged template IS a call (the tag function receives every
+ * substitution as an argument), but it is neither a `CallExpression` nor
+ * a `NewExpression`, so {@link classifyClosureWideningCall}'s argument
+ * check never sees it; passing a capability this way was a reproduced
+ * blocker. An untagged template literal needs no equivalent: its result
+ * is always a string ({@link valueFlowOperandsOf}'s Exclusion 3).
+ */
+function taggedTemplateSubstitutionsOf(
+  node: ts.TaggedTemplateExpression,
+): readonly ts.Expression[] {
+  return ts.isTemplateExpression(node.template)
+    ? node.template.templateSpans.map((span) => span.expression)
+    : [];
 }
 
 /**
@@ -1842,7 +2229,11 @@ function isModuleLoaderAssignmentMutation(
   node: ts.BinaryExpression,
   context: LoaderClassificationContext,
 ): DynamicCallReason | undefined {
-  if (node.operatorToken.kind !== ts.SyntaxKind.EqualsToken) {
+  // VT-307c-value-flow-closure widens this from `=` alone to the three
+  // logical assignments as well: `Module._resolveFilename ||= hook`
+  // replaces the resolver exactly as `Module._resolveFilename = hook`
+  // does, and an `EqualsToken`-only guard let it through untouched.
+  if (!isCapabilityStoringAssignmentOperator(node.operatorToken.kind)) {
     return undefined;
   }
   const target = node.left;
@@ -1961,20 +2352,36 @@ function isModuleLoaderAssignmentMutation(
  *
  * - a capability as the right-hand side of an assignment whose TARGET
  *   isn't itself a recognized mutation (`registry.loader = Module`,
- *   `exports.loader = Module`, a bare `let`-reassignment) -- checked only
- *   when {@link isModuleLoaderAssignmentMutation} found no target-side
- *   reason, so `module.exports = Module` correctly reports the escape via
- *   its RHS (this branch) rather than a spurious mutation flag on
- *   `.exports` itself (which stays safe-listed on the target side);
- * - `return <capability>;`
- * - `export default <capability>;` / TypeScript's `export = <capability>;`
+ *   `exports.loader = Module`, a bare `let`-reassignment, and -- VT-307c-
+ *   value-flow-closure -- the logical assignments `||=`/`&&=`/`??=`) --
+ *   checked only when {@link isModuleLoaderAssignmentMutation} found no
+ *   target-side reason, so `module.exports = Module` correctly reports
+ *   the escape via its RHS (this branch) rather than a spurious mutation
+ *   flag on `.exports` itself (which stays safe-listed on the target
+ *   side);
+ * - a tagged template's substitutions
+ *   ({@link taggedTemplateSubstitutionsOf}) -- call-shaped, but neither a
+ *   `CallExpression` nor a `NewExpression`, so
+ *   {@link classifyClosureWideningCall}'s argument check cannot see it;
  * - `export { localName };` (a same-file named re-export of a local
  *   capability-bound identifier; deliberately NOT `export { x } from
  *   "pkg"`, which re-exports something from elsewhere, not this file's
  *   own value)
  * - `delete <capability>.<member>;` ({@link isCapabilityDeleteMutation}) --
  *   the one mutation shape that is neither a `BinaryExpression` nor a
- *   call at all.
+ *   call at all;
+ * - and every remaining position where a value LEAVES the expression
+ *   tree that computed it, resolved through the single semantic
+ *   abstraction {@link consumedValuePositionOf} rather than a per-node-
+ *   kind chain: values stored under a name (any declaration carrying an
+ *   `initializer` -- variable, parameter, binding element, class field,
+ *   enum member), values handed out of the current computation
+ *   (`return`/`throw`/`yield`/`export =`/`export default`), and values
+ *   consumed by iteration (`for...of`/`for...in`). VT-307c-value-flow-
+ *   closure replaced the previous hand-listed branches here after this
+ *   task reproduced `BindingElement`, `PropertyDeclaration`,
+ *   `YieldExpression`, and `for`-iterable escapes end-to-end -- the same
+ *   enumeration failure mode, one layer up from the value walker's own.
  *
  * Once a capability escapes into any of these positions, this scanner
  * does not attempt to follow it further (no interprocedural analysis of
@@ -2013,69 +2420,29 @@ export function findClosureWideningConstructs(
       if (reason !== undefined) {
         record(reason, node);
       }
+    } else if (ts.isTaggedTemplateExpression(node)) {
+      // VT-307c-value-flow-closure: a tagged template hands every
+      // substitution to the tag function as an argument, but is neither
+      // a CallExpression nor a NewExpression, so
+      // `classifyClosureWideningCall`'s argument check never sees it.
+      // Closure-only, like the other non-call escape positions here --
+      // CallGraph has no edge shape for it (see this function's own doc
+      // comment).
+      for (const substitution of taggedTemplateSubstitutionsOf(node)) {
+        if (isEscapingCapabilityUse(substitution, context)) {
+          record("loader_capability_escape", substitution);
+        }
+      }
     } else if (ts.isBinaryExpression(node)) {
       const targetReason = isModuleLoaderAssignmentMutation(node, context);
       if (targetReason !== undefined) {
         record(targetReason, node);
       } else if (
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        isCapabilityStoringAssignmentOperator(node.operatorToken.kind) &&
         isEscapingCapabilityUse(node.right, context)
       ) {
         record("loader_capability_escape", node.right);
       }
-    } else if (
-      // VT-307c-capability-flow Part 4/5/10: a variable's INITIALIZER is
-      // the one value-flowing position where a BARE capability reference
-      // must stay safe (`const alias = Module` is alias creation, per
-      // VT-307c-capability-floor Part 8) while a COMPOSITE one containing
-      // the capability nested inside it (`const registry = { loader:
-      // Module }`, `const arr = [Module]`, `const get = () => Module`)
-      // must not. `isNonAliasCapabilityEscape`'s own name says exactly
-      // that: it excludes the bare-alias case and only fires on
-      // composite containment. Applied to `const`/`let`/`var` alike --
-      // the composite-containment hazard is identical regardless of
-      // which declaration keyword introduced the binding.
-      ts.isVariableDeclaration(node) &&
-      node.initializer !== undefined &&
-      isNonAliasCapabilityEscape(node.initializer, context)
-    ) {
-      record("loader_capability_escape", node.initializer);
-    } else if (
-      // VT-307c-capability-flow Part 7: a default parameter value
-      // (`function f(x = Module)` / `function f(x = { loader: Module })`)
-      // is the same value-flowing hazard as a variable initializer, but a
-      // parameter's default is never itself an "alias" in any sense this
-      // classifier tracks further (there is no `resolveSingleAssignmentValue`
-      // equivalent for parameters) -- so even a BARE capability default
-      // is an escape here, matching every other non-declaration
-      // value-flowing position (`isEscapingCapabilityUse`, not the
-      // alias-exempting `isNonAliasCapabilityEscape` used for variable
-      // declarations above).
-      ts.isParameter(node) &&
-      node.initializer !== undefined &&
-      isEscapingCapabilityUse(node.initializer, context)
-    ) {
-      record("loader_capability_escape", node.initializer);
-    } else if (
-      ts.isReturnStatement(node) &&
-      node.expression &&
-      isEscapingCapabilityUse(node.expression, context)
-    ) {
-      record("loader_capability_escape", node.expression);
-    } else if (
-      // VT-307c-capability-flow Part 8: `throw Module;` -- the capability
-      // leaves this file's own tracked control flow entirely (caught,
-      // rethrown, or logged arbitrarily far away), the same
-      // "provenance lost" hazard as every other escape position here.
-      ts.isThrowStatement(node) &&
-      isEscapingCapabilityUse(node.expression, context)
-    ) {
-      record("loader_capability_escape", node.expression);
-    } else if (
-      ts.isExportAssignment(node) &&
-      isEscapingCapabilityUse(node.expression, context)
-    ) {
-      record("loader_capability_escape", node.expression);
     } else if (
       ts.isExportDeclaration(node) &&
       node.moduleSpecifier === undefined &&
@@ -2093,6 +2460,24 @@ export function findClosureWideningConstructs(
       isCapabilityDeleteMutation(node, context)
     ) {
       record("loader_capability_escape", node);
+    } else {
+      // VT-307c-value-flow-closure: every remaining position where a
+      // value leaves the expression tree that computed it, resolved
+      // through ONE semantic abstraction rather than a per-node-kind
+      // chain -- see {@link consumedValuePositionOf} for the three
+      // categories and why they are stated semantically. A bare
+      // capability is an escape in all of them EXCEPT the one
+      // declaration form whose alias this classifier can follow
+      // afterwards (`const alias = Module`).
+      const consumed = consumedValuePositionOf(node);
+      if (
+        consumed !== undefined &&
+        (consumed.aliasFollowable
+          ? isNonAliasCapabilityEscape(consumed.expression, context)
+          : isEscapingCapabilityUse(consumed.expression, context))
+      ) {
+        record("loader_capability_escape", consumed.expression);
+      }
     }
     ts.forEachChild(node, visit);
   }
