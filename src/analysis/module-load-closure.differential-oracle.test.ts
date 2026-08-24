@@ -1206,3 +1206,129 @@ describe("ModuleLoadClosure differential Node oracle: provenance grammar (VT-307
     20000,
   );
 });
+
+/**
+ * VT-307c-builtin-closure's extension of the provenance axis above to the
+ * OTHER three modeled loader/execution builtins.
+ *
+ * The provenance matrix VT-307c-provenance-closure added covered only the
+ * `module` builtin, because that is where its own twelve blockers lived.
+ * That left the identical axis untested for `vm`, `child_process`, and
+ * `worker_threads` -- and the certification then reproduced five
+ * end-to-end violations there, all the same shape (`const fk = cp.fork;
+ * fk(child)`), because `referencesBuiltinExport` had never been folded
+ * into the shared relation and still resolved one hop, identifier-only.
+ * A matrix that stops at one builtin is exactly as blind as a hand-written
+ * case list; this closes it over the builtin dimension too.
+ *
+ * Every row loads a real installed package from a REAL child execution
+ * context (a forked/spawned process, a worker thread) or through a real
+ * loader primitive, so `exec` is genuine rather than incidental.
+ */
+interface BuiltinProvenanceForm {
+  readonly name: string;
+  /** Source, with `CHILD` substituted for a path expression to the child script. */
+  readonly source: string;
+}
+
+const BUILTIN_PROVENANCE_FORMS: readonly BuiltinProvenanceForm[] = [
+  // whole-module binding -> member, every spelling
+  {
+    name: "cp.fork direct",
+    source: "const cp = require('child_process');\ncp.fork(CHILD);\n",
+  },
+  {
+    name: "cp.fork via node: specifier",
+    source: "const cp = require('node:child_process');\ncp.fork(CHILD);\n",
+  },
+  {
+    name: "cp.fork stored member value",
+    source:
+      "const cp = require('child_process');\nconst f = cp.fork;\nf(CHILD);\n",
+  },
+  {
+    name: "cp.fork stored, alias depth 2",
+    source:
+      "const cp = require('child_process');\nconst a = cp.fork;\nconst b = a;\nb(CHILD);\n",
+  },
+  {
+    name: "cp.fork stored, alias depth 3",
+    source:
+      "const cp = require('child_process');\nconst a = cp.fork;\nconst b = a;\nconst c = b;\nc(CHILD);\n",
+  },
+  {
+    name: "cp namespace aliased, then member",
+    source:
+      "const cp = require('child_process');\nconst c2 = cp;\nconst f = c2.fork;\nf(CHILD);\n",
+  },
+  {
+    name: "cp.fork via CJS destructure",
+    source: "const { fork } = require('child_process');\nfork(CHILD);\n",
+  },
+  {
+    name: "cp.fork via CJS destructure with rename",
+    source: "const { fork: F } = require('node:child_process');\nF(CHILD);\n",
+  },
+  {
+    name: "cp.fork destructured then re-aliased",
+    source:
+      "const { fork } = require('child_process');\nconst f2 = fork;\nf2(CHILD);\n",
+  },
+  {
+    name: "cp.spawn stored member value",
+    source:
+      "const cp = require('child_process');\nconst sp = cp.spawn;\nsp(process.execPath, [CHILD], { stdio: 'inherit' });\n",
+  },
+  {
+    name: "cp.execSync stored member value",
+    source:
+      "const cp = require('child_process');\nconst es = cp.execSync;\nes(process.execPath + ' ' + CHILD, { stdio: 'inherit' });\n",
+  },
+  {
+    name: "cp.execFileSync stored member value",
+    source:
+      "const cp = require('child_process');\nconst ef = cp.execFileSync;\nef(process.execPath, [CHILD], { stdio: 'inherit' });\n",
+  },
+  {
+    name: "worker_threads Worker stored member value",
+    source:
+      "const wt = require('worker_threads');\nconst W = wt.Worker;\nnew W(CHILD);\n",
+  },
+  {
+    name: "worker_threads Worker via destructure",
+    source:
+      "const { Worker } = require('worker_threads');\nnew Worker(CHILD);\n",
+  },
+  {
+    name: "worker_threads Worker aliased twice",
+    source:
+      "const wt = require('worker_threads');\nconst A = wt.Worker;\nconst B = A;\nnew B(CHILD);\n",
+  },
+];
+
+describe("ModuleLoadClosure differential Node oracle: builtin provenance grammar (VT-307c-builtin-closure)", () => {
+  const generated: OracleCase[] = BUILTIN_PROVENANCE_FORMS.map((form) => ({
+    label: form.name,
+    vulnInstanceRelPath: "node_modules/vuln",
+    setup: (root: string) => {
+      markerPackage(root, "node_modules/vuln");
+      write(root, "src/child.js", "require('vuln');\n");
+      return write(
+        root,
+        "src/index.js",
+        form.source.replace(
+          /CHILD/g,
+          "require('path').join(__dirname,'child.js')",
+        ),
+      );
+    },
+  }));
+
+  it.each(generated.map((c) => [c.label, c] as const))(
+    "%s: complete=true never coexists with a real, unaccounted-for execution",
+    async (_label, oracleCase) => {
+      await runOracleCase(oracleCase);
+    },
+    20000,
+  );
+});

@@ -79,7 +79,7 @@ function builtinNameFromSpecifier(specifier: string): string | undefined {
  * builtin `builtin` -- `const whole = require("vm")`, `import whole from
  * "node:vm"` (ESM default), or `import * as whole from "node:vm"` (ESM
  * namespace). Never a named/destructured single export -- see
- * {@link isNamedBuiltinBinding} for that.
+ * {@link namedBuiltinBindingOf} for that.
  */
 function wholeModuleBuiltinFor(
   localName: string,
@@ -104,29 +104,6 @@ function wholeModuleBuiltinFor(
     }
   }
   return undefined;
-}
-
-/**
- * Whether `localName` is bound, in this file, to `exportName` specifically
- * (not the whole module) of Node builtin `builtin` -- a named ESM import
- * (`import { exportName } from "node:vm"`) or a CommonJS destructure
- * (`const { exportName } = require("vm")`), including the aliased forms
- * both allow (`import { exportName as localName } ...` /
- * `const { exportName: localName } = ...`).
- */
-function isNamedBuiltinBinding(
-  localName: string,
-  builtin: string,
-  exportName: string,
-  context: LoaderClassificationContext,
-): boolean {
-  return context.model.imports.some(
-    (imp) =>
-      imp.localName === localName &&
-      imp.importedName === exportName &&
-      imp.kind === "named" &&
-      builtinNameFromSpecifier(imp.specifier) === builtin,
-  );
 }
 
 /**
@@ -217,26 +194,24 @@ function referencesBuiltinExport(
   exportName: string,
   context: LoaderClassificationContext,
 ): boolean {
-  if (ts.isPropertyAccessExpression(expr) && expr.name.text === exportName) {
-    return resolveWholeModuleBuiltin(expr.expression, context) === builtin;
+  const capability = resolveLoaderCapability(expr, context);
+  if (capability === undefined) {
+    return false;
   }
-
-  if (ts.isIdentifier(expr)) {
-    if (isNamedBuiltinBinding(expr.text, builtin, exportName, context)) {
-      return true;
-    }
-    const initializer = resolveSingleAssignmentValue(
-      expr.text,
-      context.index.sourceFile,
-    );
+  // `module` members collapse onto `module_constructor_member` -- see
+  // {@link capabilityForBuiltinMember} for why the whole `module` builtin
+  // and the `Module` constructor are the same value.
+  if (builtin === "module") {
     return (
-      initializer !== undefined &&
-      ts.isIdentifier(initializer) &&
-      isNamedBuiltinBinding(initializer.text, builtin, exportName, context)
+      capability.kind === "module_constructor_member" &&
+      capability.member === exportName
     );
   }
-
-  return false;
+  return (
+    capability.kind === "builtin_member" &&
+    capability.builtin === builtin &&
+    capability.member === exportName
+  );
 }
 
 /**
@@ -345,31 +320,11 @@ function isVmConstructedInstance(
   constructorName: string,
   context: LoaderClassificationContext,
 ): boolean {
-  if (ts.isNewExpression(expr)) {
-    return referencesBuiltinExport(
-      expr.expression,
-      "vm",
-      constructorName,
-      context,
-    );
-  }
-  if (ts.isIdentifier(expr)) {
-    const initializer = resolveSingleAssignmentValue(
-      expr.text,
-      context.index.sourceFile,
-    );
-    return (
-      initializer !== undefined &&
-      ts.isNewExpression(initializer) &&
-      referencesBuiltinExport(
-        initializer.expression,
-        "vm",
-        constructorName,
-        context,
-      )
-    );
-  }
-  return false;
+  const capability = resolveLoaderCapability(expr, context);
+  return (
+    capability?.kind === "vm_instance" &&
+    capability.constructorName === constructorName
+  );
 }
 
 /**
@@ -401,20 +356,21 @@ function isAmbientModuleInstance(expr: ts.Expression): boolean {
   if (ts.isIdentifier(expr) && expr.text === "module") {
     return true;
   }
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "main" &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "require"
-  ) {
+  if (!ts.isPropertyAccessExpression(expr)) {
+    return false;
+  }
+  // VT-307c-builtin-closure: the OWNER is matched through
+  // `stripGlobalThisPrefix`, so `globalThis.require.main` and
+  // `globalThis.process.mainModule` are recognized as the very same
+  // ambient instances their unprefixed spellings already were.
+  const owner = stripGlobalThisPrefix(expr.expression);
+  if (!ts.isIdentifier(owner)) {
+    return false;
+  }
+  if (expr.name.text === "main" && owner.text === "require") {
     return true;
   }
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "mainModule" &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "process"
-  ) {
+  if (expr.name.text === "mainModule" && owner.text === "process") {
     return true;
   }
   return false;
@@ -436,6 +392,126 @@ function isNamespaceBuiltinBinding(
       imp.localName === localName &&
       imp.kind === "namespace" &&
       builtinNameFromSpecifier(imp.specifier) === builtin,
+  );
+}
+
+/**
+ * The `(builtin, exportName)` pair `localName` is bound to by a NAMED
+ * import/destructure of any modeled Node builtin, or `undefined`
+ * (VT-307c-builtin-closure). The open-ended sibling of
+ * the removed `isNamedBuiltinBinding`, which answered the same question only for
+ * one caller-supplied `(builtin, exportName)` guess at a time: this one
+ * lets {@link resolveLoaderCapability} discover WHICH builtin export a
+ * bare identifier denotes without being told what to look for, so
+ * `const { fork } = require("child_process")` resolves through the same
+ * single relation `const { Module } = require("module")` already did.
+ */
+function namedBuiltinBindingOf(
+  localName: string,
+  context: LoaderClassificationContext,
+): { readonly builtin: string; readonly exportName: string } | undefined {
+  for (const imp of context.model.imports) {
+    if (
+      imp.localName !== localName ||
+      imp.kind !== "named" ||
+      imp.importedName === undefined
+    ) {
+      continue;
+    }
+    const builtin = builtinNameFromSpecifier(imp.specifier);
+    if (builtin) {
+      return { builtin, exportName: imp.importedName };
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Unwraps one `globalThis.` prefix, so `globalThis.process` is matched by
+ * the same literal-identifier-chain checks that already match a bare
+ * `process` (VT-307c-builtin-closure Family F). `globalThis.X` and `X`
+ * denote the same object for every genuine global, and
+ * `globalThis.process.mainModule.constructor._preloadModules([...])` was
+ * reproduced end-to-end as a real invariant violation purely because the
+ * ambient checks below matched only the unprefixed spelling.
+ *
+ * Returns `expr.name` (an `Identifier`) rather than a synthesized node --
+ * every ambient check in this file is a `.text` comparison, so the
+ * identifier itself is exactly what they need. Deliberately unwraps only
+ * ONE level and only the literal name `globalThis`: `global.process`
+ * (Node's older, non-standard alias) is intentionally NOT unwrapped here,
+ * since `global` is far more commonly shadowed by ordinary local
+ * variables in real code than `globalThis` is. Over-approximating in the
+ * other direction is harmless: a `globalThis.module` that is genuinely
+ * `undefined` at runtime (CommonJS `module` is wrapper-scoped, not
+ * global) merely fails closed on an expression that could not have
+ * worked anyway.
+ */
+function stripGlobalThisPrefix(expr: ts.Expression): ts.Expression {
+  if (
+    ts.isPropertyAccessExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "globalThis"
+  ) {
+    return expr.name;
+  }
+  return expr;
+}
+
+/**
+ * The capability kind for `<builtin>.<member>`, normalizing the one case
+ * where the two spellings collapse: because the whole `module` builtin IS
+ * the `Module` constructor, `require("module").createRequire` and
+ * `Module.createRequire` are the same value, so a `module` member always
+ * resolves to `"module_constructor_member"` and never to
+ * `"builtin_member"`. Every other modeled builtin uses
+ * `"builtin_member"`. Keeping this in ONE place is what lets
+ * {@link resolveLoaderCapability}'s several entry paths (a named
+ * destructure, a property access off a namespace, an ESM named import)
+ * agree on the answer without each repeating the special case.
+ */
+function capabilityForBuiltinMember(
+  builtin: string,
+  member: string,
+): ResolvedLoaderCapability {
+  if (builtin !== "module") {
+    return { kind: "builtin_member", builtin, member };
+  }
+  // `module`'s own `Module` export is the self-reference Node's loader
+  // sets up (`Module.Module = Module`), so it IS the constructor rather
+  // than a member OF it -- the same identity the property-access branch
+  // of {@link resolveLoaderCapability} applies to `<X>.Module`. Handling
+  // it here too is what keeps a NAMED binding of it
+  // (`import { Module } from "module"`, `const { Module } =
+  // require("module")`) resolving to the constructor, which every
+  // `Module.<member>` classification downstream depends on.
+  if (member === "Module") {
+    return { kind: "module_constructor" };
+  }
+  return { kind: "module_constructor_member", member };
+}
+
+/**
+ * Whether `<builtin>.<member>` is a member this classifier considers a
+ * loader/execution capability at all (VT-307c-builtin-closure).
+ *
+ * The split this function draws is deliberate and is what keeps
+ * {@link resolveLoaderCapability} a pure RESOLUTION relation. That
+ * relation answers "what does this expression denote" and resolves EVERY
+ * member of a modeled builtin, dangerous or not -- so
+ * `child_process.fork` and `worker_threads.isMainThread` both resolve,
+ * and an alias chain to either is followed identically. This predicate
+ * then answers the separate question "does losing track of this value
+ * matter", consulting the SAME {@link BUILTIN_MEMBER_REASONS} table the
+ * call-classification path already uses rather than a second list of its
+ * own. Without the split, `const notMainThread = wt.isMainThread` -- an
+ * ordinary boolean read -- would become a capability escape purely
+ * because the relation could now resolve it.
+ */
+function isDangerousBuiltinMember(builtin: string, member: string): boolean {
+  return BUILTIN_MEMBER_REASONS.some(
+    ([tableBuiltin, tableExport]) =>
+      tableBuiltin === builtin && tableExport === member,
   );
 }
 
@@ -464,6 +540,29 @@ type ResolvedLoaderCapability =
   | { readonly kind: "create_require_result" }
   | { readonly kind: "module_constructor_member"; readonly member: string }
   | { readonly kind: "module_prototype_member"; readonly member: string }
+  /**
+   * The WHOLE value of one of the OTHER modeled loader/execution builtins
+   * -- `vm`, `child_process`, `worker_threads` (VT-307c-builtin-closure).
+   * `module` never produces this kind: Node's own loader does
+   * `module.exports = Module`, so the whole `module` builtin IS the
+   * `Module` constructor and resolves to `"module_constructor"` instead.
+   */
+  | { readonly kind: "builtin_namespace"; readonly builtin: string }
+  /**
+   * A MEMBER value read off one of those other builtins (`vm.Script`,
+   * `child_process.fork`, `worker_threads.Worker`, ...) -- present
+   * whether that member is dangerous, safe, or unrecognized, exactly as
+   * `module_constructor_member` is. Whether a given member MATTERS is
+   * {@link BUILTIN_MEMBER_REASONS}/{@link isDangerousBuiltinMember}'s
+   * job, never this relation's.
+   */
+  | {
+      readonly kind: "builtin_member";
+      readonly builtin: string;
+      readonly member: string;
+    }
+  /** An instance constructed from one of `vm`'s own constructors (`new vm.Script(...)`). */
+  | { readonly kind: "vm_instance"; readonly constructorName: string }
   | { readonly kind: "ambiguous" };
 
 /**
@@ -484,7 +583,7 @@ type ResolvedLoaderCapability =
  * for named exports; purely syntactic (never alias-resolving) for the
  * `.prototype` receiver case; non-recursive for the `<whole>.Module`
  * self-reference, unlike its own `.constructor` sibling; and no
- * consultation of {@link isNamedBuiltinBinding} at all for ESM named
+ * consultation of any named-binding lookup at all for ESM named
  * imports of `Module` itself. Wherever the promise wasn't kept, the
  * capability vanished in BOTH directions at once: no escape recorded at
  * the declaration, no provenance recognized at the use.
@@ -512,7 +611,7 @@ type ResolvedLoaderCapability =
  *   default/namespace import of it) -- {@link resolveWholeModuleBuiltin};
  * - a NAMED/destructured `Module` export binding (`import { Module } from
  *   "module"`, `const { Module } = require("module")`, including aliased
- *   forms) -- reuses {@link isNamedBuiltinBinding}, the SAME mechanism
+ *   forms) -- reuses {@link namedBuiltinBindingOf}, the SAME mechanism
  *   already modeling every other named builtin export, rather than a
  *   parallel one;
  * - an ESM NAMESPACE import's `.default` property, which Node's CJS-ESM
@@ -578,32 +677,43 @@ function resolveLoaderCapability(
     return { kind: "ambient_eval" };
   }
 
-  // Whole-module reference to the `module`/`node:module` builtin IS the
-  // Module constructor (Node's own loader does `module.exports = Module`).
-  if (resolveWholeModuleBuiltin(expr, context, depth) === "module") {
-    return { kind: "module_constructor" };
+  // Whole-value reference to a modeled builtin. For `module` that value
+  // IS the `Module` constructor (Node's own loader does
+  // `module.exports = Module`); for the others it is the namespace
+  // object, whose members the property-access branch below resolves.
+  const wholeBuiltin = resolveWholeModuleBuiltin(expr, context, depth);
+  if (wholeBuiltin !== undefined) {
+    return wholeBuiltin === "module"
+      ? { kind: "module_constructor" }
+      : { kind: "builtin_namespace", builtin: wholeBuiltin };
   }
 
-  // Named/destructured `Module` export binding (Family A).
-  if (
-    ts.isIdentifier(expr) &&
-    isNamedBuiltinBinding(expr.text, "module", "Module", context)
-  ) {
-    return { kind: "module_constructor" };
-  }
-
-  // ESM namespace import's `.default` property IS the whole default
-  // export (Family A namespace case).
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "default" &&
-    ts.isIdentifier(expr.expression) &&
-    isNamespaceBuiltinBinding(expr.expression.text, "module", context)
-  ) {
-    return { kind: "module_constructor" };
+  // Named/destructured export binding of ANY modeled builtin
+  // (VT-307c-builtin-closure generalizes VT-307c-provenance-closure's
+  // `module`-only Family-A case): `const { Module } = require("module")`,
+  // `import { Module as M } from "node:module"`, and equally
+  // `const { fork } = require("child_process")` /
+  // `import { Worker } from "node:worker_threads"`.
+  if (ts.isIdentifier(expr)) {
+    const named = namedBuiltinBindingOf(expr.text, context);
+    if (named) {
+      return capabilityForBuiltinMember(named.builtin, named.exportName);
+    }
   }
 
   if (ts.isPropertyAccessExpression(expr)) {
+    // ESM namespace import's `.default` IS the whole default export.
+    const namespaceOwner = expr.expression;
+    if (expr.name.text === "default" && ts.isIdentifier(namespaceOwner)) {
+      for (const [builtin] of NODE_BUILTIN_SPECIFIERS) {
+        if (isNamespaceBuiltinBinding(namespaceOwner.text, builtin, context)) {
+          return builtin === "module"
+            ? { kind: "module_constructor" }
+            : { kind: "builtin_namespace", builtin };
+        }
+      }
+    }
+
     const receiverKind = resolveLoaderCapability(
       expr.expression,
       context,
@@ -639,14 +749,17 @@ function resolveLoaderCapability(
       return { kind: "module_constructor" };
     }
 
-    // Any other member off the constructor or its prototype is a
-    // resolvable member value (Family C/D), whether reached directly or
-    // through an arbitrary alias chain.
+    // Any other member off the constructor, its prototype, or one of the
+    // other builtins' namespace objects is a resolvable member value,
+    // whether reached directly or through an arbitrary alias chain.
     if (receiverKind?.kind === "module_constructor") {
       return { kind: "module_constructor_member", member: expr.name.text };
     }
     if (receiverKind?.kind === "module_prototype") {
       return { kind: "module_prototype_member", member: expr.name.text };
+    }
+    if (receiverKind?.kind === "builtin_namespace") {
+      return capabilityForBuiltinMember(receiverKind.builtin, expr.name.text);
     }
 
     if (receiverKind?.kind === "ambiguous") {
@@ -654,8 +767,11 @@ function resolveLoaderCapability(
     }
   }
 
-  // `new <ctor>(...)` where `<ctor>` resolves to the constructor produces
-  // a Module instance.
+  // `new <ctor>(...)`: off the `Module` constructor this produces a
+  // `Module` INSTANCE; off one of `vm`'s own constructors it produces the
+  // corresponding `vm` instance (`new vm.Script(code)`), which
+  // {@link isVmConstructedInstance} then recognizes through this same
+  // relation rather than its own separate one-hop alias check.
   if (ts.isNewExpression(expr)) {
     const ctorKind = resolveLoaderCapability(
       expr.expression,
@@ -664,6 +780,9 @@ function resolveLoaderCapability(
     );
     if (ctorKind?.kind === "module_constructor") {
       return { kind: "module_instance" };
+    }
+    if (ctorKind?.kind === "builtin_member" && ctorKind.builtin === "vm") {
+      return { kind: "vm_instance", constructorName: ctorKind.member };
     }
     if (ctorKind?.kind === "ambiguous") {
       return { kind: "ambiguous" };
@@ -1636,7 +1755,32 @@ function isAuthoritativeCapabilityValue(
   // an authoritative capability VALUE before this task either (see this
   // function's own history) -- this exclusion restores exactly that prior
   // scope while still gaining the unbounded-depth CALLEE fix.
-  return capability !== undefined && capability.kind !== "ambient_eval";
+  if (capability === undefined || capability.kind === "ambient_eval") {
+    return false;
+  }
+  // `vm_instance` is likewise a RESOLUTION-only kind: constructing a
+  // `vm.Script`/`vm.SourceTextModule` compiles but executes nothing until
+  // one of its own run methods is called, which
+  // {@link classifyLoaderConstruct} detects directly via
+  // {@link isVmConstructedInstance}. Treating the constructed instance as
+  // an escaping capability VALUE would contradict that long-standing,
+  // separately-tested distinction (see this file's `BUILTIN_MEMBER_REASONS`
+  // doc comment on why `vm`'s `Script` export is deliberately absent from
+  // it, and the "(AG control)" / "construction is not itself execution"
+  // precision controls in module-load-closure.test.ts).
+  if (capability.kind === "vm_instance") {
+    return false;
+  }
+  // VT-307c-builtin-closure: a member of one of the non-`module`
+  // builtins is a capability only when the shared
+  // {@link BUILTIN_MEMBER_REASONS} table (or `vm`'s capability
+  // constructors) says so -- see {@link isDangerousBuiltinMember} for why
+  // RESOLUTION and DANGER are deliberately separate questions, and what
+  // would break if they were not.
+  if (capability.kind === "builtin_member") {
+    return isDangerousBuiltinMember(capability.builtin, capability.member);
+  }
+  return true;
 }
 
 /**
@@ -2066,10 +2210,38 @@ function isNonAliasCapabilityEscape(
  * bare capability there is an escape like any other.
  */
 function isFollowableAliasDeclaration(node: ts.Node): boolean {
+  if (!ts.isVariableDeclaration(node)) {
+    return false;
+  }
+  if (ts.isIdentifier(node.name) && isConstDeclaration(node)) {
+    return true;
+  }
+  // VT-307c-builtin-closure: a DESTRUCTURE of a builtin `require(...)`
+  // call is followable too, for exactly the same reason -- the module
+  // model records `const { fork } = require("child_process")` as a named
+  // import binding, so {@link namedBuiltinBindingOf} resolves every name
+  // it introduces back to the right `(builtin, export)` pair later,
+  // precisely as {@link resolveSingleAssignmentValue} resolves a plain
+  // `const` alias. Withholding the exemption here made
+  // `const { isMainThread } = require("worker_threads")` -- an ordinary,
+  // extremely common read of a boolean -- report a capability escape
+  // purely because the WHOLE-namespace initializer is a capability,
+  // even though the binding extracts a member that is not one.
+  //
+  // Gated on the initializer being SYNTACTICALLY a static
+  // `require("<builtin>")` call, which is exactly the shape the module
+  // model records: `const { prototype } = Module` (initializer an
+  // identifier, no import binding recorded, `prototype` therefore NOT
+  // resolvable later) is deliberately excluded and still escapes.
+  const { initializer } = node;
   return (
-    ts.isVariableDeclaration(node) &&
-    ts.isIdentifier(node.name) &&
-    isConstDeclaration(node)
+    ts.isObjectBindingPattern(node.name) &&
+    initializer !== undefined &&
+    ts.isCallExpression(initializer) &&
+    isStaticRequireCall(initializer) &&
+    builtinNameFromSpecifier(
+      (initializer.arguments[0] as ts.StringLiteral).text,
+    ) !== undefined
   );
 }
 
@@ -2694,6 +2866,33 @@ export function findClosureWideningConstructs(
           record("loader_capability_escape", specifier);
         }
       }
+    } else if (
+      // VT-307c-builtin-closure Family G: a RE-EXPORT whose source is one
+      // of the modeled loader/execution builtins -- `export { Module }
+      // from "module"`, `export { createRequire } from "node:module"`,
+      // `export * from "vm"`. Both spellings were reproduced end-to-end
+      // as real invariant violations: the IMPORTING file sees only a
+      // relative specifier (`./reexport.mjs`), so no builtin binding
+      // exists there to resolve, and this file -- which does have the
+      // builtin provenance -- previously skipped every re-export
+      // outright via the `moduleSpecifier === undefined` guard above.
+      // Both files were loaded and whole-file scanned; neither flagged.
+      //
+      // Deliberately does NOT inspect the exported NAMES: re-exporting
+      // anything at all out of `module`/`vm`/`child_process`/
+      // `worker_threads` hands a binding from a loader/execution builtin
+      // to consumers this per-file classifier cannot see, and the
+      // name-agnostic rule also covers `export * from`, which has no
+      // names to inspect. Re-exporting from these four builtins is
+      // vanishingly rare in real code (zero occurrences across the whole
+      // validation corpus), so the conservative answer costs nothing
+      // measurable.
+      ts.isExportDeclaration(node) &&
+      node.moduleSpecifier !== undefined &&
+      ts.isStringLiteral(node.moduleSpecifier) &&
+      builtinNameFromSpecifier(node.moduleSpecifier.text) !== undefined
+    ) {
+      record("loader_capability_escape", node);
     } else if (
       ts.isDeleteExpression(node) &&
       isCapabilityDeleteMutation(node, context)

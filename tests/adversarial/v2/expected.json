@@ -680,5 +680,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-063",
+    "dir": "adv2-063-dependency-toplevel-builtin-member-alias",
+    "category": "63. VT-307c-builtin-closure regression: a stored MEMBER VALUE of a modeled Node builtin (const launch = cp.fork) in a DEPENDENCY's own module top-level scope",
+    "description": "Pins the defect class the final certification found in VT-307c-provenance-closure itself. That task built ONE shared provenance relation and correctly routed every `module`-family resolver through it, closing all twelve of its own blockers -- but left a SECOND relation standing beside it: `referencesBuiltinExport` was never folded in, kept its own one-hop identifier-only alias logic, and serves every BUILTIN_MEMBER_REASONS entry. Because the shared relation modeled only the `module` builtin, the other three modeled builtins (`vm`, `child_process`, `worker_threads`) fell through BOTH relations, leaving the exact defect the task had just eliminated for Module._preloadModules alive for three builtins. vt2-holder does `const launch = cp.fork; launch(workerScript);` at its own top level, where the launched script requires the never-imported top-level vt2-vuln-lib@1.9.0. Reproduced end-to-end, with the DIRECT spelling (cp.fork(...)) and the NAMED-IMPORT spelling (const { fork } = require(...)) both proven to classify correctly -- so the hazard was already fully modeled and only the single alias hop lost it, with NO unknown Node API name involved anywhere. VT-307c-builtin-closure closes this by generalizing the shared relation to all four modeled builtins and making referencesBuiltinExport a thin wrapper over it. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-062.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `const launch = cp.fork; launch(workerScript);`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), starts a separate Node execution context on a script this analyzer never traverses. A human analyst cannot rule out reachability here merely because `fork` was reached through a stored member value rather than a direct `cp.fork(...)` call. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]
