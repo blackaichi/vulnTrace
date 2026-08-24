@@ -352,28 +352,11 @@ function isVmConstructedInstance(
  * never something reached through an import, and never a same-file
  * `require`/`process` shadowed by a local variable of that name.
  */
-function isAmbientModuleInstance(expr: ts.Expression): boolean {
-  if (ts.isIdentifier(expr) && expr.text === "module") {
-    return true;
-  }
-  if (!ts.isPropertyAccessExpression(expr)) {
-    return false;
-  }
-  // VT-307c-builtin-closure: the OWNER is matched through
-  // `stripGlobalThisPrefix`, so `globalThis.require.main` and
-  // `globalThis.process.mainModule` are recognized as the very same
-  // ambient instances their unprefixed spellings already were.
-  const owner = stripGlobalThisPrefix(expr.expression);
-  if (!ts.isIdentifier(owner)) {
-    return false;
-  }
-  if (expr.name.text === "main" && owner.text === "require") {
-    return true;
-  }
-  if (expr.name.text === "mainModule" && owner.text === "process") {
-    return true;
-  }
-  return false;
+function isAmbientModuleInstance(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
+  return resolveLoaderCapability(expr, context)?.kind === "module_instance";
 }
 
 /**
@@ -424,38 +407,6 @@ function namedBuiltinBindingOf(
     }
   }
   return undefined;
-}
-
-/**
- * Unwraps one `globalThis.` prefix, so `globalThis.process` is matched by
- * the same literal-identifier-chain checks that already match a bare
- * `process` (VT-307c-builtin-closure Family F). `globalThis.X` and `X`
- * denote the same object for every genuine global, and
- * `globalThis.process.mainModule.constructor._preloadModules([...])` was
- * reproduced end-to-end as a real invariant violation purely because the
- * ambient checks below matched only the unprefixed spelling.
- *
- * Returns `expr.name` (an `Identifier`) rather than a synthesized node --
- * every ambient check in this file is a `.text` comparison, so the
- * identifier itself is exactly what they need. Deliberately unwraps only
- * ONE level and only the literal name `globalThis`: `global.process`
- * (Node's older, non-standard alias) is intentionally NOT unwrapped here,
- * since `global` is far more commonly shadowed by ordinary local
- * variables in real code than `globalThis` is. Over-approximating in the
- * other direction is harmless: a `globalThis.module` that is genuinely
- * `undefined` at runtime (CommonJS `module` is wrapper-scoped, not
- * global) merely fails closed on an expression that could not have
- * worked anyway.
- */
-function stripGlobalThisPrefix(expr: ts.Expression): ts.Expression {
-  if (
-    ts.isPropertyAccessExpression(expr) &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "globalThis"
-  ) {
-    return expr.name;
-  }
-  return expr;
 }
 
 /**
@@ -563,6 +514,24 @@ type ResolvedLoaderCapability =
     }
   /** An instance constructed from one of `vm`'s own constructors (`new vm.Script(...)`). */
   | { readonly kind: "vm_instance"; readonly constructorName: string }
+  /**
+   * The ambient `process` object, and the global object itself
+   * (`globalThis`/`global`) -- tracked ONLY as intermediate steps on the
+   * way to a real capability (`process.mainModule`,
+   * `globalThis.process.mainModule`, `globalThis.require`), never
+   * capabilities in their own right (see
+   * {@link isAuthoritativeCapabilityValue}'s explicit exclusion).
+   * Making them resolvable KINDS rather than literal identifier matches
+   * is what lets an ambient chain be reached through an ALIAS
+   * (`const p = process; p.mainModule.constructor`) or through a global
+   * prefix (`globalThis.process...`, `global.process...`) -- five such
+   * spellings were reproduced end-to-end as real invariant violations
+   * while the OWNER position of an ambient chain was still matched by
+   * literal name only, the same defect class as every other round of
+   * this series, one level further out.
+   */
+  | { readonly kind: "ambient_process" }
+  | { readonly kind: "ambient_global" }
   | { readonly kind: "ambiguous" };
 
 /**
@@ -664,17 +633,36 @@ function resolveLoaderCapability(
     return { kind: "ambiguous" };
   }
 
-  // Ambient globals, matched by literal identifier chain only -- no
-  // provenance check applies, the same deliberate simplification this
-  // file already applies to `module`/`require`/`process` elsewhere.
-  if (isAmbientModuleInstance(expr)) {
-    return { kind: "module_instance" };
-  }
-  if (isAmbientRequireFunctionIdentifier(expr)) {
-    return { kind: "ambient_require" };
-  }
-  if (ts.isIdentifier(expr) && expr.text === "eval") {
-    return { kind: "ambient_eval" };
+  // Ambient globals. Each is a LEAF of this relation -- an identifier
+  // with no import binding and no local declaration -- so every way of
+  // REACHING one (an alias, a `globalThis.`/`global.` prefix, a longer
+  // chain) is handled by the ordinary recursion below rather than by a
+  // literal identifier-chain match, which is what previously lost
+  // `const p = process; p.mainModule.constructor` and its four siblings.
+  // A same-file `const <name> = ...` shadows the ambient global and is
+  // resolved as the ordinary alias it is (the `require` case matters in
+  // real ESM code: `const require = createRequire(import.meta.url)`).
+  if (ts.isIdentifier(expr)) {
+    const shadowed =
+      resolveSingleAssignmentValue(expr.text, context.index.sourceFile) !==
+      undefined;
+    if (!shadowed) {
+      switch (expr.text) {
+        case "module":
+          return { kind: "module_instance" };
+        case "require":
+          return { kind: "ambient_require" };
+        case "eval":
+          return { kind: "ambient_eval" };
+        case "process":
+          return { kind: "ambient_process" };
+        case "globalThis":
+        case "global":
+          return { kind: "ambient_global" };
+        default:
+          break;
+      }
+    }
   }
 
   // Whole-value reference to a modeled builtin. For `module` that value
@@ -719,6 +707,42 @@ function resolveLoaderCapability(
       context,
       depth + 1,
     );
+
+    // Ambient chains, resolved through the SAME recursion as everything
+    // else: `globalThis.X` IS `X` for every genuine global, `<require>
+    // .main` and `<process>.mainModule` are both the entry `Module`
+    // INSTANCE (the very same object, under Node's two historical
+    // spellings). Because the receiver is RESOLVED rather than
+    // name-matched, an alias or a global prefix anywhere along the chain
+    // composes for free.
+    if (receiverKind?.kind === "ambient_global") {
+      switch (expr.name.text) {
+        case "process":
+          return { kind: "ambient_process" };
+        case "require":
+          return { kind: "ambient_require" };
+        case "module":
+          return { kind: "module_instance" };
+        case "eval":
+          return { kind: "ambient_eval" };
+        default:
+          // `globalThis.<anything else>` is an ordinary global read.
+          return undefined;
+      }
+    }
+    if (receiverKind?.kind === "ambient_require" && expr.name.text === "main") {
+      return { kind: "module_instance" };
+    }
+    if (
+      receiverKind?.kind === "ambient_process" &&
+      expr.name.text === "mainModule"
+    ) {
+      return { kind: "module_instance" };
+    }
+    if (receiverKind?.kind === "ambient_process") {
+      // `process.<anything else>` is an ordinary process read.
+      return undefined;
+    }
 
     // `<X>.Module` self-reference off an already-resolved constructor
     // (Family B) -- recurses through this SAME function, so arbitrary-
@@ -1220,7 +1244,7 @@ export function classifyLoaderConstruct(
     // ambient VALUE (`module`/`require.main`), same shape as the vm/Module
     // instance-method checks above -- see
     // {@link isModuleLoaderPathArrayMutatingCall}.
-    if (isModuleLoaderPathArrayMutatingCall(expr)) {
+    if (isModuleLoaderPathArrayMutatingCall(expr, context)) {
       return "loader_hook_mutation";
     }
 
@@ -1656,20 +1680,6 @@ const MODULE_CONSTRUCTOR_MUTABLE_PROTOTYPE_MEMBERS: ReadonlySet<string> =
  */
 
 /**
- * Whether `expr` is the ambient `require` FUNCTION VALUE itself (VT-307c-
- * capability-floor) -- the bare identifier, used as a value rather than as
- * the callee of `require(...)` or the base of an already-modeled
- * property-access chain (`require.main`, `require.cache`,
- * `require.extensions`, `require.resolve`, ...). Matched by literal
- * identifier only, the same deliberate ambient-global simplification this
- * file already applies to `module`/`process`/`require` elsewhere -- never
- * a same-file `require` shadowed by a local variable of that name.
- */
-function isAmbientRequireFunctionIdentifier(expr: ts.Expression): boolean {
-  return ts.isIdentifier(expr) && expr.text === "require";
-}
-
-/**
  * Whether `expr` is a receiver with authoritative Node loader-capability
  * provenance -- Node's `Module` constructor, an ambient `Module`
  * INSTANCE, or `Module.prototype` itself -- consulted when classifying a
@@ -1769,6 +1779,23 @@ function isAuthoritativeCapabilityValue(
   // it, and the "(AG control)" / "construction is not itself execution"
   // precision controls in module-load-closure.test.ts).
   if (capability.kind === "vm_instance") {
+    return false;
+  }
+  // `ambient_global`/`ambient_process` are likewise RESOLUTION-only: they
+  // exist so an ambient CHAIN (`globalThis.process.mainModule`) resolves
+  // through the ordinary recursion, not because the global object or
+  // `process` is itself a loader capability. Treating them as escaping
+  // VALUES was tried and reverted after measuring the real-world
+  // corpus: `var freeGlobal = typeof global == 'object' && global && ...`
+  // (lodash and its satellites) and `else if (typeof global !==
+  // 'undefined') globalVar = global;` (url-parse) are ordinary
+  // global-object detection preambles, ubiquitous in published packages,
+  // that hand out no loader capability at all. The chain-resolving power
+  // this kind exists for is unaffected -- only the escape sweep is.
+  if (
+    capability.kind === "ambient_global" ||
+    capability.kind === "ambient_process"
+  ) {
     return false;
   }
   // VT-307c-builtin-closure: a member of one of the non-`module`
@@ -2518,11 +2545,14 @@ function isModuleConstructorMutablePrototypeMember(
  * a same-file `obj.paths`/`obj.main.paths` that merely happens to share the
  * name (see this file's precision-control tests).
  */
-function isAmbientModulePathsArray(expr: ts.Expression): boolean {
+function isAmbientModulePathsArray(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
   return (
     ts.isPropertyAccessExpression(expr) &&
     expr.name.text === "paths" &&
-    isAmbientModuleInstance(expr.expression)
+    isAmbientModuleInstance(expr.expression, context)
   );
 }
 
@@ -2570,11 +2600,14 @@ const ARRAY_MUTATING_METHODS: ReadonlySet<string> = new Set([
  * {@link isModuleLoaderAssignmentMutation} below -- see that call site's
  * own comment.
  */
-function isModuleLoaderPathArrayMutatingCall(expr: ts.Expression): boolean {
+function isModuleLoaderPathArrayMutatingCall(
+  expr: ts.Expression,
+  context: LoaderClassificationContext,
+): boolean {
   return (
     ts.isPropertyAccessExpression(expr) &&
     ARRAY_MUTATING_METHODS.has(expr.name.text) &&
-    isAmbientModulePathsArray(expr.expression)
+    isAmbientModulePathsArray(expr.expression, context)
   );
 }
 
@@ -2671,7 +2704,7 @@ function isModuleLoaderAssignmentMutation(
   if (isLoaderHookRegistryObject(target, context)) {
     return "loader_hook_mutation";
   }
-  if (isAmbientModulePathsArray(target)) {
+  if (isAmbientModulePathsArray(target, context)) {
     return "loader_hook_mutation";
   }
 
