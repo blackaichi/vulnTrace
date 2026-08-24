@@ -691,5 +691,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-064",
+    "dir": "adv2-064-dependency-toplevel-ambient-owner-alias",
+    "category": "64. VT-307c-ambient-closure regression: an ALIASED AMBIENT OWNER (const p = process; p.mainModule.constructor) in a DEPENDENCY's own module top-level scope",
+    "description": "Pins the defect class the certification found after VT-307c-builtin-closure. By then the shared provenance relation covered every modeled builtin and every capability VALUE form -- but an ambient chain's OWNER position (`require` in `require.main`, `process` in `process.mainModule`) was STILL matched by literal identifier name and never resolved. Aliasing the owner one hop, or prefixing it with `globalThis.`/`global.` (both semantically identity operations), lost the capability entirely, even though the unprefixed unaliased spelling of the very same chain had classified correctly since VT-307c-fix-7. Five spellings were reproduced end-to-end (real Node execution + a gate-eligible closure + complete=true + the exact installed package OUT + an EMPTY incompleteness array), with NO unknown Node API name and NO novel value-container syntax involved anywhere. vt2-holder does `const p = process; p.mainModule.constructor._preloadModules(['vt2-vuln-lib']);` at its own top level. VT-307c-ambient-closure closes this by making `process` and the global object resolvable KINDS of the shared relation, so every way of reaching an ambient chain composes through the ordinary recursion rather than a name match. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-063.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `const p = process; p.mainModule.constructor._preloadModules(['vt2-vuln-lib']);`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), directly loads a package by name using Node's own module-loading primitive. A human analyst cannot rule out reachability here merely because the entry Module instance was reached through an aliased `process` rather than the literal `process.mainModule` spelling. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]
