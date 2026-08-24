@@ -4617,3 +4617,114 @@ describe("ModuleLoadClosure: ambient-chain owners resolve rather than name-match
     expect(reasonsOf(closure)).toContain("create_require");
   });
 });
+
+/**
+ * VT-307c-registry-closure. The certification pass following
+ * VT-307c-ambient-closure found the same owner-not-resolved defect at the
+ * last remaining layer: the module system's own mutable REGISTRY objects
+ * (`Module._extensions`/`require.extensions`, `Module._cache`/
+ * `require.cache`, `Module.wrapper`, `Module._pathCache`) were each
+ * matched by six near-identical syntactic helpers that required the
+ * registry to appear literally as `<owner>.<name>` at the mutation site.
+ * Holding a registry in a local const and mutating through THAT was
+ * reproduced end-to-end (real Node execution + a gate-eligible closure +
+ * `complete: true` + the exact installed package OUT + an EMPTY
+ * `incompleteness` array) -- for example a `.js` compile hook installed
+ * via `const ext = Module._extensions` that redirects an ordinary,
+ * statically-resolvable `require('safe')` into executing a
+ * never-imported package's source.
+ *
+ * All six helpers are now one thin wrapper over the shared relation, so
+ * every aliasing path resolves for free.
+ */
+describe("ModuleLoadClosure: loader registries resolve through aliases (VT-307c-registry-closure)", () => {
+  it.each([
+    [
+      "const ext = Module._extensions; ext['.js'] = hook",
+      "const M = require('module');\nconst ext = M._extensions;\next['.js'] = function(){};\nmodule.exports={};\n",
+    ],
+    [
+      "const ext = require.extensions; ext['.js'] = hook",
+      "const ext = require.extensions;\next['.js'] = function(){};\nmodule.exports={};\n",
+    ],
+    [
+      "const cache = Module._cache; cache[k] = planted",
+      "const M = require('module');\nconst cache = M._cache;\ncache[process.env.K] = {};\nmodule.exports={};\n",
+    ],
+    [
+      "const cache = require.cache; cache[k] = planted",
+      "const cache = require.cache;\ncache[process.env.K] = {};\nmodule.exports={};\n",
+    ],
+    [
+      "const wrap = Module.wrapper; wrap[0] = injected",
+      "const M = require('module');\nconst wrap = M.wrapper;\nwrap[0] = 'x';\nmodule.exports={};\n",
+    ],
+    [
+      "const pc = Module._pathCache; pc[k] = redirect",
+      "const M = require('module');\nconst pc = M._pathCache;\npc[process.env.K] = '/x';\nmodule.exports={};\n",
+    ],
+    [
+      "alias depth 2 of a registry",
+      "const M = require('module');\nconst a = M._extensions;\nconst b = a;\nb['.js'] = function(){};\nmodule.exports={};\n",
+    ],
+    [
+      "registry reached through an aliased ambient require owner",
+      "const r = require;\nconst ext = r.extensions;\next['.js'] = function(){};\nmodule.exports={};\n",
+    ],
+    [
+      "registry reached through a globalThis-prefixed owner",
+      "globalThis.require = require;\nconst ext = globalThis.require.extensions;\next['.js'] = function(){};\nmodule.exports={};\n",
+    ],
+    [
+      "whole-registry replacement through an alias",
+      "const M = require('module');\nconst holder = M;\nholder._extensions = {};\nmodule.exports={};\n",
+    ],
+    // controls: the direct spellings that always worked
+    [
+      "CONTROL direct Module._extensions['.js'] = hook",
+      "const M = require('module');\nM._extensions['.js'] = function(){};\nmodule.exports={};\n",
+    ],
+    [
+      "CONTROL direct require.cache[k] = planted",
+      "require.cache[process.env.K] = {};\nmodule.exports={};\n",
+    ],
+    [
+      "CONTROL direct Module.wrapper[0] = x",
+      "const M = require('module');\nM.wrapper[0] = 'x';\nmodule.exports={};\n",
+    ],
+  ])("%s -> loader_hook_mutation", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_hook_mutation");
+  });
+
+  it.each([
+    [
+      "a user-defined object with its own extensions table",
+      "const registry = { extensions: {} };\nregistry.extensions['.js'] = function(){};\nmodule.exports = { registry };\n",
+    ],
+    [
+      "a same-file object named require with an extensions property",
+      "const req = { extensions: {} };\nconst ext = req.extensions;\next['.js'] = function(){};\nmodule.exports = { req };\n",
+    ],
+    [
+      "an ordinary cache object unrelated to the module system",
+      "const cache = new Map();\ncache.set('k', 1);\nmodule.exports = { cache };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-registry-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+});
