@@ -1332,3 +1332,47 @@ describe("ModuleLoadClosure differential Node oracle: builtin provenance grammar
     20000,
   );
 });
+
+/**
+ * VT-307c-ambient-closure's axis: how the OWNER of an ambient chain is
+ * reached. The provenance matrix above varies how a capability is named;
+ * this varies how the ambient object the capability hangs off is named --
+ * the dimension the certification found still matched by literal
+ * identifier, which lost five spellings end-to-end.
+ */
+const AMBIENT_OWNER_FORMS: readonly string[] = [
+  "module.constructor._preloadModules(['vuln']);\n",
+  "require.main.constructor._preloadModules(['vuln']);\n",
+  "process.mainModule.constructor._preloadModules(['vuln']);\n",
+  "globalThis.process.mainModule.constructor._preloadModules(['vuln']);\n",
+  "globalThis.require.main.constructor._preloadModules(['vuln']);\n",
+  "global.process.mainModule.constructor._preloadModules(['vuln']);\n",
+  "const p = process;\np.mainModule.constructor._preloadModules(['vuln']);\n",
+  "const r = require;\nr.main.constructor._preloadModules(['vuln']);\n",
+  "const g = globalThis;\ng.process.mainModule.constructor._preloadModules(['vuln']);\n",
+  "const g = global;\ng.require = require;\ng.require.main.constructor._preloadModules(['vuln']);\n",
+  "const m = module;\nm.constructor._preloadModules(['vuln']);\n",
+  "const rm = require.main;\nrm.constructor._preloadModules(['vuln']);\n",
+  "const pm = process.mainModule;\npm.constructor._preloadModules(['vuln']);\n",
+  "const p1 = process;\nconst p2 = p1;\nconst p3 = p2;\np3.mainModule.constructor._preloadModules(['vuln']);\n",
+  "const pm = globalThis.process.mainModule;\npm.constructor._preloadModules(['vuln']);\n",
+];
+
+describe("ModuleLoadClosure differential Node oracle: ambient-owner grammar (VT-307c-ambient-closure)", () => {
+  const generated: OracleCase[] = AMBIENT_OWNER_FORMS.map((source, index) => ({
+    label: `ambient owner form ${index + 1}: ${source.split("\n")[0]}`,
+    vulnInstanceRelPath: "node_modules/vuln",
+    setup: (root: string) => {
+      markerPackage(root, "node_modules/vuln");
+      return write(root, "src/index.js", source);
+    },
+  }));
+
+  it.each(generated.map((c) => [c.label, c] as const))(
+    "%s: complete=true never coexists with a real, unaccounted-for execution",
+    async (_label, oracleCase) => {
+      await runOracleCase(oracleCase);
+    },
+    20000,
+  );
+});

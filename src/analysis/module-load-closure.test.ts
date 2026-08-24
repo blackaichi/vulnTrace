@@ -4475,3 +4475,145 @@ describe("ModuleLoadClosure: shared provenance across all modeled builtins (VT-3
     expect(reasonsOf(closure)).toContain("loader_capability_escape");
   });
 });
+
+/**
+ * VT-307c-ambient-closure. The certification pass that followed
+ * VT-307c-builtin-closure found the SAME defect class one level further
+ * out again: an ambient chain's OWNER (`require` in `require.main`,
+ * `process` in `process.mainModule`) was still matched by literal
+ * identifier name, never RESOLVED -- so an alias of the owner, or a
+ * `globalThis.`/`global.` prefix in front of it, lost the capability
+ * entirely. Five spellings were reproduced end-to-end (real Node
+ * execution + a gate-eligible closure + `complete: true` + the exact
+ * installed package OUT + an EMPTY `incompleteness` array).
+ *
+ * The fix makes `process` and the global object resolvable KINDS of the
+ * shared relation (`ambient_process`, `ambient_global`), so every way of
+ * reaching an ambient chain composes through the ordinary recursion.
+ * Both kinds are deliberately RESOLUTION-ONLY -- never escaping
+ * capability VALUES -- which the precision controls below pin: bare
+ * `global` is ubiquitous in real published packages' global-detection
+ * preambles (lodash, url-parse) and hands out no loader capability.
+ */
+describe("ModuleLoadClosure: ambient-chain owners resolve rather than name-match (VT-307c-ambient-closure)", () => {
+  it.each([
+    [
+      "const p = process; p.mainModule.constructor._preloadModules(...)",
+      "const p = process;\np.mainModule.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "const r = require; r.main.constructor._preloadModules(...)",
+      "const r = require;\nr.main.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "const g = globalThis; g.process.mainModule.constructor",
+      "const g = globalThis;\ng.process.mainModule.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "global.process.mainModule.constructor (Node's older global alias)",
+      "global.process.mainModule.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "globalThis.process.mainModule.constructor",
+      "globalThis.process.mainModule.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "const m = module; m.constructor._preloadModules(...)",
+      "const m = module;\nm.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "const rm = require.main; rm.constructor._preloadModules(...)",
+      "const rm = require.main;\nrm.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "const pm = process.mainModule; pm.constructor._preloadModules(...)",
+      "const pm = process.mainModule;\npm.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "aliased owner reaching an ambient .paths mutation",
+      "const p = process;\np.mainModule.paths.unshift('/tmp/x');\nmodule.exports={};\n",
+      "loader_hook_mutation",
+    ],
+  ])("%s -> %s", async (_label, source, expectedReason) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain(expectedReason);
+  });
+
+  it.each([
+    // The global object and `process` are RESOLUTION-only kinds. These
+    // two shapes are taken verbatim from real published packages in the
+    // validation corpus (lodash.templatesettings and url-parse); both
+    // regressed when the kinds were briefly treated as escaping values.
+    [
+      "lodash-style global detection: typeof global == 'object' && global && ...",
+      "var freeGlobal = typeof global == 'object' && global && global.Object === Object && global;\nmodule.exports = { freeGlobal };\n",
+    ],
+    [
+      "url-parse-style global detection: else if (typeof global !== 'undefined') globalVar = global",
+      "let globalVar;\nif (typeof window !== 'undefined') globalVar = window;\nelse if (typeof global !== 'undefined') globalVar = global;\nmodule.exports = { globalVar };\n",
+    ],
+    [
+      "globalThis stored in a const and re-exported",
+      "const g = globalThis;\nmodule.exports = { g };\n",
+    ],
+    [
+      "process stored in a const and re-exported",
+      "const p = process;\nmodule.exports = { p, cwd: p.cwd() };\n",
+    ],
+    [
+      "ordinary process reads",
+      "const env = process.env.NODE_ENV;\nconst v = process.version;\nmodule.exports = { env, v };\n",
+    ],
+    [
+      "globalThis.<ordinary global> is not a capability",
+      "const x = globalThis.JSON.parse('1');\nconst y = globalThis.Math.max(1, 2);\nmodule.exports = { x, y };\n",
+    ],
+    [
+      "a same-file const named global shadows the ambient one",
+      "const global = { process: { mainModule: { constructor: null } } };\nmodule.exports = { global };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-ambient-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("a same-file `const require = createRequire(...)` shadows the ambient require and resolves as the createRequire result", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      "import { createRequire } from 'module';\nconst require = createRequire(import.meta.url);\nconst x = require('vuln');\nexport { x };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("create_require");
+  });
+});
