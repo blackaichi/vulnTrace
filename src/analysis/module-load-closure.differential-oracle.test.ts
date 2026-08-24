@@ -1001,3 +1001,208 @@ describe("ModuleLoadClosure differential Node oracle: value-container grammar (V
     20000,
   );
 });
+
+/**
+ * VT-307c-provenance-closure's own axis for this generative oracle (this
+ * task's Part 14). The container-grammar oracle above tests "does a
+ * capability survive being WRAPPED in every value-container form" -- it
+ * cannot, by construction, catch a defect in HOW a capability is
+ * originally NAMED/REACHED, which is precisely the layer the final
+ * invariant certification found broken: the alias-EXEMPTION relation was
+ * broader than what use-site resolvers could actually resolve back to.
+ * This axis is the missing half -- every ordinary way source code can
+ * bind a name to an authoritative capability, independent of what
+ * container (if any) that name is later put into.
+ *
+ * Each row is a COMPLETE small program (not composed from a shared
+ * seed/form pair the way the container grammar's rows are): provenance
+ * forms are too heterogeneous in SHAPE (ESM import syntax, CJS
+ * destructuring, alias-chain depth, member-value extraction) to force
+ * through one substitution template without the template itself hiding
+ * the very defect class under test. Every sink is capability-FREE
+ * (`_preloadModules(['vuln'])`'s array argument is string literals only)
+ * for the same reason the container grammar's sinks are: a sink that
+ * itself carries a capability (`Module._load(x, module, false)`'s own
+ * `module` argument) can mask a broken container/provenance form behind
+ * an unrelated, already-correct classification -- the exact failure mode
+ * that hid this task's own Family D blocker 12
+ * (`Module._load(x, module, false)` vs. the genuinely capability-free
+ * `Module._preloadModules(['vuln'])`).
+ */
+interface ProvenanceForm {
+  readonly name: string;
+  readonly esm?: boolean;
+  readonly source: string;
+}
+
+const MODULE_CONSTRUCTOR_PROVENANCE_FORMS: readonly ProvenanceForm[] = [
+  {
+    name: "whole-module require('module')",
+    source:
+      "const Module = require('module');\nModule._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "whole-module require('node:module')",
+    source:
+      "const Module = require('node:module');\nModule._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "ESM default import",
+    esm: true,
+    source: "import Module from 'module';\nModule._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "ESM namespace import (bare)",
+    esm: true,
+    source: "import * as M from 'module';\nM._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "ESM namespace import .default",
+    esm: true,
+    source:
+      "import * as M from 'module';\nM.default._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "ESM named import",
+    esm: true,
+    source:
+      "import { Module } from 'module';\nModule._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "ESM named+aliased import",
+    esm: true,
+    source:
+      "import { Module as M } from 'node:module';\nM._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "CJS destructure",
+    source:
+      "const { Module } = require('module');\nModule._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "CJS destructure with rename",
+    source:
+      "const { Module: M } = require('module');\nM._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "const alias depth 1",
+    source:
+      "const Module = require('module');\nconst A = Module;\nA._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "const alias depth 2",
+    source:
+      "const Module = require('module');\nconst A = Module;\nconst B = A;\nB._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "const alias depth 3",
+    source:
+      "const Module = require('module');\nconst A = Module;\nconst B = A;\nconst C = B;\nC._preloadModules(['vuln']);\n",
+  },
+  {
+    name: ".Module self-reference depth 1",
+    source:
+      "const Module = require('module');\nModule.Module._preloadModules(['vuln']);\n",
+  },
+  {
+    name: ".Module self-reference depth 2",
+    source:
+      "const Module = require('module');\nModule.Module.Module._preloadModules(['vuln']);\n",
+  },
+  {
+    name: ".Module self-reference depth 3",
+    source:
+      "const Module = require('module');\nModule.Module.Module.Module._preloadModules(['vuln']);\n",
+  },
+  {
+    name: ".prototype.constructor depth 1",
+    source:
+      "const Module = require('module');\nModule.prototype.constructor._preloadModules(['vuln']);\n",
+  },
+  {
+    name: ".prototype.constructor depth 2",
+    source:
+      "const Module = require('module');\nModule.prototype.constructor.prototype.constructor._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "Module.prototype held in a const, then .constructor",
+    source:
+      "const Module = require('module');\nconst proto = Module.prototype;\nproto.constructor._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "stored createRequire member value (via require('module').createRequire)",
+    source:
+      "const cr = require('module').createRequire;\nconst r = cr(__filename);\nr('vuln');\n",
+  },
+  {
+    name: "stored createRequire member value (via Module.createRequire)",
+    source:
+      "const Module = require('module');\nconst cr = Module.createRequire;\nconst r = cr(__filename);\nr('vuln');\n",
+  },
+  {
+    name: "stored _preloadModules member value",
+    source:
+      "const Module = require('module');\nconst pre = Module._preloadModules;\npre(['vuln']);\n",
+  },
+  {
+    name: "ambient module.constructor",
+    source: "module.constructor._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "ambient require.main.constructor",
+    source: "require.main.constructor._preloadModules(['vuln']);\n",
+  },
+  {
+    name: "ambient process.mainModule.constructor",
+    source: "process.mainModule.constructor._preloadModules(['vuln']);\n",
+  },
+];
+
+const REQUIRE_PROVENANCE_FORMS: readonly ProvenanceForm[] = [
+  {
+    name: "require alias depth 1",
+    source: "const r1 = require;\nr1('vuln');\n",
+  },
+  {
+    name: "require alias depth 2",
+    source: "const r1 = require;\nconst r2 = r1;\nr2('vuln');\n",
+  },
+  {
+    name: "require alias depth 3",
+    source:
+      "const r1 = require;\nconst r2 = r1;\nconst r3 = r2;\nr3('vuln');\n",
+  },
+];
+
+describe("ModuleLoadClosure differential Node oracle: provenance grammar (VT-307c-provenance-closure)", () => {
+  const generated: OracleCase[] = [
+    ...MODULE_CONSTRUCTOR_PROVENANCE_FORMS,
+    ...REQUIRE_PROVENANCE_FORMS,
+  ].map((form) => ({
+    label: form.name,
+    vulnInstanceRelPath: "node_modules/vuln",
+    setup: (root: string) => {
+      write(
+        root,
+        "package.json",
+        JSON.stringify(
+          form.esm ? { name: "app", type: "module" } : { name: "app" },
+        ),
+      );
+      markerPackage(root, "node_modules/vuln");
+      return write(
+        root,
+        form.esm ? "src/index.mjs" : "src/index.js",
+        form.source,
+      );
+    },
+  }));
+
+  it.each(generated.map((c) => [c.label, c] as const))(
+    "%s: complete=true never coexists with a real, unaccounted-for execution",
+    async (_label, oracleCase) => {
+      await runOracleCase(oracleCase);
+    },
+    20000,
+  );
+});
