@@ -3485,3 +3485,99 @@ describe("buildCallGraph: shared loader-capability provenance relation (VT-307c-
     expect(graph).toBeDefined();
   });
 });
+
+/**
+ * VT-307c-builtin-closure. `referencesBuiltinExport` -- consulted first
+ * in `classifyLoaderConstruct` for every `BUILTIN_MEMBER_REASONS` entry
+ * -- is now a thin wrapper over the shared provenance relation rather
+ * than a second relation with its own one-hop, identifier-only alias
+ * logic, so a `vm`/`child_process`/`worker_threads` primitive reached
+ * through ANY alias chain still emits the SPECIFIC CallGraph edge its
+ * direct spelling always did.
+ */
+describe("buildCallGraph: builtin-member provenance through aliases (VT-307c-builtin-closure)", () => {
+  it.each([
+    [
+      "const fk = cp.fork; fk(x)",
+      "child_process_execution",
+      "function main(){ const cp = require('child_process'); const fk = cp.fork; fk('./w.js'); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "depth-3 alias of cp.spawn",
+      "child_process_execution",
+      "function main(){ const cp = require('child_process'); const a = cp.spawn; const b = a; const c = b; c('node', []); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "const W = wt.Worker; new W(x)",
+      "worker_execution",
+      "function main(){ const wt = require('worker_threads'); const W = wt.Worker; new W('./w.js'); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "namespace alias then member: const c2 = cp; c2.fork(x)",
+      "child_process_execution",
+      "function main(){ const cp = require('child_process'); const c2 = cp; c2.fork('./w.js'); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "const { fork } = require('child_process'); fork(x)",
+      "child_process_execution",
+      "function main(){ const { fork } = require('child_process'); fork('./w.js'); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "vm.Script alias, then a run method on the instance",
+      "vm_execution",
+      "function main(){ const vm = require('vm'); const S = vm.Script; const s = new S('1'); s.runInThisContext(); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "const rinc = vm.runInNewContext; rinc(code, sandbox)",
+      "vm_execution",
+      "function main(){ const vm = require('vm'); const rinc = vm.runInNewContext; rinc(process.env.C, {}); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "globalThis.process.mainModule.constructor._preloadModules(...)",
+      "module_internal_load",
+      "function main(){ globalThis.process.mainModule.constructor._preloadModules(['vuln-lib']); }\nmodule.exports = { main };\n",
+    ],
+  ])("classifies %s as %s", async (_label, expectedReason, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: expectedReason,
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "a non-dangerous builtin member read (wt.isMainThread)",
+      "function main(){ const wt = require('worker_threads'); const m = wt.isMainThread; return m; }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined object named cp with its own fork method",
+      "function main(){ const cp = { fork(){ return 1; } }; cp.fork(); }\nmodule.exports = { main };\n",
+    ],
+  ])("emits no loader edge for %s", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.resolution.kind === "unknown" &&
+          (edge.resolution.reason === "child_process_execution" ||
+            edge.resolution.reason === "worker_execution" ||
+            edge.resolution.reason === "vm_execution" ||
+            edge.resolution.reason === "loader_capability_escape"),
+      ),
+    ).toBe(false);
+  });
+});

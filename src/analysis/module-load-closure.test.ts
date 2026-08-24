@@ -4179,3 +4179,299 @@ describe("ModuleLoadClosure: shared loader-capability provenance relation (VT-30
     expect(reasonsOf(closure).length).toBeGreaterThan(0);
   });
 });
+
+/**
+ * VT-307c-builtin-closure. VT-307c-provenance-closure built ONE shared
+ * provenance relation and routed the `module`-family resolvers through
+ * it -- but left a SECOND relation standing beside it:
+ * `referencesBuiltinExport` was never folded in, kept its own one-hop,
+ * identifier-only alias logic, and served every `BUILTIN_MEMBER_REASONS`
+ * entry. Because the shared relation modeled only the `module` builtin,
+ * the other three modeled builtins (`vm`, `child_process`,
+ * `worker_threads`) fell through BOTH relations. The certification
+ * reproduced eight end-to-end violations from that, in three families --
+ * every one satisfying the full bar (real Node execution + a
+ * gate-eligible closure + `complete: true` + the exact installed package
+ * OUT + an EMPTY `incompleteness` array):
+ *
+ * - Family E: a stored MEMBER value of a non-`module` builtin
+ *   (`const fk = cp.fork; fk(child)`) -- the very same defect
+ *   VT-307c-provenance-closure closed for `Module._preloadModules`,
+ *   surviving untouched for three builtins. Controls proved the hazard
+ *   was already modeled: the DIRECT and NAMED-IMPORT spellings both
+ *   correctly produced `child_process_execution`.
+ * - Family F: a `globalThis.`-prefixed ambient chain
+ *   (`globalThis.process.mainModule.constructor`), semantically
+ *   identical to the unprefixed spelling the ambient checks matched.
+ * - Family G: a cross-file ESM re-export of a builtin binding
+ *   (`export { Module } from "module"`) -- with BOTH files loaded and
+ *   whole-file scanned, and neither flagging.
+ *
+ * The fix generalizes the shared relation to all four modeled builtins
+ * (`builtin_namespace`/`builtin_member`/`vm_instance` kinds) and makes
+ * `referencesBuiltinExport` and `isVmConstructedInstance` thin wrappers
+ * over it, so there is now genuinely one relation rather than two.
+ */
+describe("ModuleLoadClosure: shared provenance across all modeled builtins (VT-307c-builtin-closure)", () => {
+  const CHILD_REQUIRES_VULN = "require('vuln');\n";
+
+  function projectWithChild(): { root: string; childArg: string } {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/vuln/package.json",
+      JSON.stringify({ name: "vuln", version: "1.0.0", main: "index.js" }),
+    );
+    write(root, "node_modules/vuln/index.js", "module.exports = {};\n");
+    write(root, "src/child.js", CHILD_REQUIRES_VULN);
+    return { root, childArg: "require('path').join(__dirname,'child.js')" };
+  }
+
+  it.each([
+    // --- Family E: stored member values of non-`module` builtins ---
+    [
+      "E1 const fk = cp.fork; fk(child)",
+      "const cp = require('child_process');\nconst fk = cp.fork;\nfk(CHILD);\n",
+      "child_process_execution",
+    ],
+    [
+      "E2 const sp = cp.spawn; sp(...)",
+      "const cp = require('child_process');\nconst sp = cp.spawn;\nsp(process.execPath, [CHILD]);\n",
+      "child_process_execution",
+    ],
+    [
+      "E3 const es = cp.execSync; es(...)",
+      "const cp = require('child_process');\nconst es = cp.execSync;\nes(process.execPath + ' ' + CHILD);\n",
+      "child_process_execution",
+    ],
+    [
+      "E4 const W = wt.Worker; new W(child)",
+      "const wt = require('worker_threads');\nconst W = wt.Worker;\nnew W(CHILD);\n",
+      "worker_execution",
+    ],
+    [
+      "E5 depth-2 alias of cp.fork",
+      "const cp = require('child_process');\nconst a = cp.fork;\nconst b = a;\nb(CHILD);\n",
+      "child_process_execution",
+    ],
+    [
+      "E6 depth-4 alias of cp.fork",
+      "const cp = require('child_process');\nconst a=cp.fork;const b=a;const c=b;const d=c;\nd(CHILD);\n",
+      "child_process_execution",
+    ],
+    [
+      "E7 namespace alias then member: const c2 = cp; const f = c2.fork",
+      "const cp = require('child_process');\nconst c2 = cp;\nconst f = c2.fork;\nf(CHILD);\n",
+      "child_process_execution",
+    ],
+    [
+      "E8 node:-prefixed stored member",
+      "const cp = require('node:child_process');\nconst f = cp.fork;\nf(CHILD);\n",
+      "child_process_execution",
+    ],
+    [
+      "E9 destructured then re-aliased: const { fork } = require('cp'); const f2 = fork",
+      "const { fork } = require('child_process');\nconst f2 = fork;\nf2(CHILD);\n",
+      "child_process_execution",
+    ],
+    [
+      "E10 vm.Script alias, then a run method on the instance",
+      "const vm = require('vm');\nconst S = vm.Script;\nconst s = new S('1');\ns.runInThisContext();\n",
+      "vm_execution",
+    ],
+    // --- controls: the DIRECT and NAMED-IMPORT spellings always worked ---
+    [
+      "E-CONTROL direct cp.fork(child)",
+      "const cp = require('child_process');\ncp.fork(CHILD);\n",
+      "child_process_execution",
+    ],
+    [
+      "E-CONTROL const { fork } = require('child_process'); fork(child)",
+      "const { fork } = require('child_process');\nfork(CHILD);\n",
+      "child_process_execution",
+    ],
+  ])("%s -> %s", async (_label, source, expectedReason) => {
+    const { root, childArg } = projectWithChild();
+    const entry = write(
+      root,
+      "src/index.js",
+      source.replace(/CHILD/g, childArg),
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain(expectedReason);
+  });
+
+  it.each([
+    [
+      "F1 globalThis.process.mainModule.constructor._preloadModules(...)",
+      "globalThis.process.mainModule.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "F2 globalThis.process.mainModule.require(...)",
+      "globalThis.process.mainModule.require('vuln');\nmodule.exports={};\n",
+      "loader_capability_escape",
+    ],
+    [
+      "F-CONTROL unprefixed process.mainModule.constructor",
+      "process.mainModule.constructor._preloadModules(['vuln']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+  ])(
+    "%s -> %s (globalThis-prefixed ambient chains)",
+    async (_label, source, expectedReason) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain(expectedReason);
+    },
+  );
+
+  it.each([
+    [
+      "G1 export { Module } from 'module'",
+      "export { Module } from 'module';\n",
+    ],
+    [
+      "G2 export { createRequire } from 'node:module'",
+      "export { createRequire } from 'node:module';\n",
+    ],
+    ["G3 export * from 'module'", "export * from 'module';\n"],
+    [
+      "G4 export { fork } from 'child_process'",
+      "export { fork } from 'child_process';\n",
+    ],
+  ])(
+    "%s makes the RE-EXPORTING file's own closure incomplete",
+    async (_label, reexportSource) => {
+      const root = tempProject();
+      write(
+        root,
+        "package.json",
+        JSON.stringify({ name: "app", type: "module" }),
+      );
+      write(root, "src/reexport.mjs", reexportSource);
+      const entry = write(
+        root,
+        "src/index.mjs",
+        "import './reexport.mjs';\nexport const x = 1;\n",
+      );
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(
+        closureContainsFile(closure, path.join(root, "src/reexport.mjs")),
+      ).toBe(true);
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain("loader_capability_escape");
+    },
+  );
+
+  it("a builtin re-export is caught through a MULTI-LEVEL chain (the level with the real builtin provenance flags)", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    write(root, "src/b.mjs", "export { Module } from 'module';\n");
+    write(root, "src/a.mjs", "export { Module } from './b.mjs';\n");
+    const entry = write(
+      root,
+      "src/index.mjs",
+      "import { Module } from './a.mjs';\nexport const x = Module;\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it.each([
+    // A non-dangerous member of a modeled builtin is resolvable but is
+    // NOT a capability -- see isDangerousBuiltinMember.
+    [
+      "const notMain = wt.isMainThread",
+      "const wt = require('worker_threads');\nconst notMain = wt.isMainThread;\nmodule.exports = { notMain };\n",
+    ],
+    [
+      "const { isMainThread } = require('worker_threads')",
+      "const { isMainThread } = require('worker_threads');\nmodule.exports = { isMainThread };\n",
+    ],
+    [
+      "const cpc = cp.ChildProcess",
+      "const cp = require('child_process');\nconst cpc = cp.ChildProcess;\nmodule.exports = { cpc };\n",
+    ],
+    [
+      "const c = vm.constants",
+      "const vm = require('vm');\nconst c = vm.constants;\nmodule.exports = { c };\n",
+    ],
+    [
+      "new vm.Script(code) constructed but never run",
+      "const vm = require('vm');\nfunction main(){ return new vm.Script(process.env.C); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "a user-defined object named cp with its own fork method",
+      "const cp = { fork(){ return 1; } };\ncp.fork();\nmodule.exports = {};\n",
+    ],
+    [
+      "destructure of a NON-builtin require",
+      "const { readFile } = require('fs');\nmodule.exports = { readFile };\n",
+    ],
+    [
+      "globalThis.JSON.parse -- an ordinary global, not an ambient capability",
+      "const x = globalThis.JSON.parse('1');\nmodule.exports = { x };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-builtin-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("export { readFile } from 'fs' is not a loader re-export and stays complete", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "package.json",
+      JSON.stringify({ name: "app", type: "module" }),
+    );
+    const entry = write(
+      root,
+      "src/index.mjs",
+      "export { readFile } from 'fs';\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(true);
+    expect(closure.incompleteness).toEqual([]);
+  });
+
+  it("const { prototype } = Module still escapes -- the destructure exemption covers only a builtin require(...) initializer", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nconst { prototype } = Module;\nprototype.require = function(){ return 1; };\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+});
