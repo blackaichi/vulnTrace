@@ -532,6 +532,23 @@ type ResolvedLoaderCapability =
    */
   | { readonly kind: "ambient_process" }
   | { readonly kind: "ambient_global" }
+  /**
+   * One of the module system's own MUTABLE REGISTRY objects -- the
+   * compile-hook table (`Module._extensions`/`require.extensions`), the
+   * module-instance cache (`Module._cache`/`require.cache`), the source
+   * wrapper array (`Module.wrapper`), or the resolved-path cache
+   * (`Module._pathCache`). Mutating any of them changes what a
+   * SUBSEQUENT load resolves to or executes.
+   *
+   * A resolvable KIND rather than a syntactic `<owner>.<name>` shape
+   * because holding a registry in a local const and mutating through
+   * THAT (`const ext = Module._extensions; ext['.js'] = hook;`) was
+   * reproduced end-to-end as a real invariant violation -- the same
+   * owner-not-resolved defect this series has now closed at four
+   * successive layers (value containers, capability provenance, builtin
+   * members, ambient owners), reaching the registries last.
+   */
+  | { readonly kind: "loader_registry" }
   | { readonly kind: "ambiguous" };
 
 /**
@@ -732,6 +749,18 @@ function resolveLoaderCapability(
     }
     if (receiverKind?.kind === "ambient_require" && expr.name.text === "main") {
       return { kind: "module_instance" };
+    }
+    // The module system's own mutable registries, under BOTH of Node's
+    // aliasing names for each (`Module._extensions` and
+    // `require.extensions` are the same object; so are `Module._cache`
+    // and `require.cache`).
+    if (
+      (receiverKind?.kind === "module_constructor" &&
+        MODULE_CONSTRUCTOR_REGISTRY_MEMBERS.has(expr.name.text)) ||
+      (receiverKind?.kind === "ambient_require" &&
+        AMBIENT_REQUIRE_REGISTRY_MEMBERS.has(expr.name.text))
+    ) {
+      return { kind: "loader_registry" };
     }
     if (
       receiverKind?.kind === "ambient_process" &&
@@ -1416,176 +1445,55 @@ export function classifyClosureWideningCall(
 }
 
 /**
- * Whether `expr` is the ambient `require.extensions` object -- Node's own
- * CommonJS compile-hook registry (VT-307c-fix-6 Part 11). Matched by
- * literal identifier chain only (`require` is an ambient CJS wrapper-scope
- * variable, the same deliberate simplification VT-307b already applies to
- * `module.require`/`process.mainModule.require`/`require.main.require`
- * elsewhere in this file) -- never a same-file `obj.extensions`, which has
- * no relationship to Node's module system.
+ * `<ModuleCtor>.<member>` names that ARE one of the module system's own
+ * mutable registries. Node's CJS loader aliases each of these under a
+ * second name on `require` as well (`Module._extensions ===
+ * require.extensions`, `Module._cache === require.cache`), which
+ * {@link AMBIENT_REQUIRE_REGISTRY_MEMBERS} covers -- the two tables name
+ * the same four objects, not eight.
+ *
+ * `wrapper` is the two-element array Node wraps every module's source in
+ * before compiling it; `_pathCache` is the resolved-path memoization
+ * cache. Populating, replacing, or mutating any entry of any of these
+ * changes what a SUBSEQUENT `require()` resolves to or executes, which is
+ * why all four share one `loader_hook_mutation` reason.
  */
-function isRequireExtensionsObject(expr: ts.Expression): boolean {
-  return (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "extensions" &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "require"
-  );
-}
+const MODULE_CONSTRUCTOR_REGISTRY_MEMBERS: ReadonlySet<string> = new Set([
+  "_extensions",
+  "_cache",
+  "wrapper",
+  "_pathCache",
+]);
 
-/**
- * Whether `expr` is `<ModuleCtor>._extensions` (VT-307c-fix-7 Part 4) --
- * `Module._extensions`, `module.constructor._extensions`,
- * `require("module").Module._extensions`, or any other spelling
- * {@link resolvesToModuleConstructor} recognizes. Node's CJS loader
- * defines `Module._extensions` and `require.extensions` as the exact SAME
- * object (`Module._extensions = Module.prototype._extensions =
- * require.extensions` alias each other in `lib/internal/modules/cjs/
- * loader.js`), so this is a second name for {@link isRequireExtensionsObject}'s
- * same registry, not a different one.
- */
-function isModuleExtensionsObject(
-  expr: ts.Expression,
-  context: LoaderClassificationContext,
-): boolean {
-  return (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "_extensions" &&
-    resolvesToModuleConstructor(expr.expression, context)
-  );
-}
-
-/**
- * Whether `expr` is the ambient `require.cache` object -- Node's own
- * module-instance cache, keyed by resolved filename (VT-307c-fix-9 Part
- * 16's own nearby-mutation audit). Populating an entry for a filename Node
- * hasn't loaded yet (or overwriting an existing one) makes the NEXT
- * `require()` of that resolved file return the planted object instead of
- * ever reading/compiling/executing the real file -- reproduced end-to-end:
- * pre-seeding `require.cache[require.resolve('safe-lib')]` with a module
- * object whose `exports` come from a separate, never-otherwise-imported
- * package silently redirects every subsequent `require('safe-lib')`.
- * Matched by literal identifier chain only, the same deliberate
- * ambient-global simplification `isRequireExtensionsObject` above already
- * applies to `require.extensions`.
- */
-function isRequireCacheObject(expr: ts.Expression): boolean {
-  return (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "cache" &&
-    ts.isIdentifier(expr.expression) &&
-    expr.expression.text === "require"
-  );
-}
-
-/**
- * Whether `expr` is `<ModuleCtor>._cache` (VT-307c-fix-9 Part 16) --
- * `Module._cache`, `module.constructor._cache`, or any other spelling
- * {@link resolvesToModuleConstructor} recognizes. Node's CJS loader
- * defines `Module._cache` and `require.cache` as the exact SAME object
- * (`Module._cache = require.cache = {}` in `lib/internal/modules/cjs/
- * loader.js`), the same relationship {@link isModuleExtensionsObject}'s
- * doc comment already describes for `_extensions`/`require.extensions`.
- */
-function isModuleCacheObject(
-  expr: ts.Expression,
-  context: LoaderClassificationContext,
-): boolean {
-  return (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "_cache" &&
-    resolvesToModuleConstructor(expr.expression, context)
-  );
-}
-
-/**
- * Whether `expr` is `<ModuleCtor>.wrapper` (VT-307c-fix-10) -- the two-
- * element array (`["(function (exports, require, module, __filename,
- * __dirname) { ", "\n});"]`) Node's CJS loader wraps every module's raw
- * source in before compiling it. Mutating either element -- or replacing
- * the array outright -- injects attacker-chosen source into the wrapper
- * function EVERY SUBSEQUENTLY loaded CommonJS module runs inside,
- * reproduced end-to-end by the final VT-307d go/no-go audit
- * (`Module.wrapper[0] = Module.wrapper[0] + "require('vuln-lib');"` made a
- * separate, never-imported package execute on the very next `require()`).
- * Same object-mutation shape as {@link isModuleExtensionsObject}/
- * {@link isModuleCacheObject} -- an array rather than a plain object, but
- * `require()`'s element-access assignment (`Module.wrapper[0] = ...`) and
- * whole-value replacement (`Module.wrapper = [...]`) are exactly the two
- * mutation shapes {@link isLoaderHookRegistryObject}'s existing callers
- * already handle for every other registry, so no new mutation-detection
- * code is needed beyond recognizing this object.
- */
-function isModuleWrapperObject(
-  expr: ts.Expression,
-  context: LoaderClassificationContext,
-): boolean {
-  return (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "wrapper" &&
-    resolvesToModuleConstructor(expr.expression, context)
-  );
-}
-
-/**
- * Whether `expr` is `<ModuleCtor>._pathCache` (VT-307c-fix-11) -- Node's
- * OWN resolved-path memoization cache, keyed by a combination of the
- * requested specifier and search paths (`Module._pathCache`, distinct
- * from `Module._cache`/`require.cache`'s module-INSTANCE cache above).
- * Pre-populating an entry for a specifier/search-path combination Node
- * hasn't resolved yet (or overwriting an existing one) redirects the NEXT
- * `require()`/resolution of that exact combination to the planted file
- * path, without ever running the real resolution algorithm -- reproduced
- * end-to-end by the final VT-307d go/no-go audit: poisoning the cache
- * entry for an otherwise perfectly ordinary, statically-resolvable
- * `require('safe-lib')` made it load a separate, never-imported
- * `vuln-lib` instance instead. Unlike `_cache`, `_pathCache` has no
- * `require`-namespaced alias of its own to fold in here (Node never
- * exposes it as `require.pathCache`) -- only the `<ModuleCtor>` spellings
- * {@link resolvesToModuleConstructor} already recognizes.
- */
-function isModulePathCacheObject(
-  expr: ts.Expression,
-  context: LoaderClassificationContext,
-): boolean {
-  return (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "_pathCache" &&
-    resolvesToModuleConstructor(expr.expression, context)
-  );
-}
+/** The same registries under their `require`-namespaced aliases. */
+const AMBIENT_REQUIRE_REGISTRY_MEMBERS: ReadonlySet<string> = new Set([
+  "extensions",
+  "cache",
+]);
 
 /**
  * Whether `expr` is one of the module system's own mutable registry
- * objects, under any of their aliasing names -- the compile-hook registry
- * (VT-307c-fix-6 Part 11 `require.extensions`; VT-307c-fix-7 Part 4
- * `<ModuleCtor>._extensions`; see {@link isModuleExtensionsObject}'s doc
- * comment for why these two are the same underlying object), the
- * module-instance cache (VT-307c-fix-9 Part 16 `require.cache`/
- * `<ModuleCtor>._cache`; see {@link isModuleCacheObject}'s doc comment for
- * the same relationship), the source-wrapper array (VT-307c-fix-10
- * `<ModuleCtor>.wrapper`; see {@link isModuleWrapperObject}'s doc
- * comment), and the resolved-path cache (VT-307c-fix-11
- * `<ModuleCtor>._pathCache`; see {@link isModulePathCacheObject}'s doc
- * comment). Populating/replacing an entry in any of these -- or replacing
- * the registry object itself -- changes what a SUBSEQUENT `require()`/
- * module compile/resolution actually does, the same class of hazard for
- * all four: this is deliberately one shared check, not four, so any
- * future spelling generalization (a new provenance path onto any of these
- * registries) benefits every consumer at once.
+ * objects, under any of their aliasing names, reached DIRECTLY or through
+ * an arbitrary `const`-alias chain -- a thin wrapper over
+ * {@link resolveLoaderCapability} (VT-307c-registry-closure).
+ *
+ * This replaces six near-identical syntactic helpers (one per registry
+ * per aliasing name), each of which required the registry to appear
+ * literally as `<owner>.<name>` at the mutation site. Holding a registry
+ * in a local const and mutating through THAT -- `const ext =
+ * Module._extensions; ext['.js'] = hook;`, `const wrap = Module.wrapper;
+ * wrap[0] = injectedSource;` -- was reproduced end-to-end as a real
+ * invariant violation against all six, while the direct spellings they
+ * did match kept working. Routing them through the shared relation makes
+ * every aliasing path resolve for free, exactly as it already does for
+ * the constructor, its prototype, the builtin namespaces, and the
+ * ambient chain owners.
  */
 function isLoaderHookRegistryObject(
   expr: ts.Expression,
   context: LoaderClassificationContext,
 ): boolean {
-  return (
-    isRequireExtensionsObject(expr) ||
-    isModuleExtensionsObject(expr, context) ||
-    isRequireCacheObject(expr) ||
-    isModuleCacheObject(expr, context) ||
-    isModuleWrapperObject(expr, context) ||
-    isModulePathCacheObject(expr, context)
-  );
+  return resolveLoaderCapability(expr, context)?.kind === "loader_registry";
 }
 
 /**
