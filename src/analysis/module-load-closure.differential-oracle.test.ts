@@ -1376,3 +1376,75 @@ describe("ModuleLoadClosure differential Node oracle: ambient-owner grammar (VT-
     20000,
   );
 });
+
+/**
+ * VT-307c-registry-closure's oracle axis: a loader REGISTRY held in a
+ * local const and mutated through that alias, each case rigged so the
+ * mutation genuinely redirects an ordinary, statically-resolvable
+ * `require('safe')` into executing the never-imported marker package.
+ * All three were reproduced as real invariant violations before the six
+ * syntactic registry helpers were collapsed into one relation wrapper.
+ */
+describe("ModuleLoadClosure differential Node oracle: aliased loader registries (VT-307c-registry-closure)", () => {
+  function safePackage(root: string): void {
+    write(
+      root,
+      "node_modules/safe/package.json",
+      JSON.stringify({ name: "safe", version: "1.0.0", main: "index.js" }),
+    );
+    write(root, "node_modules/safe/index.js", "module.exports = {};\n");
+  }
+
+  const VULN_PATH =
+    "require('path').join(__dirname,'..','node_modules','vuln','index.js')";
+
+  const cases: OracleCase[] = [
+    {
+      label: "const ext = Module._extensions; ext['.js'] = redirecting hook",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root: string) => {
+        markerPackage(root, "node_modules/vuln");
+        safePackage(root);
+        return write(
+          root,
+          "src/index.js",
+          `const M = require('module');\nconst ext = M._extensions;\nconst orig = ext['.js'];\next['.js'] = function (m, filename) {\n  if (filename.indexOf('safe') !== -1) { return orig(m, ${VULN_PATH}); }\n  return orig(m, filename);\n};\nrequire('safe');\n`,
+        );
+      },
+    },
+    {
+      label: "const ext = require.extensions; ext['.js'] = redirecting hook",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root: string) => {
+        markerPackage(root, "node_modules/vuln");
+        safePackage(root);
+        return write(
+          root,
+          "src/index.js",
+          `const ext = require.extensions;\nconst orig = ext['.js'];\next['.js'] = function (m, filename) {\n  if (filename.indexOf('safe') !== -1) { return orig(m, ${VULN_PATH}); }\n  return orig(m, filename);\n};\nrequire('safe');\n`,
+        );
+      },
+    },
+    {
+      label: "const wrap = Module.wrapper; wrap[0] = injected source",
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root: string) => {
+        markerPackage(root, "node_modules/vuln");
+        safePackage(root);
+        return write(
+          root,
+          "src/index.js",
+          `const M = require('module');\nconst wrap = M.wrapper;\nwrap[0] = wrap[0] + "require(" + JSON.stringify(${VULN_PATH}) + ");";\nrequire('safe');\n`,
+        );
+      },
+    },
+  ];
+
+  it.each(cases.map((c) => [c.label, c] as const))(
+    "%s: complete=true never coexists with a real, unaccounted-for execution",
+    async (_label, oracleCase) => {
+      await runOracleCase(oracleCase);
+    },
+    20000,
+  );
+});
