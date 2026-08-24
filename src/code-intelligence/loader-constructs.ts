@@ -549,6 +549,17 @@ type ResolvedLoaderCapability =
    * members, ambient owners), reaching the registries last.
    */
   | { readonly kind: "loader_registry" }
+  /**
+   * The `Function` constructor -- `Function(src)()`/`new Function(src)()`
+   * compiles and runs arbitrary generated source, the same hazard class
+   * as `eval`. Like `ambient_eval` this is a RESOLUTION-ONLY kind (see
+   * {@link isAuthoritativeCapabilityValue}'s exclusion): it exists so an
+   * ALIASED callee resolves -- `const F = Function; F(src)()` and five
+   * sibling spellings were reproduced end-to-end while the callee was
+   * matched by literal identifier text -- not so that `Function` merely
+   * appearing in a value position counts as an escape.
+   */
+  | { readonly kind: "ambient_function_constructor" }
   | { readonly kind: "ambiguous" };
 
 /**
@@ -671,6 +682,8 @@ function resolveLoaderCapability(
           return { kind: "ambient_require" };
         case "eval":
           return { kind: "ambient_eval" };
+        case "Function":
+          return { kind: "ambient_function_constructor" };
         case "process":
           return { kind: "ambient_process" };
         case "globalThis":
@@ -742,6 +755,8 @@ function resolveLoaderCapability(
           return { kind: "module_instance" };
         case "eval":
           return { kind: "ambient_eval" };
+        case "Function":
+          return { kind: "ambient_function_constructor" };
         default:
           // `globalThis.<anything else>` is an ordinary global read.
           return undefined;
@@ -790,6 +805,23 @@ function resolveLoaderCapability(
       receiverKind?.kind === "module_constructor"
     ) {
       return { kind: "module_prototype" };
+    }
+
+    // Any function's own `.constructor` IS the `Function` constructor,
+    // by the same JS invariant that makes `<X>.prototype.constructor` be
+    // `<X>` -- `(function(){}).constructor(src)()` was reproduced as a
+    // real invariant violation. Matched only on a LITERAL function
+    // expression receiver, never an arbitrary `.constructor` read.
+    if (expr.name.text === "constructor") {
+      // `(function(){}).constructor` -- the receiver is a PARENTHESIZED
+      // function expression, which is how this is always written.
+      let receiver: ts.Expression = expr.expression;
+      while (ts.isParenthesizedExpression(receiver)) {
+        receiver = receiver.expression;
+      }
+      if (ts.isFunctionExpression(receiver) || ts.isArrowFunction(receiver)) {
+        return { kind: "ambient_function_constructor" };
+      }
     }
 
     // `<X>.constructor` off a Module instance OR off Module.prototype IS
@@ -1150,11 +1182,28 @@ export function classifyLoaderConstruct(
     return moduleConstructorReason;
   }
 
-  if (ts.isIdentifier(expr)) {
-    if (expr.text === "Function") {
+  // VT-307c-registry-closure: the SHAPE-INDEPENDENT capability callees.
+  // These three resolve to the same capability however they are spelled
+  // -- bare, aliased at any depth, or reached through a `globalThis.`/
+  // `global.` prefix -- so dispatching on the RESOLVED kind here, before
+  // any per-shape branch, is what makes `globalThis.Function(src)()` and
+  // `const g = globalThis; g.Function(src)()` classify exactly as the
+  // bare `Function(src)()` spelling does. Both were reproduced
+  // end-to-end while this dispatch lived inside the identifier-only
+  // branch below and property-access spellings never reached it.
+  const calleeCapability = resolveLoaderCapability(expr, context);
+  switch (calleeCapability?.kind) {
+    case "ambient_function_constructor":
       return "function_constructor";
-    }
+    case "ambient_eval":
+      return "aliased_eval";
+    case "ambient_require":
+      return "aliased_require";
+    default:
+      break;
+  }
 
+  if (ts.isIdentifier(expr)) {
     // VT-307c-provenance-closure: resolved through the SAME shared
     // relation every other check in this file now uses, so an identifier
     // aliasing `require`/`eval` at ANY depth (`const r1 = require; const
@@ -1173,6 +1222,8 @@ export function classifyLoaderConstruct(
         return "aliased_require";
       case "ambient_eval":
         return "aliased_eval";
+      case "ambient_function_constructor":
+        return "function_constructor";
       case "create_require_result":
         return "create_require";
       case "module_constructor_member": {
@@ -1702,7 +1753,12 @@ function isAuthoritativeCapabilityValue(
   // this kind exists for is unaffected -- only the escape sweep is.
   if (
     capability.kind === "ambient_global" ||
-    capability.kind === "ambient_process"
+    capability.kind === "ambient_process" ||
+    // `Function` shares `eval`'s exclusion, for the same measured
+    // reason: `get-intrinsic`'s INTRINSICS table holds
+    // `'%Function%': Function` right beside `'%eval%': eval`, calls
+    // neither, and is a transitive dependency of much of the ecosystem.
+    capability.kind === "ambient_function_constructor"
   ) {
     return false;
   }
