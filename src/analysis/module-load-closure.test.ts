@@ -3483,3 +3483,314 @@ describe("ModuleLoadClosure: value-oriented loader-capability escape analysis (V
     expect(reasonsOf(closure)).toContain("loader_capability_escape");
   });
 });
+
+/**
+ * VT-307c-value-flow-closure. The final go/no-go invariant review found
+ * that VT-307c-capability-flow's value walker, while genuinely
+ * value-oriented, was itself still an ENUMERATION -- this time of
+ * container NODE KINDS -- so any value-producing form missing from its
+ * list failed open. Seven end-to-end violations were reproduced from
+ * that single structural fact (real Node execution + a gate-eligible
+ * closure + `complete: true` + the exact installed package OUT + an
+ * EMPTY `incompleteness` array), and this task's own pre-implementation
+ * sweep found thirteen more of the same family.
+ *
+ * The traversal is now CLOSED BY DEFAULT: `valueFlowOperandsOf` names the
+ * value-OPAQUE forms (member access, call results, primitive-result
+ * operators, function/class values) and recurses into everything else,
+ * including node kinds it has never heard of. These tests therefore have
+ * two jobs, and the second matters as much as the first: prove the
+ * twenty reproduced blockers converge through that ONE generic
+ * mechanism, and prove the exclusions still hold so ordinary code stays
+ * complete.
+ */
+describe("ModuleLoadClosure: closed-by-default value-flow traversal (VT-307c-value-flow-closure)", () => {
+  it.each([
+    // --- The seven blockers the go/no-go review reproduced ---
+    [
+      "1. object destructuring default: const { l = Module } = {}",
+      "const Module = require('module');\nconst { l = Module } = {};\nmodule.exports = { l };\n",
+    ],
+    [
+      "2. array destructuring default: const [ l = Module ] = []",
+      "const Module = require('module');\nconst [ l = Module ] = [];\nmodule.exports = { l };\n",
+    ],
+    [
+      "3. sequence expression: const x = (0, Module)",
+      "const Module = require('module');\nconst x = (0, Module);\nmodule.exports = { x };\n",
+    ],
+    [
+      "4. class instance field: class H { loader = Module }",
+      "const Module = require('module');\nclass H { loader = Module; }\nmodule.exports = { H };\n",
+    ],
+    [
+      "5. class static field: class H { static loader = Module }",
+      "const Module = require('module');\nclass H { static loader = Module; }\nmodule.exports = { H };\n",
+    ],
+    [
+      "6. logical OR: const x = a || Module",
+      "const Module = require('module');\nconst x = process.env.NOPE || Module;\nmodule.exports = { x };\n",
+    ],
+    [
+      "7. nullish coalescing: const x = a ?? Module",
+      "const Module = require('module');\nconst x = process.env.NOPE ?? Module;\nmodule.exports = { x };\n",
+    ],
+    // --- The thirteen more this task's own sweep reproduced ---
+    [
+      "8. logical AND: const x = a && Module",
+      "const Module = require('module');\nconst x = 1 && Module;\nmodule.exports = { x };\n",
+    ],
+    [
+      "9. logical assignment: x ||= Module",
+      "const Module = require('module');\nlet x;\nx ||= Module;\nmodule.exports = { x };\n",
+    ],
+    [
+      "10. await of a capability: const x = await Module",
+      "const Module = require('module');\nasync function f(){ const x = await Module; return x; }\nmodule.exports = { f };\n",
+    ],
+    [
+      "11. let binding (not a followable alias): let x = Module",
+      "const Module = require('module');\nlet x = Module;\nmodule.exports = { x };\n",
+    ],
+    [
+      "12. var binding (not a followable alias): var x = Module",
+      "const Module = require('module');\nvar x = Module;\nmodule.exports = { x };\n",
+    ],
+    [
+      "13. destructuring default holding a composite: const { l = { m: Module } } = {}",
+      "const Module = require('module');\nconst { l = { m: Module } } = {};\nmodule.exports = { l };\n",
+    ],
+    [
+      "14. nested destructuring default: const { a: { b = Module } = {} } = {}",
+      "const Module = require('module');\nconst { a: { b = Module } = {} } = {};\nmodule.exports = { b };\n",
+    ],
+    [
+      "15. parameter destructuring default: function f({ l = Module })",
+      "const Module = require('module');\nfunction f({ l = Module }){ return l; }\nmodule.exports = { f };\n",
+    ],
+    [
+      "16. array-pattern parameter default: function f([ l = Module ])",
+      "const Module = require('module');\nfunction f([ l = Module ]){ return l; }\nmodule.exports = { f };\n",
+    ],
+    [
+      "17. class field holding a composite: class H { loader = { m: Module } }",
+      "const Module = require('module');\nclass H { loader = { m: Module }; }\nmodule.exports = { H };\n",
+    ],
+    [
+      "18. computed-name class field: class H { [k] = Module }",
+      "const Module = require('module');\nconst k = 'l';\nclass H { [k] = Module; }\nmodule.exports = { H };\n",
+    ],
+    [
+      "19. static field holding an array of require: class H { static r = [require] }",
+      "class H { static r = [require]; }\nmodule.exports = { H };\n",
+    ],
+    [
+      "20. for-of over a capability-bearing iterable",
+      "const Module = require('module');\nlet held;\nfor (const m of [Module]) { held = m; }\nmodule.exports = { held };\n",
+    ],
+    [
+      "21. generator yield of a capability",
+      "const Module = require('module');\nfunction* gen(){ yield Module; }\nmodule.exports = { gen };\n",
+    ],
+    [
+      "22. generator yield of a composite containing a capability",
+      "const Module = require('module');\nfunction* gen(){ yield { l: Module }; }\nmodule.exports = { gen };\n",
+    ],
+    [
+      "23. tagged template substitution",
+      "const Module = require('module');\nfunction tag(s, v){ return v; }\nconst held = tag`${Module}`;\nmodule.exports = { held };\n",
+    ],
+    // --- Composed forms: closure of the abstraction, not spelling count ---
+    [
+      "composed: a || (b ? [Module] : c)",
+      "const Module = require('module');\nconst x = process.env.NOPE || (process.env.Q ? [Module] : null);\nmodule.exports = { x };\n",
+    ],
+    [
+      "composed: class field holding new Set([Module])",
+      "const Module = require('module');\nclass H { s = new Set([Module]); }\nmodule.exports = { H };\n",
+    ],
+    [
+      "composed: destructuring default holding a concise arrow returning require",
+      "const { get = () => require } = {};\nmodule.exports = { get };\n",
+    ],
+    [
+      "composed: (a, b) sequence inside an object inside a class static field",
+      "const Module = require('module');\nclass H { static box = { l: (0, Module) }; }\nmodule.exports = { H };\n",
+    ],
+    [
+      "composed: spread of a composite reached through a logical default",
+      "const Module = require('module');\nconst inner = { l: Module };\nconst box = process.env.NOPE || { ...inner };\nmodule.exports = { box };\n",
+    ],
+    [
+      "composed: TS-style parenthesized + non-null wrapping of a logical default",
+      "const Module = require('module');\nconst x = (process.env.NOPE || Module);\nmodule.exports = { x };\n",
+    ],
+  ])("goes incomplete for %s", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it.each([
+    // Exclusion 1: member access -- `module.exports` is in every CJS file.
+    [
+      "module.exports read and write",
+      "const x = module.exports;\nmodule.exports = { x, y: 1 };\n",
+    ],
+    [
+      "require.main === module entrypoint guard",
+      "if (require.main === module) { console.log('main'); }\nmodule.exports = {};\n",
+    ],
+    // Exclusion 2: call results.
+    [
+      "const ok = Module.isBuiltin('fs') (allowlisted read-only call)",
+      "const Module = require('module');\nconst ok = Module.isBuiltin('fs');\nmodule.exports = { ok };\n",
+    ],
+    // Exclusion 3: primitive-result operators.
+    [
+      "typeof module guard",
+      "const isCjs = typeof module === 'object';\nmodule.exports = { isCjs };\n",
+    ],
+    [
+      "template literal over a capability's member",
+      "const id = `${module.id}`;\nmodule.exports = { id };\n",
+    ],
+    [
+      "comparison against a capability",
+      "const Module = require('module');\nconst ok = Module === undefined;\nmodule.exports = { ok };\n",
+    ],
+    // The same value shapes as the blockers above, WITHOUT a capability.
+    [
+      "logical OR of ordinary values",
+      "const x = process.env.Q || { b: 1 };\nmodule.exports = { x };\n",
+    ],
+    [
+      "logical AND of ordinary values",
+      "const x = 1 && { b: 1 };\nmodule.exports = { x };\n",
+    ],
+    [
+      "nullish coalescing of ordinary values",
+      "const x = process.env.Q ?? 'fallback';\nmodule.exports = { x };\n",
+    ],
+    [
+      "sequence expression of ordinary values",
+      "const x = (0, 42);\nmodule.exports = { x };\n",
+    ],
+    [
+      "object destructuring default of an ordinary value",
+      "const { l = 42 } = {};\nmodule.exports = { l };\n",
+    ],
+    [
+      "array destructuring default of an ordinary value",
+      "const [ l = 42 ] = [];\nmodule.exports = { l };\n",
+    ],
+    [
+      "class instance and static fields of ordinary values",
+      "class H { l = 42; static m = 'x'; }\nmodule.exports = { H };\n",
+    ],
+    [
+      "logical assignment of an ordinary value",
+      "let x;\nx ||= 42;\nmodule.exports = { x };\n",
+    ],
+    [
+      "for-of over an ordinary iterable",
+      "let held;\nfor (const m of [1, 2, 3]) { held = m; }\nmodule.exports = { held };\n",
+    ],
+    [
+      "generator yielding an ordinary value",
+      "function* gen(){ yield 42; }\nmodule.exports = { gen };\n",
+    ],
+    [
+      "tagged template over ordinary values",
+      "function tag(s, v){ return v; }\nconst held = tag`${42}`;\nmodule.exports = { held };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-value-flow-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it("keeps the followable const-alias exemption -- const A = Module; const B = A; stays precise", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const Module = require('module');\nconst A = Module;\nconst B = A;\nconst C = B;\nC._load(process.env.X, module, false);\nmodule.exports = {};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["module_internal_load"]);
+  });
+
+  it.each([
+    [
+      "Module._preloadModules(['x'])",
+      "const Module = require('module');\nModule._preloadModules(['x']);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "Module._load(x, module, false)",
+      "const Module = require('module');\nModule._load(process.env.X, module, false);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "Module.registerHooks(hooks)",
+      "const Module = require('module');\nModule.registerHooks({ resolve(s, c, n){ return n(s, c); } });\nmodule.exports = {};\n",
+      "loader_hook_mutation",
+    ],
+    [
+      "Module.prototype.constructor._preloadModules(['x'])",
+      "const Module = require('module');\nModule.prototype.constructor._preloadModules(['x']);\nmodule.exports = {};\n",
+      "module_internal_load",
+    ],
+    [
+      "Module._resolveFilename ||= hook (logical-assignment mutation)",
+      "const Module = require('module');\nModule._resolveFilename ||= function(){ return 'x'; };\nmodule.exports = {};\n",
+      "loader_hook_mutation",
+    ],
+  ])(
+    "does not degrade %s into the generic fallback (precise reason still wins)",
+    async (_label, source, expectedReason) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toEqual([expectedReason]);
+    },
+  );
+
+  it("finds a value-flow escape in a never-called function of a transitively loaded dependency", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/dep/package.json",
+      JSON.stringify({ name: "dep", version: "1.0.0", main: "index.js" }),
+    );
+    write(
+      root,
+      "node_modules/dep/index.js",
+      "const Module = require('module');\nfunction neverCalled({ loader = Module } = {}){ return loader; }\nmodule.exports = { neverCalled };\n",
+    );
+    const entry = write(root, "src/index.js", "require('dep');\n");
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+});

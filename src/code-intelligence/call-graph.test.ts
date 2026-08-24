@@ -3284,3 +3284,101 @@ describe("buildCallGraph: resource limits (TASK-028 security hardening)", () => 
     expect(graph.nodes).toEqual([]);
   });
 });
+
+/**
+ * VT-307c-value-flow-closure. The value walker behind the argument-escape
+ * check inside `classifyClosureWideningCall` (shared with
+ * ModuleLoadClosure) is now closed by default over value-producing
+ * operands, so a capability reaching a call ARGUMENT through any value
+ * form -- not only the handful of container kinds the previous
+ * enumeration named -- still produces the `unknown` CallGraph edge. Pure
+ * value-POSITION escapes (a class field, a `yield`, a tagged template)
+ * remain closure-only under the established architecture: CallGraph has
+ * no edge shape for a non-call construct, and this task does not
+ * redesign that.
+ */
+describe("buildCallGraph: closed-by-default value-flow argument escapes (VT-307c-value-flow-closure)", () => {
+  it.each([
+    [
+      "configure(a || Module) -- capability behind a logical-OR default",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure(process.env.NOPE || Module); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure(a ?? Module) -- capability behind nullish coalescing",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure(process.env.NOPE ?? Module); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure(1 && Module) -- capability as the right operand of &&",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure(1 && Module); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure((0, Module)) -- capability behind a sequence expression",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure((0, Module)); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure(a || { l: [Module] }) -- capability composed through three value forms",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure(process.env.NOPE || { l: [Module] }); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure(await Module) -- capability behind await",
+      "loader_capability_escape",
+      "function configure(x){ return x; }\nasync function main(){ const Module = require('module'); configure(await Module); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "Module._load(x, module, false) -- precise reason still wins over its own legitimate capability argument",
+      "module_internal_load",
+      "function main(){ const Module = require('module'); Module._load(process.env.X, module, false); }\nmodule.exports = { main };\n",
+    ],
+  ])("classifies %s as %s", async (_label, expectedReason, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        resolution: {
+          kind: "unknown",
+          reason: expectedReason,
+          potentialTargets: [],
+        },
+      }),
+    );
+  });
+
+  it.each([
+    [
+      "configure(a || { b: 1 }) -- same value shape, no capability",
+      "function configure(x){ return x; }\nfunction main(){ configure(process.env.NOPE || { b: 1 }); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure(typeof module === 'object') -- primitive result of a capability operand",
+      "function configure(x){ return x; }\nfunction main(){ configure(typeof module === 'object'); }\nmodule.exports = { main };\n",
+    ],
+    [
+      "configure(Module.isBuiltin('fs')) -- allowlisted read-only call result",
+      "function configure(x){ return x; }\nfunction main(){ const Module = require('module'); configure(Module.isBuiltin('fs')); }\nmodule.exports = { main };\n",
+    ],
+  ])(
+    "does not emit a loader_capability_escape edge for %s",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const graph = await graphFor(root, [entry]);
+
+      expect(
+        graph.edges.some(
+          (edge) =>
+            edge.resolution.kind === "unknown" &&
+            edge.resolution.reason === "loader_capability_escape",
+        ),
+      ).toBe(false);
+    },
+  );
+});
