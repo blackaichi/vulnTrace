@@ -713,5 +713,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-066",
+    "dir": "adv2-066-dependency-toplevel-element-access-capability",
+    "category": "66. VT-307c-element-closure regression: an authoritative capability reached entirely through ELEMENT ACCESS (M['_preloadModules'](...)) in a DEPENDENCY's own module top-level scope",
+    "description": "Pins a bypass that applied to EVERY capability the shared provenance relation had learned to resolve across five prior rounds. `x.y` and `x['y']` denote the same member of the same receiver, but the relation matched only `PropertyAccessExpression` and never its `ElementAccessExpression` sibling -- so the whole model was bypassable by writing brackets. Eight spellings were reproduced end-to-end (M['prototype'].constructor, M['Module'], M['_preloadModules'], require['main'], process['mainModule'], globalThis['process']['mainModule']['constructor'], globalThis['Function'], and a computed key M[k]), with NO unknown Node API name involved anywhere. vt2-holder does `M['_preloadModules'](['vt2-vuln-lib']);` at its own top level. VT-307c-element-closure normalizes both spellings onto one member accessor and fails closed on a COMPUTED key into an authoritative receiver, since such a key could name any member at all. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-065.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `M['_preloadModules'](['vt2-vuln-lib']);`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), directly loads a package by name using Node's own module-loading primitive. A human analyst cannot rule out reachability here merely because the member was written with brackets rather than a dot. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]

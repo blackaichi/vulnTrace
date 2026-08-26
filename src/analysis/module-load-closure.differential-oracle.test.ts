@@ -1517,3 +1517,117 @@ describe("ModuleLoadClosure differential Node oracle: Function-constructor gramm
     20000,
   );
 });
+
+/**
+ * VT-307c-element-closure + VT-307c-reflection-closure oracle axes.
+ *
+ * Element access is the same member access as a dotted name, spelled with
+ * brackets; a classifier that resolves only the first is bypassed by
+ * writing the second. Reflection via `.constructor` is different in kind
+ * from every family before it: `Function` is reachable from EVERY value in
+ * JavaScript, so there is no provenance to preserve and nothing to
+ * resolve -- the bound that keeps it precise is that the `.constructor`
+ * value must itself be called, never merely read or member-accessed.
+ */
+const ELEMENT_AND_REFLECTION_FORMS: readonly (readonly [string, string])[] = [
+  // Element access -- authoritative receivers, static keys.
+  [
+    "M['prototype'].constructor",
+    "const M = require('module');\nM['prototype'].constructor._preloadModules(['vuln']);\n",
+  ],
+  [
+    "M['Module']",
+    "const M = require('module');\nM['Module']._preloadModules(['vuln']);\n",
+  ],
+  [
+    "M['_preloadModules'](...)",
+    "const M = require('module');\nM['_preloadModules'](['vuln']);\n",
+  ],
+  [
+    "require['main'].constructor",
+    "require['main'].constructor._preloadModules(['vuln']);\n",
+  ],
+  [
+    "process['mainModule'].constructor",
+    "process['mainModule'].constructor._preloadModules(['vuln']);\n",
+  ],
+  [
+    "globalThis['process']['mainModule']['constructor']",
+    "globalThis['process']['mainModule']['constructor']._preloadModules(['vuln']);\n",
+  ],
+  [
+    "globalThis['Function'](src)()",
+    "globalThis['Function'](\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  // Element access -- COMPUTED key into an authoritative receiver.
+  [
+    "computed key: M[k](...)",
+    "const M = require('module');\nconst k = process.env.K || '_preloadModules';\nM[k](['vuln']);\n",
+  ],
+  // Reflection -- `.constructor` CALLED, reaching Function from any value.
+  [
+    "[].constructor.constructor(src)()",
+    "[].constructor.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "''.constructor.constructor(src)()",
+    "''.constructor.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "({}).constructor.constructor(src)()",
+    "({}).constructor.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "(0).constructor.constructor(src)()",
+    "(0).constructor.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "Object.constructor(src)()",
+    "Object.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "JSON.parse.constructor(src)()",
+    "JSON.parse.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "Array.prototype.map.constructor(src)()",
+    "Array.prototype.map.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "local function decl .constructor(src)()",
+    "function f(){}\nf.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "local arrow const .constructor(src)()",
+    "const f = () => {};\nf.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "object-property function .constructor(src)()",
+    "const o = { f: () => {} };\no.f.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "array-element function .constructor(src)()",
+    "const arr = [() => {}];\narr[0].constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+];
+
+describe("ModuleLoadClosure differential Node oracle: element access and .constructor reflection (VT-307c-element/reflection-closure)", () => {
+  const generated: OracleCase[] = ELEMENT_AND_REFLECTION_FORMS.map(
+    ([name, source]) => ({
+      label: name,
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root: string) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(root, "src/index.js", source);
+      },
+    }),
+  );
+
+  it.each(generated.map((c) => [c.label, c] as const))(
+    "%s: complete=true never coexists with a real, unaccounted-for execution",
+    async (_label, oracleCase) => {
+      await runOracleCase(oracleCase);
+    },
+    20000,
+  );
+});
