@@ -77,7 +77,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | ID | Package | Root cause | Impact | Status |
 |---|---|---|---|---|
 | RWF-001 | `lodash` (the main package) | UMD `module.exports` assignment via a locally-aliased variable is invisible to export detection | Precision only — degrades to UNKNOWN in both directions, never a false AFFECTED/NOT_AFFECTED | Open, not yet scoped as a task |
-| RWF-002 | any (`node-forge` isolates it cleanly) | One unresolved/dynamic construct *anywhere* in an entrypoint's reachable call graph forces `UNKNOWN` for every vulnerability checked against that entrypoint, even when the construct is entirely unrelated to the target | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model | Open, not yet scoped as a task |
+| RWF-002 | any (`node-forge` isolates it cleanly) | One unresolved/dynamic construct *anywhere* in an entrypoint's reachable call graph forces `UNKNOWN` for every vulnerability checked against that entrypoint, even when the construct is entirely unrelated to the target | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below |
 | RWF-003 | `minimist` | `module.exports = function (...) {...}` (an anonymous function expression, not a named local declaration) isn't matched by export-to-function resolution | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
 | RWF-004 | `qs`, `debug`→`ms`, `semver` | An exported value that is itself a re-export of a function declared in a *different* file (same-package sibling file or a different package entirely) is never chased to its real declaration | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
 | RWF-005 | `trim-newlines` | TypeScript module resolution prefers a package's hand-authored `.d.ts` over its real `.js` implementation when resolving a bare specifier from a plain `.js` importer | Precision only — degrades to UNKNOWN (analysis operates on a file with no real function bodies) | **Fixed (VT-304)** |
@@ -148,6 +148,45 @@ This proves the mechanism precisely: `checkReachability`'s search (`src/analysis
 **Proposed direction (not scoped, not implemented):** this is a genuine soundness-vs-precision tradeoff, not simply a bug to fix — narrowing it (e.g., scoping "blocking uncertainty" to unresolved edges that lie on *some* path toward the target, rather than anywhere in the reachable subgraph) would need careful analysis to confirm it can't introduce a false `NOT_AFFECTED`. Flagging the tradeoff itself as the finding, not prescribing a fix.
 
 **MVP-readiness relevance:** does not violate any adversarial-suite invariant (still 79/79) — the adversarial fixtures are, by construction, minimal and free of incidental unresolved constructs, so this behavior was invisible to them. This is the highest-value finding from this benchmark run precisely because it was invisible to synthetic testing.
+
+### Status update — VT-307d (module-load absence negative proof)
+
+`RWB-06` now returns the expected `NOT_AFFECTED`. Read the scope of that
+carefully, because it is **not** the fix this finding's "proposed direction"
+above contemplated, and RWF-002's own tradeoff is deliberately untouched:
+
+- Nothing about "blocking uncertainty" was narrowed. `checkReachability`
+  still sets `sawUnknown` for **any** unclassifiable edge anywhere in an
+  entrypoint's reachable subgraph, exactly as described above, and every
+  reachability-derived `NOT_AFFECTED` still requires `graphTruncated ===
+  false`. The dangerous change this finding warned against — scoping
+  blocking uncertainty to edges "on some path toward the target" — was
+  **not** made, and would still need the careful analysis this entry asks
+  for.
+- Instead, VT-307d added a **second, independent** route to `NOT_AFFECTED`
+  that never consults the call graph at all: a `ModuleLoadClosure` over the
+  configured entrypoints. When that closure is **complete** and this
+  finding's exact canonical `PackageInstanceId` is **not** in its
+  `loadedPackageInstances`, the affected package's code cannot execute from
+  those entrypoints at all — so no call-graph search is needed to know that
+  no call into it can happen either.
+- Why unrelated non-widening uncertainty is safe to ignore **on that route
+  specifically**: a construct that could actually load a module the
+  traversal never saw is *closure-widening*, and every closure-widening
+  construct makes the closure incomplete, which withdraws the proof
+  entirely. `token.trim()` — this finding's own trigger — is
+  `unsupported_construct`: non-widening, bounded to values already
+  discovered, and incapable of loading `node-forge`. It therefore stops
+  vetoing a conclusion it has no bearing on, without anything being
+  assumed about it.
+
+So the blast radius described above is genuinely reduced, but only for the
+UNREACHED_DEPENDENCY shape: a package that is installed and never loaded.
+A vulnerable package that IS loaded, with an unattributable target or an
+unresolved call path, still returns `UNKNOWN` for precisely the reasons
+this finding gives (`RWB-07`, `RWB-08`, `RWB-09a`, `RWB-10` are all
+unchanged). The compounding effect this entry predicted for those cases is
+real and still stands.
 
 ---
 

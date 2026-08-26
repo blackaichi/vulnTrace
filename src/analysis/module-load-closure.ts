@@ -114,9 +114,22 @@ export interface ClosureIncompleteness {
  * It says nothing about semantic or type correctness, and it is not a
  * statement about call reachability in either direction.
  *
- * NOTE (VT-307c scope): this type is representation + diagnostics only. No
- * verdict logic consumes it yet -- wiring it into the RWF-002
- * NOT_AFFECTED gate is VT-307d's own, separately-reviewed task.
+ * CONSUMED BY (VT-307d): the Site-B module-load absence gate in
+ * `analysis/verdict.ts`. A `complete` closure whose
+ * `loadedPackageInstances` does not contain a finding's exact canonical
+ * `PackageInstanceId` is positive analytical evidence that the affected
+ * installed instance cannot be loaded from the configured entrypoints, and
+ * yields NOT_AFFECTED with the reason
+ * `package_instance_not_in_complete_module_load_closure` (see
+ * `ConfirmedAbsentFromModuleLoadClosure` in domain/evidence.ts, which also
+ * records the boundary of that claim: it is absence under VulnTrace's
+ * DECLARED SUPPORTED module-loading model, never universal runtime
+ * impossibility).
+ *
+ * Only closures from {@link buildGateEligibleModuleLoadClosure} are ever
+ * eligible for that gate. An INCOMPLETE closure is never absence evidence
+ * of any kind -- that is what makes every widening condition above
+ * load-bearing rather than advisory.
  */
 export interface ModuleLoadClosure {
   /** The configured entrypoint FILES the closure is rooted at (never narrowed by `{file, symbol}` -- see {@link buildModuleLoadClosure}). */
@@ -419,8 +432,13 @@ export interface BuildGateEligibleModuleLoadClosureOptions extends Omit<
  * SHAPE is identical either way -- the only thing that actually needs
  * guaranteeing is that this function is the sole path capable of producing
  * one, which VT-307d's own gate is written to call exclusively. This
- * function intentionally has no verdict-facing caller yet: wiring it into
- * `cli/scan.ts`/`verdict.ts` is VT-307d's own, separately-reviewed task.
+ * VT-307d wired this into production: `cli/scan.ts` calls it exactly once
+ * per scan (after building the dependency graph, `KnownPackageRoots` and
+ * the configured entrypoints) and threads the single resulting closure
+ * into every `buildFinding` call, where `verdict.ts`'s Site-B gate is the
+ * only consumer. `buildModuleLoadClosure` is deliberately NOT reachable
+ * from that path: being the sole producer of a gate-eligible closure is
+ * precisely what makes eligibility structural.
  */
 export async function buildGateEligibleModuleLoadClosure(
   options: BuildGateEligibleModuleLoadClosureOptions,

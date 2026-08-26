@@ -23,9 +23,13 @@ import type {
   VulnerableSymbolTarget,
 } from "../domain/target.js";
 import type { Finding } from "../domain/verdict.js";
+import type { ConfirmedAbsentFromModuleLoadClosure } from "../domain/evidence.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import type { VersionMatchResult } from "../vulnerabilities/version-matching.js";
-import type { ModuleLoadClosure } from "./module-load-closure.js";
+import {
+  closureContainsPackageInstance,
+  type ModuleLoadClosure,
+} from "./module-load-closure.js";
 import {
   analyzeReachability,
   collectReachableUnknownEdges,
@@ -125,6 +129,21 @@ export interface BuildFindingOptions {
    */
   readonly allowSyntheticNameOnlyTargetBinding?: boolean;
 }
+
+/**
+ * The reason string a NOT_AFFECTED carries when, and only when, it was
+ * reached through VT-307d's module-load absence proof.
+ *
+ * Deliberately its own distinct value, never folded into the ordinary
+ * "vulnerable symbol confirmed unreachable from all analyzed entrypoints"
+ * text: the two conclusions are established by different evidence, over
+ * different traversals, with different preconditions, and a reader must be
+ * able to tell them apart. This one says the package's code never runs at
+ * all; the ordinary one says the package's code may well run but this
+ * symbol is not called.
+ */
+const MODULE_LOAD_ABSENCE_REASON =
+  "package_instance_not_in_complete_module_load_closure";
 
 function locationOf(graph: CallGraph, id: GraphNodeId): string {
   const node = graph.nodes.find((n) => n.id === id);
@@ -379,10 +398,20 @@ async function resolveTargetNodes(
   packageInstance: string | undefined,
   allowSyntheticNameOnlyTargetBinding: boolean,
   knownPackageRoots: KnownPackageRoots | undefined,
+  moduleLoadClosure: ModuleLoadClosure | undefined,
 ): Promise<{
   nodes: GraphNode[];
   unresolvedReason?: string;
   confirmedAbsentInstance?: boolean;
+  /**
+   * VT-307d's positive module-load absence proof. Deliberately a SEPARATE
+   * result from `confirmedAbsentInstance`, never an overload of it: that
+   * flag means "the CALL GRAPH never traversed this instance", which is
+   * evidence only under VT-300's own closure-widening guard. This one
+   * means "the complete MODULE-LOAD CLOSURE does not contain this
+   * instance", which is a different traversal proving a stronger fact.
+   */
+  absentFromModuleLoadClosure?: ConfirmedAbsentFromModuleLoadClosure;
 }> {
   const instances = graphPackageInstances(
     graph,
@@ -476,6 +505,66 @@ async function resolveTargetNodes(
     return {
       nodes: [],
       unresolvedReason: `module "${target.module}" is a Node builtin module, not a resolvable runtime file`,
+    };
+  }
+
+  // VT-307d -- MODULE-LOAD ABSENCE PROOF. Sits here, at Site B, and
+  // nowhere else. Everything above has already run: the advisory applied,
+  // the installed version matched a vulnerable range (buildFinding returns
+  // before this for `not_affected`/`indeterminate`), a rule with targets
+  // exists, and this target's module resolved to a real runtime file. Only
+  // then is it meaningful to ask whether that file's package can load at
+  // all. Placed BEFORE the phantom construction and the reachability BFS
+  // below because the answer makes both unnecessary: if the package's code
+  // never runs, no search through the call graph can change that.
+  //
+  // Every conjunct is load-bearing:
+  //
+  // - `moduleLoadClosure !== undefined`: `undefined` means no proof is
+  //   available (no entrypoints, or construction failed). It must never be
+  //   read as "an empty closure", which would assert that every installed
+  //   package is unloadable.
+  // - gate-eligible BY CONSTRUCTION: the only producer is
+  //   `buildGateEligibleModuleLoadClosure`, which requires
+  //   `knownPackageRoots` at the type level and refuses to return a
+  //   root-less closure. `rootFiles.length > 0` is re-asserted here anyway
+  //   -- a vacuously complete, zero-root closure contains NO package
+  //   instance, so it would "prove" absence for every finding in the
+  //   project, and this is the single cheapest place to make that
+  //   impossible twice over.
+  // - `complete === true`: the entire soundness precondition. Any parse
+  //   failure, unresolved or declaration-only module, traversal
+  //   truncation, or in-source loader/runtime capability anywhere in the
+  //   closure sets this false and withdraws the proof. That is exactly why
+  //   this gate may safely ignore unrelated NON-WIDENING call-graph
+  //   uncertainty (RWF-002/RWB-06): a construct that could actually load a
+  //   new module is closure-widening, and closure-widening constructs make
+  //   the closure incomplete, so they disable this gate rather than being
+  //   ignored by it.
+  // - exact `packageInstance` identity: an install LOCATION, compared
+  //   whole. Never a package name, never a version, never name+version --
+  //   two same-name same-version installs at different locations get
+  //   independent answers.
+  // - the resolved target file must genuinely belong to THAT instance.
+  //   Without this, a rule target naming a module that resolves into some
+  //   OTHER installed package would be answered with a proof about this
+  //   finding's package, which is not the same question.
+  if (
+    packageInstance !== undefined &&
+    moduleLoadClosure !== undefined &&
+    moduleLoadClosure.complete &&
+    moduleLoadClosure.rootFiles.length > 0 &&
+    !closureContainsPackageInstance(moduleLoadClosure, packageInstance) &&
+    identifyModule(resolution.resolvedFileName, knownPackageRoots)
+      .packageInstance === packageInstance
+  ) {
+    return {
+      nodes: [],
+      absentFromModuleLoadClosure: {
+        packageInstance,
+        entrypointRoots: moduleLoadClosure.rootFiles,
+        closureComplete: true,
+      },
     };
   }
 
@@ -634,11 +723,18 @@ async function checkReachability(
   packageInstance: string | undefined,
   allowSyntheticNameOnlyTargetBinding: boolean,
   knownPackageRoots: KnownPackageRoots | undefined,
+  moduleLoadClosure: ModuleLoadClosure | undefined,
 ): Promise<{
   reachable?: ReachableEvidence;
   sawUnknown: boolean;
   reasons: string[];
   representativeTarget?: VulnerableSymbolTarget;
+  /**
+   * VT-307d: set when this finding's own exact package instance was proved
+   * absent from a complete, gate-eligible module-load closure. Reported by
+   * `buildFinding` ahead of `sawUnknown`, deliberately -- see there.
+   */
+  absentFromModuleLoadClosure?: ConfirmedAbsentFromModuleLoadClosure;
   /**
    * Whether at least one reachability search actually ran. `false` means no
    * entrypoint produced a usable source node to search from (e.g. the
@@ -655,12 +751,15 @@ async function checkReachability(
   let checkedAny = false;
   const reasons: string[] = [];
   let representativeTarget: VulnerableSymbolTarget | undefined;
+  let absentFromModuleLoadClosure:
+    ConfirmedAbsentFromModuleLoadClosure | undefined;
 
   for (const target of rule.targets) {
     const {
       nodes: targetNodes,
       unresolvedReason,
       confirmedAbsentInstance,
+      absentFromModuleLoadClosure: targetAbsenceProof,
     } = await resolveTargetNodes(
       graph,
       target,
@@ -670,6 +769,7 @@ async function checkReachability(
       packageInstance,
       allowSyntheticNameOnlyTargetBinding,
       knownPackageRoots,
+      moduleLoadClosure,
     );
 
     if (unresolvedReason) {
@@ -681,6 +781,17 @@ async function checkReachability(
     }
 
     representativeTarget ??= target;
+
+    if (targetAbsenceProof) {
+      // VT-307d: a genuine, positive check ran and concluded -- this
+      // instance's code cannot execute at all from the configured
+      // entrypoints. `checkedAny` records that, so a finding whose every
+      // target resolves this way never falls through to the separate "no
+      // entrypoints were available" UNKNOWN below.
+      checkedAny = true;
+      absentFromModuleLoadClosure ??= targetAbsenceProof;
+      continue;
+    }
 
     if (confirmedAbsentInstance) {
       // This finding's own package instance was never traversed by the
@@ -740,7 +851,13 @@ async function checkReachability(
     }
   }
 
-  return { sawUnknown, reasons, representativeTarget, checkedAny };
+  return {
+    sawUnknown,
+    reasons,
+    representativeTarget,
+    checkedAny,
+    absentFromModuleLoadClosure,
+  };
 }
 
 /**
@@ -784,6 +901,7 @@ export async function buildFinding(
     resolver,
     projectRoot,
     knownPackageRoots,
+    moduleLoadClosure,
     graphTruncated = false,
     allowSyntheticNameOnlyTargetBinding = false,
   } = options;
@@ -806,18 +924,25 @@ export async function buildFinding(
     return { ...base, verdict: "UNKNOWN" };
   }
 
-  const { reachable, sawUnknown, reasons, representativeTarget, checkedAny } =
-    await checkReachability(
-      rule,
-      graph,
-      entrypoints,
-      resolver,
-      projectRoot,
-      packageVersion,
-      packageInstance,
-      allowSyntheticNameOnlyTargetBinding,
-      knownPackageRoots,
-    );
+  const {
+    reachable,
+    sawUnknown,
+    reasons,
+    representativeTarget,
+    checkedAny,
+    absentFromModuleLoadClosure,
+  } = await checkReachability(
+    rule,
+    graph,
+    entrypoints,
+    resolver,
+    projectRoot,
+    packageVersion,
+    packageInstance,
+    allowSyntheticNameOnlyTargetBinding,
+    knownPackageRoots,
+    moduleLoadClosure,
+  );
 
   if (reachable) {
     return {
@@ -831,6 +956,43 @@ export async function buildFinding(
           "vulnerable symbol resolved",
           "symbol reachable from application entrypoint",
         ],
+      },
+    };
+  }
+
+  // VT-307d -- MODULE-LOAD ABSENCE PROOF, deliberately ahead of
+  // `sawUnknown`, `checkedAny` and `graphTruncated` alike.
+  //
+  // That ordering IS the fix for RWF-002/RWB-06. Those three branches all
+  // express one thing: the CALL-GRAPH search could not finish the job. The
+  // proof reaching here expresses something the call graph never asked --
+  // that this installed instance's code cannot execute at all from the
+  // configured entrypoints -- established by a different, independently
+  // complete traversal. Unrelated non-widening call-graph uncertainty
+  // elsewhere in the project (RWB-06's `String.prototype.trim()` call, an
+  // untraversed region behind a resource limit) cannot make an unloadable
+  // package load, so it must not veto a conclusion it has no bearing on.
+  //
+  // This does NOT loosen anything for the routes below. Every existing
+  // reachability-derived NOT_AFFECTED still requires `graphTruncated ===
+  // false`, VT-300's closure-widening guard on `confirmedAbsentInstance`
+  // is untouched, and ordinary `graphTruncated` semantics are unchanged.
+  // The guard this route relies on instead is closure COMPLETENESS, which
+  // the gate in `resolveTargetNodes` checks and which any construct
+  // capable of loading a new module would have falsified.
+  //
+  // AFFECTED still wins ahead of this (the branch above): a positively
+  // reproduced reachable path is the safe direction to prefer if the two
+  // could ever disagree.
+  if (absentFromModuleLoadClosure) {
+    return {
+      ...base,
+      verdict: "NOT_AFFECTED",
+      target: representativeTarget,
+      evidence: {
+        path: [],
+        reasons: [MODULE_LOAD_ABSENCE_REASON],
+        confirmedAbsentFromModuleLoadClosure: absentFromModuleLoadClosure,
       },
     };
   }
