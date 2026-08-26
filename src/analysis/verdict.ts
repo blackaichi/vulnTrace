@@ -25,6 +25,7 @@ import type {
 import type { Finding } from "../domain/verdict.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import type { VersionMatchResult } from "../vulnerabilities/version-matching.js";
+import type { ModuleLoadClosure } from "./module-load-closure.js";
 import {
   analyzeReachability,
   collectReachableUnknownEdges,
@@ -82,6 +83,28 @@ export interface BuildFindingOptions {
    * no path and no unknown edge along the way it did traverse.
    */
   readonly graphTruncated?: boolean;
+  /**
+   * The scan's single gate-eligible {@link ModuleLoadClosure} (VT-307d),
+   * built exactly once per scan by `cli/scan.ts` through
+   * `buildGateEligibleModuleLoadClosure` and passed here by reference.
+   *
+   * `undefined` means NO absence proof is available for this scan -- no
+   * configured/discovered entrypoints, or a closure-construction failure.
+   * `undefined` must therefore never be read as "an empty closure", which
+   * would say every installed package instance is unloadable; it says
+   * nothing at all, and every finding falls through the existing
+   * conservative verdict path unchanged.
+   *
+   * Being present is NOT on its own a licence to conclude anything: only
+   * a closure with `complete === true` supports an absence conclusion, and
+   * only for a `packageInstance` that is genuinely absent from
+   * `loadedPackageInstances`. See the Site-B gate in `checkReachability`.
+   *
+   * Proves module-load absence ONLY. It says nothing about which SYMBOLS
+   * inside a loaded package are reachable, so it can never rescue a Site-A
+   * UNKNOWN (package instance loaded, vulnerable target unattributed).
+   */
+  readonly moduleLoadClosure?: ModuleLoadClosure;
   /**
    * Test-only escape hatch (VT-301B; see RWF-011,
    * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 7.3/§ 10, R-6). Allows
