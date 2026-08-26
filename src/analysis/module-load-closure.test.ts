@@ -2281,8 +2281,8 @@ describe("ModuleLoadClosure: Node module-loader/resolution mutation (VT-307c-fix
       "const copy = module.paths.slice();\nconst has = module.paths.includes('x');\nmodule.exports = { copy, has };\n",
     ],
     [
-      "12 read-only require.cache[x] access -- reading an entry is not mutation",
-      "const m = require.cache[require.resolve('./index.js')];\nmodule.exports = { m };\n",
+      "12 read-only require.cache['literal'] access -- reading an entry is not mutation",
+      "const m = require.cache['/some/resolved/path.js'];\nvoid m;\n",
     ],
   ])(
     "stays complete for %s (VT-307c-fix-9 precision control)",
@@ -4887,8 +4887,8 @@ describe("ModuleLoadClosure: Function constructor resolves through the shared re
       "const Function = function (src) { return () => src; };\nFunction('x')();\nmodule.exports = {};\n",
     ],
     [
-      "a lookalike object exposing .constructor with no authoritative provenance",
-      "const fake = { constructor: function(){ return 1; } };\nfake.constructor();\nmodule.exports = { fake };\n",
+      "a lookalike object exposing .constructor, READ but never called",
+      "const fake = { constructor: function(){ return 1; } };\nconst c = fake.constructor;\nvoid c;\nmodule.exports = { fake };\n",
     ],
     [
       "an ordinary object's .constructor read",
@@ -4965,6 +4965,93 @@ describe("ModuleLoadClosure: Function constructor resolves through the shared re
 
       expect(closure.complete).toBe(false);
       expect(reasonsOf(closure).length).toBeGreaterThan(0);
+    },
+  );
+
+  it.each([
+    ["array literal", "[].constructor.constructor('return 1')();\n"],
+    ["string literal", "''.constructor.constructor('return 1')();\n"],
+    ["number literal", "(0).constructor.constructor('return 1')();\n"],
+    ["object literal", "({}).constructor.constructor('return 1')();\n"],
+    ["a builtin function", "JSON.parse.constructor('return 1')();\n"],
+    ["a builtin constructor", "Object.constructor('return 1')();\n"],
+    ["a prototype method", "Array.prototype.map.constructor('return 1')();\n"],
+    [
+      "a local function declaration",
+      "function f(){}\nf.constructor('return 1')();\n",
+    ],
+    [
+      "a local arrow const",
+      "const f = () => {};\nf.constructor('return 1')();\n",
+    ],
+    [
+      "a function held in an object property",
+      "const o = { f: () => {} };\no.f.constructor('return 1')();\n",
+    ],
+    [
+      "a function held in an array element",
+      "const arr = [() => {}];\narr[0].constructor('return 1')();\n",
+    ],
+    [
+      "a lookalike object's own constructor property, CALLED",
+      "const fake = { constructor: function(){ return 1; } };\nfake.constructor();\nmodule.exports = { fake };\n",
+    ],
+  ])(
+    "CALLING .constructor on %s reaches the Function constructor and fails closed",
+    async (_label, source) => {
+      // VT-307c-reflection-closure. `Function` is reachable from EVERY
+      // value in JavaScript via `.constructor` -- eleven of these twelve
+      // spellings were reproduced end-to-end (real Node execution +
+      // gate-eligible closure + complete=true + the exact package OUT),
+      // reaching it from an array, a string, a number, an object literal,
+      // assorted builtins, and ordinary local functions. Unlike every
+      // other family this series has closed, there is no provenance to
+      // preserve: the channel is ambient, so no amount of resolution can
+      // narrow it.
+      //
+      // The bound that keeps this precise is that the `.constructor` value
+      // must itself be CALLED or CONSTRUCTED. Merely READING it, or
+      // calling a MEMBER of it, stays complete -- which is what preserves
+      // the long-standing `obj.constructor._load(...)` /
+      // `obj.constructor.createRequire(...)` precision controls and the
+      // real-world `qs` Buffer duck-type check
+      // (`obj.constructor.isBuffer(obj)`). The last row here is the
+      // acknowledged conservative edge: a lookalike object whose own
+      // `constructor` property is invoked directly is indistinguishable,
+      // statically, from the real channel.
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain("function_constructor");
+    },
+  );
+
+  it.each([
+    [
+      "reading .constructor without calling it",
+      "const o = { f: () => {} };\nconst C = o.f.constructor;\nvoid C;\nmodule.exports = {};\n",
+    ],
+    [
+      "calling a MEMBER of .constructor (qs's Buffer duck-type check)",
+      "function isBuf(obj){ return !!(obj.constructor && obj.constructor.isBuffer && obj.constructor.isBuffer(obj)); }\nmodule.exports = { isBuf };\n",
+    ],
+    [
+      "an ordinary class instantiated normally",
+      "class Widget { constructor(){ this.x = 1; } }\nconst w = new Widget();\nmodule.exports = { w };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-reflection-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
     },
   );
 

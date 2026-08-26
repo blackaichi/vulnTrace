@@ -563,6 +563,46 @@ type ResolvedLoaderCapability =
   | { readonly kind: "ambiguous" };
 
 /**
+ * One member access, normalized across BOTH of JavaScript's spellings --
+ * `x.y` and `x['y']` denote the same member of the same receiver, and a
+ * classifier that resolves only the first is trivially bypassed by
+ * writing the second (VT-307c-element-closure: eight spellings,
+ * `M['prototype'].constructor`, `M['_preloadModules'](...)`,
+ * `require['main']`, `globalThis['Function']`, ... , were all reproduced
+ * end-to-end as real invariant violations purely because
+ * {@link resolveLoaderCapability} matched `PropertyAccessExpression` and
+ * never its `ElementAccessExpression` sibling).
+ *
+ * `name` is `undefined` when the key is COMPUTED and cannot be read off
+ * the AST (`M[k]`, `M[process.env.X]`). That is deliberately distinct
+ * from "not a member access at all": the caller must fail closed on a
+ * computed key into an authoritative receiver rather than treat it as an
+ * ordinary value, since the key could name any member at all.
+ */
+interface NormalizedMemberAccess {
+  readonly receiver: ts.Expression;
+  readonly name: string | undefined;
+}
+
+function memberAccessOf(
+  expr: ts.Expression,
+): NormalizedMemberAccess | undefined {
+  if (ts.isPropertyAccessExpression(expr)) {
+    return { receiver: expr.expression, name: expr.name.text };
+  }
+  if (ts.isElementAccessExpression(expr)) {
+    const argument = expr.argumentExpression;
+    return {
+      receiver: expr.expression,
+      // A string/numeric literal key is as statically known as a dotted
+      // member name; anything else is a computed key.
+      name: ts.isStringLiteralLike(argument) ? argument.text : undefined,
+    };
+  }
+  return undefined;
+}
+
+/**
  * VT-307c-provenance-closure. The final invariant certification found 12
  * end-to-end violations (real Node execution + a gate-eligible, complete
  * closure + the exact installed package OUT), all instances of ONE
@@ -719,10 +759,13 @@ function resolveLoaderCapability(
     }
   }
 
-  if (ts.isPropertyAccessExpression(expr)) {
+  const memberAccess = memberAccessOf(expr);
+  if (memberAccess !== undefined) {
+    const memberName = memberAccess.name;
+
     // ESM namespace import's `.default` IS the whole default export.
-    const namespaceOwner = expr.expression;
-    if (expr.name.text === "default" && ts.isIdentifier(namespaceOwner)) {
+    const namespaceOwner = memberAccess.receiver;
+    if (memberName === "default" && ts.isIdentifier(namespaceOwner)) {
       for (const [builtin] of NODE_BUILTIN_SPECIFIERS) {
         if (isNamespaceBuiltinBinding(namespaceOwner.text, builtin, context)) {
           return builtin === "module"
@@ -733,10 +776,19 @@ function resolveLoaderCapability(
     }
 
     const receiverKind = resolveLoaderCapability(
-      expr.expression,
+      memberAccess.receiver,
       context,
       depth + 1,
     );
+
+    // A COMPUTED key into an authoritative receiver could name any member
+    // at all -- including one this classifier models as dangerous -- so it
+    // must fail closed rather than resolve to nothing. `"ambiguous"` is
+    // the kind that already means exactly that everywhere else in this
+    // relation (see MAX_ALIAS_RESOLUTION_DEPTH's own use of it).
+    if (memberName === undefined) {
+      return receiverKind === undefined ? undefined : { kind: "ambiguous" };
+    }
 
     // Ambient chains, resolved through the SAME recursion as everything
     // else: `globalThis.X` IS `X` for every genuine global, `<require>
@@ -746,7 +798,7 @@ function resolveLoaderCapability(
     // name-matched, an alias or a global prefix anywhere along the chain
     // composes for free.
     if (receiverKind?.kind === "ambient_global") {
-      switch (expr.name.text) {
+      switch (memberName) {
         case "process":
           return { kind: "ambient_process" };
         case "require":
@@ -762,7 +814,7 @@ function resolveLoaderCapability(
           return undefined;
       }
     }
-    if (receiverKind?.kind === "ambient_require" && expr.name.text === "main") {
+    if (receiverKind?.kind === "ambient_require" && memberName === "main") {
       return { kind: "module_instance" };
     }
     // The module system's own mutable registries, under BOTH of Node's
@@ -771,15 +823,15 @@ function resolveLoaderCapability(
     // and `require.cache`).
     if (
       (receiverKind?.kind === "module_constructor" &&
-        MODULE_CONSTRUCTOR_REGISTRY_MEMBERS.has(expr.name.text)) ||
+        MODULE_CONSTRUCTOR_REGISTRY_MEMBERS.has(memberName)) ||
       (receiverKind?.kind === "ambient_require" &&
-        AMBIENT_REQUIRE_REGISTRY_MEMBERS.has(expr.name.text))
+        AMBIENT_REQUIRE_REGISTRY_MEMBERS.has(memberName))
     ) {
       return { kind: "loader_registry" };
     }
     if (
       receiverKind?.kind === "ambient_process" &&
-      expr.name.text === "mainModule"
+      memberName === "mainModule"
     ) {
       return { kind: "module_instance" };
     }
@@ -792,7 +844,7 @@ function resolveLoaderCapability(
     // (Family B) -- recurses through this SAME function, so arbitrary-
     // depth self-reference chains converge with no per-depth logic.
     if (
-      expr.name.text === "Module" &&
+      memberName === "Module" &&
       receiverKind?.kind === "module_constructor"
     ) {
       return { kind: "module_constructor" };
@@ -801,7 +853,7 @@ function resolveLoaderCapability(
     // `<X>.prototype` off the constructor -> Module.prototype, a
     // first-class capability kind (Family C).
     if (
-      expr.name.text === "prototype" &&
+      memberName === "prototype" &&
       receiverKind?.kind === "module_constructor"
     ) {
       return { kind: "module_prototype" };
@@ -812,10 +864,10 @@ function resolveLoaderCapability(
     // `<X>` -- `(function(){}).constructor(src)()` was reproduced as a
     // real invariant violation. Matched only on a LITERAL function
     // expression receiver, never an arbitrary `.constructor` read.
-    if (expr.name.text === "constructor") {
+    if (memberName === "constructor") {
       // `(function(){}).constructor` -- the receiver is a PARENTHESIZED
       // function expression, which is how this is always written.
-      let receiver: ts.Expression = expr.expression;
+      let receiver: ts.Expression = memberAccess.receiver;
       while (ts.isParenthesizedExpression(receiver)) {
         receiver = receiver.expression;
       }
@@ -827,7 +879,7 @@ function resolveLoaderCapability(
     // `<X>.constructor` off a Module instance OR off Module.prototype IS
     // the Module constructor.
     if (
-      expr.name.text === "constructor" &&
+      memberName === "constructor" &&
       (receiverKind?.kind === "module_instance" ||
         receiverKind?.kind === "module_prototype")
     ) {
@@ -838,13 +890,13 @@ function resolveLoaderCapability(
     // other builtins' namespace objects is a resolvable member value,
     // whether reached directly or through an arbitrary alias chain.
     if (receiverKind?.kind === "module_constructor") {
-      return { kind: "module_constructor_member", member: expr.name.text };
+      return { kind: "module_constructor_member", member: memberName };
     }
     if (receiverKind?.kind === "module_prototype") {
-      return { kind: "module_prototype_member", member: expr.name.text };
+      return { kind: "module_prototype_member", member: memberName };
     }
     if (receiverKind?.kind === "builtin_namespace") {
-      return capabilityForBuiltinMember(receiverKind.builtin, expr.name.text);
+      return capabilityForBuiltinMember(receiverKind.builtin, memberName);
     }
 
     if (receiverKind?.kind === "ambiguous") {
@@ -1182,6 +1234,40 @@ export function classifyLoaderConstruct(
     return moduleConstructorReason;
   }
 
+  // VT-307c-reflection-closure: CALLING an expression's own `.constructor`
+  // invokes that value's constructor function -- and for ANY function
+  // value in JavaScript, that constructor IS the `Function` constructor,
+  // which compiles and runs arbitrary source. This channel is ambient
+  // rather than provenance-carrying: `[].constructor.constructor(src)()`,
+  // `''.constructor.constructor(src)()`, `JSON.parse.constructor(src)()`,
+  // `Object.constructor(src)()` and eight more spellings were each
+  // reproduced end-to-end, reaching `Function` from an array, a string, a
+  // number, an object literal, and assorted builtin functions. There is no
+  // provenance to preserve here and nothing to resolve: every value in the
+  // language exposes it.
+  //
+  // Deliberately keyed on the `.constructor` value being CALLED/CONSTRUCTED
+  // ITSELF, never on merely READING it or on calling a MEMBER of it. That
+  // distinction is what keeps this precise, and it is exactly the line the
+  // existing precision controls draw: `obj.constructor._load(...)`,
+  // `obj.constructor.createRequire(...)`, `obj.mainModule.constructor._load
+  // = fn` and `obj.constructor.isBuffer(obj)` (the real-world `qs` Buffer
+  // duck-type check) all call a MEMBER of the constructor and stay
+  // complete, while `X.constructor(src)` calls the constructor itself.
+  // Receivers that DO resolve to a modeled capability are excluded --
+  // `module.constructor`, `Module.prototype.constructor` and friends are
+  // the Module constructor, already classified precisely above and below.
+  {
+    const calleeMember = memberAccessOf(expr);
+    if (
+      calleeMember !== undefined &&
+      calleeMember.name === "constructor" &&
+      resolveLoaderCapability(calleeMember.receiver, context) === undefined
+    ) {
+      return "function_constructor";
+    }
+  }
+
   // VT-307c-registry-closure: the SHAPE-INDEPENDENT capability callees.
   // These three resolve to the same capability however they are spelled
   // -- bare, aliased at any depth, or reached through a `globalThis.`/
@@ -1199,6 +1285,15 @@ export function classifyLoaderConstruct(
       return "aliased_eval";
     case "ambient_require":
       return "aliased_require";
+    case "ambiguous":
+      // The callee is rooted in an authoritative capability but could
+      // not be resolved to a specific one -- a computed member key
+      // (`Module[k](...)`), or an alias chain that hit the depth budget.
+      // Fails closed here, shape-independently: the per-shape fallback
+      // further down is reached only by `PropertyAccessExpression`, so
+      // an ELEMENT-access callee (`M[k](...)`, a reproduced end-to-end
+      // violation) would otherwise slip past it entirely.
+      return "loader_capability_escape";
     default:
       break;
   }
