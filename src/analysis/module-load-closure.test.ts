@@ -5350,3 +5350,121 @@ describe("ModuleLoadClosure: runtime-transparent wrappers resolve through (VT-30
     },
   );
 });
+
+/**
+ * VT-307c-selector-closure. Three more places where the value side and the
+ * provenance side of the model disagreed, each reproduced end-to-end:
+ *
+ * - value-SELECTING operators in CALLEE position. `valueFlowOperandsOf`
+ *   had always resolved `?:`, `||`, `??` and `&&` on the value side; the
+ *   provenance relation had not, so `(cond ? Module._preloadModules :
+ *   null)([...])`, `(x || Module._preloadModules)([...])`,
+ *   `(x ?? Function)(src)()` and `(1 && eval)(src)` all lost their
+ *   capability at the callee.
+ * - `await`. `await X` of a non-thenable IS `X`.
+ * - class heritage. `class H extends Module {}` makes every static member
+ *   of the base reachable through `H`, which this model does not track, so
+ *   the heritage clause now fails closed at the declaration -- the same
+ *   treatment every other position that hands a capability somewhere
+ *   untracked already gets.
+ */
+describe("ModuleLoadClosure: value-selecting operators, await and heritage (VT-307c-selector-closure)", () => {
+  it.each([
+    [
+      "(cond ? M._preloadModules : null)([...])",
+      "const M = require('module');\n(process.env.Q ? null : M._preloadModules)(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "(x || M._preloadModules)([...])",
+      "const M = require('module');\n(process.env.Q || M._preloadModules)(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "(x ?? M._preloadModules)([...])",
+      "const M = require('module');\n(process.env.Q ?? M._preloadModules)(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "(1 && M._preloadModules)([...])",
+      "const M = require('module');\n(1 && M._preloadModules)(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "(x ?? Function)(src)()",
+      "(process.env.Q ?? Function)('return 1')();\nmodule.exports={};\n",
+      "function_constructor",
+    ],
+    [
+      "(1 && eval)(src)",
+      "(1 && eval)('1');\nmodule.exports={};\n",
+      "aliased_eval",
+    ],
+    [
+      "(cond ? M : null)._preloadModules([...]) -- selector in RECEIVER position",
+      "const M = require('module');\n(process.env.Q ? null : M)._preloadModules(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "class H extends M {} then H._preloadModules([...])",
+      "const M = require('module');\nclass H extends M {}\nH._preloadModules(['x']);\nmodule.exports={H};\n",
+      "loader_capability_escape",
+    ],
+  ])("%s -> %s", async (_label, source, expectedReason) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain(expectedReason);
+  });
+
+  it("(await M)._preloadModules([...]) resolves through await", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const M = require('module');\nasync function go(){ (await M)._preloadModules(['x']); }\nmodule.exports={go};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("module_internal_load");
+  });
+
+  it.each([
+    [
+      "an ordinary conditional callee",
+      "function a(){return 1;}\nfunction b(){return 2;}\nconst r = (process.env.Q ? a : b)();\nmodule.exports={r};\n",
+    ],
+    [
+      "ordinary logical-operator callees",
+      "function a(){return 1;}\nconst r = (process.env.Q || a)();\nconst s = (1 && a)();\nconst t = (process.env.Q ?? a)();\nmodule.exports={r,s,t};\n",
+    ],
+    [
+      "an ordinary class hierarchy",
+      "class Base { static s = 1; }\nclass Sub extends Base {}\nmodule.exports={v:Sub.s};\n",
+    ],
+    [
+      "ordinary await of a non-capability",
+      "async function go(){ const v = await Promise.resolve(1); return v; }\nmodule.exports={go};\n",
+    ],
+    [
+      "ordinary try/switch/loop assignment",
+      "let c;\ntry { c = 1; } finally {}\nswitch(1){case 1: c=2; break;}\nfor(let i=0;i<1;i++){c=3;}\nmodule.exports={c};\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-selector-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+});
