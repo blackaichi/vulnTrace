@@ -702,5 +702,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-065",
+    "dir": "adv2-065-dependency-toplevel-function-constructor-alias",
+    "category": "65. VT-307c-function-closure regression: an ALIASED Function constructor (const F = Function; F(src)()) in a DEPENDENCY's own module top-level scope",
+    "description": "Pins the last literal-identifier match on the classifier's callee path. By this point in the series every other capability had been routed through the shared provenance relation, but `Function` alone was still recognized by comparing the callee's identifier TEXT to \"Function\" -- so aliasing it one hop, prefixing it with `globalThis.`/`global.`, or reaching it as any function's own `.constructor` lost it entirely, even though the bare `Function(src)()` spelling had classified correctly since VT-307b. Six spellings were reproduced end-to-end (real Node execution + a gate-eligible closure + complete=true + the exact installed package OUT + an EMPTY incompleteness array), with NO unknown Node API name involved anywhere. vt2-holder does `const F = Function; F(\"return process.mainModule.require('vt2-vuln-lib')\")();` at its own top level -- the generated source reaches the loader through `process`, a real global visible inside a Function body where CommonJS's wrapper-scoped `require` is not, which is what makes the construct genuinely load-bearing. VT-307c-function-closure closes it by making `Function` a resolvable kind of the shared relation and by hoisting the capability dispatch out of the identifier-only branch so property-access spellings reach it too. The separate, never-imported top-level vt2-vuln-lib@1.9.0 instance is under test, exactly as in ADV2-047/ADV2-050 through ADV2-064.",
+    "expected": "UNKNOWN",
+    "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `const F = Function; F(src)();`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), compiles and executes generated source that this analyzer never reads. A human analyst cannot rule out reachability here merely because the Function constructor was reached through a local alias rather than the bare `Function(...)` spelling. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
   }
 ]

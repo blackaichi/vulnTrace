@@ -1724,7 +1724,7 @@ function isAuthoritativeCapabilityValue(
   // an authoritative capability VALUE before this task either (see this
   // function's own history) -- this exclusion restores exactly that prior
   // scope while still gaining the unbounded-depth CALLEE fix.
-  if (capability === undefined || capability.kind === "ambient_eval") {
+  if (capability === undefined) {
     return false;
   }
   // `vm_instance` is likewise a RESOLUTION-only kind: constructing a
@@ -1753,12 +1753,7 @@ function isAuthoritativeCapabilityValue(
   // this kind exists for is unaffected -- only the escape sweep is.
   if (
     capability.kind === "ambient_global" ||
-    capability.kind === "ambient_process" ||
-    // `Function` shares `eval`'s exclusion, for the same measured
-    // reason: `get-intrinsic`'s INTRINSICS table holds
-    // `'%Function%': Function` right beside `'%eval%': eval`, calls
-    // neither, and is a transitive dependency of much of the ecosystem.
-    capability.kind === "ambient_function_constructor"
+    capability.kind === "ambient_process"
   ) {
     return false;
   }
