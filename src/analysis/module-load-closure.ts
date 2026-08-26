@@ -456,6 +456,92 @@ export async function buildGateEligibleModuleLoadClosure(
   return closure;
 }
 
+/**
+ * Whether `reason` can invalidate a CALL-GRAPH-derived negative proof
+ * (VT-307e) -- i.e. the "exact installed instance was never traversed"
+ * proof (`confirmedAbsentInstance`) and the "vulnerable target is not
+ * reachable" proof, both of which conclude NOT_AFFECTED from what the call
+ * graph did NOT contain.
+ *
+ * This is deliberately a PROOF-SPECIFIC partition, not a reuse of
+ * `closure.complete`. Those two proofs do not depend on module loading in
+ * the same way {@link ModuleLoadClosure}'s own absence proof does, so
+ * blanket-blocking them on any incompleteness would both over-block and
+ * obscure WHY a given condition matters. Each value is decided on whether
+ * it can hide a call path to the target, or hide the loading of the very
+ * instance being called absent:
+ *
+ * - Every loader/execution-capability reason (`dynamic_require`,
+ *   `dynamic_import`, `eval`/`aliased_eval`/`function_constructor`,
+ *   `create_require`/`aliased_require`/`module_require`,
+ *   `module_internal_load`, `loader_hook_mutation`,
+ *   `loader_capability_escape`, `vm_execution`, `worker_execution`,
+ *   `child_process_execution`) BLOCKS both. Each can execute or load code
+ *   this analysis never modeled, which can both introduce a call path to
+ *   the target and load an instance the graph never traversed. Note that
+ *   the call graph independently catches these only when they appear as
+ *   an unresolved CALL edge inside an entrypoint's reachable subgraph --
+ *   it does not catch a non-call form (an assignment such as
+ *   `Module._extensions['.js'] = ...`), which is exactly the pre-existing
+ *   gap the VT-307d audit surfaced and this partition closes.
+ * - `parse_failure` BLOCKS both. TypeScript's parser is error-tolerant, so
+ *   a syntactically invalid member still yields a partial, silently
+ *   reshaped AST. The closure has refused to trust that since
+ *   VT-307c-fix-2; the call graph does NOT check `hasSyntaxErrors` and
+ *   builds nodes and edges from the recovered AST regardless. A `require`
+ *   and the call that follows it can both be swallowed by the same syntax
+ *   error, so neither "no path was found" nor "this instance was never
+ *   traversed" means anything for such a file.
+ * - `unresolved_module` BLOCKS both: the specifier that failed to resolve
+ *   may BE the absent instance, and the module behind it may call the
+ *   target.
+ * - `declaration_only_resolution` BLOCKS both: the module that actually
+ *   runs was never identified, so its imports and calls are unknown.
+ * - `traversal_truncated` DOES NOT BLOCK either. This is the one genuine
+ *   exclusion, and the reason is structural rather than convenient: it is
+ *   a bound on THIS closure's own walk, and says nothing about how far the
+ *   call graph got. The call graph's coverage has its own independent
+ *   guard -- `graphTruncated` (VT-202) -- which `buildFinding` already
+ *   enforces for every call-graph-derived NOT_AFFECTED. In production both
+ *   traversals are bounded by the same `analysis.limits.maxFiles`, so a
+ *   truncated closure is accompanied by a truncated graph and the correct
+ *   guard engages anyway (verified directly). Treating it as blocking here
+ *   would double-count one condition through two mechanisms, and would let
+ *   a limit on the closure veto a proof whose own traversal completed.
+ *
+ * The non-widening {@link DynamicCallReason} values (`unsupported_construct`,
+ * `dynamic_member_access`, `unresolved_target`) are NOT APPLICABLE: a
+ * closure never emits them (see {@link ClosureIncompletenessReason}), and
+ * their uncertainty is bounded to values and modules already discovered,
+ * so they could not load a new module even if it did.
+ */
+export function invalidatesCallGraphNegativeProof(
+  reason: ClosureIncompletenessReason,
+): boolean {
+  return reason !== "traversal_truncated";
+}
+
+/**
+ * The distinct closure conditions that forbid a call-graph-derived
+ * NOT_AFFECTED for this scan (VT-307e), or `[]` when none do.
+ *
+ * An ABSENT closure yields `[]`, deliberately: `undefined` means no
+ * module-load information was available at all (no entrypoints, or a
+ * construction failure), which is the pre-VT-307d status quo for these
+ * two proofs and is not itself evidence of a blocker. See
+ * `buildFinding`'s own note on the residual risk that leaves.
+ */
+export function callGraphNegativeProofBlockers(
+  closure: ModuleLoadClosure | undefined,
+): readonly ClosureIncompletenessReason[] {
+  if (closure === undefined) {
+    return [];
+  }
+  return [...new Set(closure.incompleteness.map((i) => i.reason))].filter(
+    invalidatesCallGraphNegativeProof,
+  );
+}
+
 /** Whether `filePath` is guaranteed to be loaded from the closure's entrypoint roots. */
 export function closureContainsFile(
   closure: ModuleLoadClosure,

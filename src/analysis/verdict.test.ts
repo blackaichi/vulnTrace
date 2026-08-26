@@ -449,6 +449,15 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
         reasons: [
           "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
         ],
+        // VT-307e: proof family C now also carries an explicit, machine-
+        // readable evidence object, so a consumer never has to parse the
+        // prose reason above to learn WHICH proof produced this verdict,
+        // which target it is about, or which roots it is relative to.
+        confirmedUnreachableTarget: {
+          target: { module: "fixture-lib", export: "vulnerable" },
+          entrypointRoots: ["/project/src/index.ts"],
+          callGraphComplete: true,
+        },
       },
     });
   });
