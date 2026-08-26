@@ -4097,10 +4097,6 @@ describe("ModuleLoadClosure: shared loader-capability provenance relation (VT-30
 
   it.each([
     [
-      "eval stored in a lookup table stays complete (real-world precision: get-intrinsic's INTRINSICS['%eval%'] = eval)",
-      "const INTRINSICS = { '%eval%': eval, '%Array%': Array };\nmodule.exports = { INTRINSICS };\n",
-    ],
-    [
       "const mod = module; mod.exports = {...} stays exempt (aliased ambient-instance safe write)",
       "const mod = module;\nmod.exports = { a: 1 };\n",
     ],
@@ -4727,4 +4723,268 @@ describe("ModuleLoadClosure: loader registries resolve through aliases (VT-307c-
       expect(closure.incompleteness).toEqual([]);
     },
   );
+});
+
+/**
+ * VT-307c-function-closure. `Function` was the last capability CALLEE
+ * still matched by literal identifier text in `classifyLoaderConstruct`.
+ * Six spellings were reproduced end-to-end (real Node execution + a
+ * gate-eligible closure + `complete: true` + the exact installed package
+ * OUT + an EMPTY `incompleteness` array), each reaching the loader from
+ * generated source via `process` -- a real global, and therefore visible
+ * inside a `Function` body where CommonJS `require` is not.
+ *
+ * Two placement defects the reproductions forced out, each a distinct way
+ * the same "matched by shape, not resolved" bug hides:
+ *
+ * - the capability dispatch lived inside `classifyLoaderConstruct`'s
+ *   IDENTIFIER-only branch, so property-access spellings
+ *   (`globalThis.Function(...)`) never reached it at all;
+ * - `(function(){}).constructor` has a PARENTHESIZED function expression
+ *   as its receiver, which is how it is always written.
+ *
+ * `Function` is a RESOLUTION-ONLY capability kind, excluded from the
+ * value-escape sweep exactly as `eval` is and for the same measured
+ * reason -- see the precision controls below.
+ */
+describe("ModuleLoadClosure: Function constructor resolves through the shared relation (VT-307c-function-closure)", () => {
+  const GENERATED_LOADER = String.raw`"return process.mainModule.require('vuln')"`;
+
+  it.each([
+    [
+      "1. const F = Function; F(src)()",
+      `const F = Function;\nF(${GENERATED_LOADER})();\n`,
+    ],
+    [
+      "2. const F = Function; new F(src)()",
+      `const F = Function;\nnew F(${GENERATED_LOADER})();\n`,
+    ],
+    [
+      "3. alias depth 2: const A = Function; const B = A; B(src)()",
+      `const A = Function;\nconst B = A;\nB(${GENERATED_LOADER})();\n`,
+    ],
+    [
+      "4. globalThis.Function(src)()",
+      `globalThis.Function(${GENERATED_LOADER})();\n`,
+    ],
+    [
+      "5. const g = globalThis; g.Function(src)()",
+      `const g = globalThis;\ng.Function(${GENERATED_LOADER})();\n`,
+    ],
+    [
+      "6. const F = (function(){}).constructor; F(src)()",
+      `const F = (function(){}).constructor;\nF(${GENERATED_LOADER})();\n`,
+    ],
+    // Compositions with the other closed families -- the point of a
+    // shared relation is that these need no logic of their own.
+    [
+      "7. arrow's own .constructor: (() => {}).constructor",
+      `const F = (() => {}).constructor;\nF(${GENERATED_LOADER})();\n`,
+    ],
+    [
+      "8. global.Function (Node's older global alias)",
+      `global.Function(${GENERATED_LOADER})();\n`,
+    ],
+    [
+      "9. alias depth 4 of Function",
+      `const a = Function;\nconst b = a;\nconst c = b;\nconst d = c;\nd(${GENERATED_LOADER})();\n`,
+    ],
+  ])("%s -> function_constructor", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("function_constructor");
+  });
+
+  it.each([
+    ["CONTROL direct Function(src)()", `Function(${GENERATED_LOADER})();\n`],
+    [
+      "CONTROL direct new Function(src)()",
+      `new Function(${GENERATED_LOADER})();\n`,
+    ],
+  ])("%s still classifies as function_constructor", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("function_constructor");
+  });
+
+  it("aliased eval keeps its own specific reason, not the Function one", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const e1 = eval;\nconst e2 = e1;\ne2('1');\nmodule.exports={};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual(["aliased_eval"]);
+  });
+
+  it("globalThis.require(...) upgrades from the generic escape to aliased_require", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "globalThis.require = require;\nglobalThis.require(process.env.NAME);\nmodule.exports={};\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("aliased_require");
+  });
+
+  it.each([
+    [
+      "Module._preloadModules(...) keeps module_internal_load",
+      "const M = require('module');\nM._preloadModules(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "Module.registerHooks(...) keeps loader_hook_mutation",
+      "const M = require('module');\nif (M.registerHooks) { M.registerHooks({ resolve(s,c,n){ return n(s,c); } }); }\nmodule.exports={};\n",
+      "loader_hook_mutation",
+    ],
+    [
+      "child_process.fork(...) keeps child_process_execution",
+      "const cp = require('child_process');\nconst f = cp.fork;\nf('./w.js');\nmodule.exports={};\n",
+      "child_process_execution",
+    ],
+    [
+      "Module.someFutureThing(...) still falls back to the generic escape",
+      "const M = require('module');\nif (M.someFutureThing) { M.someFutureThing(1); }\nmodule.exports={};\n",
+      "loader_capability_escape",
+    ],
+  ])("diagnostic precedence: %s", async (_label, source, expectedReason) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toEqual([expectedReason]);
+  });
+
+  it.each([
+    // `Function` is RESOLUTION-only, never an escaping VALUE. This shape
+    // is verbatim `get-intrinsic`'s INTRINSICS table -- an extremely
+    // widely-depended-on real package.
+    [
+      "a user-defined class named Function-like, constructed and called",
+      "class FunctionFactory { build(){ return 1; } }\nconst f = new FunctionFactory();\nf.build();\nmodule.exports = { FunctionFactory };\n",
+    ],
+    [
+      "a user-defined local named Function shadowing the global",
+      "const Function = function (src) { return () => src; };\nFunction('x')();\nmodule.exports = {};\n",
+    ],
+    [
+      "a lookalike object exposing .constructor with no authoritative provenance",
+      "const fake = { constructor: function(){ return 1; } };\nfake.constructor();\nmodule.exports = { fake };\n",
+    ],
+    [
+      "an ordinary object's .constructor read",
+      "const o = { a: 1 };\nconst C = o.constructor;\nmodule.exports = { C };\n",
+    ],
+    [
+      "a class's own constructor invoked normally",
+      "class Widget { constructor(){ this.x = 1; } }\nconst w = new Widget();\nmodule.exports = { w };\n",
+    ],
+    [
+      "globalThis.JSON / globalThis.Math ordinary global reads",
+      "const x = globalThis.JSON.parse('1');\nconst y = globalThis.Math.max(1,2);\nmodule.exports = { x, y };\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-function-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+
+  it.each([
+    [
+      "eval stored in an object literal",
+      "const INTRINSICS = { '%eval%': eval, '%Array%': Array };\nmodule.exports = { INTRINSICS };\n",
+    ],
+    [
+      "Function and eval stored in an object literal (get-intrinsic's INTRINSICS table)",
+      "const INTRINSICS = { '%Function%': Function, '%eval%': eval, '%Array%': Array };\nmodule.exports = { INTRINSICS };\n",
+    ],
+    [
+      "Function re-exported inside a composite",
+      "const F = Function;\nmodule.exports = { F };\n",
+    ],
+    [
+      "Function stored in an object property, then called",
+      "const box = { F: Function };\nbox.F('return 1')();\nmodule.exports = {};\n",
+    ],
+    [
+      "Function returned from a factory, then called",
+      "function getF(){ return Function; }\ngetF()('return 1')();\nmodule.exports = {};\n",
+    ],
+  ])(
+    "%s escapes -- transport the resolver cannot follow must fail closed",
+    async (_label, source) => {
+      // These five REVERSE an earlier round's precision controls, and the
+      // reversal is the point. VT-307c-provenance-closure and the first
+      // cut of VT-307c-function-closure carved `eval` and `Function` out
+      // of the value-escape sweep to keep `get-intrinsic`'s INTRINSICS
+      // table complete. The differential oracle then reproduced two
+      // end-to-end soundness violations straight through that carve-out
+      // (`const box = { F: Function }; box.F(src)()` and a factory
+      // returning `Function`), because the carve-out made the EXEMPTION
+      // relation wider than the RESOLUTION relation -- the exact defect
+      // class this whole series exists to eliminate. A capability stored
+      // into a composite, or returned, is transport the resolver cannot
+      // follow, so it must fail closed like every other capability.
+      //
+      // The measured real-world cost is one file, `get-intrinsic/index.js`
+      // in rwb-05, and it is a TRUE positive: that module's exported
+      // `GetIntrinsic(name)` reads `INTRINSICS[name]` and returns it, so
+      // it genuinely hands `Function` and `eval` to arbitrary callers.
+      // rwb-05 was already incomplete for an unrelated reason, so no
+      // fixture changed its `complete` value.
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure).length).toBeGreaterThan(0);
+    },
+  );
+
+  it("finds an aliased Function construct in a never-called function of a transitively loaded dependency", async () => {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/dep/package.json",
+      JSON.stringify({ name: "dep", version: "1.0.0", main: "index.js" }),
+    );
+    write(
+      root,
+      "node_modules/dep/index.js",
+      "const F = Function;\nfunction neverCalled(src){ return F(src)(); }\nmodule.exports = { neverCalled };\n",
+    );
+    const entry = write(root, "src/index.js", "require('dep');\n");
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("function_constructor");
+  });
 });
