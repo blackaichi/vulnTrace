@@ -17,7 +17,10 @@
     },
     "scan": {
       "type": "object",
-      "required": ["id", "project"],
+      "required": [
+        "id",
+        "project"
+      ],
       "properties": {
         "id": {
           "type": "string",
@@ -33,7 +36,12 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["vulnerability", "package", "version", "verdict"],
+        "required": [
+          "vulnerability",
+          "package",
+          "version",
+          "verdict"
+        ],
         "properties": {
           "vulnerability": {
             "type": "string",
@@ -48,7 +56,11 @@
             "minLength": 1
           },
           "verdict": {
-            "enum": ["AFFECTED", "NOT_AFFECTED", "UNKNOWN"]
+            "enum": [
+              "AFFECTED",
+              "NOT_AFFECTED",
+              "UNKNOWN"
+            ]
           },
           "confidence": {
             "type": "number",
@@ -57,7 +69,10 @@
           },
           "target": {
             "type": "object",
-            "required": ["module", "symbol"],
+            "required": [
+              "module",
+              "symbol"
+            ],
             "properties": {
               "module": {
                 "type": "string",
@@ -79,7 +94,9 @@
           },
           "evidence": {
             "type": "object",
-            "required": ["path"],
+            "required": [
+              "path"
+            ],
             "properties": {
               "path": {
                 "type": "array",
@@ -92,6 +109,34 @@
                 "items": {
                   "type": "string"
                 }
+              },
+              "confirmedAbsentFromModuleLoadClosure": {
+                "type": "object",
+                "description": "VT-307d module-load absence proof: positive evidence that this exact canonical installed package instance cannot be loaded from the configured entrypoint roots, under VulnTrace's declared supported module-loading model. Present only on a NOT_AFFECTED whose reasons include package_instance_not_in_complete_module_load_closure. This is module-load absence, NOT call-graph absence.",
+                "required": [
+                  "packageInstance",
+                  "entrypointRoots",
+                  "closureComplete"
+                ],
+                "properties": {
+                  "packageInstance": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "The exact canonical install LOCATION proved absent -- never a package name, version, or name+version pair."
+                  },
+                  "entrypointRoots": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "The configured entrypoint files the absence proof is relative to. Non-empty by construction."
+                  },
+                  "closureComplete": {
+                    "const": true,
+                    "description": "Always true: closure completeness is the load-bearing precondition, recorded explicitly rather than left implicit."
+                  }
+                }
               }
             }
           }
@@ -99,7 +144,10 @@
         "if": {
           "properties": {
             "verdict": {
-              "enum": ["AFFECTED", "NOT_AFFECTED"]
+              "enum": [
+                "AFFECTED",
+                "NOT_AFFECTED"
+              ]
             }
           }
         },
@@ -109,7 +157,9 @@
               "type": "object"
             }
           },
-          "required": ["evidence"]
+          "required": [
+            "evidence"
+          ]
         }
       }
     },
@@ -154,7 +204,10 @@
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["source", "message"],
+        "required": [
+          "source",
+          "message"
+        ],
         "properties": {
           "source": {
             "type": "string",
@@ -180,14 +233,38 @@
         "totalMs"
       ],
       "properties": {
-        "parsingMs": { "type": "number", "minimum": 0 },
-        "resolutionMs": { "type": "number", "minimum": 0 },
-        "graphConstructionMs": { "type": "number", "minimum": 0 },
-        "reachabilityMs": { "type": "number", "minimum": 0 },
-        "providerMs": { "type": "number", "minimum": 0 },
-        "cacheHits": { "type": "integer", "minimum": 0 },
-        "cacheMisses": { "type": "integer", "minimum": 0 },
-        "totalMs": { "type": "number", "minimum": 0 }
+        "parsingMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "resolutionMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "graphConstructionMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "reachabilityMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "providerMs": {
+          "type": "number",
+          "minimum": 0
+        },
+        "cacheHits": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "cacheMisses": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "totalMs": {
+          "type": "number",
+          "minimum": 0
+        }
       }
     }
   }
