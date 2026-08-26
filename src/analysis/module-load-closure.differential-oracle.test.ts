@@ -1622,6 +1622,22 @@ const ELEMENT_AND_REFLECTION_FORMS: readonly (readonly [string, string])[] = [
     "chained: ({}).constructor.constructor(src)()",
     "({}).constructor.constructor(\"return process.mainModule.require('vuln')\")();\n",
   ],
+  [
+    "(0, M._preloadModules)([...]) -- comma indirect call",
+    "const M = require('module');\n(0, M._preloadModules)(['vuln']);\n",
+  ],
+  [
+    "(0, Function)(src)() -- comma indirect Function",
+    "(0, Function)(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "(0, eval)(src) -- comma indirect eval",
+    "(0, eval)(\"process.mainModule.require('vuln')\");\n",
+  ],
+  [
+    "((M))._preloadModules([...]) -- nested parentheses",
+    "const M = require('module');\n((M))._preloadModules(['vuln']);\n",
+  ],
 ];
 
 describe("ModuleLoadClosure differential Node oracle: element access and .constructor reflection (VT-307c-element/reflection-closure)", () => {
