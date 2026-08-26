@@ -560,6 +560,27 @@ type ResolvedLoaderCapability =
    * appearing in a value position counts as an escape.
    */
   | { readonly kind: "ambient_function_constructor" }
+  /**
+   * `<X>.constructor` where `<X>` is NOT a modeled capability -- an
+   * ordinary object, an array, a string, a local function, anything.
+   * For any FUNCTION value that member is the `Function` constructor, and
+   * `Function` is reachable that way from essentially every value in the
+   * language, so a call through it must fail closed.
+   *
+   * A RESOLUTION-ONLY kind, and the distinction is load-bearing:
+   * `isAuthoritativeCapabilityValue` excludes it, so merely READING or
+   * storing a `.constructor` is not an escape, and no member reached
+   * THROUGH it resolves to a capability either. That is what preserves
+   * the precision controls dating to fix-6..fix-10
+   * (`obj.constructor._load(...)`, `obj.constructor.createRequire(...)`)
+   * and the real-world `qs` Buffer duck-type check
+   * (`obj.constructor.isBuffer(obj)`) -- each calls a MEMBER of the
+   * constructor, never the constructor itself. Being a resolvable kind
+   * rather than a call-site shape check is what makes it survive
+   * aliasing: `const F = o.f.constructor; F(src)()` was a reproduced
+   * end-to-end violation of the shape-only version.
+   */
+  | { readonly kind: "unresolved_constructor" }
   | { readonly kind: "ambiguous" };
 
 /**
@@ -859,23 +880,6 @@ function resolveLoaderCapability(
       return { kind: "module_prototype" };
     }
 
-    // Any function's own `.constructor` IS the `Function` constructor,
-    // by the same JS invariant that makes `<X>.prototype.constructor` be
-    // `<X>` -- `(function(){}).constructor(src)()` was reproduced as a
-    // real invariant violation. Matched only on a LITERAL function
-    // expression receiver, never an arbitrary `.constructor` read.
-    if (memberName === "constructor") {
-      // `(function(){}).constructor` -- the receiver is a PARENTHESIZED
-      // function expression, which is how this is always written.
-      let receiver: ts.Expression = memberAccess.receiver;
-      while (ts.isParenthesizedExpression(receiver)) {
-        receiver = receiver.expression;
-      }
-      if (ts.isFunctionExpression(receiver) || ts.isArrowFunction(receiver)) {
-        return { kind: "ambient_function_constructor" };
-      }
-    }
-
     // `<X>.constructor` off a Module instance OR off Module.prototype IS
     // the Module constructor.
     if (
@@ -884,6 +888,21 @@ function resolveLoaderCapability(
         receiverKind?.kind === "module_prototype")
     ) {
       return { kind: "module_constructor" };
+    }
+
+    // Every remaining `.constructor` -- off an object, an array, a
+    // string, a local function, anything this relation does not model --
+    // is the receiver's constructor function, which for any function
+    // value IS `Function`. Resolution-only; see the kind's own doc.
+    // Chains stay in this kind: `Function.constructor === Function`, so
+    // `({}).constructor.constructor` and `''.constructor.constructor`
+    // converge here at any depth with no per-depth logic.
+    if (
+      memberName === "constructor" &&
+      (receiverKind === undefined ||
+        receiverKind.kind === "unresolved_constructor")
+    ) {
+      return { kind: "unresolved_constructor" };
     }
 
     // Any other member off the constructor, its prototype, or one of the
@@ -1257,17 +1276,6 @@ export function classifyLoaderConstruct(
   // Receivers that DO resolve to a modeled capability are excluded --
   // `module.constructor`, `Module.prototype.constructor` and friends are
   // the Module constructor, already classified precisely above and below.
-  {
-    const calleeMember = memberAccessOf(expr);
-    if (
-      calleeMember !== undefined &&
-      calleeMember.name === "constructor" &&
-      resolveLoaderCapability(calleeMember.receiver, context) === undefined
-    ) {
-      return "function_constructor";
-    }
-  }
-
   // VT-307c-registry-closure: the SHAPE-INDEPENDENT capability callees.
   // These three resolve to the same capability however they are spelled
   // -- bare, aliased at any depth, or reached through a `globalThis.`/
@@ -1277,9 +1285,16 @@ export function classifyLoaderConstruct(
   // bare `Function(src)()` spelling does. Both were reproduced
   // end-to-end while this dispatch lived inside the identifier-only
   // branch below and property-access spellings never reached it.
-  const calleeCapability = resolveLoaderCapability(expr, context);
+  const calleeCapability = resolveLoaderCapability(
+    // `.call`/`.apply` invoke the SAME underlying function, so a callee
+    // wearing one resolves to whatever the bare callee does --
+    // `require.call(null, name)` was a reproduced end-to-end violation.
+    stripCallApplySuffix(expr),
+    context,
+  );
   switch (calleeCapability?.kind) {
     case "ambient_function_constructor":
+    case "unresolved_constructor":
       return "function_constructor";
     case "ambient_eval":
       return "aliased_eval";
@@ -1359,6 +1374,30 @@ export function classifyLoaderConstruct(
       return "create_require";
     }
     return undefined;
+  }
+
+  // VT-307c-element-closure: the unknown-member fail-closed fallback,
+  // applied to BOTH member spellings. The per-shape branch below is
+  // reached only by `PropertyAccessExpression`, so `module['require']
+  // (name)` and `Module['someFutureThing'](x)` -- an ordinary loader call
+  // and an unrecognized member call, both on genuinely authoritative
+  // receivers -- previously slipped past it entirely. Runs AFTER every
+  // precise check above, so a modeled construct keeps its specific
+  // reason; the safe-call allowlist still applies to the direct
+  // `Module.<member>` form only.
+  {
+    const unknownMember = memberAccessOf(expr);
+    if (unknownMember !== undefined && !ts.isPropertyAccessExpression(expr)) {
+      if (resolvesToModuleConstructor(unknownMember.receiver, context)) {
+        return unknownMember.name !== undefined &&
+          MODULE_CONSTRUCTOR_SAFE_CALLS.has(unknownMember.name)
+          ? undefined
+          : "loader_capability_escape";
+      }
+      if (isAuthoritativeCapabilityReceiver(unknownMember.receiver, context)) {
+        return "loader_capability_escape";
+      }
+    }
   }
 
   if (ts.isPropertyAccessExpression(expr)) {
@@ -1848,7 +1887,8 @@ function isAuthoritativeCapabilityValue(
   // this kind exists for is unaffected -- only the escape sweep is.
   if (
     capability.kind === "ambient_global" ||
-    capability.kind === "ambient_process"
+    capability.kind === "ambient_process" ||
+    capability.kind === "unresolved_constructor"
   ) {
     return false;
   }
@@ -2538,10 +2578,10 @@ function isCapabilityDeleteMutation(
   node: ts.DeleteExpression,
   context: LoaderClassificationContext,
 ): boolean {
-  const target = node.expression;
+  const target = memberAccessOf(node.expression);
   return (
-    ts.isPropertyAccessExpression(target) &&
-    isAuthoritativeCapabilityReceiver(target.expression, context)
+    target !== undefined &&
+    isAuthoritativeCapabilityReceiver(target.receiver, context)
   );
 }
 
