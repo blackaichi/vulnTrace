@@ -5231,3 +5231,122 @@ describe("ModuleLoadClosure: every literal-match miss fails closed (VT-307c-stru
     },
   );
 });
+
+/**
+ * VT-307c-wrapper-closure. The provenance relation resolved receivers and
+ * callees WITHOUT first unwrapping the syntax that is transparent at
+ * runtime -- parenthesization, TypeScript's erased type assertions, and
+ * the comma operator. The value walker (`valueFlowOperandsOf`) had always
+ * looked through exactly these forms; the provenance relation had not, so
+ * the two disagreed, and six spellings were reproduced end-to-end:
+ *
+ *   (0, Module._preloadModules)([...])   -- the standard indirect-call
+ *   (0, eval)(src)                          idiom for invoking something
+ *   (0, Function)(src)()                    with `this` unbound
+ *   (M, M._preloadModules)([...])
+ *   (M as any)._preloadModules([...])    -- TS assertions, erased at
+ *   (M!)._preloadModules([...])             runtime
+ *
+ * None involves an unknown API or a new value container: each merely
+ * wraps a capability the relation already resolved in syntax it did not
+ * look through. The fix unwraps all three at the top of the relation, so
+ * value-side and provenance-side agree by construction.
+ */
+describe("ModuleLoadClosure: runtime-transparent wrappers resolve through (VT-307c-wrapper-closure)", () => {
+  it.each([
+    [
+      "(0, M._preloadModules)([...]) -- comma indirect call",
+      "const M = require('module');\n(0, M._preloadModules)(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "(M, M._preloadModules)([...]) -- comma with a capability on the left",
+      "const M = require('module');\n(M, M._preloadModules)(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "(0, eval)(src) -- comma indirect eval",
+      "(0, eval)('1');\nmodule.exports={};\n",
+      "aliased_eval",
+    ],
+    [
+      "(0, Function)(src)() -- comma indirect Function",
+      "(0, Function)('return 1')();\nmodule.exports={};\n",
+      "function_constructor",
+    ],
+    [
+      "((M))._preloadModules([...]) -- nested parentheses",
+      "const M = require('module');\n((M))._preloadModules(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+    [
+      "(0, (0, M._preloadModules))([...]) -- nested comma",
+      "const M = require('module');\n(0, (0, M._preloadModules))(['x']);\nmodule.exports={};\n",
+      "module_internal_load",
+    ],
+  ])("%s -> %s", async (_label, source, expectedReason) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain(expectedReason);
+  });
+
+  it.each([
+    [
+      "(M as any)._preloadModules([...])",
+      "const M = require('module');\n(M as any)._preloadModules(['x']);\nexport {};\n",
+    ],
+    [
+      "(M!)._preloadModules([...])",
+      "const M = require('module');\n(M!)._preloadModules(['x']);\nexport {};\n",
+    ],
+    [
+      "(M satisfies unknown)._preloadModules([...])",
+      "const M = require('module');\n(M satisfies unknown as any)._preloadModules(['x']);\nexport {};\n",
+    ],
+  ])(
+    "%s -> module_internal_load (TypeScript assertions are erased at runtime)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.ts", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain("module_internal_load");
+    },
+  );
+
+  it.each([
+    [
+      "an ordinary (0, fn)() indirect call",
+      "function fn(){ return 1; }\nconst r = (0, fn)();\nmodule.exports={r};\n",
+    ],
+    [
+      "ordinary parenthesized arithmetic and comma",
+      "const a = (1 + 2);\nconst b = (1, 2);\nmodule.exports={a,b};\n",
+    ],
+    [
+      "an ordinary optional-chaining call",
+      "const o = { a: { b(){ return 1; } } };\nconst r = o?.a?.b?.();\nmodule.exports={r};\n",
+    ],
+    [
+      "ordinary Reflect.apply and spread calls",
+      "function fn(a){ return a; }\nconst r = Reflect.apply(fn, null, [1]);\nconst s = fn(...[2]);\nmodule.exports={r,s};\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-wrapper-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+});

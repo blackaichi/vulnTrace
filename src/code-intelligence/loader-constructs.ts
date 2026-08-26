@@ -722,6 +722,39 @@ function resolveLoaderCapability(
     return { kind: "ambiguous" };
   }
 
+  // Runtime-TRANSPARENT wrappers resolve to whatever they wrap. These are
+  // exactly the forms `valueFlowOperandsOf` already recurses through on
+  // the value side, applied here on the provenance side so the two agree:
+  // parenthesization; TypeScript's `as`/`satisfies`/`!`/`<T>` assertions,
+  // which are erased entirely at runtime; and the comma operator, whose
+  // value is its RIGHT operand.
+  //
+  // The comma case is the `(0, expr)(...)` indirect-call idiom, the
+  // standard way to invoke a method with `this` unbound --
+  // `(0, Module._preloadModules)([...])`, `(0, eval)(src)` and
+  // `(0, Function)(src)()` were each reproduced end-to-end, as were the
+  // TypeScript spellings `(M as any)._preloadModules(...)` and
+  // `(M!)._preloadModules(...)`. None involves an unknown API or a new
+  // container: each merely wraps a capability the relation already
+  // resolves in syntax it did not look through.
+  if (ts.isParenthesizedExpression(expr)) {
+    return resolveLoaderCapability(expr.expression, context, depth + 1);
+  }
+  if (
+    ts.isAsExpression(expr) ||
+    ts.isSatisfiesExpression(expr) ||
+    ts.isNonNullExpression(expr) ||
+    ts.isTypeAssertionExpression(expr)
+  ) {
+    return resolveLoaderCapability(expr.expression, context, depth + 1);
+  }
+  if (
+    ts.isBinaryExpression(expr) &&
+    expr.operatorToken.kind === ts.SyntaxKind.CommaToken
+  ) {
+    return resolveLoaderCapability(expr.right, context, depth + 1);
+  }
+
   // Ambient globals. Each is a LEAF of this relation -- an identifier
   // with no import binding and no local declaration -- so every way of
   // REACHING one (an alias, a `globalThis.`/`global.` prefix, a longer
