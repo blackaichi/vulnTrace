@@ -36,6 +36,10 @@ import {
   computeCoverage,
 } from "../analysis/reachability.js";
 import { buildFinding } from "../analysis/verdict.js";
+import {
+  buildGateEligibleModuleLoadClosure,
+  type ModuleLoadClosure,
+} from "../analysis/module-load-closure.js";
 import { readOwnVersion } from "../shared/own-version.js";
 import { OsvProvider } from "../vulnerabilities/osv-provider.js";
 import { normalizeOsvVulnerability } from "../vulnerabilities/osv-normalizer.js";
@@ -64,6 +68,32 @@ export interface RunScanOptions {
   /** Defaults to a real {@link OsvProvider}; overridable for testing without live network access. */
   readonly provider?: VulnerabilityProvider;
   readonly io?: CliIo;
+  /**
+   * Read-only observation seam for the scan's single
+   * {@link ModuleLoadClosure} (VT-307d), invoked exactly once per scan
+   * with whatever `buildGateEligibleModuleLoadClosure` produced --
+   * including `undefined` when no gate-eligible closure could be built at
+   * all (no entrypoints, or a construction failure).
+   *
+   * Deliberately an OBSERVATION callback and nothing else: it receives the
+   * closure, it cannot supply or alter one, and no analysis decision reads
+   * anything it returns (it returns `void`). That asymmetry is the point --
+   * unlike `BuildFindingOptions.allowSyntheticNameOnlyTargetBinding`, this
+   * seam is structurally incapable of changing a verdict, so wiring it up
+   * cannot weaken the negative-proof gate it exists to test. It is not
+   * exposed through `vulntrace.yml` or any CLI flag.
+   *
+   * Exists because the six real-world closure facts VT-307d depends on
+   * (RWB-06/06A OUT+complete, RWB-07/08/09a IN+complete, RWB-10
+   * IN+incomplete) must be asserted against the REAL production
+   * construction order -- dependency graph -> KnownPackageRoots ->
+   * entrypoint discovery -> closure -- and not merely against a
+   * hand-assembled `buildModuleLoadClosure` call that could silently drift
+   * from what `runScanCommand` actually does. See scan.module-load-closure.test.ts.
+   */
+  readonly onModuleLoadClosure?: (
+    closure: ModuleLoadClosure | undefined,
+  ) => void;
 }
 
 /**
@@ -309,6 +339,51 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     });
   }
 
+  // The scan's single {@link ModuleLoadClosure} (VT-307d), built EXACTLY
+  // ONCE here -- never per advisory, per package, per vulnerability or per
+  // finding -- and threaded unchanged into every `buildFinding` call below.
+  // Its construction order is deliberate and load-bearing: the dependency
+  // graph and `knownPackageRoots` above must both already exist, because a
+  // closure built without authoritative package-root identity silently
+  // loses the `PackageInstanceId` of every workspace/`file:`-linked install
+  // (see `buildGateEligibleModuleLoadClosure`) -- exactly the false-absence
+  // shape the Site-B negative-proof gate must never observe.
+  //
+  // Built through the STRICT builder, never `buildModuleLoadClosure`
+  // directly: that is what makes gate eligibility structural rather than a
+  // caller promise. `knownPackageRoots` is required there at the TYPE
+  // level, and the empty-entrypoints case returns `undefined` rather than
+  // a vacuously-complete closure in which every installed package instance
+  // would be OUT.
+  //
+  // `maxFiles` is the closure's OWN traversal bound; reaching it records
+  // `traversal_truncated` and makes the closure incomplete. That is
+  // deliberately independent of the call graph's `graphTruncated` below --
+  // the two traversals visit different file sets and can be truncated
+  // independently.
+  let moduleLoadClosure: ModuleLoadClosure | undefined;
+  try {
+    moduleLoadClosure = await buildGateEligibleModuleLoadClosure({
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      maxFiles: config.analysis.limits.maxFiles,
+      knownPackageRoots,
+    });
+  } catch (error) {
+    // A closure failure disables the absence proof; it never fails the
+    // scan, and it must never be turned into an empty-but-"complete"
+    // closure -- that would assert every package instance is unloadable,
+    // the exact false NOT_AFFECTED this whole mechanism exists to avoid.
+    // The rest of the pipeline continues down its existing conservative
+    // path, which reaches UNKNOWN on its own.
+    moduleLoadClosure = undefined;
+    diagnostics.push({
+      source: "module-load-closure",
+      message: `module-load absence proof is unavailable: closure construction failed (${errorMessage(error)}); findings fall back to call-graph reachability alone`,
+    });
+  }
+  options.onModuleLoadClosure?.(moduleLoadClosure);
+
   // A limit reached mid-build (see docs/SDD.md § 26, § 29 hardening: a
   // pathological/adversarial target project must not consume unbounded
   // resources) truncates the call graph rather than aborting the scan —
@@ -449,6 +524,10 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
             projectRoot,
             knownPackageRoots,
             graphTruncated,
+            // The one closure built above, passed by reference to every
+            // finding -- never rebuilt, and never a closure from some
+            // other scan context.
+            moduleLoadClosure,
           });
           reachabilityMs += Date.now() - reachabilityStart;
           if (finding) {
