@@ -754,6 +754,48 @@ function resolveLoaderCapability(
   ) {
     return resolveLoaderCapability(expr.right, context, depth + 1);
   }
+  // `await X` of a non-thenable IS `X`, so it carries provenance through.
+  if (ts.isAwaitExpression(expr)) {
+    return resolveLoaderCapability(expr.expression, context, depth + 1);
+  }
+  // Value-SELECTING operators: the result is one of the operands, so the
+  // expression denotes a capability whenever any selectable operand does.
+  // Returning the first that resolves is the conservative answer, and it
+  // mirrors `valueFlowOperandsOf`'s treatment of the very same operators
+  // on the value side -- `(cond ? Module._preloadModules : null)([...])`,
+  // `(x || Module._preloadModules)([...])`, `(x ?? Function)(src)()` and
+  // `(1 && eval)(src)` were each reproduced end-to-end while the two
+  // sides disagreed. `&&` contributes only its RIGHT operand, since it
+  // evaluates to the left one only when that is falsy and every
+  // authoritative capability is a live function or object.
+  {
+    let selectable: readonly ts.Expression[] | undefined;
+    if (ts.isConditionalExpression(expr)) {
+      selectable = [expr.whenTrue, expr.whenFalse];
+    } else if (ts.isBinaryExpression(expr)) {
+      const operator = expr.operatorToken.kind;
+      if (
+        operator === ts.SyntaxKind.BarBarToken ||
+        operator === ts.SyntaxKind.QuestionQuestionToken
+      ) {
+        selectable = [expr.left, expr.right];
+      } else if (
+        operator === ts.SyntaxKind.AmpersandAmpersandToken ||
+        isCapabilityStoringAssignmentOperator(operator)
+      ) {
+        selectable = [expr.right];
+      }
+    }
+    if (selectable !== undefined) {
+      for (const candidate of selectable) {
+        const resolved = resolveLoaderCapability(candidate, context, depth + 1);
+        if (resolved !== undefined) {
+          return resolved;
+        }
+      }
+      return undefined;
+    }
+  }
 
   // Ambient globals. Each is a LEAF of this relation -- an identifier
   // with no import binding and no local declaration -- so every way of
@@ -2476,6 +2518,21 @@ function consumedValuePositionOf(
 
   // Category 3: iterated.
   if (ts.isForOfStatement(node) || ts.isForInStatement(node)) {
+    return { expression: node.expression, aliasFollowable: false };
+  }
+
+  // Category 4: extended. `class H extends <expr>` evaluates `<expr>` as a
+  // value AND makes every static member of it reachable through `H`, which
+  // this model does not track -- `class H extends Module {}` followed by
+  // `H._preloadModules([...])` was reproduced end-to-end. Failing closed at
+  // the heritage clause is the same treatment every other position that
+  // hands a capability somewhere untracked already gets.
+  if (
+    ts.isExpressionWithTypeArguments(node) &&
+    node.parent !== undefined &&
+    ts.isHeritageClause(node.parent) &&
+    node.parent.token === ts.SyntaxKind.ExtendsKeyword
+  ) {
     return { expression: node.expression, aliasFollowable: false };
   }
 
