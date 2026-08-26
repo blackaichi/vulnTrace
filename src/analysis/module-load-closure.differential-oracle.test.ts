@@ -1448,3 +1448,72 @@ describe("ModuleLoadClosure differential Node oracle: aliased loader registries 
     20000,
   );
 });
+
+/**
+ * VT-307c-function-closure's oracle axis: the `Function` constructor
+ * reached by every provenance path, each case rigged so the GENERATED
+ * source genuinely loads the marker package. `process` is used inside the
+ * generated body because it is a real global and therefore visible there,
+ * where CommonJS `require` is not -- the same construction that made
+ * these six spellings reproducible end-to-end.
+ */
+const FUNCTION_PROVENANCE_FORMS: readonly (readonly [string, string])[] = [
+  ["direct Function(src)()", "Function(SRC)();\n"],
+  ["direct new Function(src)()", "new Function(SRC)();\n"],
+  ["const F = Function; F(src)()", "const F = Function;\nF(SRC)();\n"],
+  ["const F = Function; new F(src)()", "const F = Function;\nnew F(SRC)();\n"],
+  [
+    "alias depth 3 of Function",
+    "const a = Function;\nconst b = a;\nconst c = b;\nc(SRC)();\n",
+  ],
+  ["globalThis.Function(src)()", "globalThis.Function(SRC)();\n"],
+  ["global.Function(src)()", "global.Function(SRC)();\n"],
+  [
+    "const g = globalThis; g.Function(src)()",
+    "const g = globalThis;\ng.Function(SRC)();\n",
+  ],
+  [
+    "(function(){}).constructor(src)()",
+    "const F = (function(){}).constructor;\nF(SRC)();\n",
+  ],
+  [
+    "(() => {}).constructor(src)()",
+    "const F = (() => {}).constructor;\nF(SRC)();\n",
+  ],
+  [
+    "Function held in an object property, then called",
+    "const box = { F: Function };\nbox.F(SRC)();\n",
+  ],
+  [
+    "Function returned from a factory, then called",
+    "function getF(){ return Function; }\ngetF()(SRC)();\n",
+  ],
+];
+
+describe("ModuleLoadClosure differential Node oracle: Function-constructor grammar (VT-307c-function-closure)", () => {
+  const generated: OracleCase[] = FUNCTION_PROVENANCE_FORMS.map(
+    ([name, source]) => ({
+      label: name,
+      vulnInstanceRelPath: "node_modules/vuln",
+      setup: (root: string) => {
+        markerPackage(root, "node_modules/vuln");
+        return write(
+          root,
+          "src/index.js",
+          source.replace(
+            /SRC/g,
+            String.raw`"return process.mainModule.require('vuln')"`,
+          ),
+        );
+      },
+    }),
+  );
+
+  it.each(generated.map((c) => [c.label, c] as const))(
+    "%s: complete=true never coexists with a real, unaccounted-for execution",
+    async (_label, oracleCase) => {
+      await runOracleCase(oracleCase);
+    },
+    20000,
+  );
+});
