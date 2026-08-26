@@ -27,6 +27,7 @@ import type { ConfirmedAbsentFromModuleLoadClosure } from "../domain/evidence.js
 import type { Vulnerability } from "../domain/vulnerability.js";
 import type { VersionMatchResult } from "../vulnerabilities/version-matching.js";
 import {
+  callGraphNegativeProofBlockers,
   closureContainsPackageInstance,
   type ModuleLoadClosure,
 } from "./module-load-closure.js";
@@ -144,6 +145,32 @@ export interface BuildFindingOptions {
  */
 const MODULE_LOAD_ABSENCE_REASON =
   "package_instance_not_in_complete_module_load_closure";
+
+/**
+ * PROOF FAMILY B's own reason (VT-307e).
+ *
+ * Before VT-307e this proof emitted family C's
+ * "vulnerable symbol confirmed unreachable..." string, so two materially
+ * different conclusions were indistinguishable in the output: "the call
+ * graph never traversed this install location at all" versus "the code was
+ * analyzed and no path to the symbol exists". Phase 8's 1:1 reason-to-proof
+ * rule requires they be told apart.
+ */
+const INSTANCE_ABSENT_FROM_CALL_GRAPH_REASON =
+  "package_instance_absent_from_complete_call_graph";
+
+/**
+ * PROOF FAMILY C's reason, deliberately UNCHANGED (VT-307e).
+ *
+ * Kept as the existing human-readable string rather than migrated to a
+ * slug: it is already 1:1 with family C once family B has its own reason
+ * above, and it is asserted by existing e2e/output/verdict tests whose
+ * expectations encode real user-visible output. Family C's machine-readable
+ * contract is the new `confirmedUnreachableTarget` evidence object, not
+ * this string.
+ */
+const TARGET_UNREACHABLE_REASON =
+  "vulnerable symbol confirmed unreachable from all analyzed entrypoints";
 
 function locationOf(graph: CallGraph, id: GraphNodeId): string {
   const node = graph.nodes.find((n) => n.id === id);
@@ -736,6 +763,19 @@ async function checkReachability(
    */
   absentFromModuleLoadClosure?: ConfirmedAbsentFromModuleLoadClosure;
   /**
+   * VT-307e, PROOF FAMILY B: this finding's exact instance was never
+   * traversed by the call graph, and VT-300's guard found nothing
+   * reachable that could load it. Carries the instance so `buildFinding`
+   * can emit evidence naming exactly what the verdict is about.
+   */
+  absentInstance?: string;
+  /**
+   * VT-307e, PROOF FAMILY C: at least one resolved, attributed target was
+   * searched to exhaustion and found unreachable, with no unresolved edge
+   * anywhere in the reachable subgraph.
+   */
+  unreachableTarget?: VulnerableSymbolTarget;
+  /**
    * Whether at least one reachability search actually ran. `false` means no
    * entrypoint produced a usable source node to search from (e.g. the
    * project has no configured/discoverable entrypoints at all) — a
@@ -753,6 +793,8 @@ async function checkReachability(
   let representativeTarget: VulnerableSymbolTarget | undefined;
   let absentFromModuleLoadClosure:
     ConfirmedAbsentFromModuleLoadClosure | undefined;
+  let absentInstance: string | undefined;
+  let unreachableTarget: VulnerableSymbolTarget | undefined;
 
   for (const target of rule.targets) {
     const {
@@ -823,6 +865,12 @@ async function checkReachability(
         reasons.push(
           `package instance for module "${target.module}" was never traversed by the call graph, but a closure-widening construct reachable from an entrypoint could load it at runtime`,
         );
+      } else if (packageInstance !== undefined) {
+        // VT-307e: a POSITIVE family-B result. Recorded only when VT-300's
+        // guard passed, so this can never carry a proof the guard rejected,
+        // and only with an authoritative instance identity -- without one
+        // there is no exact thing to call absent.
+        absentInstance ??= packageInstance;
       }
       continue;
     }
@@ -845,6 +893,12 @@ async function checkReachability(
           if (result.state === "unknown") {
             sawUnknown = true;
             reasons.push(...result.blockers);
+          } else if (result.state === "unreachable") {
+            // VT-307e: a POSITIVE family-C result -- this search ran to
+            // exhaustion and found no unresolved edge anywhere in the
+            // reachable subgraph (see analyzeReachability, which returns
+            // `unknown` rather than `unreachable` if even one exists).
+            unreachableTarget ??= target;
           }
         }
       }
@@ -857,6 +911,8 @@ async function checkReachability(
     representativeTarget,
     checkedAny,
     absentFromModuleLoadClosure,
+    absentInstance,
+    unreachableTarget,
   };
 }
 
@@ -931,6 +987,8 @@ export async function buildFinding(
     representativeTarget,
     checkedAny,
     absentFromModuleLoadClosure,
+    absentInstance,
+    unreachableTarget,
   } = await checkReachability(
     rule,
     graph,
@@ -1041,15 +1099,104 @@ export async function buildFinding(
     };
   }
 
+  // VT-307e -- CALL-GRAPH NEGATIVE-PROOF GUARD.
+  //
+  // Everything below concludes NOT_AFFECTED from what the CALL GRAPH did
+  // not contain (family B: this exact install location was never
+  // traversed; family C: no path from any entrypoint to a resolved,
+  // attributed target). Both therefore depend on the analyzed code having
+  // been modeled faithfully -- and the call graph, unlike
+  // `ModuleLoadClosure`, has never checked two conditions that can make it
+  // silently unfaithful:
+  //
+  //  - a member with a SYNTAX ERROR. `indexSourceFileFromDisk` is
+  //    error-tolerant, so `prepareFile` builds nodes and edges from a
+  //    partial, silently reshaped AST. A `require` and the call that
+  //    follows it can both be swallowed by the same error, after which
+  //    "no path was found" and "this instance was never traversed" mean
+  //    nothing for that file. The closure has refused to trust such an
+  //    AST since VT-307c-fix-2; this extends the same rule to the two
+  //    proofs that read the graph built from it.
+  //  - an in-source loader/runtime capability in a NON-CALL position, e.g.
+  //    `Module._extensions['.js'] = ...`. VT-300's own guard
+  //    (`hasReachableClosureWideningBlocker`) inspects unresolved CALL
+  //    EDGES, so an assignment that rewires module loading produces no
+  //    edge for it to see. The closure's whole-file scan does see it.
+  //
+  // Both were reproduced end-to-end against the pre-VT-307d base
+  // (ec7e0c5), so this is legacy-behavior hardening, not a VT-307d
+  // regression -- see the VT-307d audit's own "pre-existing finding".
+  //
+  // Deliberately NOT `closure.complete`: `traversal_truncated` is excluded
+  // by `invalidatesCallGraphNegativeProof`, because it bounds the
+  // CLOSURE's walk while these proofs' coverage is governed by
+  // `graphTruncated` just above. See that function for the per-reason
+  // justification.
+  //
+  // Residual, accepted risk: an ABSENT closure contributes no blockers, so
+  // a scan whose closure construction failed keeps exactly its
+  // pre-VT-307d behavior here rather than degrading every finding. That is
+  // the status quo, not a new exposure.
+  const callGraphProofBlockers =
+    callGraphNegativeProofBlockers(moduleLoadClosure);
+  if (callGraphProofBlockers.length > 0) {
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      target: representativeTarget,
+      evidence: {
+        path: [],
+        reasons: [
+          `call-graph-derived non-reachability cannot be confirmed: the module-load closure recorded ${callGraphProofBlockers.join(", ")}, which can hide a call path to the target or the loading of this instance`,
+        ],
+      },
+    };
+  }
+
+  // PROOF FAMILY B (VT-212/VT-300): the exact installed instance was never
+  // traversed by the call graph, the graph was not truncated, and nothing
+  // reachable from an entrypoint could have loaded it. Checked before
+  // family C because it is the more specific claim -- when it holds, no
+  // code of this instance was ever analyzed, so "no path to the target"
+  // would be a weaker way of saying the same thing.
+  if (absentInstance !== undefined) {
+    return {
+      ...base,
+      verdict: "NOT_AFFECTED",
+      target: representativeTarget,
+      evidence: {
+        path: [],
+        reasons: [INSTANCE_ABSENT_FROM_CALL_GRAPH_REASON],
+        confirmedAbsentInstance: {
+          packageInstance: absentInstance,
+          entrypointRoots: entrypoints.map((e) => e.filePath),
+          callGraphComplete: true,
+        },
+      },
+    };
+  }
+
+  // PROOF FAMILY C: a resolved, attributed target searched to exhaustion
+  // with no unresolved edge anywhere in the reachable subgraph.
   return {
     ...base,
     verdict: "NOT_AFFECTED",
     target: representativeTarget,
     evidence: {
       path: [],
-      reasons: [
-        "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
-      ],
+      reasons: [TARGET_UNREACHABLE_REASON],
+      ...(unreachableTarget
+        ? {
+            confirmedUnreachableTarget: {
+              target: {
+                module: unreachableTarget.module,
+                export: unreachableTarget.export,
+              },
+              entrypointRoots: entrypoints.map((e) => e.filePath),
+              callGraphComplete: true as const,
+            },
+          }
+        : {}),
     },
   };
 }
