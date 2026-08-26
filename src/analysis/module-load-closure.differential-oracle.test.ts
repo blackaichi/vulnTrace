@@ -1609,6 +1609,19 @@ const ELEMENT_AND_REFLECTION_FORMS: readonly (readonly [string, string])[] = [
     "array-element function .constructor(src)()",
     "const arr = [() => {}];\narr[0].constructor(\"return process.mainModule.require('vuln')\")();\n",
   ],
+
+  [
+    "stored then called: const F = o.f.constructor; F(src)()",
+    "const o = { f: () => {} };\nconst F = o.f.constructor;\nF(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "stored then NEW'd: const F = g.constructor; new F(src)()",
+    "function g(){}\nconst F = g.constructor;\nnew F(\"return process.mainModule.require('vuln')\")();\n",
+  ],
+  [
+    "chained: ({}).constructor.constructor(src)()",
+    "({}).constructor.constructor(\"return process.mainModule.require('vuln')\")();\n",
+  ],
 ];
 
 describe("ModuleLoadClosure differential Node oracle: element access and .constructor reflection (VT-307c-element/reflection-closure)", () => {

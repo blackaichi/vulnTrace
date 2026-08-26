@@ -5075,3 +5075,159 @@ describe("ModuleLoadClosure: Function constructor resolves through the shared re
     expect(reasonsOf(closure)).toContain("function_constructor");
   });
 });
+
+/**
+ * VT-307c-structural-closure. The final certification pass audited every
+ * remaining literal-syntax match in the classifier and asked, of each, the
+ * only question that matters: when this literal match MISSES, does the
+ * construct still fail closed?
+ *
+ * Most remaining literals are member NAMES (`.prototype`, `.constructor`,
+ * `.main`), which are literal in source by definition and whose RECEIVER
+ * is resolved through the shared relation -- nothing to fix. Three were
+ * precision shortcuts whose miss was supposed to fall through to a
+ * fail-closed path, and two of those turned out not to:
+ *
+ * - `classifyLoaderConstruct`'s unknown-member fail-closed fallback was
+ *   gated on `PropertyAccessExpression`, so `module['require'](name)` (an
+ *   ordinary loader call) and `Module['someFutureThing'](x)` (an
+ *   unrecognized member call) both slipped past it on a genuinely
+ *   authoritative receiver;
+ * - a `.call`/`.apply`-wearing callee was never resolved as its bare self,
+ *   so `require.call(null, name)` was lost.
+ *
+ * `delete Module[computed]` had the same PropertyAccess-only gate. All
+ * three now go through the normalized member accessor.
+ */
+describe("ModuleLoadClosure: every literal-match miss fails closed (VT-307c-structural-closure)", () => {
+  it.each([
+    // The literal `module_require` chain walk misses these; each must
+    // still fail closed rather than silently stay unclassified.
+    [
+      "module['require'](name) -- element-access loader call",
+      "module['require'](process.env.N || 'x');\nmodule.exports={};\n",
+    ],
+    [
+      "const m = module; m.require(name) -- aliased owner",
+      "const m = module;\nm.require(process.env.N || 'x');\nmodule.exports={};\n",
+    ],
+    [
+      "globalThis.module.require(name)",
+      "globalThis.module = module;\nglobalThis.module.require(process.env.N || 'x');\nmodule.exports={};\n",
+    ],
+    // Unknown members on an authoritative receiver, both spellings.
+    [
+      "Module['someFutureThing'](x) -- unknown member via element access",
+      "const M = require('module');\nif (M['someFutureThing']) { M['someFutureThing'](1); }\nmodule.exports={};\n",
+    ],
+    [
+      "Module[computed] = fn -- computed-key write",
+      "const M = require('module');\nM[process.env.K || 'zz'] = function(){};\nmodule.exports={};\n",
+    ],
+    [
+      "delete Module[computed] -- computed-key delete",
+      "const M = require('module');\ndelete M[process.env.K || 'zz'];\nmodule.exports={};\n",
+    ],
+  ])("%s fails closed", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  it.each([
+    [
+      "require.call(null, name) -- .call-wearing callee",
+      "require.call(null, process.env.N || 'x');\nmodule.exports={};\n",
+      "aliased_require",
+    ],
+    [
+      "globalThis['eval'](src) -- element-access eval",
+      "globalThis['eval']('1');\nmodule.exports={};\n",
+      "aliased_eval",
+    ],
+    [
+      "globalThis.eval(src) -- property-access eval",
+      "globalThis.eval('1');\nmodule.exports={};\n",
+      "aliased_eval",
+    ],
+  ])("%s resolves to %s", async (_label, source, expectedReason) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain(expectedReason);
+  });
+
+  it.each([
+    // The literal shortcuts still win where they hit -- a miss must
+    // degrade to the generic escape, never the reverse.
+    [
+      "module.require(name)",
+      "module.require(process.env.N || 'x');\nmodule.exports={};\n",
+      "module_require",
+    ],
+    [
+      "require.main.require(name)",
+      "require.main.require(process.env.N || 'x');\nmodule.exports={};\n",
+      "module_require",
+    ],
+    [
+      "process.mainModule.require(name)",
+      "process.mainModule.require(process.env.N || 'x');\nmodule.exports={};\n",
+      "module_require",
+    ],
+    ["direct eval(src)", "eval('1');\nmodule.exports={};\n", "eval"],
+    [
+      "direct require(dynamic)",
+      "require(process.env.N || 'x');\nmodule.exports={};\n",
+      "dynamic_require",
+    ],
+  ])(
+    "%s keeps its specific reason %s",
+    async (_label, source, expectedReason) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(false);
+      expect(reasonsOf(closure)).toContain(expectedReason);
+    },
+  );
+
+  it.each([
+    [
+      "a user object with its own require member, element-accessed",
+      "const fake = { require(){ return 1; } };\nfake['require']('x');\nmodule.exports={fake};\n",
+    ],
+    [
+      "a user object with a someFutureThing member",
+      "const fake = { someFutureThing(){ return 1; } };\nfake['someFutureThing'](1);\nmodule.exports={fake};\n",
+    ],
+    [
+      "computed writes and deletes on an ordinary object",
+      "const o = {};\no[process.env.K || 'a'] = 1;\ndelete o[process.env.K || 'a'];\nmodule.exports={o};\n",
+    ],
+    [
+      "ordinary .call/.apply on a user function",
+      "function f(a){ return a; }\nf.call(null, 1);\nf.apply(null, [2]);\nmodule.exports={f};\n",
+    ],
+  ])(
+    "stays complete for %s (VT-307c-structural-closure precision control)",
+    async (_label, source) => {
+      const root = tempProject();
+      const entry = write(root, "src/index.js", source);
+
+      const closure = await closureFor(root, [entry]);
+
+      expect(closure.complete).toBe(true);
+      expect(closure.incompleteness).toEqual([]);
+    },
+  );
+});
