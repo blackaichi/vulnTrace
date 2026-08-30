@@ -147,7 +147,8 @@ const MODULE_LOAD_ABSENCE_REASON =
   "package_instance_not_in_complete_module_load_closure";
 
 /**
- * PROOF FAMILY B's own reason (VT-307e).
+ * PROOF FAMILY B's own reason (VT-307e, hardened by VT-307e's own final
+ * audit).
  *
  * Before VT-307e this proof emitted family C's
  * "vulnerable symbol confirmed unreachable..." string, so two materially
@@ -155,9 +156,22 @@ const MODULE_LOAD_ABSENCE_REASON =
  * graph never traversed this install location at all" versus "the code was
  * analyzed and no path to the symbol exists". Phase 8's 1:1 reason-to-proof
  * rule requires they be told apart.
+ *
+ * Renamed from `package_instance_absent_from_complete_call_graph` when the
+ * audit reproduced a false NOT_AFFECTED under that exact name: a
+ * non-truncated call graph is NOT a complete one -- the call graph never
+ * follows a re-export declaration (`export * from "pkg"`) as a discovery
+ * edge at all (VT-307c-fix-8 added that traversal to `ModuleLoadClosure`
+ * ONLY), so a package instance reached solely through a re-export chain is
+ * genuinely loaded and called while remaining entirely invisible to a
+ * "complete" (merely non-truncated) call graph. The old name asserted a
+ * completeness the call graph never had. This proof is sound only because
+ * it now additionally requires independent corroboration from a complete
+ * `ModuleLoadClosure` (see the `confirmedAbsentInstance` branch below) --
+ * the new name names BOTH sources the conclusion rests on, not just one.
  */
 const INSTANCE_ABSENT_FROM_CALL_GRAPH_REASON =
-  "package_instance_absent_from_complete_call_graph";
+  "package_instance_absent_from_call_graph_and_module_load_closure";
 
 /**
  * PROOF FAMILY C's reason, deliberately UNCHANGED (VT-307e).
@@ -764,9 +778,15 @@ async function checkReachability(
   absentFromModuleLoadClosure?: ConfirmedAbsentFromModuleLoadClosure;
   /**
    * VT-307e, PROOF FAMILY B: this finding's exact instance was never
-   * traversed by the call graph, and VT-300's guard found nothing
-   * reachable that could load it. Carries the instance so `buildFinding`
-   * can emit evidence naming exactly what the verdict is about.
+   * traversed by the call graph, VT-300's guard found nothing reachable
+   * that could load it, AND (hardened after VT-307e's own final audit) a
+   * gate-eligible, COMPLETE `ModuleLoadClosure` independently corroborates
+   * the absence -- it does not contain this exact instance either. Set
+   * ONLY when all three hold; a call-graph absence the closure cannot
+   * corroborate becomes `sawUnknown` instead (see the `confirmedAbsentInstance`
+   * branch above), never a value here. Carries the instance so
+   * `buildFinding` can emit evidence naming exactly what the verdict is
+   * about.
    */
   absentInstance?: string;
   /**
@@ -866,11 +886,58 @@ async function checkReachability(
           `package instance for module "${target.module}" was never traversed by the call graph, but a closure-widening construct reachable from an entrypoint could load it at runtime`,
         );
       } else if (packageInstance !== undefined) {
-        // VT-307e: a POSITIVE family-B result. Recorded only when VT-300's
-        // guard passed, so this can never carry a proof the guard rejected,
-        // and only with an authoritative instance identity -- without one
-        // there is no exact thing to call absent.
-        absentInstance ??= packageInstance;
+        // VT-307e (hardened by VT-307e's own final audit, which
+        // reproduced a false NOT_AFFECTED here): VT-300's guard passing
+        // means no RESOLVED CALL EDGE reachable from an entrypoint could
+        // load this instance. That is not the same claim as "this
+        // instance cannot be loaded at all" -- the call graph's own
+        // discovery never follows a re-export DECLARATION
+        // (`export * from "pkg"`) as an edge in the first place
+        // (VT-307c-fix-8 added that traversal to `ModuleLoadClosure`
+        // ONLY), so an instance reached solely through a re-export chain
+        // is genuinely loaded and called while producing no call-graph
+        // edge whatsoever for VT-300 to have inspected. Concretely
+        // reproduced: two installs of one package name/version, a
+        // `consumer` package doing `export * from "pkg"` to the nested
+        // one, an entrypoint that imports the top-level install directly
+        // (so the graph discovers THAT instance) and calls the vulnerable
+        // export through `consumer` (so the nested instance's code
+        // genuinely runs) -- the nested instance was absent from a
+        // non-truncated call graph while being both loaded and called.
+        //
+        // Family B's own "the call graph never traversed this instance"
+        // claim is therefore corroborated -- and only corroborated -- by
+        // an INDEPENDENT traversal that does follow re-export
+        // declarations: a gate-eligible, COMPLETE `ModuleLoadClosure`
+        // (the same closure-membership fact Family A relies on, checked
+        // here because the call graph discovered some OTHER instance of
+        // this package name, not none at all). Absent, incomplete, or
+        // containing this exact instance all disqualify Family B outright
+        // -- none of them fabricate a replacement proof; each degrades to
+        // exactly the same `sawUnknown` uncertainty every other
+        // unresolved case in this function already produces, so a finding
+        // with another target that IS genuinely proven unreachable is
+        // still correctly forced to UNKNOWN as a whole (see `buildFinding`
+        // AGENTS.md: never infer NOT_AFFECTED merely because something
+        // failed to resolve).
+        if (
+          moduleLoadClosure !== undefined &&
+          moduleLoadClosure.complete &&
+          !closureContainsPackageInstance(moduleLoadClosure, packageInstance)
+        ) {
+          absentInstance ??= packageInstance;
+        } else {
+          sawUnknown = true;
+          reasons.push(
+            `package instance for module "${target.module}" was never traversed by the call graph, but its absence could not be corroborated by a complete module-load closure (module-load closure is ${
+              moduleLoadClosure === undefined
+                ? "unavailable"
+                : moduleLoadClosure.complete
+                  ? "complete and reports this instance as loaded"
+                  : "incomplete"
+            })`,
+          );
+        }
       }
       continue;
     }
@@ -1153,12 +1220,18 @@ export async function buildFinding(
     };
   }
 
-  // PROOF FAMILY B (VT-212/VT-300): the exact installed instance was never
-  // traversed by the call graph, the graph was not truncated, and nothing
-  // reachable from an entrypoint could have loaded it. Checked before
-  // family C because it is the more specific claim -- when it holds, no
-  // code of this instance was ever analyzed, so "no path to the target"
-  // would be a weaker way of saying the same thing.
+  // PROOF FAMILY B (VT-212/VT-300, hardened VT-307e): the exact installed
+  // instance was never traversed by the call graph, the graph was not
+  // truncated, nothing reachable from an entrypoint could have loaded it
+  // (VT-300), AND a gate-eligible, COMPLETE `ModuleLoadClosure`
+  // independently corroborates the absence. `absentInstance` is set ONLY
+  // when all of that already holds -- see `checkReachability`'s own
+  // `confirmedAbsentInstance` branch, where an uncorroborated call-graph
+  // absence becomes `sawUnknown` instead and is handled by the branch
+  // above this one, never here. Checked before family C because it is the
+  // more specific claim -- when it holds, no code of this instance was
+  // ever analyzed, so "no path to the target" would be a weaker way of
+  // saying the same thing.
   if (absentInstance !== undefined) {
     return {
       ...base,
@@ -1170,7 +1243,13 @@ export async function buildFinding(
         confirmedAbsentInstance: {
           packageInstance: absentInstance,
           entrypointRoots: entrypoints.map((e) => e.filePath),
-          callGraphComplete: true,
+          // Both literally guaranteed at this point: `graphTruncated` was
+          // checked false above, and the corroboration check in
+          // `checkReachability` already required `moduleLoadClosure` to
+          // be defined with `complete === true` before `absentInstance`
+          // could ever be set.
+          graphTruncated: false,
+          moduleLoadClosureComplete: true,
         },
       },
     };

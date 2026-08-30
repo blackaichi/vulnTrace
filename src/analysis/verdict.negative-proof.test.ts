@@ -421,7 +421,29 @@ describe("VT-307e case 11-12: proof-specific, not blanket", () => {
  * location -- so `resolveTargetNodes` takes the `confirmedAbsentInstance`
  * path and the Site-B module-load gate (family A) is never consulted.
  */
-describe("VT-307e: proof family B has its own reason and evidence", () => {
+/**
+ * VT-307e Family B -- hardened by VT-307e's own final audit.
+ *
+ * The audit reproduced a false NOT_AFFECTED: `graphTruncated === false`
+ * proves only that the call graph's OWN traversal did not hit a resource
+ * limit, never that every statically loaded module was represented in it.
+ * The call graph's discovery never follows a re-export DECLARATION
+ * (`export * from "pkg"`) as an edge at all, so a package instance reached
+ * solely through a re-export chain can be genuinely loaded and called
+ * while the call graph reports it "absent" from a "complete" (merely
+ * non-truncated) graph.
+ *
+ * Family B is therefore no longer sufficient on the call graph alone: it
+ * now ALSO requires a gate-eligible, COMPLETE `ModuleLoadClosure` that
+ * independently corroborates the absence (does not contain this exact
+ * instance either) -- see `matrix items 1-8` below, matching the fix's
+ * own required regression matrix. Items 9-14 of that matrix (re-export-
+ * only, TS `import=require`, workspace, pnpm, alias, multiple entrypoints)
+ * are real-source loading shapes and live in
+ * verdict.family-b-soundness.test.ts, which also pins the exact
+ * end-to-end counterexample the audit reproduced.
+ */
+describe("VT-307e: proof family B requires ModuleLoadClosure corroboration", () => {
   const OTHER_FILE = "/other/node_modules/fixture-lib/index.js";
   const graphWithOtherInstance = (): CallGraph => ({
     nodes: [
@@ -431,27 +453,54 @@ describe("VT-307e: proof family B has its own reason and evidence", () => {
     edges: [],
   });
 
-  it("emits package_instance_absent_from_complete_call_graph with confirmedAbsentInstance", async () => {
+  it("matrix item 1: CallGraph OUT + closure complete + instance OUT -> NOT_AFFECTED via family B", async () => {
     const f = await verdictFor({
       graph: graphWithOtherInstance(),
+      // closure() defaults loadedPackageInstances to [] -- LIB is absent
+      // from the closure too, so the corroboration holds.
       moduleLoadClosure: closure(),
       graphTruncated: false,
     });
     expect(f?.verdict).toBe("NOT_AFFECTED");
     expect(familyOf(f)).toBe("B");
     expect(f?.evidence?.reasons).toEqual([
-      "package_instance_absent_from_complete_call_graph",
+      "package_instance_absent_from_call_graph_and_module_load_closure",
     ]);
     const proof = f?.evidence?.confirmedAbsentInstance;
     // Names THIS finding's instance -- never the sibling the graph did find.
     expect(proof?.packageInstance).toBe(LIB);
     expect(proof?.entrypointRoots).toEqual([ENTRY]);
-    expect(proof?.callGraphComplete).toBe(true);
-    // Never conflated with the module-load proof.
+    expect(proof?.graphTruncated).toBe(false);
+    expect(proof?.moduleLoadClosureComplete).toBe(true);
+    // Never conflated with the module-load proof, and the retired field
+    // must not silently reappear.
     expect(f?.evidence?.confirmedAbsentFromModuleLoadClosure).toBeUndefined();
+    expect(
+      (proof as unknown as Record<string, unknown>)["callGraphComplete"],
+    ).toBeUndefined();
   });
 
-  it("is blocked by a closure condition that can hide the instance's loading", async () => {
+  it("matrix item 2: CallGraph OUT + closure complete + instance IN -> family B blocked (THE audit's exact counterexample shape)", async () => {
+    // This is the synthetic pin of the audit's blocker: the closure says
+    // this exact instance IS loaded (complete=true, LIB present) while the
+    // call graph never traversed it. Pre-fix, this produced a false
+    // Family-B NOT_AFFECTED. Post-fix it must degrade to UNKNOWN --
+    // NEVER fall through to a bare, uncorroborated NOT_AFFECTED via any
+    // other branch either.
+    const f = await verdictFor({
+      graph: graphWithOtherInstance(),
+      moduleLoadClosure: closure([], [LIB]),
+      graphTruncated: false,
+    });
+    expect(
+      f?.verdict,
+      "a package instance the closure says IS loaded must never be declared call-graph-absent",
+    ).toBe("UNKNOWN");
+    expect(familyOf(f)).toBe("-");
+    expect(f?.evidence?.confirmedAbsentInstance).toBeUndefined();
+  });
+
+  it("matrix item 3: CallGraph OUT + closure incomplete -> family B blocked", async () => {
     for (const reason of [
       "parse_failure",
       "loader_hook_mutation",
@@ -467,13 +516,63 @@ describe("VT-307e: proof family B has its own reason and evidence", () => {
     }
   });
 
-  it("is blocked by graphTruncated, its own coverage guard", async () => {
+  it("matrix item 4: CallGraph OUT + closure unavailable -> family B blocked", async () => {
+    // The audit upgraded this from an accepted compatibility risk to
+    // UNSOUND for family B specifically: with no closure to corroborate
+    // against, family B has no protection at all.
+    const f = await verdictFor({
+      graph: graphWithOtherInstance(),
+      moduleLoadClosure: undefined,
+      graphTruncated: false,
+    });
+    expect(
+      f?.verdict,
+      "an unavailable closure must disqualify family B, not preserve its old uncorroborated verdict",
+    ).toBe("UNKNOWN");
+    expect(familyOf(f)).toBe("-");
+  });
+
+  it("matrix item 5: CallGraph OUT + graphTruncated=true -> family B blocked (unchanged)", async () => {
     const f = await verdictFor({
       graph: graphWithOtherInstance(),
       moduleLoadClosure: closure(),
       graphTruncated: true,
     });
     expect(f?.verdict).toBe("UNKNOWN");
+  });
+
+  it("matrix item 7: every invalidatesCallGraphNegativeProof reason blocks family B", async () => {
+    // Exhaustive per Section 8 of the audit -- every reason the partition
+    // says blocks a call-graph-derived proof must also block family B's
+    // NEW corroboration check, not just its old graph-only check.
+    const reasons: ClosureIncompletenessReason[] = [
+      "dynamic_require",
+      "dynamic_import",
+      "eval",
+      "aliased_eval",
+      "function_constructor",
+      "create_require",
+      "aliased_require",
+      "module_require",
+      "module_internal_load",
+      "loader_hook_mutation",
+      "loader_capability_escape",
+      "vm_execution",
+      "worker_execution",
+      "child_process_execution",
+      "unresolved_module",
+      "declaration_only_resolution",
+      "parse_failure",
+    ];
+    for (const reason of reasons) {
+      const f = await verdictFor({
+        graph: graphWithOtherInstance(),
+        moduleLoadClosure: closure([reason]),
+        graphTruncated: false,
+      });
+      expect(f?.verdict, `${reason} must block family B`).toBe("UNKNOWN");
+      expect(familyOf(f)).toBe("-");
+    }
   });
 
   it("never fires without an authoritative packageInstance", async () => {
@@ -484,6 +583,57 @@ describe("VT-307e: proof family B has its own reason and evidence", () => {
       graphTruncated: false,
     });
     expect(familyOf(f)).not.toBe("B");
+  });
+
+  it("matrix item 8: duplicate same-name/same-version instances -- corroboration applies per exact canonical PackageInstance", async () => {
+    // X is genuinely absent from BOTH the call graph and a complete
+    // closure -- family B may fire for X. Y is the sibling the graph
+    // happened to discover; the closure says Y IS loaded. A finding about
+    // Y must never borrow X's corroborated absence, and vice versa.
+    // Both must resolve package name "fixture-lib" via identifyModule's
+    // own "segment right after the LAST node_modules/" rule -- distinct
+    // installs of the SAME package name, not two different package names.
+    const X = canonicalizePackageInstancePath(
+      "/dup-x-root/node_modules/fixture-lib",
+    );
+    const Y = canonicalizePackageInstancePath(
+      "/dup-y-root/node_modules/fixture-lib",
+    );
+    const graph: CallGraph = {
+      nodes: [
+        moduleNode("src#<module>", ENTRY),
+        moduleNode("y#<module>", `${Y}/index.js`),
+      ],
+      edges: [],
+    };
+
+    const findingForX = await verdictFor({
+      graph,
+      packageInstance: X,
+      resolverMap: { "fixture-lib": `${X}/index.js` },
+      // X absent from the closure too -- corroborated.
+      moduleLoadClosure: closure([], [Y]),
+      graphTruncated: false,
+    });
+    expect(findingForX?.verdict).toBe("NOT_AFFECTED");
+    expect(familyOf(findingForX)).toBe("B");
+    expect(
+      findingForX?.evidence?.confirmedAbsentInstance?.packageInstance,
+    ).toBe(X);
+
+    const findingForY = await verdictFor({
+      graph,
+      packageInstance: Y,
+      resolverMap: { "fixture-lib": `${Y}/index.js` },
+      // Y IS in the closure -- corroboration fails for Y specifically.
+      moduleLoadClosure: closure([], [Y]),
+      graphTruncated: false,
+    });
+    expect(
+      findingForY?.verdict,
+      "Y's own presence in the closure must block family B for Y, independent of X's result",
+    ).toBe("UNKNOWN");
+    expect(familyOf(findingForY)).toBe("-");
   });
 });
 
