@@ -41,7 +41,16 @@ export type {
   UnresolvedEdge,
 } from "./graph.js";
 export { isCallResolved, isReachable } from "./graph.js";
-export type { Evidence } from "./evidence.js";
+export type {
+  ConfirmedAbsentFromModuleLoadClosure,
+  ConfirmedAbsentInstance,
+  ConfirmedUnreachableTarget,
+  Evidence,
+} from "./evidence.js";
+export {
+  SUPPORTED_MODEL_EXCLUSIONS,
+  SUPPORTED_MODEL_STATEMENT,
+} from "./evidence.js";
 export type {
   KnownPackageRoots,
   ModuleIdentity,

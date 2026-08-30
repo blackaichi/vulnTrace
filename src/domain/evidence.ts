@@ -40,8 +40,8 @@
  *
  * What NONE of them claim: universal runtime impossibility. Every proof is
  * relative to VulnTrace's declared supported model -- see
- * {@link ConfirmedAbsentFromModuleLoadClosure} for the enumerated
- * exclusions, which apply to all three families.
+ * {@link SUPPORTED_MODEL_EXCLUSIONS} for the enumerated exclusions, which
+ * apply to all three families.
  */
 
 /**
@@ -78,11 +78,12 @@
  *
  * SCOPE OF THE CLAIM. This is absence under VulnTrace's DECLARED SUPPORTED
  * module-loading model, never a claim of universal runtime impossibility.
- * It does not model, and does not claim anything about: `NODE_OPTIONS`, an
- * external `--require`, an external `--loader`/ESM hook, native addon
- * behavior, loader monkey-patching originating in code this scan never
- * analyzed, or execution that begins somewhere other than the configured
- * entrypoints. In-source loader/runtime capabilities ARE modeled -- they
+ * It does not model, and does not claim anything about any of
+ * {@link SUPPORTED_MODEL_EXCLUSIONS} -- the single, shared enumeration of
+ * what this model leaves out, kept there rather than restated here so no
+ * consumer that has to DISCLOSE the scope of a negative proof can drift
+ * out of agreement with it. In-source loader/runtime capabilities ARE
+ * modeled -- they
  * widen the closure and make it incomplete, which withdraws this evidence
  * entirely rather than weakening it.
  *
@@ -231,3 +232,40 @@ export interface Evidence {
    */
   readonly confirmedUnreachableTarget?: ConfirmedUnreachableTarget;
 }
+
+/**
+ * VulnTrace's DECLARED SUPPORTED MODULE-LOADING MODEL: the enumerated
+ * constructs every negative proof in this file is explicitly relative to,
+ * and therefore claims nothing about.
+ *
+ * The single source of this list (VT-HTML-01). It was previously stated
+ * only as prose inside {@link ConfirmedAbsentFromModuleLoadClosure}'s doc
+ * comment, which is invisible to anything that has to SHOW a reader what a
+ * NOT_AFFECTED does and does not mean -- and a second, hand-copied list in
+ * a renderer is exactly how such a disclosure drifts out of agreement with
+ * the contract it describes. Every consumer that discloses the scope of a
+ * negative proof (the HTML report today; anything else later) must read it
+ * from here rather than restating it.
+ *
+ * These are exclusions of the MODEL, not of a particular scan: no evidence
+ * object, no completeness flag, and no verdict can retire one. In-source
+ * loader/runtime capabilities are deliberately NOT in this list -- those
+ * ARE modeled, and they withdraw a proof entirely (by making the closure
+ * incomplete) rather than sitting outside it.
+ */
+export const SUPPORTED_MODEL_EXCLUSIONS: readonly string[] = [
+  "NODE_OPTIONS",
+  "an externally supplied --require preload",
+  "an external --loader / ESM hook",
+  "native addon behavior",
+  "loader monkey-patching originating in code this scan never analyzed",
+  "execution that begins somewhere other than the configured entrypoints",
+];
+
+/**
+ * The one-sentence framing that {@link SUPPORTED_MODEL_EXCLUSIONS} belongs
+ * to, kept beside the list so a consumer cannot show the exclusions
+ * without the claim they qualify (or vice versa).
+ */
+export const SUPPORTED_MODEL_STATEMENT =
+  "Every NOT_AFFECTED verdict is a positive claim established under VulnTrace's declared supported module-loading model, never a claim of universal runtime impossibility.";
