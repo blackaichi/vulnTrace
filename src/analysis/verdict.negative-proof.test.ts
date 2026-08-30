@@ -240,7 +240,12 @@ describe("VT-307e case 3-4: package IN (families B and C are the only options)",
       export: "vulnerable",
     });
     expect(proof?.entrypointRoots).toEqual([ENTRY]);
-    expect(proof?.callGraphComplete).toBe(true);
+    // VT-CONTRACT-02: the completeness fact names the reachable subgraph
+    // the search exhausted, never the whole call graph.
+    expect(proof?.reachableSubgraphComplete).toBe(true);
+    expect(
+      (proof as unknown as Record<string, unknown>)["callGraphComplete"],
+    ).toBeUndefined();
   });
 });
 
@@ -477,6 +482,13 @@ describe("VT-307e: proof family B requires ModuleLoadClosure corroboration", () 
     expect(f?.evidence?.confirmedAbsentFromModuleLoadClosure).toBeUndefined();
     expect(
       (proof as unknown as Record<string, unknown>)["callGraphComplete"],
+    ).toBeUndefined();
+    // VT-CONTRACT-02: family C's own completeness field must not leak onto
+    // family B either -- the two proofs establish different things.
+    expect(
+      (proof as unknown as Record<string, unknown>)[
+        "reachableSubgraphComplete"
+      ],
     ).toBeUndefined();
   });
 

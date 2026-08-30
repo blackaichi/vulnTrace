@@ -464,9 +464,13 @@ function renderFamilyC(
       code(`${evidence.target.module}#${evidence.target.export}`),
     ) +
     entrypointRootsRow(evidence.entrypointRoots) +
+    // VT-CONTRACT-02: labelled for the reachable subgraph the search
+    // actually exhausted. The previous label read "Call graph complete",
+    // which a reader skimming the row could take as whole-program
+    // completeness -- a stronger claim than this proof makes.
     definitionRow(
-      "Call graph complete",
-      `${code(evidence.callGraphComplete)} <span class="note">— the search over the reachable subgraph was exhaustive and met no unresolved edge. Scoped to that search, not a claim about the whole program.</span>`,
+      "Reachable subgraph complete",
+      `${code(evidence.reachableSubgraphComplete)} <span class="note">— the search over the subgraph reachable from the entrypoints was exhaustive and met no unresolved edge anywhere in it. Scoped to that subgraph, not a claim that the whole call graph is complete.</span>`,
     ) +
     `</dl>`
   );

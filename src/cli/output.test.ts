@@ -165,7 +165,7 @@ describe("validateScanOutput", () => {
             confirmedUnreachableTarget: {
               target: { module: "fixture-lib", export: "vulnerable" },
               entrypointRoots: ["src/index.ts"],
-              callGraphComplete: true,
+              reachableSubgraphComplete: true,
             },
           },
         },

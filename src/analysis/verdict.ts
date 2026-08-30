@@ -1255,6 +1255,53 @@ export async function buildFinding(
     };
   }
 
+  // PROOF FAMILY C's PRECONDITION, made structural (VT-CONTRACT-02).
+  //
+  // Family C's whole claim is carried by `unreachableTarget`: the one
+  // target that `analyzeReachability` searched to exhaustion and found
+  // unreachable with no unresolved edge in the reachable subgraph. Without
+  // it there is no proof, and a NOT_AFFECTED asserting one would be the
+  // unproven negative verdict AGENTS.md forbids.
+  //
+  // This branch is not believed reachable, and that is exactly why it is
+  // written as a guard rather than left implicit. Reaching the return
+  // below requires `checkedAny === true`, and `checkedAny` is set in only
+  // three places, none of which can arrive here without a target:
+  //
+  //  1. the module-load absence branch -- also sets
+  //     `absentFromModuleLoadClosure`, so family A returns above;
+  //  2. the `confirmedAbsentInstance` branch -- reachable only when
+  //     `packageInstance` is truthy (`resolveTargetNodes` returns that
+  //     flag only inside its own `if (packageInstance)` guard), and from
+  //     there it either sets `absentInstance` (family B returns above) or
+  //     sets `sawUnknown` (UNKNOWN returns above);
+  //  3. the reachability loop -- `analyzeReachability` returns exactly one
+  //     of three states: `reachable` returns AFFECTED above, `unknown`
+  //     sets `sawUnknown`, and `unreachable` sets `unreachableTarget`.
+  //
+  // So every surviving path sets it. The previous code encoded that
+  // argument as a conditional spread, which silently degraded to a
+  // NOT_AFFECTED with NO evidence object if the argument ever stopped
+  // holding -- the one shape that turns a refactor into a false negative.
+  // The invariant is now enforced where it is established: no
+  // authoritative unreachable target, no family C verdict. VT-CONTRACT-01's
+  // schema would also reject that shape at serialization; this makes the
+  // production construction state its own precondition rather than relying
+  // on a downstream check to catch a bug it should not be able to express.
+  if (!unreachableTarget) {
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      target: representativeTarget,
+      evidence: {
+        path: [],
+        reasons: [
+          "no vulnerable target was searched to exhaustion, so unreachability could not be positively established",
+        ],
+      },
+    };
+  }
+
   // PROOF FAMILY C: a resolved, attributed target searched to exhaustion
   // with no unresolved edge anywhere in the reachable subgraph.
   return {
@@ -1264,18 +1311,18 @@ export async function buildFinding(
     evidence: {
       path: [],
       reasons: [TARGET_UNREACHABLE_REASON],
-      ...(unreachableTarget
-        ? {
-            confirmedUnreachableTarget: {
-              target: {
-                module: unreachableTarget.module,
-                export: unreachableTarget.export,
-              },
-              entrypointRoots: entrypoints.map((e) => e.filePath),
-              callGraphComplete: true as const,
-            },
-          }
-        : {}),
+      confirmedUnreachableTarget: {
+        target: {
+          module: unreachableTarget.module,
+          export: unreachableTarget.export,
+        },
+        entrypointRoots: entrypoints.map((e) => e.filePath),
+        // VT-CONTRACT-02: names the reachable subgraph the search actually
+        // exhausted, not the whole call graph (see
+        // ConfirmedUnreachableTarget). Renamed from `callGraphComplete`,
+        // which overstated the claim.
+        reachableSubgraphComplete: true as const,
+      },
     },
   };
 }
