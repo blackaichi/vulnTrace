@@ -1,4 +1,50 @@
 /**
+ * THE NEGATIVE-PROOF CONTRACT (VT-307e).
+ *
+ * `NOT_AFFECTED` is a positive claim, never the absence of a positive one.
+ * VulnTrace has exactly three ways to make it, and every one of them must
+ * satisfy all of:
+ *
+ *  1. vulnerability applicability is already established -- the advisory
+ *     applies, the installed version is in a vulnerable range, a rule with
+ *     targets exists, and the target was established;
+ *  2. where the claim is instance-specific, the exact canonical
+ *     `PackageInstanceId` is authoritative -- never a package name, a
+ *     version, or a name+version pair;
+ *  3. the finding carries an explicit evidence OBJECT for that proof, not
+ *     merely a reason string;
+ *  4. every completeness condition that proof depends on holds;
+ *  5. no uncertainty capable of invalidating THAT proof is outstanding.
+ *
+ * Point 5 is deliberately proof-specific rather than global. A single
+ * "everything was complete" boolean would be trivially sound and nearly
+ * useless: it would let a limit on one traversal veto a conclusion drawn
+ * from another, and would hide WHICH condition actually mattered. The three
+ * families therefore carry different guards:
+ *
+ * | family | claim                                  | evidence                               | guards |
+ * | ------ | -------------------------------------- | -------------------------------------- | ------ |
+ * | A      | the instance cannot be LOADED at all   | {@link ConfirmedAbsentFromModuleLoadClosure} | gate-eligible closure; `complete === true` (ALL reasons, `traversal_truncated` included); non-empty roots; exact instance OUT; resolved target belongs to that instance |
+ * | B      | the graph never TRAVERSED the instance | {@link ConfirmedAbsentInstance}         | `graphTruncated === false`; VT-300's reachable closure-widening guard; no closure condition that could hide the instance's loading; AND a gate-eligible, complete `ModuleLoadClosure` independently corroborates the absence (VT-307e hardening -- see below) |
+ * | C      | the resolved target is never CALLED    | {@link ConfirmedUnreachableTarget}      | target resolved AND attributed; exhaustive search with zero unresolved edges in the reachable subgraph; `graphTruncated === false`; no closure condition that could hide a call path |
+ *
+ * Families B and C both reason from what the CALL GRAPH did not contain, so
+ * they share one extra guard that family A does not need and family A's own
+ * `complete` flag does not express -- see
+ * `invalidatesCallGraphNegativeProof` in analysis/module-load-closure.ts for
+ * the per-reason partition and, in particular, for why
+ * `traversal_truncated` is the one condition that blocks A but NOT B or C.
+ *
+ * Exactly one of the three evidence objects appears on any NOT_AFFECTED
+ * finding, and each reason string maps 1:1 to one family.
+ *
+ * What NONE of them claim: universal runtime impossibility. Every proof is
+ * relative to VulnTrace's declared supported model -- see
+ * {@link ConfirmedAbsentFromModuleLoadClosure} for the enumerated
+ * exclusions, which apply to all three families.
+ */
+
+/**
  * Supporting evidence for a verdict: the resolved source-location path and
  * human-readable justifications (see docs/SDD.md § 6).
  *
@@ -71,6 +117,99 @@ export interface ConfirmedAbsentFromModuleLoadClosure {
   readonly closureComplete: true;
 }
 
+/**
+ * Positive analytical evidence that one exact installed package instance
+ * was never traversed by the call graph, under conditions establishing
+ * that absence actually means something (VT-212/VT-300, hardened VT-307e).
+ *
+ * PROOF FAMILY B, and deliberately its own evidence type (VT-307e). Before
+ * VT-307e this proof shared family C's reason string, so a consumer could
+ * not tell "the analyzer never saw this install location" from "the
+ * analyzer saw the code and found no path to the symbol" -- two materially
+ * different claims with different preconditions.
+ *
+ * VT-307e HARDENING (its own final audit reproduced a false NOT_AFFECTED
+ * here). This evidence originally asserted `callGraphComplete: true` on
+ * the strength of `graphTruncated === false` alone -- but a non-truncated
+ * call graph is not a complete one: the call graph's own discovery never
+ * follows a re-export DECLARATION (`export * from "pkg"`) as an edge at
+ * all (VT-307c-fix-8 added that traversal to `ModuleLoadClosure` ONLY), so
+ * a package instance reached solely through a re-export chain can be
+ * genuinely loaded and called while remaining entirely absent from a
+ * merely-non-truncated call graph. Concretely reproduced: two installs of
+ * one package name/version, a `consumer` package doing
+ * `export * from "pkg"` to the nested one, an entrypoint importing the
+ * top-level install directly (so the graph discovers THAT instance) and
+ * calling the vulnerable export through `consumer` (so the nested
+ * instance's code genuinely runs) -- the nested instance was absent from a
+ * non-truncated call graph while being both loaded and called.
+ *
+ * This proof is therefore no longer sufficient on the call graph alone. It
+ * additionally requires independent corroboration from a gate-eligible,
+ * COMPLETE {@link ModuleLoadClosure} that ALSO does not contain this exact
+ * instance -- the SAME closure-membership fact {@link ConfirmedAbsentFromModuleLoadClosure}
+ * relies on, reached here because the call graph discovered some OTHER
+ * instance of this package name (Site A), not because it discovered none
+ * at all (Site B, family A's own domain). `callGraphComplete` is retired
+ * rather than kept as a now-half-true field: it asserted a completeness
+ * the call graph never actually had, and simply requiring closure
+ * corroboration alongside it would leave that same misleading name in the
+ * output. The two fields below name exactly, and only, what is actually
+ * established.
+ *
+ * Distinct from {@link ConfirmedAbsentFromModuleLoadClosure}: THAT proof
+ * says the instance cannot be LOADED at all, established directly by the
+ * module-load traversal, and is reached at Site B when the call graph
+ * discovered NO instance of the package name whatsoever. THIS one says the
+ * CALL GRAPH never traversed this exact instance while some OTHER instance
+ * of the same name was discovered (Site A), corroborated by the same kind
+ * of closure evidence but reached through a different code path with an
+ * additional guard (VT-300's closure-widening check) that family A does
+ * not need.
+ */
+export interface ConfirmedAbsentInstance {
+  /** The exact canonical install LOCATION never traversed -- never a name or version. */
+  readonly packageInstance: string;
+  /** The configured entrypoint files the traversal started from. */
+  readonly entrypointRoots: readonly string[];
+  /**
+   * Always `false`: a truncated call graph cannot support this proof
+   * (VT-202). Named for exactly what it establishes -- that the call
+   * graph's traversal did not hit a resource limit -- and nothing more;
+   * see this type's own doc comment for why that is NOT the same claim as
+   * "the call graph is complete".
+   */
+  readonly graphTruncated: false;
+  /**
+   * Always `true`: the independent {@link ModuleLoadClosure} corroboration
+   * VT-307e added is the load-bearing half of this proof. Without it,
+   * `graphTruncated === false` alone reproducibly permits a false
+   * NOT_AFFECTED (see this type's own doc comment) -- so this field is
+   * never omitted or defaulted, and `confirmedAbsentInstance` is never
+   * constructed without it having been checked.
+   */
+  readonly moduleLoadClosureComplete: true;
+}
+
+/**
+ * Positive analytical evidence that a RESOLVED, ATTRIBUTED vulnerable
+ * target has no call path from any configured entrypoint.
+ *
+ * PROOF FAMILY C. Unlike families A and B this says nothing about whether
+ * the package is present or loaded -- it may well be both. It says the
+ * specific symbol is never called, established by an exhaustive search
+ * that encountered no unresolved edge anywhere in the entrypoint's
+ * reachable subgraph.
+ */
+export interface ConfirmedUnreachableTarget {
+  /** The vulnerable target this proof is about, restated so the evidence stands alone. */
+  readonly target: { readonly module: string; readonly export: string };
+  /** The configured entrypoint files the search started from. */
+  readonly entrypointRoots: readonly string[];
+  /** Always `true`: a truncated call graph cannot support this proof (VT-202). */
+  readonly callGraphComplete: true;
+}
+
 export interface Evidence {
   readonly path: readonly string[];
   readonly reasons?: readonly string[];
@@ -79,4 +218,16 @@ export interface Evidence {
    * absence proof (see {@link ConfirmedAbsentFromModuleLoadClosure}).
    */
   readonly confirmedAbsentFromModuleLoadClosure?: ConfirmedAbsentFromModuleLoadClosure;
+  /**
+   * Present only on a NOT_AFFECTED reached through proof family B (see
+   * {@link ConfirmedAbsentInstance}). Mutually exclusive with the other
+   * two proof evidences -- exactly one negative-proof evidence object
+   * appears on any NOT_AFFECTED finding.
+   */
+  readonly confirmedAbsentInstance?: ConfirmedAbsentInstance;
+  /**
+   * Present only on a NOT_AFFECTED reached through proof family C (see
+   * {@link ConfirmedUnreachableTarget}).
+   */
+  readonly confirmedUnreachableTarget?: ConfirmedUnreachableTarget;
 }
