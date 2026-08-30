@@ -224,6 +224,17 @@ export interface Evidence {
    * {@link ConfirmedAbsentInstance}). Mutually exclusive with the other
    * two proof evidences -- exactly one negative-proof evidence object
    * appears on any NOT_AFFECTED finding.
+   *
+   * That exclusivity is a runtime property of `buildFinding`'s three
+   * mutually-exclusive early returns, and since VT-CONTRACT-01 it is also
+   * enforced structurally by the SERIALIZED contract:
+   * `schemas/result.schema.json` accepts a NOT_AFFECTED only with exactly
+   * one of these three present, and rejects any of them on an AFFECTED or
+   * UNKNOWN. These fields stay individually optional here because the
+   * three families are genuinely three shapes and a discriminated union
+   * would buy compile-time exclusivity at the cost of churn across every
+   * construction and read site; the invariant is enforced where a
+   * regression could actually escape -- at serialization.
    */
   readonly confirmedAbsentInstance?: ConfirmedAbsentInstance;
   /**

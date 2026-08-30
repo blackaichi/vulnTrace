@@ -140,7 +140,14 @@ describe("validateScanOutput", () => {
     expect(validateScanOutput(output)).toEqual([]);
   });
 
-  it("accepts a NOT_AFFECTED finding with evidence", () => {
+  // Updated by VT-CONTRACT-01. This case previously carried reasons ONLY,
+  // which the schema accepted before the negative-proof invariant was
+  // enforced -- an unproven NOT_AFFECTED. That shape predates VT-307e's
+  // `confirmedUnreachableTarget` evidence object, and production has not
+  // emitted it since; the finding now carries its family-C proof, which is
+  // what `buildFinding` actually produces for this reason string. The
+  // full exactly-one matrix lives in result-schema.negative-proof.test.ts.
+  it("accepts a NOT_AFFECTED finding with evidence and its negative proof", () => {
     const output: ScanOutput = {
       ...validOutput,
       findings: [
@@ -155,6 +162,11 @@ describe("validateScanOutput", () => {
             reasons: [
               "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
             ],
+            confirmedUnreachableTarget: {
+              target: { module: "fixture-lib", export: "vulnerable" },
+              entrypointRoots: ["src/index.ts"],
+              callGraphComplete: true,
+            },
           },
         },
       ],
