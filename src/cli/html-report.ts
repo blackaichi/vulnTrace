@@ -274,6 +274,17 @@ function verdictOf(finding: JsonFinding): ReportVerdict {
  * mapping `domain/evidence.ts` guarantees. Returns `undefined` when a
  * NOT_AFFECTED carries no proof evidence object at all, which the report
  * then states plainly rather than guessing a family from prose.
+ *
+ * Since VT-CONTRACT-01, `schemas/result.schema.json` structurally enforces
+ * that a NOT_AFFECTED carries EXACTLY one of the three, so for any
+ * schema-valid `ScanOutput` the first match below is also the only one,
+ * and the `undefined` branch is unreachable. Both are kept anyway: this
+ * renderer is a pure function that any caller may hand an unvalidated
+ * object (`renderHtmlReport` performs no validation of its own — see
+ * cli/scan.ts, which validates before rendering), and a report that
+ * silently mislabels a proof family is worse than one that degrades
+ * honestly. Defensive rendering is not made weaker just because the
+ * contract got stronger.
  */
 function proofFamilyOf(finding: JsonFinding): ProofFamily | undefined {
   const evidence = finding.evidence;
