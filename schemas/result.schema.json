@@ -173,11 +173,11 @@
               },
               "confirmedUnreachableTarget": {
                 "type": "object",
-                "description": "VT-307e proof family C: positive evidence that a resolved, attributed vulnerable target has no call path from any configured entrypoint, established by an exhaustive search that met no unresolved edge in the reachable subgraph. Says nothing about whether the package is present or loaded -- it may be both.",
+                "description": "VT-307e proof family C: positive evidence that a resolved, attributed vulnerable target has no call path from any configured entrypoint, established by an exhaustive search that met no unresolved edge in the reachable subgraph. Says nothing about whether the package is present or loaded -- it may be both. VT-CONTRACT-02 renamed this proof's completeness field from callGraphComplete to reachableSubgraphComplete: the old name asserted a property of the WHOLE call graph that this proof never established, and a consumer could reasonably have read it as a stronger claim than the analyzer makes. Family B's identical field was retired by VT-307e for the identical reason.",
                 "required": [
                   "target",
                   "entrypointRoots",
-                  "callGraphComplete"
+                  "reachableSubgraphComplete"
                 ],
                 "properties": {
                   "target": {
@@ -205,9 +205,9 @@
                     },
                     "description": "The configured entrypoint files this proof is relative to. Non-empty by construction."
                   },
-                  "callGraphComplete": {
+                  "reachableSubgraphComplete": {
                     "const": true,
-                    "description": "Always true: a truncated call graph cannot support this proof (VT-202)."
+                    "description": "Always true, and the narrowest accurate statement of what this proof rests on: the REACHABLE SUBGRAPH -- the nodes analyzeReachability reaches from the entrypoint source node over resolved edges -- was enumerated to exhaustion AND contained no unresolved edge anywhere in it. Both halves are load-bearing: analyzeReachability returns `unreachable` only when it drains its queue and met no unresolved edge, and returns `unknown` otherwise, so this is not merely 'the search finished'. Scoped to that subgraph and no further: NOT a claim that the call graph is complete, that the package is unloaded, or that unresolved edges elsewhere in the program do not exist. The separate graphTruncated === false requirement (VT-202) is enforced by buildFinding ahead of this proof."
                   }
                 }
               }
