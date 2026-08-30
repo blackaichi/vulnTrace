@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, statSync } from "node:fs";
+import { existsSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createModuleResolver } from "../code-intelligence/module-resolver.js";
 import { loadTsProject } from "../code-intelligence/ts-project.js";
@@ -46,6 +46,7 @@ import { normalizeOsvVulnerability } from "../vulnerabilities/osv-normalizer.js"
 import { matchVulnerabilities } from "../vulnerabilities/version-matching.js";
 import type { VulnerabilityProvider } from "../domain/vulnerability.js";
 import { errorMessage } from "./errors.js";
+import { renderHtmlReport } from "./html-report.js";
 import { type CliIo, defaultIo } from "./io.js";
 import {
   SCHEMA_VERSION,
@@ -60,6 +61,27 @@ export interface RunScanOptions {
   readonly projectPathArg: string;
   readonly configPathOverride?: string;
   readonly cveFilter?: string;
+  /**
+   * How to RENDER the finished scan result (`--format`). Defaults to
+   * `"json"`, which is the unchanged existing behavior in every respect:
+   * the same `ScanOutput`, the same schema validation, the same stdout.
+   *
+   * `"html"` renders that identical `ScanOutput` through
+   * {@link renderHtmlReport} instead. It is a presentation choice and
+   * nothing more -- no analysis, verdict, evidence or diagnostic differs
+   * by format, and the HTML report is generated from the very object the
+   * JSON output serializes (see html-report.ts).
+   */
+  readonly format?: "json" | "html";
+  /**
+   * `--output`: write the rendered result to this file instead of stdout.
+   * Required by `runCli` for `--format html` (there is no safe stdout
+   * behavior for a full HTML document -- see run.ts), optional for JSON.
+   * Relative paths resolve against the process working directory, not the
+   * scanned project, so `--output` behaves like every other shell
+   * redirection target the user could have typed.
+   */
+  readonly outputPath?: string;
   readonly pretty?: boolean;
   /** `--no-cache` (docs/SDD.md § 28): forces the vulnerability provider cache off regardless of config. */
   readonly noCache?: boolean;
@@ -568,9 +590,35 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     return 3;
   }
 
-  io.stdout(
-    formatScanOutput(output, options.pretty ?? config.output.pretty) + "\n",
-  );
+  // RENDERING, and only rendering, happens past this point. `output` is
+  // final and identical for every format: the HTML report is a
+  // presentation of the exact object the JSON output serializes, never a
+  // second analysis (see html-report.ts).
+  const rendered =
+    options.format === "html"
+      ? renderHtmlReport(output)
+      : formatScanOutput(output, options.pretty ?? config.output.pretty) + "\n";
+
+  if (options.outputPath !== undefined) {
+    const destination = path.resolve(options.outputPath);
+    try {
+      writeFileSync(destination, rendered, "utf-8");
+    } catch (error) {
+      // The scan itself succeeded; only delivery failed. Reported as a
+      // usage error (an unwritable destination is something the user
+      // typed) rather than silently exiting 0/1 as though the report the
+      // user asked for existed.
+      io.stderr(
+        `vulntrace: failed to write --output file ${destination}: ${errorMessage(error)}\n`,
+      );
+      return 2;
+    }
+    io.stderr(
+      `vulntrace: wrote ${options.format ?? "json"} report to ${destination}\n`,
+    );
+  } else {
+    io.stdout(rendered);
+  }
 
   return findings.some((finding) => finding.verdict === "AFFECTED") ? 1 : 0;
 }

@@ -47,6 +47,7 @@ for what's deliberately out of scope for this release.
 vulntrace scan .
 vulntrace scan . --cve CVE-XXXX
 vulntrace scan . --format json
+vulntrace scan . --format html --output report.html
 vulntrace scan . --config vulntrace.yml --pretty
 vulntrace scan . --no-cache
 vulntrace rules validate rules/vulntrace-rules.yml
@@ -56,6 +57,31 @@ vulntrace version
 Exit codes: `0` no AFFECTED findings, `1` at least one AFFECTED finding,
 `2` configuration/usage error, `3` analysis failure, `4` vulnerability
 provider/network failure (see `docs/SDD.md § 25` and `src/cli/scan.ts`).
+
+### HTML report
+
+```bash
+vulntrace scan . --format html --output report.html
+```
+
+Writes a single self-contained HTML file you can open directly from disk —
+no server, no CDN, no external stylesheet, font or image, and no network
+request of any kind. It is a presentation of the same scan result
+`--format json` prints, so the two never disagree about a verdict.
+
+It shows, per finding: the verdict, advisory, package and installed
+version; the vulnerable symbol; the reachability path for an `AFFECTED`;
+the concrete blockers behind an `UNKNOWN` (`UNKNOWN` is a first-class
+result, not an error); and, for a `NOT_AFFECTED`, which positive
+negative-proof family justified it, with the exact canonical package
+instance and entrypoint roots that proof is relative to. A prominent
+"Analysis scope / supported model" section states what those proofs are
+relative to and what the model does not cover.
+
+`--format html` requires `--output` (there is no safe stdout behavior for a
+whole HTML document); `--output` also works with `--format json` to write
+the JSON result to a file instead of stdout. `--output` overwrites an
+existing file.
 
 ### What a scan actually needs to find something
 
