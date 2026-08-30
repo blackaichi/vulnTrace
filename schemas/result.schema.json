@@ -140,11 +140,12 @@
               },
               "confirmedAbsentInstance": {
                 "type": "object",
-                "description": "VT-307e proof family B: positive evidence that this exact canonical installed package instance was never traversed by the call graph, under a non-truncated graph in which nothing reachable from an entrypoint could have loaded it (VT-212/VT-300). Distinct from confirmedAbsentFromModuleLoadClosure, which is the stronger claim that the instance cannot be LOADED at all.",
+                "description": "VT-307e proof family B (hardened by VT-307e's own final audit): positive evidence that this exact canonical installed package instance was never traversed by a non-truncated call graph, AND is independently corroborated absent from a complete, gate-eligible ModuleLoadClosure. Call-graph absence alone (graphTruncated=false) is NOT sufficient -- a package instance reached only through a re-export declaration is invisible to call-graph discovery while genuinely loaded and called, so the ModuleLoadClosure corroboration is the load-bearing half of this proof. Distinct from confirmedAbsentFromModuleLoadClosure, which is the stronger claim that the instance cannot be LOADED at all, established directly rather than by corroboration.",
                 "required": [
                   "packageInstance",
                   "entrypointRoots",
-                  "callGraphComplete"
+                  "graphTruncated",
+                  "moduleLoadClosureComplete"
                 ],
                 "properties": {
                   "packageInstance": {
@@ -160,9 +161,13 @@
                     },
                     "description": "The configured entrypoint files this proof is relative to. Non-empty by construction."
                   },
-                  "callGraphComplete": {
+                  "graphTruncated": {
+                    "const": false,
+                    "description": "Always false: a truncated call graph cannot support this proof (VT-202). Establishes only that the call graph's traversal did not hit a resource limit -- not that the call graph is complete."
+                  },
+                  "moduleLoadClosureComplete": {
                     "const": true,
-                    "description": "Always true: a truncated call graph cannot support this proof (VT-202)."
+                    "description": "Always true: the independent ModuleLoadClosure corroboration that makes this proof sound despite the call graph's own traversal not being import-complete (VT-307e)."
                   }
                 }
               },
