@@ -11,7 +11,22 @@ import type { VulnerableSymbolRule } from "../domain/target.js";
 import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
 import { fixturePath } from "../testing/fixtures.js";
 import { discoverEntrypoints } from "./entrypoints.js";
+import { buildGateEligibleModuleLoadClosure } from "./module-load-closure.js";
 import { buildFinding } from "./verdict.js";
+import type { DependencyNode } from "../domain/dependency.js";
+import { buildKnownPackageRoots } from "../domain/resolved-target.js";
+
+function dependencyNode(name: string, location: string): DependencyNode {
+  return {
+    id: `${name}@${location}`,
+    name,
+    version: "0.0.0",
+    ecosystem: "npm",
+    direct: true,
+    locations: [location],
+    dependencyPaths: [],
+  };
+}
 
 function write(root: string, relativePath: string, content: string): string {
   const filePath = path.join(root, relativePath);
@@ -502,6 +517,16 @@ describe("buildFinding regression: an installed instance never imported at all (
   // unconditionally, so the top-level instance's own Finding silently
   // inherited the nested instance's AFFECTED verdict (see ADV2-045,
   // tests/adversarial-v2/).
+  //
+  // VT-307e: family B's "never traversed by the call graph" conclusion for
+  // the top-level instance now additionally requires independent
+  // corroboration from a complete, gate-eligible ModuleLoadClosure (see the
+  // audit's own reproduced false NOT_AFFECTED for the case where that
+  // corroboration is unavailable). This fixture genuinely never loads the
+  // top-level instance at all, so a real closure built for it DOES
+  // corroborate the absence -- wired in below, matching how
+  // `cli/scan.ts`'s production path actually calls `buildFinding`, rather
+  // than relying on the pre-VT-307d calling convention this test predates.
   let tmpDir: string | undefined;
 
   afterEach(() => {
@@ -581,6 +606,23 @@ describe("buildFinding regression: an installed instance never imported at all (
       references: [],
     };
 
+    const knownPackageRoots = buildKnownPackageRoots(
+      [
+        dependencyNode("vuln-lib", path.join(tmpDir, "node_modules/vuln-lib")),
+        dependencyNode(
+          "vuln-lib",
+          path.join(tmpDir, "node_modules/consumer/node_modules/vuln-lib"),
+        ),
+        dependencyNode("consumer", path.join(tmpDir, "node_modules/consumer")),
+      ],
+      tmpDir,
+    );
+    const moduleLoadClosure = await buildGateEligibleModuleLoadClosure({
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      knownPackageRoots,
+    });
+
     const topLevelFinding = await buildFinding({
       vulnerability,
       packageName: "vuln-lib",
@@ -592,6 +634,8 @@ describe("buildFinding regression: an installed instance never imported at all (
       entrypoints: entrypointsResult.entrypoints,
       resolver,
       projectRoot: tmpDir,
+      knownPackageRoots,
+      moduleLoadClosure,
     });
     const nestedFinding = await buildFinding({
       vulnerability,
@@ -607,15 +651,117 @@ describe("buildFinding regression: an installed instance never imported at all (
       entrypoints: entrypointsResult.entrypoints,
       resolver,
       projectRoot: tmpDir,
+      knownPackageRoots,
+      moduleLoadClosure,
     });
 
     // The top-level instance was never imported anywhere -- the call graph
-    // never traversed it at all. Must be confirmed NOT_AFFECTED, never
-    // AFFECTED merely because it's the same package name as the one
+    // never traversed it at all, AND (VT-307e) a real, complete
+    // ModuleLoadClosure over this fixture independently corroborates that
+    // it is genuinely never loaded either. Must be confirmed NOT_AFFECTED,
+    // never AFFECTED merely because it's the same package name as the one
     // instance the graph did discover.
+    expect(moduleLoadClosure?.complete).toBe(true);
     expect(topLevelFinding?.verdict).toBe("NOT_AFFECTED");
+    expect(
+      topLevelFinding?.evidence?.confirmedAbsentInstance?.packageInstance,
+    ).toBe(path.join(tmpDir, "node_modules/vuln-lib"));
     // The nested instance's own vulnerable() genuinely is reachable.
     expect(nestedFinding?.verdict).toBe("AFFECTED");
+  });
+
+  it("degrades to UNKNOWN, not the old unconditional NOT_AFFECTED, when no ModuleLoadClosure is available to corroborate the absence", async () => {
+    // Same fixture shape as above, but calling buildFinding the way code
+    // predating VT-307d/e does -- no knownPackageRoots, no
+    // moduleLoadClosure. VT-307e's own final audit found the OLD
+    // unconditional behavior here unsound (graphTruncated=false alone is
+    // not "the call graph is complete"), so a caller that cannot supply
+    // closure corroboration must get the conservative answer, not a
+    // silently-preserved NOT_AFFECTED.
+    tmpDir = mkdtempSync(
+      path.join(tmpdir(), "vulntrace-verdict-unreached-instance-nocorrob-"),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "2.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/node_modules/vuln-lib/package.json",
+      JSON.stringify({ name: "vuln-lib", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/node_modules/vuln-lib/index.js",
+      "export function vulnerable() {\n  return 'vuln';\n}\n",
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/package.json",
+      JSON.stringify({ name: "consumer", version: "1.0.0", type: "module" }),
+    );
+    write(
+      tmpDir,
+      "node_modules/consumer/index.js",
+      'import { vulnerable } from "vuln-lib";\n\nexport function useIt() {\n  return vulnerable();\n}\n',
+    );
+    write(tmpDir, "package.json", JSON.stringify({ type: "module" }));
+    const entry = write(
+      tmpDir,
+      "src/index.ts",
+      'import { useIt } from "consumer";\n\nexport function main() {\n  return useIt();\n}\n',
+    );
+
+    const resolver = createModuleResolver(loadTsProject(tmpDir));
+    const [graph, entrypointsResult] = await Promise.all([
+      buildCallGraph({ entryFiles: [entry], resolver }),
+      discoverEntrypoints({
+        projectRoot: tmpDir,
+        resolver,
+        configuredEntrypoints: ["src/index.ts"],
+      }),
+    ]);
+
+    const rule: VulnerableSymbolRule = {
+      id: "GHSA-test-unreached-instance-nocorrob",
+      package: { name: "vuln-lib" },
+      targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
+    };
+    const vulnerability: Vulnerability = {
+      id: "GHSA-test-unreached-instance-nocorrob",
+      aliases: [],
+      package: "vuln-lib",
+      ecosystem: "npm",
+      affectedVersions: [{ introduced: "0" }],
+      fixedVersions: [],
+      references: [],
+    };
+
+    const topLevelFinding = await buildFinding({
+      vulnerability,
+      packageName: "vuln-lib",
+      packageVersion: "2.0.0",
+      packageInstance: path.join(tmpDir, "node_modules/vuln-lib"),
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      projectRoot: tmpDir,
+      // No knownPackageRoots, no moduleLoadClosure.
+    });
+
+    expect(
+      topLevelFinding?.verdict,
+      "an uncorroborated call-graph absence must never be reported as NOT_AFFECTED",
+    ).toBe("UNKNOWN");
+    expect(topLevelFinding?.evidence?.confirmedAbsentInstance).toBeUndefined();
   });
 
   it("falls back to the pre-VT-212 version heuristic when no packageInstance is provided (backward compatibility)", async () => {
