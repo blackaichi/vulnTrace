@@ -5,11 +5,11 @@ import { runRulesValidateCommand } from "./rules-validate.js";
 import { runScanCommand } from "./scan.js";
 import { runVersionCommand } from "./version.js";
 
-const SUPPORTED_FORMATS = new Set(["json"]);
+const SUPPORTED_FORMATS = new Set(["json", "html"]);
 
 const USAGE =
   "vulntrace: usage: vulntrace <command> [options]\n" +
-  "  vulntrace scan <path> [--format json] [--cve <id>] [--config <file>] [--pretty] [--no-cache]\n" +
+  "  vulntrace scan <path> [--format json|html] [--output <file>] [--cve <id>] [--config <file>] [--pretty] [--no-cache]\n" +
   "  vulntrace rules validate <file>\n" +
   "  vulntrace version\n";
 
@@ -54,7 +54,29 @@ export async function runCli(
       (typeof format !== "string" || !SUPPORTED_FORMATS.has(format))
     ) {
       io.stderr(
-        'vulntrace: unsupported --format value (only "json" is supported)\n',
+        'vulntrace: unsupported --format value (supported: "json", "html")\n',
+      );
+      return 2;
+    }
+
+    const output = flags.output;
+    if (output !== undefined && (typeof output !== "string" || output === "")) {
+      io.stderr("vulntrace: --output requires a file path\n");
+      return 2;
+    }
+
+    // `--format html` has no safe stdout behavior to fall back on. This
+    // CLI's stdout contract is the machine-readable scan result (see
+    // docs/SDD.md § 24), so writing a whole HTML document there would both
+    // break every existing consumer of that stream and hand an interactive
+    // user a screenful of markup. No existing convention covers a non-JSON
+    // stdout format, so this fails as a usage error rather than inventing
+    // one (and rather than silently picking an output filename, which
+    // would write to the user's working directory unasked).
+    if (format === "html" && output === undefined) {
+      io.stderr(
+        "vulntrace: --format html requires --output <file>\n" +
+          "  example: vulntrace scan . --format html --output report.html\n",
       );
       return 2;
     }
@@ -76,6 +98,8 @@ export async function runCli(
         projectPathArg,
         configPathOverride: config,
         cveFilter: cve,
+        format: format === "html" ? "html" : "json",
+        outputPath: output,
         pretty: flags.pretty === true,
         noCache: flags["no-cache"] === true,
         io,
