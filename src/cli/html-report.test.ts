@@ -148,7 +148,7 @@ const FAMILY_C_FINDING: ScanOutput["findings"][number] = {
     confirmedUnreachableTarget: {
       target: { module: "loaded-lib", export: "neverCalled" },
       entrypointRoots: ["/proj/src/index.ts"],
-      callGraphComplete: true,
+      reachableSubgraphComplete: true,
     },
   },
 };
@@ -533,15 +533,36 @@ describe("NOT_AFFECTED positive proof", () => {
 
     expect(html).toContain("Family C — confirmed unreachable target");
     expect(html).toContain("loaded-lib#neverCalled");
-    expect(html).toContain("Call graph complete");
+    // VT-CONTRACT-02: the row names the reachable subgraph the search
+    // actually exhausted, never the whole call graph.
+    expect(html).toContain("Reachable subgraph complete");
     expect(html).toContain(
-      "Scoped to that search, not a claim about the whole program",
+      "Scoped to that subgraph, not a claim that the whole call graph is complete",
     );
     expect(html).toContain(
       "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
     );
     expect(html).toContain(
       "Says nothing about whether the package is present or loaded",
+    );
+  });
+
+  it("never suggests whole-program call-graph completeness for family C (VT-CONTRACT-02)", () => {
+    const html = renderHtmlReport(scanOutput({ findings: [FAMILY_C_FINDING] }));
+
+    // The retired label and field name must not appear anywhere in the
+    // rendered document -- a reader skimming "Call graph complete" could
+    // take it as a claim the analyzer never makes.
+    expect(html).not.toContain("Call graph complete");
+    expect(html).not.toContain("callGraphComplete");
+    // Family B's own row, which legitimately mentions the call graph, is
+    // about truncation and is explicitly hedged -- it is untouched here.
+    const familyBHtml = renderHtmlReport(
+      scanOutput({ findings: [FAMILY_B_FINDING] }),
+    );
+    expect(familyBHtml).toContain("Call graph truncated");
+    expect(familyBHtml).toContain(
+      "not the same claim as the call graph being complete",
     );
   });
 

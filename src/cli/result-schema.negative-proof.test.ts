@@ -119,7 +119,7 @@ const FAMILY_B: ConfirmedAbsentInstance = {
 const FAMILY_C: ConfirmedUnreachableTarget = {
   target: { module: "vuln-lib", export: "vulnerable" },
   entrypointRoots: ["/project/src/index.js"],
-  callGraphComplete: true,
+  reachableSubgraphComplete: true,
 };
 
 /** A finding carrying whichever proof objects the case is about. */
@@ -394,6 +394,126 @@ describe("VT-CONTRACT-01 constrains only the negative-proof invariant", () => {
       );
       expect(issues.length).toBeGreaterThan(0);
     }
+  });
+});
+
+/**
+ * VT-CONTRACT-02 -- family C's own evidence shape.
+ *
+ * The completeness field was renamed `callGraphComplete` ->
+ * `reachableSubgraphComplete`: the old name asserted a property of the
+ * WHOLE call graph, which this proof never established. These cases pin
+ * the required shape so an incomplete or mislabelled family-C proof cannot
+ * be serialized.
+ */
+describe("VT-CONTRACT-02: family C evidence shape", () => {
+  /** Builds a family-C proof with one field removed or replaced. */
+  function familyC(
+    overrides: Record<string, unknown> = {},
+    remove?: string,
+  ): JsonFinding {
+    const proof: Record<string, unknown> = { ...FAMILY_C, ...overrides };
+    if (remove) {
+      delete proof[remove];
+    }
+    return {
+      vulnerability: "GHSA-fixture-0001",
+      package: "vuln-lib",
+      version: "1.0.0",
+      verdict: "NOT_AFFECTED",
+      evidence: {
+        path: [],
+        reasons: [
+          "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
+        ],
+        confirmedUnreachableTarget:
+          proof as unknown as ConfirmedUnreachableTarget,
+      },
+    };
+  }
+
+  it("a complete family C proof is valid", () => {
+    expect(validateScanOutput(outputWith(familyC()))).toEqual([]);
+  });
+
+  it("rejects a family C proof with no target", () => {
+    expect(isValid(familyC({}, "target"))).toBe(false);
+  });
+
+  it("rejects a family C target missing its module or export", () => {
+    expect(isValid(familyC({ target: { module: "vuln-lib" } }))).toBe(false);
+    expect(isValid(familyC({ target: { export: "vulnerable" } }))).toBe(false);
+  });
+
+  it("rejects a family C proof with no entrypoint roots", () => {
+    expect(isValid(familyC({}, "entrypointRoots"))).toBe(false);
+    // Present but empty is equally meaningless: "unreachable from nothing"
+    // is not a proof (minItems: 1).
+    expect(isValid(familyC({ entrypointRoots: [] }))).toBe(false);
+  });
+
+  it("rejects a family C proof with no completeness fact", () => {
+    expect(isValid(familyC({}, "reachableSubgraphComplete"))).toBe(false);
+  });
+
+  it("rejects a family C proof whose completeness fact is false", () => {
+    // The field is true-by-construction (`const: true`): the analyzer only
+    // ever reaches this proof after an exhausted, unresolved-edge-free
+    // search, so `false` is not a weaker proof -- it is a contradiction.
+    expect(isValid(familyC({ reachableSubgraphComplete: false }))).toBe(false);
+  });
+
+  it("rejects the retired callGraphComplete name as a substitute", () => {
+    // A producer still emitting the old field is missing the required new
+    // one, so it fails rather than silently validating.
+    expect(
+      isValid(
+        familyC({ callGraphComplete: true }, "reachableSubgraphComplete"),
+      ),
+    ).toBe(false);
+  });
+
+  it("keeps enforcing exactly-one and verdict placement for the renamed proof", () => {
+    // VT-CONTRACT-01 must survive the rename untouched.
+    expect(
+      isValid(findingWith("UNKNOWN", { confirmedUnreachableTarget: FAMILY_C })),
+    ).toBe(false);
+    expect(
+      isValid(
+        findingWith("AFFECTED", { confirmedUnreachableTarget: FAMILY_C }),
+      ),
+    ).toBe(false);
+    expect(
+      isValid(
+        findingWith("NOT_AFFECTED", {
+          confirmedAbsentInstance: FAMILY_B,
+          confirmedUnreachableTarget: FAMILY_C,
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      isValid(
+        findingWith("NOT_AFFECTED", { confirmedUnreachableTarget: FAMILY_C }),
+      ),
+    ).toBe(true);
+  });
+
+  it("leaves families A and B untouched by the rename", () => {
+    expect(
+      isValid(
+        findingWith("NOT_AFFECTED", {
+          confirmedAbsentFromModuleLoadClosure: FAMILY_A,
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      isValid(
+        findingWith("NOT_AFFECTED", { confirmedAbsentInstance: FAMILY_B }),
+      ),
+    ).toBe(true);
+    // Neither carries family C's completeness field.
+    expect(Object.keys(FAMILY_A)).not.toContain("reachableSubgraphComplete");
+    expect(Object.keys(FAMILY_B)).not.toContain("reachableSubgraphComplete");
   });
 });
 

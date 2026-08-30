@@ -201,14 +201,49 @@ export interface ConfirmedAbsentInstance {
  * specific symbol is never called, established by an exhaustive search
  * that encountered no unresolved edge anywhere in the entrypoint's
  * reachable subgraph.
+ *
+ * VT-CONTRACT-02 renamed this proof's completeness field from
+ * `callGraphComplete` to {@link ConfirmedUnreachableTarget.reachableSubgraphComplete}.
+ * The old name asserted a property of the WHOLE call graph, which this
+ * proof has never established and does not need: `analyzeReachability`
+ * only ever enumerates the region reachable from one entrypoint source
+ * node over RESOLVED edges, and nodes outside that region -- including
+ * their unresolved edges -- are never inspected and are irrelevant to the
+ * conclusion. An API consumer reading `callGraphComplete: true` could
+ * reasonably infer whole-program completeness and act on a stronger claim
+ * than the analyzer makes. This is the same correction VT-307e already
+ * applied to family B, which retired the identical field name for the
+ * identical reason (see {@link ConfirmedAbsentInstance}); family C simply
+ * kept it until now.
  */
 export interface ConfirmedUnreachableTarget {
   /** The vulnerable target this proof is about, restated so the evidence stands alone. */
   readonly target: { readonly module: string; readonly export: string };
   /** The configured entrypoint files the search started from. */
   readonly entrypointRoots: readonly string[];
-  /** Always `true`: a truncated call graph cannot support this proof (VT-202). */
-  readonly callGraphComplete: true;
+  /**
+   * Always `true`. Names exactly the completeness this proof rests on: the
+   * REACHABLE SUBGRAPH -- the set of nodes `analyzeReachability` reaches
+   * from the entrypoint source node over resolved edges -- was enumerated
+   * to exhaustion AND contained no unresolved edge anywhere in it.
+   *
+   * Both halves are load-bearing and both are captured by this one field,
+   * because `analyzeReachability` returns `unreachable` only when both
+   * hold: it drains its queue (exhaustion) and returns `unknown` instead
+   * if it met even one unresolved edge along the way. That is why this is
+   * NOT merely "the search finished" -- a search that meets a dynamic
+   * construct also finishes, and proves nothing.
+   *
+   * Deliberately scoped to that subgraph and no further. It is not a claim
+   * that the call graph is complete, that the package is unloaded, or that
+   * unresolved edges elsewhere in the program do not exist -- only that
+   * none of them lie between a configured entrypoint and this target along
+   * any resolved path. The separate `graphTruncated === false` requirement
+   * (VT-202), which guarantees the graph was not cut short by a resource
+   * limit before that region could be discovered, is enforced by
+   * `buildFinding` ahead of this proof rather than restated here.
+   */
+  readonly reachableSubgraphComplete: true;
 }
 
 export interface Evidence {

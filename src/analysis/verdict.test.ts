@@ -456,7 +456,7 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
         confirmedUnreachableTarget: {
           target: { module: "fixture-lib", export: "vulnerable" },
           entrypointRoots: ["/project/src/index.ts"],
-          callGraphComplete: true,
+          reachableSubgraphComplete: true,
         },
       },
     });
