@@ -233,7 +233,94 @@
           "required": [
             "evidence"
           ]
-        }
+        },
+        "allOf": [
+          {
+            "description": "VT-CONTRACT-01 -- EXACTLY ONE negative proof on a NOT_AFFECTED. NOT_AFFECTED is a positive claim (see src/domain/evidence.ts's negative-proof contract), so a NOT_AFFECTED finding must carry precisely one of the three proof-family evidence objects: never zero (an unproven NOT_AFFECTED is exactly the false negative AGENTS.md forbids), and never two or more (the three families make materially different claims under different preconditions, so a finding asserting more than one is contradictory about what was actually established). oneOf expresses EXACTLY one rather than at least one: each branch requires a different proof object, so a finding carrying two matches two branches and is rejected. `required: [evidence]` is restated here, rather than inherited from the sibling if/then above, so this invariant cannot be silently weakened by a later edit to that rule.",
+            "if": {
+              "required": [
+                "verdict"
+              ],
+              "properties": {
+                "verdict": {
+                  "const": "NOT_AFFECTED"
+                }
+              }
+            },
+            "then": {
+              "type": "object",
+              "required": [
+                "evidence"
+              ],
+              "properties": {
+                "evidence": {
+                  "type": "object",
+                  "oneOf": [
+                    {
+                      "title": "Family A -- module-load absence",
+                      "type": "object",
+                      "properties": {
+                        "confirmedAbsentFromModuleLoadClosure": true
+                      },
+                      "required": [
+                        "confirmedAbsentFromModuleLoadClosure"
+                      ]
+                    },
+                    {
+                      "title": "Family B -- exact-instance absence corroborated by call graph and module-load closure",
+                      "type": "object",
+                      "properties": {
+                        "confirmedAbsentInstance": true
+                      },
+                      "required": [
+                        "confirmedAbsentInstance"
+                      ]
+                    },
+                    {
+                      "title": "Family C -- confirmed unreachable target",
+                      "type": "object",
+                      "properties": {
+                        "confirmedUnreachableTarget": true
+                      },
+                      "required": [
+                        "confirmedUnreachableTarget"
+                      ]
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          {
+            "description": "VT-CONTRACT-01 -- NO negative proof on any other verdict. The three proof objects justify NOT_AFFECTED and nothing else: an AFFECTED carrying one would assert a reachable path and its own absence simultaneously, and an UNKNOWN carrying one would present a completed proof for a verdict that exists precisely because no proof completed. Stated as three false subschemas rather than one `not`, so a violation reports the exact offending field. This is what stops stale proof evidence from surviving an accidental object reuse or a future refactor.",
+            "if": {
+              "required": [
+                "verdict"
+              ],
+              "properties": {
+                "verdict": {
+                  "enum": [
+                    "AFFECTED",
+                    "UNKNOWN"
+                  ]
+                }
+              }
+            },
+            "then": {
+              "type": "object",
+              "properties": {
+                "evidence": {
+                  "type": "object",
+                  "properties": {
+                    "confirmedAbsentFromModuleLoadClosure": false,
+                    "confirmedAbsentInstance": false,
+                    "confirmedUnreachableTarget": false
+                  }
+                }
+              }
+            }
+          }
+        ]
       }
     },
     "coverage": {
