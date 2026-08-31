@@ -15,7 +15,7 @@ import type { VulnerableSymbolRule } from "../domain/target.js";
 import type { Finding } from "../domain/verdict.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { buildGateEligibleModuleLoadClosure } from "./module-load-closure.js";
-import { buildFinding } from "./verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 
 /**
  * VT-CONTRACT-02 -- proof family C's evidence is now STRUCTURALLY required,
@@ -177,7 +177,7 @@ describe("VT-CONTRACT-02: family C evidence is structurally required", () => {
       project,
     });
 
-    return buildFinding({
+    return buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "1.0.0",

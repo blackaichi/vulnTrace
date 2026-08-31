@@ -12,7 +12,7 @@ import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
 import { fixturePath } from "../testing/fixtures.js";
 import { discoverEntrypoints } from "./entrypoints.js";
 import { buildGateEligibleModuleLoadClosure } from "./module-load-closure.js";
-import { buildFinding } from "./verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 import type { DependencyNode } from "../domain/dependency.js";
 import { buildKnownPackageRoots } from "../domain/resolved-target.js";
 
@@ -73,7 +73,7 @@ describe("buildFinding end-to-end: real fixture, real rule, real call graph", ()
     const rule = rulesById.get("GHSA-fixture-0001");
     expect(rule).toBeDefined();
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: fixtureVulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -109,7 +109,7 @@ describe("buildFinding end-to-end: real fixture, real rule, real call graph", ()
       configuredEntrypoints: ["src/index.ts"],
     });
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: fixtureVulnerability("GHSA-fixture-unused"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -186,7 +186,7 @@ describe("buildFinding regression: CommonJS 'module.exports = someNamedFunction'
       targets: [{ module: "vuln-lib", export: "default", kind: "function" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-cjs-default",
         aliases: [],
@@ -278,7 +278,7 @@ describe("buildFinding regression: conditional exports resolved via the real imp
       targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-conditional-exports",
         aliases: [],
@@ -376,7 +376,7 @@ describe("buildFinding regression: non-hoisted multiple installed versions (VT-2
       targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-multi-version",
         aliases: [],
@@ -473,7 +473,7 @@ describe("buildFinding regression: non-hoisted multiple installed versions (VT-2
       references: [],
     };
 
-    const topLevelFinding = await buildFinding({
+    const topLevelFinding = await buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "2.0.0",
@@ -484,7 +484,7 @@ describe("buildFinding regression: non-hoisted multiple installed versions (VT-2
       resolver,
       projectRoot: tmpDir,
     });
-    const nestedFinding = await buildFinding({
+    const nestedFinding = await buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "1.0.0",
@@ -623,7 +623,7 @@ describe("buildFinding regression: an installed instance never imported at all (
       knownPackageRoots,
     });
 
-    const topLevelFinding = await buildFinding({
+    const topLevelFinding = await buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "2.0.0",
@@ -637,7 +637,7 @@ describe("buildFinding regression: an installed instance never imported at all (
       knownPackageRoots,
       moduleLoadClosure,
     });
-    const nestedFinding = await buildFinding({
+    const nestedFinding = await buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "1.0.0",
@@ -743,7 +743,7 @@ describe("buildFinding regression: an installed instance never imported at all (
       references: [],
     };
 
-    const topLevelFinding = await buildFinding({
+    const topLevelFinding = await buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "2.0.0",
@@ -801,7 +801,7 @@ describe("buildFinding regression: an installed instance never imported at all (
       targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-no-instance-hint",
         aliases: [],
@@ -891,7 +891,7 @@ describe("buildFinding regression: npm-aliased package instance is visible to gr
       targets: [{ module: "foo", export: "vulnerable", kind: "function" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-aliased-instance",
         aliases: [],
@@ -980,7 +980,7 @@ describe("buildFinding regression: {file, symbol} entrypoints, real files end to
       targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
     };
 
-    return buildFinding({
+    return buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-entrypoint-symbol",
         aliases: [],
@@ -1141,7 +1141,7 @@ describe("buildFinding regression: module-load execution is itself reachable evi
       }),
     ]);
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "1.0.0",
@@ -1194,7 +1194,7 @@ describe("buildFinding regression: module-load execution is itself reachable evi
       }),
     ]);
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "1.0.0",
@@ -1243,7 +1243,7 @@ describe("buildFinding regression: module-load execution is itself reachable evi
       }),
     ]);
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "1.0.0",
@@ -1340,7 +1340,7 @@ describe("buildFinding regression: structural class-member attribution, not bare
       targets: [{ module: "vuln-lib", export: "runDangerous", kind: "method" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-class-member-attribution",
         aliases: [],
@@ -1413,7 +1413,7 @@ describe("buildFinding regression: structural class-member attribution, not bare
       ],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-class-member-control",
         aliases: [],
@@ -1533,7 +1533,7 @@ describe("buildFinding regression: RWF-011 -- production real file, attribution 
       targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-rwf-011-regression",
         aliases: [],
@@ -1581,7 +1581,7 @@ describe("buildFinding regression: RWF-011 -- production real file, attribution 
       targets: [{ module: "vuln-lib", export: "safe", kind: "function" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-rwf-011-control",
         aliases: [],
@@ -1635,7 +1635,7 @@ describe("buildFinding regression: RWF-011 -- production real file, attribution 
       targets: [{ module: "vuln-lib", export: "vulnerable", kind: "function" }],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: {
         id: "GHSA-test-rwf-011-unreadable",
         aliases: [],

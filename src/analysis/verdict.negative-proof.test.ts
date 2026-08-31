@@ -18,7 +18,7 @@ import {
   type ClosureIncompletenessReason,
   type ModuleLoadClosure,
 } from "./module-load-closure.js";
-import { buildFinding } from "./verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 
 /**
  * VT-307e -- the unified NEGATIVE-PROOF matrix.
@@ -160,7 +160,7 @@ async function verdictFor(options: {
   rule?: VulnerableSymbolRule | undefined;
   allowSyntheticNameOnlyTargetBinding?: boolean;
 }) {
-  return buildFinding({
+  return buildFindingForTest({
     vulnerability,
     packageName: "fixture-lib",
     packageVersion: "1.0.0",
@@ -180,7 +180,7 @@ async function verdictFor(options: {
 }
 
 /** Which proof family (if any) produced this finding. */
-function familyOf(f: Awaited<ReturnType<typeof buildFinding>>): string {
+function familyOf(f: Awaited<ReturnType<typeof buildFindingForTest>>): string {
   const e = f?.evidence;
   if (e?.confirmedAbsentFromModuleLoadClosure) return "A";
   if (e?.confirmedAbsentInstance) return "B";
