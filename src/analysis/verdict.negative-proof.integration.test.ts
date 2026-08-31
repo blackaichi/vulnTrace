@@ -13,7 +13,7 @@ import {
 import type { VulnerableSymbolRule } from "../domain/target.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { buildGateEligibleModuleLoadClosure } from "./module-load-closure.js";
-import { buildFinding } from "./verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 
 /**
  * VT-307e -- the two LEGACY soundness fixes, pinned against REAL source
@@ -141,7 +141,7 @@ async function run(entrySrc: string, extraFiles: Record<string, string> = {}) {
     project,
   });
 
-  const finding = await buildFinding({
+  const finding = await buildFindingForTest({
     vulnerability,
     packageName: "vuln-lib",
     packageVersion: "1.0.0",

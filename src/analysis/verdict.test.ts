@@ -7,7 +7,7 @@ import type { Entrypoint } from "../domain/entrypoint.js";
 import type { CallEdge, CallGraph, GraphNode } from "../domain/graph.js";
 import type { VulnerableSymbolRule } from "../domain/target.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
-import { buildFinding } from "./verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 
 function fakeResolver(mapping: Record<string, string>): ModuleResolver {
   return {
@@ -86,7 +86,7 @@ const rule: VulnerableSymbolRule = {
 
 describe("buildFinding: dependency not vulnerable", () => {
   it("produces no finding when the version match is confidently not_affected", async () => {
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -113,7 +113,7 @@ describe("buildFinding: dependency not vulnerable", () => {
 
 describe("buildFinding: indeterminate version match degrades to UNKNOWN", () => {
   it("returns UNKNOWN without checking reachability at all", async () => {
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -145,7 +145,7 @@ describe("buildFinding: indeterminate version match degrades to UNKNOWN", () => 
 
 describe("buildFinding: no known vulnerable target", () => {
   it("returns UNKNOWN when no rule exists for the vulnerability", async () => {
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -177,7 +177,7 @@ describe("buildFinding: no known vulnerable target", () => {
   it("returns UNKNOWN when the rule has an empty targets array", async () => {
     const emptyRule: VulnerableSymbolRule = { ...rule, targets: [] };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -223,7 +223,7 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       ],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -281,7 +281,7 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       edges: [resolvedEdge(src.id, vulnerableNode.id)],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -326,7 +326,7 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
     const entrypointA: Entrypoint = { ...entrypoint, filePath: entryFileA };
     const entrypointB: Entrypoint = { ...entrypoint, filePath: entryFileB };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -374,7 +374,7 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       ],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -417,7 +417,7 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
       edges: [resolvedEdge(src.id, other.id)], // never reaches vulnerable
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -472,7 +472,7 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
 
     const graph: CallGraph = { nodes: [src], edges: [] };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -519,7 +519,7 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       edges: [resolvedEdge(src.id, other.id)],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -567,7 +567,7 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       edges: [resolvedEdge(src.id, other.id)],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -608,7 +608,7 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       edges: [resolvedEdge(src.id, vulnerableNode.id)],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -651,7 +651,7 @@ describe("buildFinding: UNKNOWN when reachability was never actually checked (re
 
     const graph: CallGraph = { nodes: [vulnerableNode], edges: [] };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -700,7 +700,7 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
       edges: [resolvedEdge(src.id, other.id), dynamicEdge],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -729,7 +729,7 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
   });
 
   it("produces UNKNOWN when the target's module cannot be resolved at all", async () => {
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -795,7 +795,7 @@ describe("buildFinding: {file, symbol} entrypoints scope reachability to only th
       symbol: "main",
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -834,7 +834,7 @@ describe("buildFinding: {file, symbol} entrypoints scope reachability to only th
       symbol: "unused",
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -885,7 +885,7 @@ describe("buildFinding: allowSyntheticNameOnlyTargetBinding gates the bare-name 
   it("does NOT bind via bare-name match when the flag is omitted (production default), even though the reachable edge would otherwise make this AFFECTED", async () => {
     const { graph, libFile } = buildSyntheticAffectedGraph();
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -908,7 +908,7 @@ describe("buildFinding: allowSyntheticNameOnlyTargetBinding gates the bare-name 
   it("does NOT bind via bare-name match when the flag is explicitly false", async () => {
     const { graph, libFile } = buildSyntheticAffectedGraph();
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -927,7 +927,7 @@ describe("buildFinding: allowSyntheticNameOnlyTargetBinding gates the bare-name 
   it("DOES bind via bare-name match, and reports AFFECTED, only when the flag is explicitly true", async () => {
     const { graph, libFile } = buildSyntheticAffectedGraph();
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -965,7 +965,7 @@ describe("buildFinding: Site B (package never discovered by the graph at all) is
     // never discovered, matching Site B exactly.
     const graph: CallGraph = { nodes: [src], edges: [] };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",

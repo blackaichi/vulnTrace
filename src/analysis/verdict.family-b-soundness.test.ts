@@ -20,7 +20,7 @@ import {
 import type { VulnerableSymbolRule } from "../domain/target.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { buildGateEligibleModuleLoadClosure } from "./module-load-closure.js";
-import { buildFinding } from "./verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 
 /**
  * VT-307e FAMILY B SOUNDNESS FIX -- the mandatory real end-to-end
@@ -155,7 +155,7 @@ async function run(
     project,
   });
 
-  const finding = await buildFinding({
+  const finding = await buildFindingForTest({
     vulnerability: vulnerability(),
     packageName: "vuln",
     packageVersion: "1.0.0",

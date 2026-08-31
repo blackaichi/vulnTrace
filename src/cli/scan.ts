@@ -35,6 +35,7 @@ import {
   collectGraphDiagnostics,
   computeCoverage,
 } from "../analysis/reachability.js";
+import { createAnalysisProofContext } from "../analysis/analysis-context.js";
 import { buildFinding } from "../analysis/verdict.js";
 import {
   buildGateEligibleModuleLoadClosure,
@@ -445,6 +446,31 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // NOT_AFFECTED to UNKNOWN when this is true.
   const graphTruncated = hitFileLimit || hitNodeLimit || hitTimeLimit;
 
+  // THE scan's single proof context (VT-CONTRACT-03), created exactly ONCE
+  // here -- never per advisory, per package or per finding -- and passed by
+  // reference into every `buildFinding` call below.
+  //
+  // Its position is deliberate and load-bearing: every input it binds must
+  // already be final. The dependency graph and `knownPackageRoots` exist,
+  // entrypoints are discovered, the call graph is built, `graphTruncated`
+  // has just been decided from the limit checks above, and the one
+  // `moduleLoadClosure` was built further up. Constructing it any earlier
+  // would freeze a value that had not yet been determined.
+  //
+  // This is what makes a cross-scan proof unrepresentable rather than
+  // merely discouraged: `buildFinding` no longer takes the closure, the
+  // graph, the roots or the entrypoints as separate arguments that could
+  // individually come from somewhere else.
+  const analysisProofContext = createAnalysisProofContext({
+    projectRoot,
+    resolver,
+    entrypoints: entrypointsResult.entrypoints,
+    knownPackageRoots,
+    graph,
+    graphTruncated,
+    moduleLoadClosure,
+  });
+
   const cveFilter = options.cveFilter;
   const dependencyGroups = groupDependenciesForAdvisoryLookup(dependencyNodes);
   const findings: Finding[] = [];
@@ -540,16 +566,11 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
             ),
             matchResult: match.result,
             rule,
-            graph,
-            entrypoints: entrypointsResult.entrypoints,
-            resolver,
-            projectRoot,
-            knownPackageRoots,
-            graphTruncated,
-            // The one closure built above, passed by reference to every
-            // finding -- never rebuilt, and never a closure from some
-            // other scan context.
-            moduleLoadClosure,
+            // The one proof context built above (VT-CONTRACT-03), passed
+            // by reference to every finding -- never rebuilt per advisory
+            // or per instance, and structurally incapable of carrying a
+            // closure, graph or entrypoint set from another scan.
+            context: analysisProofContext,
           });
           reachabilityMs += Date.now() - reachabilityStart;
           if (finding) {
