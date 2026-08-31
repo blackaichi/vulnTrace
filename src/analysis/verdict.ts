@@ -23,6 +23,10 @@ import type {
   VulnerableSymbolTarget,
 } from "../domain/target.js";
 import type { Finding } from "../domain/verdict.js";
+import {
+  type AnalysisProofContext,
+  isAnalysisProofContext,
+} from "./analysis-context.js";
 import type { ConfirmedAbsentFromModuleLoadClosure } from "../domain/evidence.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import type { VersionMatchResult } from "../vulnerabilities/version-matching.js";
@@ -57,59 +61,25 @@ export interface BuildFindingOptions {
   readonly matchResult: VersionMatchResult;
   /** From TASK-012's indexRulesByVulnerabilityId lookup; `undefined` if no rule targets this vulnerability. */
   readonly rule: VulnerableSymbolRule | undefined;
-  readonly graph: CallGraph;
-  readonly entrypoints: readonly Entrypoint[];
-  readonly resolver: ModuleResolver;
-  readonly projectRoot: string;
   /**
-   * The scan's dependency-provenance registry (VT-307c-fix-4b; see
-   * `domain/resolved-target.ts`'s `buildKnownPackageRoots`) -- required for
-   * `identifyModule` to correctly attribute a linked dependency (an npm
-   * workspace member, a `file:` dependency, ...) whose physical target has
-   * no `node_modules` segment of its own, REGARDLESS of whether that
-   * target happens to live inside or outside `projectRoot` (VT-307c-fix-4's
-   * own now-superseded `projectRoot`-containment check silently failed for
-   * the common in-tree-workspace case). Optional so existing callers/tests
-   * that predate this option keep their current behavior for any install
-   * shape that already has a `node_modules` segment.
-   */
-  readonly knownPackageRoots?: KnownPackageRoots;
-  /**
-   * Whether call-graph construction was truncated by a configured resource
-   * limit (`analysis.limits.maxFiles`/`maxGraphNodes`/`maxAnalysisSeconds`
-   * — see docs/SDD.md § 26, § 28-29's hardening requirement) before it
-   * could discover every file a resolved call chain would otherwise reach.
-   * Defaults to `false` so every existing caller that doesn't pass it keeps
-   * its current behavior (see VT-202, SDD-v0.2.md § 3.3: "NOT_AFFECTED is
-   * valid only when ... analysis coverage is complete"). A truncated graph
-   * cannot positively confirm non-reachability -- the untraversed region
-   * might have contained the very path being searched for -- so `buildFinding`
-   * must not report NOT_AFFECTED against one, even when its own search found
-   * no path and no unknown edge along the way it did traverse.
-   */
-  readonly graphTruncated?: boolean;
-  /**
-   * The scan's single gate-eligible {@link ModuleLoadClosure} (VT-307d),
-   * built exactly once per scan by `cli/scan.ts` through
-   * `buildGateEligibleModuleLoadClosure` and passed here by reference.
+   * EVERY per-scan, proof-relevant input, bound together (VT-CONTRACT-03).
    *
-   * `undefined` means NO absence proof is available for this scan -- no
-   * configured/discovered entrypoints, or a closure-construction failure.
-   * `undefined` must therefore never be read as "an empty closure", which
-   * would say every installed package instance is unloadable; it says
-   * nothing at all, and every finding falls through the existing
-   * conservative verdict path unchanged.
+   * Replaces what used to be six independent options -- `graph`,
+   * `entrypoints`, `resolver`, `projectRoot`, `knownPackageRoots`,
+   * `graphTruncated` and `moduleLoadClosure`. Independent options meant a
+   * caller could supply most of them from one scan and the rest from
+   * another, and a closure from an unrelated project trivially does not
+   * contain this project's install paths -- so "absent from a complete
+   * closure" was satisfiable with evidence that proved nothing. That was
+   * reproduced end-to-end against the pre-fix tree, turning a genuinely
+   * loaded-and-called instance's correct UNKNOWN into a false NOT_AFFECTED.
    *
-   * Being present is NOT on its own a licence to conclude anything: only
-   * a closure with `complete === true` supports an absence conclusion, and
-   * only for a `packageInstance` that is genuinely absent from
-   * `loadedPackageInstances`. See the Site-B gate in `checkReachability`.
-   *
-   * Proves module-load absence ONLY. It says nothing about which SYMBOLS
-   * inside a loaded package are reachable, so it can never rescue a Site-A
-   * UNKNOWN (package instance loaded, vulnerable target unattributed).
+   * Bundling them makes the mixture unrepresentable: there is no argument
+   * left to pass from the wrong scan. See
+   * `analysis/analysis-context.ts` for the brand and the runtime mark that
+   * close the remaining fabricate-a-context route.
    */
-  readonly moduleLoadClosure?: ModuleLoadClosure;
+  readonly context: AnalysisProofContext;
   /**
    * Test-only escape hatch (VT-301B; see RWF-011,
    * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 7.3/§ 10, R-6). Allows
@@ -1019,15 +989,36 @@ export async function buildFinding(
     packageInstance,
     matchResult,
     rule,
-    graph,
-    entrypoints,
-    resolver,
-    projectRoot,
-    knownPackageRoots,
-    moduleLoadClosure,
-    graphTruncated = false,
+    context,
     allowSyntheticNameOnlyTargetBinding = false,
   } = options;
+
+  const { graph, entrypoints, resolver, projectRoot, knownPackageRoots } =
+    context;
+
+  // FAIL CLOSED on a context this analyzer did not create (VT-CONTRACT-03).
+  //
+  // The brand on `AnalysisProofContext` already makes an object literal a
+  // compile error, so reaching here means someone cast their way past the
+  // type system -- exactly what a cross-wiring caller would do once the
+  // compiler started objecting. Every negative proof is withdrawn for such
+  // a context: the closure is dropped, and `graphTruncated` is forced true
+  // so the call-graph-derived proofs (families B and C) are gated off by
+  // the existing VT-202 rule rather than by a new code path with its own
+  // semantics.
+  //
+  // It does NOT throw. `buildFinding` is a library entry point whose whole
+  // contract is that uncertainty becomes UNKNOWN rather than an exception,
+  // and throwing here would convert a caller's mistake into a crashed scan
+  // for an end user -- strictly worse than the conservative verdict the
+  // analyzer already knows how to produce. It also does not fabricate an
+  // AFFECTED: a mismatched context is an absence of information, not
+  // evidence of reachability.
+  const contextTrusted = isAnalysisProofContext(context);
+  const moduleLoadClosure = contextTrusted
+    ? context.moduleLoadClosure
+    : undefined;
+  const graphTruncated = contextTrusted ? context.graphTruncated : true;
 
   const base = {
     vulnerability: vulnerability.id,

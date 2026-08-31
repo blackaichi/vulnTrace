@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildGateEligibleModuleLoadClosure } from "../analysis/module-load-closure.js";
-import { buildFinding } from "../analysis/verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
 import { createModuleResolver } from "../code-intelligence/module-resolver.js";
 import { loadTsProject } from "../code-intelligence/ts-project.js";
@@ -623,7 +623,7 @@ describe("VT-CONTRACT-01: real production findings satisfy the hardened contract
       project,
     });
 
-    return buildFinding({
+    return buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
       packageVersion: "1.0.0",

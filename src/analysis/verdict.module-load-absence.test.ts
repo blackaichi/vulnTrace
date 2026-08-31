@@ -12,7 +12,7 @@ import type {
   ClosureIncompletenessReason,
   ModuleLoadClosure,
 } from "./module-load-closure.js";
-import { buildFinding } from "./verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 
 /**
  * VT-307d Commit 2 -- the Site-B MODULE-LOAD ABSENCE negative proof.
@@ -152,7 +152,7 @@ async function findingFor(options: {
   packageInstance?: string;
   graphTruncated?: boolean;
 }) {
-  return buildFinding({
+  return buildFindingForTest({
     vulnerability: vulnerability("GHSA-fixture-0001"),
     packageName: "fixture-lib",
     packageVersion: "1.0.0",
@@ -456,7 +456,7 @@ describe("VT-307d case 26: duplicate same-name/same-version installs stay indepe
   it("the LOADED exact instance is IN -> the gate must not fire for it", async () => {
     const loadedFile =
       "/node_modules/consumer/node_modules/fixture-lib/index.js";
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -480,7 +480,7 @@ describe("VT-307d case 26: duplicate same-name/same-version installs stay indepe
   });
 
   it("the UNUSED exact instance is independently OUT -> the gate may fire for it alone", async () => {
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -603,7 +603,7 @@ describe("VT-307d: the gate never fires before applicability guards", () => {
   const absentClosure = closureWithout();
 
   it("produces NO finding at all when the version is confidently not affected", async () => {
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -620,7 +620,7 @@ describe("VT-307d: the gate never fires before applicability guards", () => {
   });
 
   it("stays UNKNOWN for an indeterminate version match", async () => {
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -640,7 +640,7 @@ describe("VT-307d: the gate never fires before applicability guards", () => {
   });
 
   it("stays UNKNOWN when no rule targets the vulnerability", async () => {
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -661,7 +661,7 @@ describe("VT-307d: the gate never fires before applicability guards", () => {
 
   it("stays UNKNOWN when the target module cannot be resolved at all", async () => {
     // No target established -> nothing to compare against the closure.
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -683,7 +683,7 @@ describe("VT-307d: the gate never fires before applicability guards", () => {
   it("stays UNKNOWN when the finding carries no authoritative packageInstance", async () => {
     // Without exact identity there is nothing to prove absent -- a
     // name-based fallback here is precisely what must not exist.
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -707,7 +707,7 @@ describe("VT-307d: the gate never fires before applicability guards", () => {
     // The finding is about /node_modules/fixture-lib, but the rule's
     // target module resolves into a different install. A proof about this
     // finding's package would be an answer to a different question.
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
@@ -851,7 +851,7 @@ describe("VT-307d: focused adversarial attack on the gate", () => {
       ],
     };
 
-    const finding = await buildFinding({
+    const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
