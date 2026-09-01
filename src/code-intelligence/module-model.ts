@@ -1,11 +1,13 @@
 import ts from "typescript";
 import type { SourceLocation } from "../domain/graph.js";
 import {
+  classifyLocalBinding,
   commonJsModuleReExportOrigin,
+  commonJsPropertyExportRhs,
   commonJsPropertyReExportOrigin,
   declaresCommonJsAmbientShadow,
+  refusesLocalIdentifierProvenance,
   resolveCommonJsReExportExpression,
-  resolveModuleScopeBindingValue,
   unwrapParentheses,
   type CommonJsReExportOrigin,
 } from "./commonjs-reexports.js";
@@ -100,6 +102,52 @@ export interface ExportBinding {
    * {@link directExportedFunctionLocation}.
    */
   readonly localFunctionLocation?: SourceLocation;
+  /**
+   * Whether this export's value is an identifier whose same-file binding
+   * the single-assignment model EXAMINED AND REFUSED (RWF-013; see
+   * `classifyLocalBinding` in commonjs-reexports.ts).
+   *
+   * Purely internal analysis state: never serialized, never surfaced in
+   * evidence, and read by exactly one consumer —
+   * {@link mapExportsToFunctions}, which must not fall back to a
+   * name-only function search for such an export.
+   *
+   * This exists because {@link localFunctionLocation} being `undefined`
+   * is NOT sufficient to decide that question, and treating it as if it
+   * were is what made the defect look fixable without a new field.
+   * `undefined` there is the answer for every export RWF-003's identity
+   * relation does not model at all, most of which the older name-based
+   * attribution handles perfectly well and soundly:
+   *
+   * ```text
+   * function fn() {}          module.exports = fn   -- a function DECLARATION,
+   *                                                    not a variable binding
+   * const C = class {};       module.exports = C    -- a class, attributed by
+   *                                                    name via its constructor
+   * exports.foo = function () {}                    -- a property export, which
+   *                                                    this relation never covered
+   * ```
+   *
+   * Suppressing the fallback on `undefined` alone would silently drop all
+   * of those. So the two facts are carried separately: a *location* says
+   * "the export IS this function node", and this flag says "the file's own
+   * text contradicts any claim about what this name holds". Only the
+   * second one is grounds for refusing to guess.
+   *
+   * The refused shape RWF-013 exists for:
+   *
+   * ```js
+   * let fn = function () {};   // indexed under the name "fn"
+   * fn = other;                // ...and immediately stale
+   * module.exports = fn;       // binds "fn" -> the STALE node, by name
+   * ```
+   *
+   * Deliberately independent of the module-scope and ambient-shadow
+   * guards that gate {@link localFunctionLocation}: a conditional
+   * assignment or a file that shadows `module`/`exports`/`require` has
+   * strictly LESS provenance for the same identifier, never more.
+   */
+  readonly localIdentifierProvenanceRefused?: boolean;
   readonly location: SourceLocation;
 }
 
@@ -305,6 +353,9 @@ function unpackObjectLiteralExports(
           index,
           property.initializer,
         ),
+        localIdentifierProvenanceRefused: refusedProvenanceFlag(
+          refusesLocalIdentifierProvenance(index, property.initializer),
+        ),
         location: toSourceLocation(sourceFile, property),
       });
     } else if (
@@ -343,6 +394,9 @@ function unpackObjectLiteralExports(
         commonJsReExport: resolveCommonJsReExportExpression(
           index,
           property.name,
+        ),
+        localIdentifierProvenanceRefused: refusedProvenanceFlag(
+          refusesLocalIdentifierProvenance(index, property.name),
         ),
         location: toSourceLocation(sourceFile, property),
       });
@@ -395,7 +449,19 @@ function buildExportBindings(
       case "commonjs-module-exports":
         sawCommonJsModuleExports = true;
         break;
-      case "commonjs-exports-property":
+      case "commonjs-exports-property": {
+        // `exports.parse = parse` binds an export to an identifier
+        // exactly as `module.exports = parse` does, and is the shape the
+        // RWF-013 reproducer actually hits (see
+        // fixtures/commonjs-stale-alias-export/). There is no `localName`
+        // here — TASK-014 infers the assigned function's own name from
+        // the assignment target — so the fallback's lookup key is the
+        // EXPORTED name, which matches the stale initializer just as
+        // readily whenever the two coincide.
+        const propertyRhs =
+          exp.exportedName === undefined
+            ? undefined
+            : commonJsPropertyExportRhs(index, exp.exportedName);
         results.push({
           kind: "named",
           syntax: "commonjs",
@@ -404,9 +470,14 @@ function buildExportBindings(
             exp.exportedName === undefined
               ? undefined
               : commonJsPropertyReExportOrigin(index, exp.exportedName),
+          localIdentifierProvenanceRefused: refusedProvenanceFlag(
+            propertyRhs !== undefined &&
+              refusesLocalIdentifierProvenance(index, propertyRhs),
+          ),
           location: exp.location,
         });
         break;
+      }
       case "named":
       case "default":
       case "re-export":
@@ -524,14 +595,24 @@ function directExportedFunctionLocation(
     return undefined;
   }
 
-  const bound = resolveModuleScopeBindingValue(index, value.text);
-  if (bound === undefined) {
+  const bound = classifyLocalBinding(index, value.text);
+  if (bound.kind !== "single-assignment") {
     return undefined;
   }
-  const boundValue = unwrapParentheses(bound);
+  const boundValue = unwrapParentheses(bound.value);
   return isDirectFunctionValue(boundValue)
     ? toSourceLocation(index.sourceFile, boundValue)
     : undefined;
+}
+
+/**
+ * `true` or absent, never `false` — {@link ExportBinding} is a bag of
+ * facts about an export, and "we did not refuse anything" is the absence
+ * of a fact rather than one. Keeps every export binding this relation has
+ * nothing to say about shaped exactly as it was before RWF-013.
+ */
+function refusedProvenanceFlag(refused: boolean): true | undefined {
+  return refused ? true : undefined;
 }
 
 function wholeModuleDefaultExport(
@@ -559,6 +640,13 @@ function wholeModuleDefaultExport(
     // value has an identity and no name, and a named function expression
     // has both.
     localFunctionLocation: directExportedFunctionLocation(index, assignment),
+    // RWF-013: `module.exports = fn` where `fn` is a variable this file
+    // reassigns (or otherwise cannot prove single-assignment for). The
+    // name "fn" is still a perfectly good same-file match for the STALE
+    // initializer, so the fallback must be told not to take it.
+    localIdentifierProvenanceRefused: refusedProvenanceFlag(
+      refusesLocalIdentifierProvenance(index, assignment.rhs),
+    ),
     // `module.exports = require("./lib")` / `= require("./lib").foo`
     // (RWF-004a): the module's whole exported value comes from another
     // module. Unlike `localName`, this survives the value being anonymous.
@@ -634,6 +722,21 @@ export function mapExportsToFunctions(
         result.set(canonicalName, byIdentity);
         continue;
       }
+    }
+
+    // RWF-013: the export's value is an identifier whose binding this
+    // file's own text contradicts (reassigned, multiply declared, not
+    // module scope, ...). The name search below would still find a
+    // same-named function -- typically the STALE initializer, which
+    // source indexing names after the very variable that was reassigned
+    // away from it -- and binding that manufactures a confident target
+    // out of a value the analyzer just proved it cannot determine. An
+    // export nothing can attribute is an unresolved target (UNKNOWN),
+    // which is the correct answer here; a stale one is a false verdict in
+    // whichever direction the stale node's reachability happens to fall.
+    // See ExportBinding.localIdentifierProvenanceRefused.
+    if (exp.localIdentifierProvenanceRefused) {
+      continue;
     }
 
     // Prefer the actual local identifier; for CommonJS `exports.foo = ...`
