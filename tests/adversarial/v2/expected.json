@@ -724,5 +724,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+  },
+  {
+    "id": "ADV2-067",
+    "dir": "adv2-067-same-package-cjs-reexport-facade",
+    "category": "67. RWF-004a: a package whose public facade DECLARES NOTHING and assembles module.exports entirely from require()d siblings inside the same installed package",
+    "description": "vt2-vuln-lib's index.js declares no functions at all: it does `var ops = require('./internal/ops')` and exports `{ dangerousOp: ops.dangerousOp, ... }`, where ./internal/ops.js is itself `module.exports = require('../impl')` -- so the real dangerousOp sits two same-package re-export hops from the name the application calls. This is the dominant authoring pattern for any CommonJS package past trivial size (qs, semver and debug all do it) and is the exact shape of RWF-004a. Three traps are layered on top: (a) the same package contains unused.js, which declares an identically-named dangerousOp that nothing exports -- a bare same-package name search binds there; (b) the facade also re-exports a DIFFERENT installed package's identically-named dangerousOp as `borrowedOp`, so a chase that ignores package identity can wander into vt2-decoy-lib; (c) safeOp travels the identical mechanism and is never called, so a mechanism that resolves the relation but loses track of which name it resolved would flag the wrong symbol. The application calls only lib.dangerousOp(userInput), directly and unconditionally.",
+    "expected": "AFFECTED",
+    "reason": "main() passes userInput straight into lib.dangerousOp(), and lib.dangerousOp IS vt2-vuln-lib's own impl.js dangerousOp -- reached through two statically-written, literal-specifier require() hops that never leave the installed package. A human analyst reading index.js, internal/ops.js and impl.js together has no ambiguity: the call lands on the exact function GHSA-vt2v2-0001 names, in this exact installed instance. Neither the never-exported decoy in unused.js nor vt2-decoy-lib's same-named function is on that path, and neither may be substituted for it.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
   }
 ]
