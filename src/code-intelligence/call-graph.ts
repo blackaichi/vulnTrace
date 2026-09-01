@@ -7,6 +7,11 @@ import type {
   GraphNodeId,
 } from "../domain/graph.js";
 import {
+  identifyModule,
+  type KnownPackageRoots,
+  type PackageInstanceId,
+} from "../domain/resolved-target.js";
+import {
   classifyClosureWideningCall,
   isStaticRequireCall,
 } from "./loader-constructs.js";
@@ -245,22 +250,27 @@ function findLocalFunctionNodeId(
 }
 
 /**
- * Follows a named re-export chain (`export { x } from "y";`, one or more
- * hops) to the graph node implementing its ultimate origin (see
- * SDD-v0.2.md § 7.4, VT-209). Before this, `export { x } from "y"` was
- * recorded in the module model but never chased: `mapExportsToFunctions`
- * deliberately skips `kind: "re-export"` entries (see module-model.ts),
- * so a call reached only through a re-export always fell to an honest but
- * imprecise `unresolved_target` edge, even when the real target was
- * trivially one hop away.
+ * Follows a re-export chain (one or more hops) to the graph node
+ * implementing its ultimate origin (see SDD-v0.2.md § 7.4, VT-209;
+ * RWF-004a). Two syntaxes are chased, by two deliberately separate
+ * relations with deliberately different reach:
  *
- * Scoped to the named form only -- `export * from "y"` wildcard
- * re-exports are a different problem (matching one specific name against
- * an unenumerated set of re-exported names) and aren't attempted here.
- * `visited` guards against a re-export cycle (`a` re-exports from `b`,
- * `b` re-exports from `a`, with no real definition anywhere): each
- * `${filePath}#${exportName}` hop is recorded, and a repeat stops the
- * chase rather than recursing forever.
+ * - ESM `export { x } from "y";` — unchanged since VT-209, including its
+ *   cross-package reach ({@link resolveEsmReExport}).
+ * - CommonJS `exports.x = require("./y").x` and friends, restricted to the
+ *   SAME canonical PackageInstance ({@link resolveCommonJsReExport}).
+ *
+ * `visited` guards against a re-export cycle (`a` re-exports from `b`, `b`
+ * re-exports from `a`, with no real definition anywhere): each
+ * file+export-name hop is recorded here, ONCE, before either relation
+ * runs, and a repeat stops the chase rather than recursing forever. Both
+ * relations recurse back through this function, so they share one visited
+ * set and compose across syntaxes without either needing to know about the
+ * other. There is deliberately no separate depth limit: the visited set
+ * already bounds the chase by the (file, export name) pairs reachable
+ * through real resolved specifiers, and a fixed depth cap would silently
+ * return "no target" — indistinguishable from "no re-export" — on a
+ * legitimate deep chain.
  */
 async function resolveReExportChain(
   prepared: FileGraphData,
@@ -274,6 +284,31 @@ async function resolveReExportChain(
   }
   visited.add(hopKey);
 
+  const viaEsm = await resolveEsmReExport(prepared, exportName, ctx, visited);
+  if (viaEsm) {
+    return viaEsm;
+  }
+
+  return resolveCommonJsReExport(prepared, exportName, ctx, visited);
+}
+
+/**
+ * The ESM half of {@link resolveReExportChain} (VT-209), behaviorally
+ * unchanged since it shipped — extracted only so the CommonJS half can sit
+ * beside it rather than inside it. Before VT-209, `export { x } from "y"`
+ * was recorded in the module model but never chased: `mapExportsToFunctions`
+ * deliberately skips `kind: "re-export"` entries (see module-model.ts).
+ *
+ * Scoped to the named form only — `export * from "y"` wildcard re-exports
+ * are a different problem (matching one specific name against an
+ * unenumerated set of re-exported names) and aren't attempted here.
+ */
+async function resolveEsmReExport(
+  prepared: FileGraphData,
+  exportName: string,
+  ctx: WalkContext,
+  visited: Set<string>,
+): Promise<GraphNodeId | undefined> {
   const reExport = prepared.model.exports.find(
     (exp) =>
       exp.kind === "re-export" &&
@@ -308,6 +343,168 @@ async function resolveReExportChain(
   }
 
   return resolveReExportChain(targetFile, originalName, ctx, visited);
+}
+
+/**
+ * The CommonJS half of {@link resolveReExportChain} (RWF-004a; see
+ * docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 5's R-5a). Assembling
+ * `module.exports` out of `require()`d sibling files is the dominant
+ * authoring pattern for any CommonJS package past trivial size (qs,
+ * semver, debug); before this, a call reaching such an export always fell
+ * to an honest but imprecise `unresolved_target` edge even though the real
+ * implementation was one statically-known hop away.
+ *
+ * Two forwarding rules, both exactly Node's own semantics:
+ *
+ * 1. A NAMED re-export (`exports.foo = require("./lib").foo`) forwards
+ *    only `foo`, and forwards it to whichever name it actually selected
+ *    over there (`exports.foo = require("./lib").bar` forwards to `bar`).
+ *    When it selected NO name at all (`exports.foo = require("./lib")`,
+ *    the dominant real-world shape — qs's
+ *    `module.exports = { stringify: stringify }` over
+ *    `var stringify = require("./stringify")`), `foo` IS that module's
+ *    whole exported value, so it forwards to the target's canonical
+ *    `"default"` export — exactly what Node binds there.
+ * 2. A WHOLE-MODULE re-export (`module.exports = require("./lib")`) makes
+ *    this module's export namespace *be* the other module's, so any
+ *    requested name is looked up under the same name over there. The
+ *    narrower `module.exports = require("./lib").foo` form forwards only
+ *    the module's own default value, hence only `exportName === "default"`.
+ *
+ * A file that has its own named export for `exportName` which this
+ * relation cannot attribute (rule 1's `commonJsReExport` is absent — a
+ * dynamic specifier, a conditional, a chained alias, a locally-defined
+ * value) deliberately stops here rather than falling through to rule 2:
+ * that own binding shadows any forwarded namespace at runtime, so
+ * forwarding anyway would resolve to a value the module does not actually
+ * export under that name.
+ */
+async function resolveCommonJsReExport(
+  prepared: FileGraphData,
+  exportName: string,
+  ctx: WalkContext,
+  visited: Set<string>,
+): Promise<GraphNodeId | undefined> {
+  const own = prepared.model.exports.find(
+    (exp) =>
+      exp.syntax === "commonjs" &&
+      exp.kind === "named" &&
+      exp.exportedName === exportName,
+  );
+  if (own) {
+    const origin = own.commonJsReExport;
+    return origin === undefined
+      ? undefined
+      : followSamePackageReExport(
+          prepared,
+          origin.specifier,
+          origin.importedName ?? "default",
+          ctx,
+          visited,
+        );
+  }
+
+  const whole = prepared.model.exports.find(
+    (exp) =>
+      exp.syntax === "commonjs" &&
+      exp.kind === "default" &&
+      exp.commonJsReExport !== undefined,
+  );
+  const origin = whole?.commonJsReExport;
+  if (!origin) {
+    return undefined;
+  }
+
+  if (origin.importedName === undefined) {
+    return followSamePackageReExport(
+      prepared,
+      origin.specifier,
+      exportName,
+      ctx,
+      visited,
+    );
+  }
+
+  return exportName === "default"
+    ? followSamePackageReExport(
+        prepared,
+        origin.specifier,
+        origin.importedName,
+        ctx,
+        visited,
+      )
+    : undefined;
+}
+
+/**
+ * Resolves one CommonJS re-export hop and continues the chase in the
+ * target file — but ONLY when that file belongs to the exact same
+ * canonical PackageInstance as the file re-exporting from it.
+ *
+ * The same-package rule is the authoritative guard for this whole
+ * relation, and it is deliberately expressed as PackageInstance identity
+ * rather than as a specifier-shape test (`./`-relative) or a package-name
+ * comparison. A relative specifier can climb out of its own package
+ * (`require("../other/lib")`); two installs of the same name AND the same
+ * version at different paths are different instances (SDD-v0.2.md § 4.2);
+ * and a pnpm/workspace/`file:` install reaches its real code through a
+ * symlink. {@link identifyModule} already resolves all three correctly and
+ * is this codebase's single identity authority — its
+ * `canonicalizePackageInstancePath` realpaths both sides, so a symlinked
+ * and a physical reference to the same install compare equal, and two
+ * same-name installs at different paths never do.
+ *
+ * Both sides must have a DEFINED instance: a file outside any installed
+ * package (the scanned project's own source) has no PackageInstance, so
+ * `undefined === undefined` is explicitly not treated as a match. That
+ * keeps this relation to exactly the shape RWF-004a scopes — inside one
+ * installed package — and, together with the equality test, is what
+ * prevents the cross-package case (RWF-004b) from being implemented here
+ * as a side effect.
+ *
+ * Returns `undefined` for every other outcome (unresolved specifier,
+ * declaration-only resolution, a different instance, a file that could not
+ * be indexed or that a resource limit stopped this graph from preparing),
+ * which leaves the caller's existing `unresolved_target` edge and its
+ * downstream UNKNOWN exactly as they were before RWF-004a.
+ */
+async function followSamePackageReExport(
+  prepared: FileGraphData,
+  specifier: string,
+  targetExportName: string,
+  ctx: WalkContext,
+  visited: Set<string>,
+): Promise<GraphNodeId | undefined> {
+  const fromFile = prepared.index.filePath;
+  const resolution = await ctx.resolver.resolve(specifier, fromFile);
+  // Same VT-304 discipline as the ESM half: a declaration-only resolution
+  // is not a runtime implementation and must never be chased.
+  if (resolution.kind !== "resolved") {
+    return undefined;
+  }
+
+  const fromInstance = ctx.packageInstanceOf(fromFile);
+  const toInstance = ctx.packageInstanceOf(resolution.resolvedFileName);
+  if (
+    fromInstance === undefined ||
+    toInstance === undefined ||
+    fromInstance !== toInstance
+  ) {
+    return undefined;
+  }
+
+  ctx.onDiscoverFile(resolution.resolvedFileName);
+  const targetFile = ctx.ensurePrepared(resolution.resolvedFileName);
+  if (!targetFile) {
+    return undefined;
+  }
+
+  const direct = targetFile.exportNameToNodeId.get(targetExportName);
+  if (direct) {
+    return direct;
+  }
+
+  return resolveReExportChain(targetFile, targetExportName, ctx, visited);
 }
 
 /**
@@ -925,6 +1122,19 @@ interface WalkContext {
    * file, so it must never run unconditionally.
    */
   readonly getProgram: () => ts.Program | undefined;
+  /**
+   * The canonical {@link PackageInstanceId} owning a resolved file, or
+   * `undefined` for a file that belongs to no installed package (the
+   * scanned project's own source). Always {@link identifyModule}'s answer
+   * — this codebase's single package-identity authority — never a
+   * separately-derived one; memoized per `buildCallGraph` invocation
+   * because that function realpaths the instance root and reads its
+   * `package.json`, and RWF-004a's re-export chase asks the question once
+   * per hop per unresolved call site.
+   */
+  readonly packageInstanceOf: (
+    filePath: string,
+  ) => PackageInstanceId | undefined;
 }
 
 /**
@@ -1643,6 +1853,22 @@ export interface BuildCallGraphOptions {
    * call this graph can't otherwise attribute, exactly as before.
    */
   readonly project?: TsProject;
+  /**
+   * The scan's dependency-provenance registry (see
+   * `domain/resolved-target.ts`'s `buildKnownPackageRoots`), used only to
+   * answer "which installed package instance does this file belong to?"
+   * for RWF-004a's same-package CommonJS re-export rule. Required for that
+   * rule to recognize a LINKED install (an npm workspace member, a `file:`
+   * dependency) whose physical target has no `node_modules` segment of its
+   * own; an ordinary `node_modules/<pkg>` install is identified from the
+   * path alone and needs no registry.
+   *
+   * Optional, and omitting it can only ever make the re-export chase
+   * MORE conservative (an unidentifiable instance fails the same-instance
+   * test and the chase stops), never less — so every caller predating
+   * RWF-004a keeps a sound, merely-less-precise result.
+   */
+  readonly knownPackageRoots?: KnownPackageRoots;
 }
 
 /**
@@ -1759,9 +1985,23 @@ export async function buildCallGraph(
     return program;
   }
 
+  const packageInstanceCache = new Map<string, PackageInstanceId | undefined>();
+  function packageInstanceOf(filePath: string): PackageInstanceId | undefined {
+    if (packageInstanceCache.has(filePath)) {
+      return packageInstanceCache.get(filePath);
+    }
+    const instance = identifyModule(
+      filePath,
+      options.knownPackageRoots,
+    ).packageInstance;
+    packageInstanceCache.set(filePath, instance);
+    return instance;
+  }
+
   const ctx: WalkContext = {
     edges,
     resolver: options.resolver,
+    packageInstanceOf,
     ensurePrepared,
     onDiscoverFile: (filePath) => {
       const prepared = ensurePrepared(filePath);
