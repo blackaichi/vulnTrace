@@ -79,7 +79,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-001 | `lodash` (the main package) | UMD `module.exports` assignment via a locally-aliased variable is invisible to export detection | Precision only — degrades to UNKNOWN in both directions, never a false AFFECTED/NOT_AFFECTED | Open, not yet scoped as a task |
 | RWF-002 | any (`node-forge` isolates it cleanly) | One unresolved/dynamic construct *anywhere* in an entrypoint's reachable call graph forces `UNKNOWN` for every vulnerability checked against that entrypoint, even when the construct is entirely unrelated to the target | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below |
 | RWF-003 | `minimist` | `module.exports = function (...) {...}` (an anonymous function expression, not a named local declaration) isn't matched by export-to-function resolution | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
-| RWF-004 | `qs`, `debug`→`ms`, `semver` | An exported value that is itself a re-export of a function declared in a *different* file (same-package sibling file or a different package entirely) is never chased to its real declaration | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
+| RWF-004 | `qs`, `debug`→`ms`, `semver` | An exported value that is itself a re-export of a function declared in a *different* file (same-package sibling file or a different package entirely) is never chased to its real declaration | Precision only — degrades to UNKNOWN, never a false verdict | **RWF-004a (same package) fixed**; RWF-004b (cross-package) open |
 | RWF-005 | `trim-newlines` | TypeScript module resolution prefers a package's hand-authored `.d.ts` over its real `.js` implementation when resolving a bare specifier from a plain `.js` importer | Precision only — degrades to UNKNOWN (analysis operates on a file with no real function bodies) | **Fixed (VT-304)** |
 | RWF-006 | `fast-xml-parser` | A webpack-bundled, `Object.defineProperty`-getter-defined class export isn't recognized as a constructible/method-bearing target | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
 | RWF-007 | `RWB-10` (`fs`, `path`) | `ts.resolveModuleName` never resolves Node builtin specifiers (`fs`, `node:fs`, ...) — every builtin `require`/`import` call produced an `unresolved_module` edge, a **closure-widening** blocker, in essentially every real Node application | Precision, universal blast radius (also a soundness *prerequisite*: combined with RWF-002, no realistic Node application could ever reach `NOT_AFFECTED` while this stood) | **Fixed (VT-305)** |
@@ -219,6 +219,28 @@ Contrast with `url-parse` (`RWB-04`, which correctly resolved `AFFECTED`): `modu
 
 ## RWF-004 — An exported value re-exported from a different file (same package or a different package) is never chased to its real declaration
 
+**Status: the SAME-PACKAGE half (RWF-004a) is fixed; the cross-package half
+(RWF-004b) remains open.**
+
+`src/code-intelligence/commonjs-reexports.ts` now derives a CommonJS
+re-export ORIGIN (`{specifier, importedName?}`) for an export whose value
+comes from a literal `require()` — directly, or through exactly one hop of a
+module-scope, provably single-assignment local binding — and
+`module-model.ts` carries it on `ExportBinding.commonJsReExport`.
+`call-graph.ts`'s `resolveReExportChain` chases it, composing across hops
+and across syntaxes with the existing ESM chase, and is gated on the target
+file belonging to the **same canonical PackageInstance** (`identifyModule`),
+so a relative `../` specifier, a same-name/same-version install at a
+different path, and a bare cross-package specifier are all refused. Dynamic
+specifiers, conditionals, chained aliases (RWF-012) and files that declare
+their own `exports`/`module`/`require` binding all produce no origin at all
+and keep their previous UNKNOWN.
+
+**Result:** `RWB-09a` moved `UNKNOWN` → `AFFECTED` (the correct answer;
+see below and RWF-009). No other validation case moved, and no case moved
+into `NOT_AFFECTED`. `RWB-05` (`qs`) and `RWB-08` (`debug`→`ms`) still fail,
+each for a *second*, independent reason documented below.
+
 **Discovered:** scanning real `qs@6.10.1` (`RWB-05`), real `debug@2.0.0`/`ms@0.6.2` (`RWB-08`), and real `semver@7.5.1`/`7.5.2` (`RWB-09a`/`RWB-09b`).
 
 **Symptom, `qs` (the clearest case):** `toQueryString()` calls only `qs.stringify(filters)` — the *safe*, unrelated export; `qs.parse` (the vulnerable one) is never referenced at all. Expected `NOT_AFFECTED`; actual `UNKNOWN` for **both** the vulnerable and the safe finding, with `unresolved_target at .../src/serialize-filters.js#toQueryString@6:1` — the diagnostic points at the *safe* call site, confirming the failure is in resolving `qs.stringify` itself, unrelated to the rule's own target (`qs.parse`).
@@ -242,7 +264,28 @@ Both `parse` and `stringify` are **local variables whose values come from `requi
 
 **Relevant files:** `src/code-intelligence/module-model.ts` (`mapExportsToFunctions`'s documented, confirmed-real limitation), `src/analysis/verdict.ts` (`findExportNodeInFile`).
 
-**Proposed direction (not scoped, not implemented):** when an export's local binding resolves to a `require(...)` call expression (directly, or via one level of local-variable indirection), follow that `require()` to the target file and repeat the same-file function lookup there — a bounded, one-or-few-hop chase (matching `VT-214`'s existing alias-tracking precedent), not unbounded points-to analysis. The cross-package (`RWB-08`) variant is strictly harder (crosses into a different package's own `node_modules` resolution) and may warrant being scoped as a separate, later step from the same-package sibling-file case (`RWB-05`, `RWB-09`).
+**Proposed direction (RWF-004a: implemented as described; RWF-004b: still open):** when an export's local binding resolves to a `require(...)` call expression (directly, or via one level of local-variable indirection), follow that `require()` to the target file and repeat the same-file function lookup there — a bounded, one-or-few-hop chase (matching `VT-214`'s existing alias-tracking precedent), not unbounded points-to analysis. The cross-package (`RWB-08`) variant is strictly harder (crosses into a different package's own `node_modules` resolution) and was scoped as a separate, later step (**RWF-004b**) from the same-package sibling-file case (**RWF-004a**, now implemented).
+
+**Why `RWB-05` (`qs`) still fails after RWF-004a:** its re-export chain now
+resolves correctly, but it terminates in `lib/parse.js` /
+`lib/stringify.js`, both of which are
+`module.exports = function (str, opts) { ... }` — an **anonymous** function
+expression, which is `RWF-003`, not this finding. The chase reaches the
+right file and asks for its canonical `"default"` export; that export has no
+attributable function, so the target stays honestly unresolved. `RWB-05`
+therefore needs `RWF-003` **and** `RWF-004a`, not `RWF-004` alone — a
+correction to this document's original single-cause attribution.
+Additionally, `RWB-05` expects `NOT_AFFECTED` for an export the application
+never calls, which also requires the *uncalled* export to be attributed: the
+chase is driven from real call sites, so a re-exported symbol nothing ever
+calls is never chased and its implementation file is never discovered. That
+is a separate, deliberate scope boundary, not a defect in this relation.
+
+**Why `RWB-08` (`debug`→`ms`) still fails after RWF-004a:** its first hop
+(`node.js`'s `exports = module.exports = require('./debug')`) is
+same-package and now resolves; its second hop
+(`debug.js:14`'s `exports.humanize = require('ms')`) crosses a package
+boundary and is refused by design — that is exactly `RWF-004b`.
 
 **MVP-readiness relevance:** does not violate any adversarial-suite invariant (still 79/79) — no adversarial fixture splits a vulnerable library's implementation across multiple files.
 
