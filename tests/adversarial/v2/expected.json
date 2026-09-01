@@ -735,5 +735,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+  },
+  {
+    "id": "ADV2-068",
+    "dir": "adv2-068-anonymous-cjs-export-facade",
+    "category": "68. RWF-003: a package whose entire public API is an ANONYMOUS function assigned to module.exports, reached through a same-package facade that declares nothing",
+    "description": "vt2-vuln-lib's whole callable API is `module.exports = function (input) {...}` -- an anonymous function expression with no name anywhere to match on -- sitting two same-package re-export hops behind a facade that declares nothing (`index.js: module.exports = require('./internal/ops')`, `ops.js: module.exports = require('../impl')`). This is the shape of real minimist@1.2.5 and of qs's lib/parse.js and lib/stringify.js. Three traps are layered on top: (a) impl.js declares a named `dangerousOp` BEFORE the real export that nothing exports, where both a same-file name search and a 'first function in the file' heuristic land; (b) the same package contains unused.js, a SECOND anonymous module.exports function that nothing requires and nothing re-exports, so a mechanism binding 'an anonymous exported function in this package' rather than the one the chain reaches would pick the wrong node; (c) the facade hangs a DIFFERENT installed package's identically-shaped anonymous export off its own exported value as `borrowed`, so a chase that ignores package identity can wander into vt2-decoy-lib. The application calls only lib(userInput), directly and unconditionally.",
+    "expected": "AFFECTED",
+    "reason": "main() passes userInput straight into lib(), and lib IS vt2-vuln-lib's own impl.js anonymous function -- reached through two statically-written, literal-specifier require() hops that never leave the installed package. A human analyst reading index.js, internal/ops.js and impl.js together has no ambiguity: the call lands on the exact function GHSA-vt2v2-0001 names, in this exact installed instance. The function having no name changes nothing about that: its identity is its position in impl.js. Neither the never-exported named decoy, nor the never-required second anonymous export in unused.js, nor vt2-decoy-lib's same-shaped function is on that path, and none may be substituted for it.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#default (the anonymous module.exports function)",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
   }
 ]
