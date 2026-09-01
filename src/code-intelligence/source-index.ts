@@ -185,6 +185,24 @@ function functionKind(
   return "function";
 }
 
+/**
+ * Whether a property-access assignment target is literally `module.exports`
+ * — the whole-module CommonJS export, never `module.exports.foo` or
+ * `exports.foo`, which name a real exported property. Mirrors
+ * `describeCommonJsExportTarget`'s `commonjs-module-exports` case below,
+ * kept as its own predicate because {@link inferAssignedName} runs before
+ * (and independently of) export extraction.
+ */
+function isWholeModuleExportsTarget(
+  left: ts.PropertyAccessExpression,
+): boolean {
+  return (
+    ts.isIdentifier(left.expression) &&
+    left.expression.text === "module" &&
+    left.name.text === "exports"
+  );
+}
+
 function inferAssignedName(node: ts.Node): string | undefined {
   const parent = node.parent as ts.Node | undefined;
   if (!parent) {
@@ -204,7 +222,22 @@ function inferAssignedName(node: ts.Node): string | undefined {
     parent.operatorToken.kind === ts.SyntaxKind.EqualsToken
   ) {
     if (ts.isPropertyAccessExpression(parent.left)) {
-      return parent.left.name.text;
+      // `module.exports = function () {}` assigns to the module's whole
+      // exported value, not to a property called "exports" -- the
+      // assignment target's last name segment is the CommonJS construct
+      // itself, not a name the function has (RWF-003). Reporting
+      // "exports" here fabricated a name for a genuinely anonymous
+      // function, which is both misleading in evidence output and exactly
+      // the kind of text a name-based match could latch onto. The
+      // function's real identity is its source position, which
+      // module-model.ts's `ExportBinding.localFunctionLocation` now
+      // carries. Every OTHER property assignment
+      // (`exports.foo = function () {}`, `obj.method = function () {}`)
+      // keeps naming the function after the property, which is both
+      // accurate and relied upon by `mapExportsToFunctions`.
+      return isWholeModuleExportsTarget(parent.left)
+        ? undefined
+        : parent.left.name.text;
     }
     if (ts.isIdentifier(parent.left)) {
       return parent.left.text;

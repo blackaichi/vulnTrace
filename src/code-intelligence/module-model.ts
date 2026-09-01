@@ -3,7 +3,10 @@ import type { SourceLocation } from "../domain/graph.js";
 import {
   commonJsModuleReExportOrigin,
   commonJsPropertyReExportOrigin,
+  declaresCommonJsAmbientShadow,
   resolveCommonJsReExportExpression,
+  resolveModuleScopeBindingValue,
+  unwrapParentheses,
   type CommonJsReExportOrigin,
 } from "./commonjs-reexports.js";
 import {
@@ -60,6 +63,43 @@ export interface ExportBinding {
    * CommonJS form the ESM form's cross-package reach.
    */
   readonly commonJsReExport?: CommonJsReExportOrigin;
+  /**
+   * The exact source position of the function-like expression this binding's
+   * exported value IS, when the export assignment structurally *references*
+   * one (RWF-003; see docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 5's R-3,
+   * tests/validation/FINDINGS.md RWF-003).
+   *
+   * This is the export's CONCRETE FUNCTION IDENTITY, deliberately kept
+   * separate from {@link localName}, which is a *name* the export can be
+   * looked up by. The two answer different questions and neither implies
+   * the other:
+   *
+   * - `module.exports = function () {}` has an identity but NO name — the
+   *   whole point of RWF-003. Before this field existed the export was
+   *   simply unattributable, because the only mechanism available was a
+   *   name lookup and there was no name to look up.
+   * - `module.exports = function internalName() {}` has both, and they
+   *   disagree about what they mean: `internalName` is the function's own
+   *   INTERNAL name, not the public binding an importer sees (which is the
+   *   canonical `"default"`). Matching on it happens to work, but only
+   *   because no other function in the file shares that text.
+   *
+   * A position is not a guess and cannot collide: exactly one AST node
+   * begins at a given offset in a file, and source-index.ts records every
+   * function-like node under that same position (see `extractFunction`'s
+   * `toSourceLocation`). So `mapExportsToFunctions` resolving through this
+   * field is an identity, where resolving through {@link localName} is a
+   * same-file name search that can land on a different function that
+   * merely shares the text.
+   *
+   * `undefined` whenever the exported value is not a directly-referenced
+   * function — including every shape this deliberately refuses to guess at:
+   * a conditionally-assigned export, a file that shadows the CommonJS
+   * ambient names, an alias chain longer than one hop, and any value that
+   * is not statically a function at all. See
+   * {@link directExportedFunctionLocation}.
+   */
+  readonly localFunctionLocation?: SourceLocation;
   readonly location: SourceLocation;
 }
 
@@ -105,6 +145,41 @@ function toImportBinding(imp: SourceIndex["imports"][number]): ImportBinding {
 interface ModuleExportsAssignment {
   readonly rhs: ts.Expression;
   readonly location: SourceLocation;
+  /**
+   * Whether the assignment is an UNCONDITIONAL module-scope statement —
+   * its own statement is a direct child of the source file, not nested
+   * inside an `if`/`try`/loop/function body (RWF-003).
+   *
+   * `false` means this task cannot know whether the assignment runs at
+   * all, so it cannot know the final value of `module.exports`. Only the
+   * function-identity binding below consults this; the pre-existing
+   * name-based attribution is deliberately left exactly as it was.
+   */
+  readonly isModuleScope: boolean;
+}
+
+/** Whether a node is a function-like *expression* — the only value shape a `module.exports = X` assignment can directly make callable. */
+function isDirectFunctionValue(
+  node: ts.Expression,
+): node is ts.FunctionExpression | ts.ArrowFunction {
+  return ts.isFunctionExpression(node) || ts.isArrowFunction(node);
+}
+
+/** Whether `node`'s own statement is a direct child of the source file (module scope, unconditional). */
+function isUnconditionalModuleScopeStatement(node: ts.Node): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  if (!parent) {
+    return false;
+  }
+  if (ts.isSourceFile(parent)) {
+    // `export = X;` — an ExportAssignment is itself a statement.
+    return true;
+  }
+  return (
+    ts.isExpressionStatement(parent) &&
+    parent.parent !== undefined &&
+    ts.isSourceFile(parent.parent)
+  );
 }
 
 /**
@@ -130,11 +205,16 @@ function findLastModuleExportsAssignment(
       node.left.expression.text === "module" &&
       node.left.name.text === "exports"
     ) {
-      found = { rhs: node.right, location: toSourceLocation(sourceFile, node) };
+      found = {
+        rhs: node.right,
+        location: toSourceLocation(sourceFile, node),
+        isModuleScope: isUnconditionalModuleScopeStatement(node),
+      };
     } else if (ts.isExportAssignment(node) && node.isExportEquals) {
       found = {
         rhs: node.expression,
         location: toSourceLocation(sourceFile, node),
+        isModuleScope: isUnconditionalModuleScopeStatement(node),
       };
     }
     ts.forEachChild(node, visit);
@@ -367,6 +447,93 @@ function buildExportBindings(
  * "the module's default export exists" fact, just not attributable to a
  * named local declaration.
  */
+/**
+ * The concrete function identity a `module.exports = X` / `export = X`
+ * assignment binds the module's whole exported value to — the RWF-003
+ * relation (see {@link ExportBinding.localFunctionLocation}).
+ *
+ * Two shapes produce an identity, both of which name a function node
+ * *structurally*, never by its text:
+ *
+ * ```text
+ * module.exports = function () {}            -> that FunctionExpression
+ * module.exports = function named() {}       -> that FunctionExpression
+ * module.exports = async function () {}      -> that FunctionExpression
+ * module.exports = () => {}                  -> that ArrowFunction
+ * module.exports = async () => {}            -> that ArrowFunction
+ * module.exports = fn   (const fn = function () {} / () => {})
+ *                                            -> that same function node
+ * export = function () {}                    -> that FunctionExpression
+ * ```
+ *
+ * An arrow function is included because source-index.ts indexes arrows as
+ * first-class function nodes exactly like function expressions
+ * (`isFunctionLike`), and call-graph.ts registers and walks them the same
+ * way — so this is integrating an already-authoritative representation,
+ * not adding a partial one.
+ *
+ * Three guards make the result a fact rather than a guess, and each one
+ * returning `undefined` leaves the export exactly as unattributed as it
+ * was before RWF-003 (an unresolved target, hence UNKNOWN — never a
+ * verdict):
+ *
+ * 1. **Unconditional module scope.** Node's `module.exports` is
+ *    last-write-wins at RUNTIME, and this task has no control-flow
+ *    semantics. An assignment nested in an `if`/`try`/loop/function may or
+ *    may not run, and `findLastModuleExportsAssignment` picks the last one
+ *    in SOURCE order — so binding to it would be choosing a branch
+ *    arbitrarily. Requiring the winning assignment to be a direct
+ *    statement of the file makes "this is the module's final exported
+ *    value" true by the language's own rules.
+ * 2. **CommonJS ambient provenance.** A file that declares its own
+ *    `module`/`exports`/`require` binding is refused outright, so
+ *    `const module = { exports: null }; module.exports = function () {}`
+ *    creates no export identity at all — the RWF-004a protection, applied
+ *    to this relation too (see `declaresCommonJsAmbientShadow`).
+ * 3. **Exactly one alias hop.** The identifier form goes through
+ *    commonjs-reexports.ts's existing module-scope single-assignment
+ *    proof and never recurses, so `const a = fn; const b = a;
+ *    module.exports = b` resolves to nothing here. Broadening that is
+ *    RWF-012, deliberately not done.
+ *
+ * A class expression (`module.exports = class {}`) is deliberately NOT
+ * matched: its callable target is an implicit or explicit constructor and
+ * its members are attributed by a different relation
+ * ({@link findExportedClassMembers}), which is keyed on the class's own
+ * name. Extending identity-based attribution to anonymous classes is a
+ * separate question, and refusing here costs only the precision it
+ * already lacked.
+ */
+function directExportedFunctionLocation(
+  index: SourceIndex,
+  assignment: ModuleExportsAssignment,
+): SourceLocation | undefined {
+  if (!assignment.isModuleScope) {
+    return undefined;
+  }
+
+  const value = unwrapParentheses(assignment.rhs);
+
+  if (isDirectFunctionValue(value)) {
+    return declaresCommonJsAmbientShadow(index)
+      ? undefined
+      : toSourceLocation(index.sourceFile, value);
+  }
+
+  if (!ts.isIdentifier(value) || declaresCommonJsAmbientShadow(index)) {
+    return undefined;
+  }
+
+  const bound = resolveModuleScopeBindingValue(index, value.text);
+  if (bound === undefined) {
+    return undefined;
+  }
+  const boundValue = unwrapParentheses(bound);
+  return isDirectFunctionValue(boundValue)
+    ? toSourceLocation(index.sourceFile, boundValue)
+    : undefined;
+}
+
 function wholeModuleDefaultExport(
   index: SourceIndex,
   assignment: ModuleExportsAssignment,
@@ -387,6 +554,11 @@ function wholeModuleDefaultExport(
     kind: "default",
     syntax: "commonjs",
     localName,
+    // The export's concrete function identity, when the assignment names
+    // one structurally (RWF-003). Independent of `localName`: an anonymous
+    // value has an identity and no name, and a named function expression
+    // has both.
+    localFunctionLocation: directExportedFunctionLocation(index, assignment),
     // `module.exports = require("./lib")` / `= require("./lib").foo`
     // (RWF-004a): the module's whole exported value comes from another
     // module. Unlike `localName`, this survives the value being anonymous.
@@ -434,6 +606,8 @@ export function mapExportsToFunctions(
   model: ModuleModel,
 ): ReadonlyMap<string, IndexedFunction> {
   const result = new Map<string, IndexedFunction>();
+  /** Built at most once per call, and only when some export actually carries an identity. */
+  let functionsByPosition: ReadonlyMap<string, IndexedFunction> | undefined;
 
   for (const exp of model.exports) {
     if (exp.kind === "re-export") {
@@ -442,12 +616,32 @@ export function mapExportsToFunctions(
       continue;
     }
     const canonicalName = exp.kind === "default" ? "default" : exp.exportedName;
+    if (!canonicalName) {
+      continue;
+    }
+
+    // RWF-003: a structurally-referenced function node is the export's real
+    // identity and always wins over the name search below — it is exact
+    // where the name search is a same-file text match, and it is the ONLY
+    // mechanism available at all when the exported function is anonymous.
+    // See ExportBinding.localFunctionLocation.
+    if (exp.localFunctionLocation) {
+      functionsByPosition ??= indexFunctionsByPosition(index);
+      const byIdentity = functionsByPosition.get(
+        positionKey(exp.localFunctionLocation),
+      );
+      if (byIdentity) {
+        result.set(canonicalName, byIdentity);
+        continue;
+      }
+    }
+
     // Prefer the actual local identifier; for CommonJS `exports.foo = ...`
     // there is no separate localName, but TASK-014 already infers the
     // assigned function's own name as "foo" from the assignment target,
     // so exportedName doubles as the correct lookup key there too.
     const localKey = exp.localName ?? exp.exportedName;
-    if (!canonicalName || !localKey) {
+    if (!localKey) {
       continue;
     }
     const matchingFn = index.functions.find((fn) => fn.name === localKey);
@@ -457,6 +651,32 @@ export function mapExportsToFunctions(
   }
 
   return result;
+}
+
+/** A function node's own start position, the identity key {@link ExportBinding.localFunctionLocation} resolves against. */
+function positionKey(location: SourceLocation): string {
+  return `${location.line}:${location.column}`;
+}
+
+/**
+ * Every indexed function keyed by its own start position, built once per
+ * {@link mapExportsToFunctions} call rather than re-scanned per export —
+ * exactly one AST node begins at a given position, so first-wins here can
+ * only ever be an exact match (the guard exists solely so a synthesized
+ * implicit-constructor entry, whose position is its class's name rather
+ * than its own node, can never displace a real function node).
+ */
+function indexFunctionsByPosition(
+  index: SourceIndex,
+): ReadonlyMap<string, IndexedFunction> {
+  const byPosition = new Map<string, IndexedFunction>();
+  for (const fn of index.functions) {
+    const key = positionKey(fn.location);
+    if (!byPosition.has(key)) {
+      byPosition.set(key, fn);
+    }
+  }
+  return byPosition;
 }
 
 /**
