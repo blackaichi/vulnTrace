@@ -11,7 +11,7 @@ import type { VulnerableSymbolRule } from "../domain/target.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { fixturePath } from "../testing/fixtures.js";
 import { discoverEntrypoints } from "./entrypoints.js";
-import { buildFinding } from "./verdict.js";
+import { buildFindingForTest } from "../testing/finding.js";
 
 /**
  * RWF-004a's permanent real-world-shaped fixture assertion (see
@@ -61,7 +61,7 @@ async function scan(options: {
     ],
   };
 
-  const finding = await buildFinding({
+  const finding = await buildFindingForTest({
     vulnerability,
     packageName: "fixture-lib",
     packageVersion: "1.0.0",
