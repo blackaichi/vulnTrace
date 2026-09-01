@@ -78,7 +78,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 |---|---|---|---|---|
 | RWF-001 | `lodash` (the main package) | UMD `module.exports` assignment via a locally-aliased variable is invisible to export detection | Precision only — degrades to UNKNOWN in both directions, never a false AFFECTED/NOT_AFFECTED | Open, not yet scoped as a task |
 | RWF-002 | any (`node-forge` isolates it cleanly) | One unresolved/dynamic construct *anywhere* in an entrypoint's reachable call graph forces `UNKNOWN` for every vulnerability checked against that entrypoint, even when the construct is entirely unrelated to the target | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below |
-| RWF-003 | `minimist` | `module.exports = function (...) {...}` (an anonymous function expression, not a named local declaration) isn't matched by export-to-function resolution | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
+| RWF-003 | `minimist` | `module.exports = function (...) {...}` (an anonymous function expression, not a named local declaration) isn't matched by export-to-function resolution | Precision only — degrades to UNKNOWN, never a false verdict | **Fixed** — see below |
 | RWF-004 | `qs`, `debug`→`ms`, `semver` | An exported value that is itself a re-export of a function declared in a *different* file (same-package sibling file or a different package entirely) is never chased to its real declaration | Precision only — degrades to UNKNOWN, never a false verdict | **RWF-004a (same package) fixed**; RWF-004b (cross-package) open |
 | RWF-005 | `trim-newlines` | TypeScript module resolution prefers a package's hand-authored `.d.ts` over its real `.js` implementation when resolving a bare specifier from a plain `.js` importer | Precision only — degrades to UNKNOWN (analysis operates on a file with no real function bodies) | **Fixed (VT-304)** |
 | RWF-006 | `fast-xml-parser` | A webpack-bundled, `Object.defineProperty`-getter-defined class export isn't recognized as a constructible/method-bearing target | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
@@ -192,6 +192,81 @@ real and still stands.
 
 ## RWF-003 — `module.exports` assigned as an anonymous function expression isn't matched to a function node
 
+**Status: Fixed.** An export binding now carries the exported value's
+CONCRETE FUNCTION IDENTITY — the source position of the function-like node
+it structurally references — on
+`ExportBinding.localFunctionLocation`
+(`src/code-intelligence/module-model.ts`), derived by
+`directExportedFunctionLocation` and preferred by `mapExportsToFunctions`
+over the pre-existing same-file name search. Exactly one AST node begins at
+a given position, so the resolution is an identity rather than a text
+match, and it works for a function with no name at all — which is the whole
+point. `source-index.ts` additionally stops fabricating the name `"exports"`
+for such a function: `module.exports = function () {}` assigns to the
+CommonJS construct, not to a property named `exports`, and reporting that
+text both misled evidence output and left a fake name a name-based match
+could latch onto (`exports.foo = function () {}` still names the function
+`foo`, which is accurate and is relied on).
+
+Six shapes now attribute (a direct anonymous / named / `async` function
+expression, a direct arrow or `async` arrow, TypeScript's
+`export = function () {}`, and one hop through a module-scope, provably
+single-assignment local binding holding a function expression or arrow —
+reusing `commonjs-reexports.ts`'s existing single-assignment proof, not a
+new one). Three guards keep the result a fact:
+
+- **unconditional module scope** — the winning assignment must be a direct
+  statement of the file. `findLastModuleExportsAssignment` picks the last
+  assignment in SOURCE order, which is not execution order, so binding to a
+  conditional one would be choosing a branch arbitrarily;
+- **CommonJS ambient provenance** — a file declaring its own
+  `module`/`exports`/`require` binding is refused outright, preserving
+  RWF-004a's protection;
+- **exactly one alias hop** — a longer chain resolves to nothing here
+  (RWF-012's boundary, deliberately not broadened).
+
+Every refusal leaves the export exactly as unattributed as before, i.e.
+UNKNOWN. Nothing in `verdict.ts`, the reachability search, the proof
+context or the negative-proof schema changed: attribution improves, so the
+real function node is bound and the normal call graph and reachability
+search do the rest. An anonymous exported CLASS
+(`module.exports = class {}`) is deliberately still unattributed — its
+callable target is a constructor and its members are attributed by a
+name-keyed relation (`findExportedClassMembers`).
+
+**Result:** `RWB-02` (`minimist`) moved `UNKNOWN` → `AFFECTED`, with a
+concrete three-hop evidence path ending at the anonymous function in
+`node_modules/minimist/index.js`. No other validation case moved, and no
+case moved into `NOT_AFFECTED`. `RWB-05` (`qs`) is still `UNKNOWN` — see
+the note under RWF-004 below, which this fix updates.
+
+**One `UNKNOWN` → `NOT_AFFECTED` transition is now reachable in principle,
+and it is correct.** Attribution is a precondition for BOTH verdicts, not
+just for `AFFECTED`: an application that installs a package whose whole API
+is an anonymous `module.exports` function and never calls it previously
+came out `UNKNOWN` because the target could not be attributed at all
+(`verdict.ts`'s Site A). With the target attributed to a real node, a
+complete, untruncated graph containing no path to it now reaches
+`NOT_AFFECTED` through exactly the positive-proof route `RWB-06`/`RWB-11b`
+already use — nothing new was added to the verdict layer, the proof
+context, or the negative-proof schema. Note what does NOT happen: no
+`NOT_AFFECTED` is ever inferred from a failure to resolve. Every shape this
+relation refuses (conditional assignment, ambient shadowing, a >1-hop alias
+chain, a cross-package hop) stays `UNKNOWN`. Both directions are pinned in
+`src/cli/scan.anonymous-export.test.ts`, which runs the real scan command
+end to end. No validation case and no adversarial scenario moved into
+`NOT_AFFECTED`.
+
+**Composition with RWF-004a, verified:** the two relations compose in both
+directions. A same-package whole-module re-export chain
+(`index.js -> internal/ops.js -> impl.js`) terminating in an anonymous
+`module.exports = function () {}` now binds end to end; permanent coverage
+is `fixtures/commonjs-anonymous-export` (with
+`src/analysis/verdict.anonymous-export.integration.test.ts`) and `ADV2-068`.
+The cross-package half stays refused: RWF-004b is unchanged, and both the
+fixture and `ADV2-068` carry an identically-shaped anonymous export in a
+DIFFERENT installed package that must never be bound.
+
 **Discovered:** scanning real `minimist@1.2.5` (`RWB-02`) against real GHSA-xvch-5gv4-984h / CVE-2021-44906.
 
 **Symptom:** `parseArgs()` calls `minimist(argv)` directly — a plain call to the package's default export, one same-file hop from the entrypoint. Expected `AFFECTED`; actual `UNKNOWN`, with `unresolved_target at .../src/cli.js#parseArgs@6:1` plus dozens of `unsupported_construct` diagnostics pointing into `minimist`'s own internal implementation (the call graph attempts to walk into the callee and can't classify its internals either).
@@ -266,20 +341,42 @@ Both `parse` and `stringify` are **local variables whose values come from `requi
 
 **Proposed direction (RWF-004a: implemented as described; RWF-004b: still open):** when an export's local binding resolves to a `require(...)` call expression (directly, or via one level of local-variable indirection), follow that `require()` to the target file and repeat the same-file function lookup there — a bounded, one-or-few-hop chase (matching `VT-214`'s existing alias-tracking precedent), not unbounded points-to analysis. The cross-package (`RWB-08`) variant is strictly harder (crosses into a different package's own `node_modules` resolution) and was scoped as a separate, later step (**RWF-004b**) from the same-package sibling-file case (**RWF-004a**, now implemented).
 
-**Why `RWB-05` (`qs`) still fails after RWF-004a:** its re-export chain now
-resolves correctly, but it terminates in `lib/parse.js` /
-`lib/stringify.js`, both of which are
-`module.exports = function (str, opts) { ... }` — an **anonymous** function
-expression, which is `RWF-003`, not this finding. The chase reaches the
-right file and asks for its canonical `"default"` export; that export has no
-attributable function, so the target stays honestly unresolved. `RWB-05`
-therefore needs `RWF-003` **and** `RWF-004a`, not `RWF-004` alone — a
-correction to this document's original single-cause attribution.
-Additionally, `RWB-05` expects `NOT_AFFECTED` for an export the application
-never calls, which also requires the *uncalled* export to be attributed: the
-chase is driven from real call sites, so a re-exported symbol nothing ever
-calls is never chased and its implementation file is never discovered. That
-is a separate, deliberate scope boundary, not a defect in this relation.
+**Why `RWB-05` (`qs`) still fails after RWF-004a AND RWF-003:** the export
+half of this case is now fully resolved. `qs`'s re-export chain reaches
+`lib/stringify.js`, whose `module.exports = function (object, opts)` is
+anonymous, and RWF-003 attributes it — the `unresolved_target at
+src/serialize-filters.js#toQueryString` diagnostic that this entry
+originally described is **gone**, and the call graph now walks into `qs`'s
+real implementation. `RWB-05` nevertheless remains `UNKNOWN`, for two
+independent reasons, neither of which is RWF-003 or RWF-004:
+
+1. **Target attribution does not chase a re-export.** The rule names
+   `qs#parse`, and `verdict.ts`'s `findExportNodeInFile` attributes a
+   target with a per-file `mapExportsToFunctions` lookup across the
+   instance's discovered files. `lib/parse.js` *is* discovered (`lib/index.js`
+   does `var parse = require('./parse')` at module level), but its canonical
+   export name is `"default"` — it is `module.exports = function (str, opts)`
+   — not `"parse"`; and `lib/index.js`'s own `parse` entry is a re-export
+   with no local function, which `mapExportsToFunctions` deliberately does
+   not chase. Bridging `qs#parse` -> `lib/parse.js#default` needs a
+   TARGET-side re-export chase; the existing chase (`resolveReExportChain`)
+   lives in the call graph and is driven from real call sites, and nothing
+   ever calls `parse`. So the target stays honestly unresolved: `export
+   "parse" could not be attributed to any function or class member in the
+   resolved module`. That is a separate, deliberate scope boundary, not a
+   defect in either relation.
+2. **RWF-002's blocking uncertainty, now with a wider surface.** Because
+   the call into `qs.stringify` resolves, the reachable subgraph now
+   genuinely includes `qs`'s implementation and its transitive dependencies
+   (`get-intrinsic`, `side-channel`, `object-inspect`, …), which are dense
+   with `unsupported_construct`, `dynamic_member_access` and
+   `function_constructor` diagnostics. Any one of those sets `sawUnknown`
+   and blocks a reachability-derived `NOT_AFFECTED`. This is RWF-002's
+   documented tradeoff, unchanged; resolving more of the graph legitimately
+   exposes more of it.
+
+`RWB-05` expects `NOT_AFFECTED`, so it needs both of the above, not more
+export attribution.
 
 **Why `RWB-08` (`debug`→`ms`) still fails after RWF-004a:** its first hop
 (`node.js`'s `exports = module.exports = require('./debug')`) is

@@ -1,0 +1,9 @@
+rules:
+  - id: GHSA-vt2v2-0001
+    package:
+      name: vt2-vuln-lib
+    targets:
+      - module: vt2-vuln-lib
+        export: default
+        kind: function
+        confidence: 1.0
