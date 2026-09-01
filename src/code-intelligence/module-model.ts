@@ -1,6 +1,12 @@
 import ts from "typescript";
 import type { SourceLocation } from "../domain/graph.js";
 import {
+  commonJsModuleReExportOrigin,
+  commonJsPropertyReExportOrigin,
+  resolveCommonJsReExportExpression,
+  type CommonJsReExportOrigin,
+} from "./commonjs-reexports.js";
+import {
   type IndexedExport,
   type IndexedFunction,
   type SourceIndex,
@@ -38,6 +44,22 @@ export interface ExportBinding {
   readonly localName?: string;
   /** The source module, for re-exports (`export { a } from "./x"`). */
   readonly specifier?: string;
+  /**
+   * For a CommonJS export whose value came from a `require()` of another
+   * module (RWF-004a): where that value originates. `undefined` for every
+   * export defined locally, and for every CommonJS export whose right-hand
+   * side has no single statically-known origin (a dynamic specifier, a
+   * conditional, a chained alias) — see
+   * {@link CommonJsReExportOrigin} and commonjs-reexports.ts.
+   *
+   * Deliberately separate from {@link specifier}, which carries the ESM
+   * `export { a } from "./x"` form: the two are different syntaxes with
+   * different resolution rules (the CommonJS one is restricted to the
+   * SAME canonical PackageInstance — see call-graph.ts's
+   * `resolveReExportChain`), and collapsing them would silently give the
+   * CommonJS form the ESM form's cross-package reach.
+   */
+  readonly commonJsReExport?: CommonJsReExportOrigin;
   readonly location: SourceLocation;
 }
 
@@ -180,9 +202,10 @@ function resolveComputedPropertyNameLiteral(
  * object literal, or when none of its properties are statically nameable.
  */
 function unpackObjectLiteralExports(
-  sourceFile: ts.SourceFile,
+  index: SourceIndex,
   assignment: ModuleExportsAssignment,
 ): ExportBinding[] | undefined {
+  const sourceFile = index.sourceFile;
   if (!ts.isObjectLiteralExpression(assignment.rhs)) {
     return undefined;
   }
@@ -198,6 +221,10 @@ function unpackObjectLiteralExports(
         localName: ts.isIdentifier(property.initializer)
           ? property.initializer.text
           : undefined,
+        commonJsReExport: resolveCommonJsReExportExpression(
+          index,
+          property.initializer,
+        ),
         location: toSourceLocation(sourceFile, property),
       });
     } else if (
@@ -216,6 +243,10 @@ function unpackObjectLiteralExports(
           localName: ts.isIdentifier(property.initializer)
             ? property.initializer.text
             : undefined,
+          commonJsReExport: resolveCommonJsReExportExpression(
+            index,
+            property.initializer,
+          ),
           location: toSourceLocation(sourceFile, property),
         });
       }
@@ -225,6 +256,14 @@ function unpackObjectLiteralExports(
         syntax: "commonjs",
         exportedName: property.name.text,
         localName: property.name.text,
+        // `module.exports = { Range }` over a local
+        // `const Range = require("./classes/range")` -- the dominant
+        // real-world shape (semver, qs; see the audit's § 5.2). The
+        // shorthand's own identifier IS the value expression.
+        commonJsReExport: resolveCommonJsReExportExpression(
+          index,
+          property.name,
+        ),
         location: toSourceLocation(sourceFile, property),
       });
     } else if (
@@ -264,9 +303,10 @@ function unpackObjectLiteralExports(
 }
 
 function buildExportBindings(
-  sourceFile: ts.SourceFile,
+  index: SourceIndex,
   exportsList: readonly IndexedExport[],
 ): ExportBinding[] {
+  const sourceFile = index.sourceFile;
   const results: ExportBinding[] = [];
   let sawCommonJsModuleExports = false;
 
@@ -280,6 +320,10 @@ function buildExportBindings(
           kind: "named",
           syntax: "commonjs",
           exportedName: exp.exportedName,
+          commonJsReExport:
+            exp.exportedName === undefined
+              ? undefined
+              : commonJsPropertyReExportOrigin(index, exp.exportedName),
           location: exp.location,
         });
         break;
@@ -301,8 +345,10 @@ function buildExportBindings(
   if (sawCommonJsModuleExports) {
     const assignment = findLastModuleExportsAssignment(sourceFile);
     if (assignment) {
-      const unpacked = unpackObjectLiteralExports(sourceFile, assignment);
-      results.push(...(unpacked ?? [wholeModuleDefaultExport(assignment)]));
+      const unpacked = unpackObjectLiteralExports(index, assignment);
+      results.push(
+        ...(unpacked ?? [wholeModuleDefaultExport(index, assignment)]),
+      );
     }
   }
 
@@ -322,6 +368,7 @@ function buildExportBindings(
  * named local declaration.
  */
 function wholeModuleDefaultExport(
+  index: SourceIndex,
   assignment: ModuleExportsAssignment,
 ): ExportBinding {
   let localName: string | undefined;
@@ -340,6 +387,10 @@ function wholeModuleDefaultExport(
     kind: "default",
     syntax: "commonjs",
     localName,
+    // `module.exports = require("./lib")` / `= require("./lib").foo`
+    // (RWF-004a): the module's whole exported value comes from another
+    // module. Unlike `localName`, this survives the value being anonymous.
+    commonJsReExport: commonJsModuleReExportOrigin(index),
     location: assignment.location,
   };
 }
@@ -352,7 +403,7 @@ export function buildModuleModel(index: SourceIndex): ModuleModel {
   return {
     filePath: index.filePath,
     imports: index.imports.map(toImportBinding),
-    exports: buildExportBindings(index.sourceFile, index.exports),
+    exports: buildExportBindings(index, index.exports),
   };
 }
 

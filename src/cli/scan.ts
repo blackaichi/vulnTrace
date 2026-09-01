@@ -331,6 +331,11 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       maxGraphNodes: config.analysis.limits.maxGraphNodes,
       maxAnalysisSeconds: config.analysis.limits.maxAnalysisSeconds,
       project: tsProject,
+      // RWF-004a: the same registry the findings below already use, so the
+      // call graph's same-canonical-PackageInstance test for a CommonJS
+      // re-export and a finding's own `packageInstance` are decided by one
+      // identity authority, never two.
+      knownPackageRoots,
     });
     graphBuildMs = Date.now() - graphBuildStart;
   } catch (error) {
