@@ -88,6 +88,26 @@ interface CommonJsFacts {
    */
   readonly localBindings: ReadonlyMap<string, ConstBinding>;
   /**
+   * Every name this file binds with a `var`/`let`/`const` declaration,
+   * in ANY scope and through any binding pattern — the exact set of names
+   * {@link localBindings}'s single-assignment proof has an OPINION about.
+   *
+   * This is what separates "the proof refused this name" from "the proof
+   * was never asked about this name at all" (RWF-013). A name in here but
+   * NOT in {@link localBindings} was examined and found wanting:
+   * reassigned, declared more than once, declared outside module scope,
+   * or declared with no initializer. A name absent from here was never a
+   * variable at all — a `function` declaration, a class declaration, an
+   * import, or a free/global reference — and this model therefore has
+   * nothing to say about it, sound or otherwise.
+   *
+   * Deliberately excludes parameters: `function f(fn) {}` says nothing
+   * about a module-scope `function fn() {}` that an export elsewhere in
+   * the file legitimately names, and treating it as a refusal would cost
+   * real attribution for no soundness gain.
+   */
+  readonly variableDeclaredNames: ReadonlySet<string>;
+  /**
    * Whether this file declares a binding of its own named `exports`,
    * `module` or `require` anywhere in it — a user object that merely
    * *looks* like CommonJS (`const exports = {}; exports.foo = ...`), or a
@@ -232,6 +252,23 @@ function declaredName(node: ts.Node): string | undefined {
   return undefined;
 }
 
+/**
+ * Every identifier a variable declaration's name position binds, however
+ * nested (`var a`, `let { b, c: [d] } = ...`, `const { e = 1 } = ...`).
+ * Feeds {@link CommonJsFacts.variableDeclaredNames}.
+ */
+function collectBoundNames(name: ts.BindingName, into: Set<string>): void {
+  if (ts.isIdentifier(name)) {
+    into.add(name.text);
+    return;
+  }
+  for (const element of name.elements) {
+    if (ts.isBindingElement(element)) {
+      collectBoundNames(element.name, into);
+    }
+  }
+}
+
 function collectFacts(sourceFile: ts.SourceFile): CommonJsFacts {
   const propertyRhsByName = new Map<string, ts.Expression>();
   /** Candidate module-scope bindings, before the single-assignment proof below. */
@@ -240,6 +277,8 @@ function collectFacts(sourceFile: ts.SourceFile): CommonJsFacts {
   const declarationCounts = new Map<string, number>();
   /** Names `const` already proves single-assignment for. */
   const constNames = new Set<string>();
+  /** Every `var`/`let`/`const`-bound name anywhere in the file (RWF-013). */
+  const variableDeclaredNames = new Set<string>();
   /** Names written to somewhere in the file after their declaration. */
   const reassignedNames = new Set<string>();
   let moduleExportsRhs: ts.Expression | undefined;
@@ -272,6 +311,7 @@ function collectFacts(sourceFile: ts.SourceFile): CommonJsFacts {
     }
 
     if (ts.isVariableDeclaration(node)) {
+      collectBoundNames(node.name, variableDeclaredNames);
       if (ts.isObjectBindingPattern(node.name)) {
         for (const element of node.name.elements) {
           if (ts.isIdentifier(element.name) && isConstDeclaration(node)) {
@@ -356,6 +396,7 @@ function collectFacts(sourceFile: ts.SourceFile): CommonJsFacts {
     moduleExportsRhs,
     propertyRhsByName,
     localBindings,
+    variableDeclaredNames,
     shadowsCommonJsNames,
   };
 }
@@ -409,28 +450,105 @@ export function declaresCommonJsAmbientShadow(index: SourceIndex): boolean {
 }
 
 /**
- * The initializer of the module-scope, provably single-assignment local
- * binding named `name`, or `undefined` when this file has no such binding
- * (see {@link CommonJsFacts.localBindings} for the full proof obligation:
- * declared exactly once in the whole file, at the file's own top level,
- * with an initializer, and never reassigned).
+ * What this file's single-assignment model has to say about the local
+ * name `name` — the three-way answer RWF-013 needs, where a bare
+ * `Expression | undefined` gave only two.
  *
- * Exactly ONE hop, deliberately: this returns the declaration's own
- * initializer expression and never resolves it further, so
- * `const a = f; const b = a; module.exports = b` stops here with `a` —
- * an identifier, not a function — rather than becoming the arbitrary
- * chained-alias resolution RWF-012 scopes separately.
+ * - `"single-assignment"` carries the initializer of the module-scope,
+ *   provably single-assignment binding (see
+ *   {@link CommonJsFacts.localBindings} for the full proof obligation:
+ *   declared exactly once in the whole file, at the file's own top level,
+ *   with an initializer, and never reassigned). This is the authoritative
+ *   answer, and exactly ONE hop: it is the declaration's own initializer
+ *   expression, never resolved further, so
+ *   `const a = f; const b = a; module.exports = b` stops here with `a` —
+ *   an identifier, not a function — rather than becoming the arbitrary
+ *   chained-alias resolution RWF-012 scopes separately.
+ * - `"refused"` means this file DOES bind `name` with a
+ *   `var`/`let`/`const`, and the proof above rejected it: reassigned,
+ *   declared more than once, declared outside module scope, declared with
+ *   no initializer, or destructured (whose value is a property of some
+ *   other object, which this relation models nothing about). The refusal
+ *   is a fact in its own right — it says the file's own text contradicts
+ *   any claim about what `name` holds — and callers must not discard it
+ *   in favour of a weaker mechanism (RWF-013).
+ * - `"unmodeled"` means this file binds no variable called `name` at all,
+ *   so the single-assignment proof was never applicable: a `function`
+ *   declaration, a class declaration, an import, or a free reference.
+ *   This is silence, NOT a refusal, and callers may fall back to whatever
+ *   older mechanism they used before this relation existed.
  *
- * Destructured bindings (`const { fn } = ...`) are excluded: their value
- * is a property of some other object, which this relation models nothing
- * about.
+ * Collapsing the last two is precisely the RWF-013 defect: both used to
+ * surface as `undefined`, so a caller could not tell "I proved this name
+ * is not what you think" from "I have never heard of this name."
  */
-export function resolveModuleScopeBindingValue(
+export type LocalBindingProvenance =
+  | { readonly kind: "single-assignment"; readonly value: ts.Expression }
+  | { readonly kind: "refused" }
+  | { readonly kind: "unmodeled" };
+
+export function classifyLocalBinding(
   index: SourceIndex,
   name: string,
+): LocalBindingProvenance {
+  const facts = factsOf(index.sourceFile);
+  const binding = facts.localBindings.get(name);
+  if (binding?.kind === "value") {
+    return { kind: "single-assignment", value: binding.initializer };
+  }
+  return facts.variableDeclaredNames.has(name)
+    ? { kind: "refused" }
+    : { kind: "unmodeled" };
+}
+
+/**
+ * Whether `expr` is a bare identifier whose local binding
+ * {@link classifyLocalBinding} examined and REFUSED — the one condition
+ * under which an export's name-only function attribution must be
+ * suppressed rather than attempted (RWF-013; see module-model.ts's
+ * `ExportBinding.localIdentifierProvenanceRefused`).
+ *
+ * Asked WITHOUT {@link usableFactsOf}'s "has at least one `require()`"
+ * short-circuit and without the ambient-shadow guard, for the same reason
+ * {@link declaresCommonJsAmbientShadow} is: the unsound shape this
+ * suppresses (`let fn = function () {}; fn = other; module.exports = fn`)
+ * needs no `require()` anywhere, and a file that shadows the CommonJS
+ * ambient names has strictly less provenance, not more.
+ *
+ * Anything that is not a bare identifier answers `false`: a function
+ * expression, an arrow, a class, a `require()` call, a member access — an
+ * export over any of those was never resolved by looking a name up, so
+ * there is nothing here to suppress.
+ */
+export function refusesLocalIdentifierProvenance(
+  index: SourceIndex,
+  expr: ts.Expression,
+): boolean {
+  const node = unwrapParentheses(expr);
+  return (
+    ts.isIdentifier(node) &&
+    classifyLocalBinding(index, node.text).kind === "refused"
+  );
+}
+
+/**
+ * The right-hand side of this file's last `exports.<exportedName> = ...` /
+ * `module.exports.<exportedName> = ...` assignment, or `undefined` when it
+ * has none.
+ *
+ * Exposed so module-model.ts can ask {@link refusesLocalIdentifierProvenance}
+ * about the property form too: `exports.parse = parse` binds an export to
+ * an identifier exactly as `module.exports = parse` does, and is the shape
+ * the RWF-013 reproducer actually hits (see
+ * fixtures/commonjs-stale-alias-export/). Uses the same last-write-wins
+ * map {@link commonJsPropertyReExportOrigin} does, so both relations see
+ * the same assignment.
+ */
+export function commonJsPropertyExportRhs(
+  index: SourceIndex,
+  exportedName: string,
 ): ts.Expression | undefined {
-  const binding = factsOf(index.sourceFile).localBindings.get(name);
-  return binding?.kind === "value" ? binding.initializer : undefined;
+  return factsOf(index.sourceFile).propertyRhsByName.get(exportedName);
 }
 
 /**

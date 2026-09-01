@@ -84,6 +84,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-006 | `fast-xml-parser` | A webpack-bundled, `Object.defineProperty`-getter-defined class export isn't recognized as a constructible/method-bearing target | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
 | RWF-007 | `RWB-10` (`fs`, `path`) | `ts.resolveModuleName` never resolves Node builtin specifiers (`fs`, `node:fs`, ...) — every builtin `require`/`import` call produced an `unresolved_module` edge, a **closure-widening** blocker, in essentially every real Node application | Precision, universal blast radius (also a soundness *prerequisite*: combined with RWF-002, no realistic Node application could ever reach `NOT_AFFECTED` while this stood) | **Fixed (VT-305)** |
 | RWF-009 | `semver` (`RWB-09a`, npm alias `semver-vulnerable`) | `identifyModule()` derived package *identity* purely from the install *directory* name, not the installed package's own declared `package.json` `"name"` — an npm-aliased install (`"semver-vulnerable": "npm:semver@7.5.1"`) was therefore invisible to `graphPackageInstances(graph, "semver")` even though the call graph genuinely traversed it | **Soundness** — a genuinely-reached aliased instance was silently treated as `confirmedAbsentInstance` (VT-212's guard, meant for a never-touched instance), producing a false `NOT_AFFECTED` for a package that was, in fact, reached and vulnerable | **Fixed (VT-306)** |
+| RWF-013 | any CommonJS file that reassigns an exported local (real shapes in `es-define-property`, `gopd`) | An export whose value is an identifier the file itself REASSIGNS fell through to a same-file name search, which lands on the binding's STALE initializer — an anonymous function expression is indexed under the name of the variable it was assigned to, so the stale node matches the export name exactly | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C unreachability proof over a function the module does not export | **Fixed (RWF-013)** |
 | RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | Open, not yet scoped as a task |
 
 ---
@@ -554,3 +555,118 @@ The rule's target names the **public, canonical export** (`parse`) — but the f
 **Proposed direction (not scoped, not implemented):** when an `exports.foo = <expr>` (or `module.exports.foo = <expr>`) assignment's RHS is itself another assignment expression (`exports.bar = decode`) or a bare identifier referencing a locally-declared function, capture that identifier as the binding's `localName` (chasing through one or more chained assignment layers, bounded the same way VT-214's alias tracking already is) rather than defaulting to the export's own name — a targeted extension to `buildExportBindings`/`describeCommonJsExportTarget`, not a general aliasing/points-to feature.
 
 **MVP-readiness relevance:** does not violate any adversarial-suite invariant (still 79/79) — no adversarial fixture uses a chained/aliased `exports.foo = exports.bar = impl` assignment. `RWB-07`'s own oracle (`expected: NOT_AFFECTED`) is unchanged by this finding: a human analyst reading `src/config.js` with the configured entrypoint in mind still concludes `NOT_AFFECTED` with no ambiguity (`loadLegacyIniConfig` is genuinely unreachable from `loadModernConfig`) — this finding is about *why the analyzer itself* can no longer reach that same conclusion with adequate coverage, now that it correctly refuses to guess at an unresolved target.
+
+---
+
+## RWF-013 — A reassigned local binding's STALE initializer is attributed to the export by name
+
+**Status: Fixed.**
+
+**Discovered:** a focused RWF-003 follow-up audit of the legacy name-based
+CommonJS export fallback, then reproduced end-to-end on a purpose-built
+fixture (`fixtures/commonjs-stale-alias-export/`) and as `ADV2-069`.
+
+**Symptom:** a false `NOT_AFFECTED` — the highest-severity class of defect
+this analyzer can produce — carrying a complete, well-formed Family C
+`confirmedUnreachableTarget` proof with `reachableSubgraphComplete: true`.
+
+**Root cause.** RWF-003 gave `module.exports = X` a concrete function
+identity (`ExportBinding.localFunctionLocation`) derived through
+`commonjs-reexports.ts`'s module-scope single-assignment proof. For an
+identifier right-hand side that proof correctly REFUSES a binding it cannot
+vouch for — reassigned, declared more than once, declared outside module
+scope, declared without an initializer. But the refusal was expressed as
+`localFunctionLocation === undefined`, and `mapExportsToFunctions` then fell
+straight through to the pre-existing name search:
+
+```ts
+const localKey = exp.localName ?? exp.exportedName;
+const matchingFn = index.functions.find((fn) => fn.name === localKey);
+```
+
+That search re-attributes the export to the very node the stronger relation
+just rejected. The two facts compose into a trap:
+
+```js
+let parse = function (input) { ... };   // SAFE fallback -- ANONYMOUS, so
+                                        // source-index names it "parse"
+                                        // after the variable it is
+                                        // assigned to
+parse = require("./lib/parse");         // ...and immediately stale
+exports.parse = parse;                  // binds "parse" -> the STALE node
+```
+
+Because `inferAssignedName` names an anonymous function expression after its
+assignment target, the discarded initializer is indexed under *exactly* the
+export name a rule asks for. The stronger, negative provenance information
+was computed and then thrown away.
+
+**Why it produced a false `NOT_AFFECTED` rather than only imprecision.**
+The stale node is a real graph node, so the target resolved and a
+reachability search ran. Whether that search says AFFECTED or NOT_AFFECTED
+depends entirely on whether the *stale* node happens to be reachable — a
+question with no relationship to the vulnerability. In the reproducer the
+package publishes the same implementation under a second, statically
+resolvable name (`exports.parseSync = require("./lib/parse")`), the
+application calls that one, and the stale fallback is called by nothing. So
+the search correctly proved the stale node unreachable, and the verdict
+layer correctly turned a complete unreachability proof into
+`NOT_AFFECTED`. Every stage was right about the node it was handed. The node
+was wrong.
+
+**Fix.** `commonjs-reexports.ts` now answers a three-way question
+(`classifyLocalBinding`) where it previously answered a two-way one:
+
+- `"single-assignment"` — the proof holds; carries the initializer.
+- `"refused"` — this file DOES bind the name with `var`/`let`/`const`, and
+  the proof rejected it. Backed by a new `CommonJsFacts.variableDeclaredNames`
+  set: every `var`/`let`/`const`-bound name in any scope, which is exactly
+  the set of names the proof has an opinion about.
+- `"unmodeled"` — no variable of that name exists, so the proof was never
+  applicable.
+
+`ExportBinding.localIdentifierProvenanceRefused` carries the middle case
+(internal only — never serialized, no schema or HTML change), and
+`mapExportsToFunctions` skips the name fallback for such an export,
+producing an unresolved target and therefore `UNKNOWN`. Applied to all three
+identifier-valued export forms: `module.exports = X`, `exports.X = <ident>`,
+and `module.exports = { X }` / `{ X: <ident> }`.
+
+**Why `localFunctionLocation === undefined` could not be the signal.** It is
+also the answer for every shape RWF-003's identity relation does not model
+at all, most of which the name-based path handles perfectly soundly:
+`function fn() {} module.exports = fn` (a function declaration, not a
+variable binding), `const C = class {}; module.exports = C` (a class,
+attributed via its constructor's name — and everything
+`findExportedClassMembers` builds on it), and every `exports.foo = ...`
+property export. Suppressing on `undefined` alone would silently drop all of
+them. The distinction that matters is "analyzed and rejected" versus "never
+analyzed", which is why this needed a new fact rather than a reinterpreted
+one.
+
+**Deliberately unchanged.** No verdict thresholds, no Family A/B/C
+semantics, no `reachableSubgraphComplete`, `ModuleLoadClosure`,
+`AnalysisProofContext`, exactly-one proof schema, evidence field or reason
+identifier was touched. Family C was never wrong here; it was fed a wrong
+target, and the correction belongs entirely in export attribution. Alias
+chains longer than one hop (RWF-012) and cross-package re-export (RWF-004b)
+remain out of scope and equally conservative.
+
+**Blast radius, measured.** A parser-based sweep of every validation
+fixture, vendored package and adversarial fixture (730 files walked, 412
+containing a CommonJS export construct) found **3** real vendored files
+matching the shape — `fast-xml-parser/lib/fxp.cjs`,
+`es-define-property/index.js` and `gopd/index.js`, the last two being the
+textbook `var x = ...; if (...) { x = ... } module.exports = x` feature
+probe. All three attribute **nothing** both before and after the fix (none
+declares a function carrying the exported name), so the benchmark delta is
+**zero**, independently confirmed: 10 PASS / 7 KNOWN_FAIL / 0 UNEXPECTED /
+17 total, unchanged. `RWB-02` and `RWB-09a` remain `AFFECTED`; `ADV2-067`
+and `ADV2-068` remain passing.
+
+**Residual limitation (precision, not soundness).** An export naming a
+top-level `function fn() {}` is refused if any *other* scope in the same
+file also declares a `var`/`let`/`const` called `fn`, since the
+declaration-count proof cannot then vouch for which binding the export sees.
+This costs an attribution that used to be made by coincidence and never
+manufactures one.
