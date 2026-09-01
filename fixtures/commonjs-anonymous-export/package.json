@@ -1,0 +1,9 @@
+{
+  "name": "commonjs-anonymous-export-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0",
+    "other-lib": "1.0.0"
+  }
+}
