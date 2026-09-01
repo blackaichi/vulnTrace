@@ -370,12 +370,67 @@ function factsOf(sourceFile: ts.SourceFile): CommonJsFacts {
   return facts;
 }
 
-function unwrapParentheses(expr: ts.Expression): ts.Expression {
+/**
+ * Strips redundant parentheses (`module.exports = (function () {})`) so
+ * every relation in this file — and module-model.ts's RWF-003 function
+ * binding, which shares it — sees the same value expression whether or not
+ * the author wrapped it.
+ */
+export function unwrapParentheses(expr: ts.Expression): ts.Expression {
   let current = expr;
   while (ts.isParenthesizedExpression(current)) {
     current = current.expression;
   }
   return current;
+}
+
+/**
+ * Whether this file declares its own binding named `exports`, `module` or
+ * `require` anywhere in it — see
+ * {@link CommonJsFacts.shadowsCommonJsNames} for what that means and why
+ * it disqualifies the file's CommonJS provenance entirely.
+ *
+ * Asked here directly, WITHOUT {@link usableFactsOf}'s
+ * "has at least one `require()`" short-circuit: that short-circuit is
+ * sound for a re-export ORIGIN (every origin bottoms out at a literal
+ * `require()`, so a require-free file provably has none), but a
+ * `module.exports = function () {}` binding needs no `require()` at all,
+ * so the same short-circuit would wave through exactly the shadowed file
+ * (`const module = { exports: null }; module.exports = function () {}`)
+ * this guard exists to refuse (RWF-003, preserving RWF-004a's
+ * ambient-provenance protection).
+ *
+ * Backed by the same per-`SourceFile` {@link factsOf} cache, so a file
+ * that already derived facts for a re-export origin pays nothing extra
+ * here.
+ */
+export function declaresCommonJsAmbientShadow(index: SourceIndex): boolean {
+  return factsOf(index.sourceFile).shadowsCommonJsNames;
+}
+
+/**
+ * The initializer of the module-scope, provably single-assignment local
+ * binding named `name`, or `undefined` when this file has no such binding
+ * (see {@link CommonJsFacts.localBindings} for the full proof obligation:
+ * declared exactly once in the whole file, at the file's own top level,
+ * with an initializer, and never reassigned).
+ *
+ * Exactly ONE hop, deliberately: this returns the declaration's own
+ * initializer expression and never resolves it further, so
+ * `const a = f; const b = a; module.exports = b` stops here with `a` —
+ * an identifier, not a function — rather than becoming the arbitrary
+ * chained-alias resolution RWF-012 scopes separately.
+ *
+ * Destructured bindings (`const { fn } = ...`) are excluded: their value
+ * is a property of some other object, which this relation models nothing
+ * about.
+ */
+export function resolveModuleScopeBindingValue(
+  index: SourceIndex,
+  name: string,
+): ts.Expression | undefined {
+  const binding = factsOf(index.sourceFile).localBindings.get(name);
+  return binding?.kind === "value" ? binding.initializer : undefined;
 }
 
 /**
