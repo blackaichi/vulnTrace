@@ -456,6 +456,59 @@ export function unwrapParentheses(expr: ts.Expression): ts.Expression {
 }
 
 /**
+ * Strips redundant parentheses AND chained plain-assignment expressions
+ * from a value expression, so every relation in this file — and
+ * module-model.ts's RWF-003 function binding, which shares it — sees the
+ * VALUE the expression evaluates to rather than the syntax the author
+ * happened to wrap it in.
+ *
+ * ```text
+ * (function () {})                 -> that FunctionExpression
+ * exports.decode = decode          -> `decode`
+ * exports.a = (exports.b = fn)     -> `fn`
+ * ```
+ *
+ * The assignment step is RWF-012's second half, and it is exact JavaScript
+ * semantics rather than a dataflow approximation: the value of `x = v` IS
+ * the value of `v`, unconditionally, for every left-hand side (a plain
+ * name, a property access, even a setter — a setter's return value is
+ * discarded and the assignment still evaluates to `v`). Real
+ * `ini@1.3.5`'s whole export table is spelled this way
+ * (`exports.parse = exports.decode = decode`), and it is a staple CommonJS
+ * idiom for publishing one function under two names.
+ *
+ * ONLY the plain `=` operator is unwrapped. A compound assignment
+ * (`x += v`, `x ||= v`) evaluates to the RESULT of the operation, not to
+ * `v`, so unwrapping one would assert an identity that does not hold.
+ *
+ * Unwrapping an assignment is safe here without any control-flow test of
+ * its own because every caller is already gated on
+ * {@link module-model.ts}'s `isUnconditionalExportAssignment` (or
+ * `ModuleExportsAssignment.isModuleScope`), which climbs out through
+ * exactly these chained assignment links before asking whether the whole
+ * statement is an unconditional module-scope one. A branch-local
+ * `if (cond) { exports.a = exports.b = fn; }` is refused there, before
+ * this ever runs.
+ */
+export function unwrapValue(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  for (;;) {
+    if (ts.isParenthesizedExpression(current)) {
+      current = current.expression;
+      continue;
+    }
+    if (
+      ts.isBinaryExpression(current) &&
+      current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      current = current.right;
+      continue;
+    }
+    return current;
+  }
+}
+
+/**
  * Whether this file declares its own binding named `exports`, `module` or
  * `require` anywhere in it — see
  * {@link CommonJsFacts.shadowsCommonJsNames} for what that means and why
@@ -489,11 +542,15 @@ export function declaresCommonJsAmbientShadow(index: SourceIndex): boolean {
  *   {@link CommonJsFacts.localBindings} for the full proof obligation:
  *   declared exactly once in the whole file, at the file's own top level,
  *   with an initializer, and never reassigned). This is the authoritative
- *   answer, and exactly ONE hop: it is the declaration's own initializer
+ *   answer for exactly ONE hop: it is the declaration's own initializer
  *   expression, never resolved further, so
  *   `const a = f; const b = a; module.exports = b` stops here with `a` —
- *   an identifier, not a function — rather than becoming the arbitrary
- *   chained-alias resolution RWF-012 scopes separately.
+ *   an identifier, not a function. Callers that need the whole chain
+ *   walked ask {@link resolveLocalValue} instead (RWF-012), which is this
+ *   same classification iterated under a cycle guard; this one-hop form
+ *   is kept because it is the exact primitive that relation is built out
+ *   of, and because a caller that wants to inspect one declaration's own
+ *   initializer should not be handed a chain's terminal value.
  * - `"refused"` means the file's own text contradicts any claim about
  *   what `name` holds. Two independent grounds produce it:
  *
@@ -555,11 +612,138 @@ export function classifyLocalBinding(
 }
 
 /**
- * Whether `expr` is a bare identifier whose local binding
- * {@link classifyLocalBinding} examined and REFUSED — the one condition
- * under which an export's name-only function attribution must be
- * suppressed rather than attempted (RWF-013; see module-model.ts's
- * `ExportBinding.localIdentifierProvenanceRefused`).
+ * {@link classifyLocalBinding} followed along a CHAIN of local aliases
+ * rather than stopping after one hop — RWF-012's core relation, and the
+ * one place the multi-hop walk over {@link CommonJsFacts.localBindings}
+ * lives for the function-identity consumers (module-model.ts's
+ * RWF-003/RWF-011 attribution). The re-export consumers get the same walk
+ * from {@link resolveOrigin}, which has to thread a
+ * `specifier`/`importedName` pair through the same hops and so cannot
+ * share this signature.
+ *
+ * ```text
+ * fn        (const fn = function () {})           -> that FunctionExpression
+ * b         (const b = a; const a = function(){}) -> that FunctionExpression
+ * b         (const b = a; a = other)              -> refused
+ * b         (const b = a; const a = b)            -> refused (cycle)
+ * b         (const b = a; const a = getIt())      -> that CallExpression
+ * fn        (function fn() {})                    -> unmodeled
+ * ```
+ *
+ * The three answers mean exactly what {@link classifyLocalBinding}'s do,
+ * and this agrees with it hop for hop — it IS that classification,
+ * iterated:
+ *
+ * - `"value"` carries the first expression on the chain that is not a
+ *   bare identifier. Every identifier hop that got there was a
+ *   module-scope, single-assignment binding of this file's own
+ *   ({@link CommonJsFacts.localBindings}), so the chain is a proof that
+ *   this expression is what the original name holds — NOT a guess about
+ *   it. The value is returned as-is; deciding whether it is an
+ *   attributable function node, a `require()` origin, or something this
+ *   analyzer models nothing about is the caller's job, unchanged. A
+ *   non-identifier input is trivially its own chain of length zero, so
+ *   `module.exports = function () {}` answers exactly as it did before.
+ * - `"refused"` means some hop's own file text contradicts any claim
+ *   about the chain's value. Four grounds produce it, and each one is
+ *   checked at EVERY hop, not just the first:
+ *
+ *   1. **Reassignment, whatever the declaration form** (RWF-013b) — the
+ *      file writes to the name somewhere. Checked first, as it is in
+ *      {@link classifyLocalBinding}, and it invalidates a chain from any
+ *      position: first hop, middle hop or terminal hop alike.
+ *   2. **A cycle** — the name is already on the chain being walked
+ *      (`const a = b; const b = a`). Both bindings can be individually
+ *      impeccable (`const`, declared once, never written to), so the
+ *      per-hop proof cannot catch this and the walk would not terminate.
+ *      Refusing is the only answer that is not an arbitrary pick from the
+ *      cycle.
+ *   3. **A variable binding the single-assignment proof rejected**
+ *      (RWF-013) — declared more than once anywhere in the file (which is
+ *      also what makes a nested same-named `const` refuse rather than
+ *      silently resolve against the wrong scope's binding), declared
+ *      outside module scope, or declared with no initializer (which is
+ *      what a conditionally-initialized `let a; if (c) { a = ... }` looks
+ *      like here, on top of its reassignment).
+ *   4. **A destructured binding** — `const { parse } = dep` makes the
+ *      name a PROPERTY of another object, and this relation models no
+ *      object properties. (The re-export relation models exactly one case
+ *      of this, `const { parse } = require("pkg")`, because there the
+ *      property selection is part of the origin it returns.)
+ * - `"unmodeled"` means the chain ran into a name this file neither
+ *   variable-binds nor ever writes to — an un-reassigned
+ *   `function`/`class` declaration, an import, or a free reference. This
+ *   is silence, not a refusal, exactly as in
+ *   {@link classifyLocalBinding}, and callers may fall back to whatever
+ *   older mechanism they used before.
+ *
+ * Termination: every iteration either returns, or adds a name to
+ * `visited` and continues. `visited` only grows, and the names it can add
+ * are drawn from {@link CommonJsFacts.localBindings}, which is finite — so
+ * the loop runs at most once per binding in the file. No recursion, hence
+ * no stack to overflow, however long or however cyclic the chain.
+ */
+export type LocalValueProvenance =
+  | { readonly kind: "value"; readonly value: ts.Expression }
+  | { readonly kind: "refused" }
+  | { readonly kind: "unmodeled" };
+
+export function resolveLocalValue(
+  index: SourceIndex,
+  expr: ts.Expression,
+): LocalValueProvenance {
+  const visited = new Set<string>();
+  let node = unwrapValue(expr);
+
+  while (ts.isIdentifier(node)) {
+    // The cycle guard, asked before the hop is classified: `const a = b;
+    // const b = a` gives two individually impeccable bindings, so no
+    // per-hop proof can catch it and the walk would not terminate.
+    if (visited.has(node.text)) {
+      return { kind: "refused" };
+    }
+    visited.add(node.text);
+
+    // The per-hop proof is {@link classifyLocalBinding}, unchanged and
+    // undiluted — this relation adds hops, never permissiveness. Building
+    // on it rather than re-deriving its facts is deliberate: RWF-013's
+    // and RWF-013b's refusal grounds cannot drift out of sync with the
+    // chain walker if there is only one implementation of them, and
+    // `"refused"`/`"unmodeled"` propagate out of the chain carrying
+    // exactly the meaning they carry for a single binding.
+    const hop = classifyLocalBinding(index, node.text);
+    if (hop.kind !== "single-assignment") {
+      return hop;
+    }
+    node = unwrapValue(hop.value);
+  }
+
+  return { kind: "value", value: node };
+}
+
+/**
+ * Whether `expr` resolves, along the alias chain
+ * {@link resolveLocalValue} walks, to a binding this file's own text
+ * REFUSES — the one condition under which an export's name-only function
+ * attribution must be suppressed rather than attempted (RWF-013; see
+ * module-model.ts's `ExportBinding.localIdentifierProvenanceRefused`).
+ *
+ * RWF-012 widened this from "is a bare identifier the one-hop
+ * classification refused" to "reaches a refused binding anywhere along
+ * the chain", which can only ever ADD refusals. That is the conservative
+ * direction by construction: a refusal never binds anything, it only
+ * stops the same-file name search from binding something the analyzer has
+ * just proved it cannot determine. It closes a real gap in the process —
+ *
+ * ```js
+ * let stale = function () {};   // indexed under the name "stale"
+ * stale = somethingElse;
+ * const alias = stale;
+ * exports.stale = alias;        // RWF-013 saw only `alias`, which is clean
+ * ```
+ *
+ * — where the chain, not the first hop, is what touches the reassigned
+ * binding.
  *
  * Asked WITHOUT {@link usableFactsOf}'s "has at least one `require()`"
  * short-circuit and without the ambient-shadow guard, for the same reason
@@ -568,20 +752,16 @@ export function classifyLocalBinding(
  * needs no `require()` anywhere, and a file that shadows the CommonJS
  * ambient names has strictly less provenance, not more.
  *
- * Anything that is not a bare identifier answers `false`: a function
- * expression, an arrow, a class, a `require()` call, a member access — an
- * export over any of those was never resolved by looking a name up, so
- * there is nothing here to suppress.
+ * Anything whose chain bottoms out in a non-identifier answers `false`: a
+ * function expression, an arrow, a class, a `require()` call, a member
+ * access — an export over any of those was never resolved by looking a
+ * name up, so there is nothing here to suppress.
  */
 export function refusesLocalIdentifierProvenance(
   index: SourceIndex,
   expr: ts.Expression,
 ): boolean {
-  const node = unwrapParentheses(expr);
-  return (
-    ts.isIdentifier(node) &&
-    classifyLocalBinding(index, node.text).kind === "refused"
-  );
+  return resolveLocalValue(index, expr).kind === "refused";
 }
 
 /**
@@ -616,14 +796,42 @@ export function commonJsPropertyExportRhs(
  * foo       (const foo = require("./lib").foo)    -> { "./lib", "foo" }
  * ```
  *
- * `allowAliasHop` bounds the local indirection to EXACTLY ONE hop through
- * a same-file, module-scope, provably single-assignment binding (see
- * {@link CommonJsFacts.localBindings}) — the audit's R-5: "directly, or
- * through one level of local-variable indirection". A second hop
- * (`const a = require("./lib"); const b = a; exports.foo = b.foo`) is
- * arbitrary chained-alias resolution — a separate, deliberately
- * unimplemented task (RWF-012) — and resolves to `undefined` here, leaving
- * the export exactly as unresolved as it was before RWF-004a.
+ * `visitedAliases` bounds the local indirection. RWF-004a admitted EXACTLY
+ * ONE hop through a same-file, module-scope, provably single-assignment
+ * binding (see {@link CommonJsFacts.localBindings}) — the audit's R-5:
+ * "directly, or through one level of local-variable indirection". RWF-012
+ * lifts that to an arbitrary number of hops, WITHOUT weakening what a hop
+ * has to prove: every identifier on the chain must still be a
+ * {@link CommonJsFacts.localBindings} member, which is a per-hop proof
+ * (declared exactly once in the whole file, at the file's own top level,
+ * with an initializer, and never assigned to again). A chain is resolved
+ * only when EVERY hop clears that bar, so
+ *
+ * ```js
+ * const target = require("pkg").parse;
+ * const a = target;
+ * const b = a;
+ * exports.parse = b;          // -> { specifier: "pkg", importedName: "parse" }
+ * ```
+ *
+ * resolves, while a single unproven hop anywhere along it stops the whole
+ * chase at `undefined` — exactly as unresolved as before RWF-004a.
+ *
+ * `visitedAliases` is what makes the traversal terminate. `const a = b;
+ * const b = a;` is a perfectly well-formed pair of module-scope,
+ * single-assignment bindings (each is `const`, each is declared once,
+ * neither is ever written to), so the per-hop proof alone would recurse
+ * forever. A name already on the current chain is refused instead, which
+ * ends the chase at `undefined` rather than at an arbitrary member of the
+ * cycle.
+ *
+ * The set is keyed by identifier TEXT, and within one file's facts that IS
+ * binding identity: {@link CommonJsFacts.localBindings} admits a name only
+ * when the whole file declares it exactly once, in any form and any scope
+ * (`declarationCounts.get(name) === 1`), so a name in the map denotes one
+ * and only one binding. There is no cross-file traversal to confuse here
+ * either — this relation never leaves the file it was given, and yields a
+ * `specifier` for call-graph.ts to resolve instead.
  *
  * Every other shape yields `undefined`, which is the whole point: a
  * dynamic specifier (`require(name)`), a conditional
@@ -634,9 +842,9 @@ export function commonJsPropertyExportRhs(
 function resolveOrigin(
   facts: CommonJsFacts,
   expr: ts.Expression,
-  allowAliasHop: boolean,
+  visitedAliases: Set<string>,
 ): CommonJsReExportOrigin | undefined {
-  const node = unwrapParentheses(expr);
+  const node = unwrapValue(expr);
 
   const specifier = staticRequireSpecifier(node);
   if (specifier !== undefined) {
@@ -645,7 +853,7 @@ function resolveOrigin(
 
   if (ts.isPropertyAccessExpression(node)) {
     return selectProperty(
-      resolveOrigin(facts, node.expression, allowAliasHop),
+      resolveOrigin(facts, node.expression, visitedAliases),
       node.name.text,
     );
   }
@@ -659,17 +867,32 @@ function resolveOrigin(
     // already treats `foo["vulnerable"]()` on the call side. A non-literal
     // key falls through to `undefined` below, never to a guess.
     return selectProperty(
-      resolveOrigin(facts, node.expression, allowAliasHop),
+      resolveOrigin(facts, node.expression, visitedAliases),
       node.argumentExpression.text,
     );
   }
 
-  if (ts.isIdentifier(node) && allowAliasHop) {
+  if (ts.isIdentifier(node)) {
+    // The per-hop proof: only a module-scope, single-assignment binding
+    // this file itself established may be looked through. A name the
+    // proof rejected, a name declared more than once anywhere in the
+    // file, a parameter, an import, a free/global reference — all of them
+    // are absent from the map and stop the chase here.
     const binding = facts.localBindings.get(node.text);
     if (binding === undefined) {
       return undefined;
     }
-    const inner = resolveOrigin(facts, binding.initializer, false);
+    // The cycle guard. A name already on this chain cannot be resolved by
+    // continuing along it, and refusing is the only answer that is not an
+    // arbitrary pick from the cycle. Every path through this function
+    // chases at most ONE sub-expression (a property access has exactly
+    // one base), so the chase is a single walk and one shared set is
+    // exactly the set of names on the current chain.
+    if (visitedAliases.has(node.text)) {
+      return undefined;
+    }
+    visitedAliases.add(node.text);
+    const inner = resolveOrigin(facts, binding.initializer, visitedAliases);
     if (!inner) {
       return undefined;
     }
@@ -740,7 +963,7 @@ export function resolveCommonJsReExportExpression(
   expr: ts.Expression,
 ): CommonJsReExportOrigin | undefined {
   const facts = usableFactsOf(index);
-  return facts ? resolveOrigin(facts, expr, true) : undefined;
+  return facts ? resolveOrigin(facts, expr, new Set()) : undefined;
 }
 
 /**
@@ -754,7 +977,7 @@ export function commonJsPropertyReExportOrigin(
 ): CommonJsReExportOrigin | undefined {
   const facts = usableFactsOf(index);
   const rhs = facts?.propertyRhsByName.get(exportedName);
-  return facts && rhs ? resolveOrigin(facts, rhs, true) : undefined;
+  return facts && rhs ? resolveOrigin(facts, rhs, new Set()) : undefined;
 }
 
 /**
@@ -766,6 +989,6 @@ export function commonJsModuleReExportOrigin(
 ): CommonJsReExportOrigin | undefined {
   const facts = usableFactsOf(index);
   return facts?.moduleExportsRhs
-    ? resolveOrigin(facts, facts.moduleExportsRhs, true)
+    ? resolveOrigin(facts, facts.moduleExportsRhs, new Set())
     : undefined;
 }

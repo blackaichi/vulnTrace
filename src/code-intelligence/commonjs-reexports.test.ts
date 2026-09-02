@@ -199,13 +199,98 @@ describe("CommonJS re-export origins: nothing is guessed (RWF-004a precision con
     ).toBeUndefined();
   });
 
-  it("a SECOND alias hop is not followed (that is RWF-012, not this task)", () => {
+  it("follows a SECOND alias hop, every hop proven (RWF-012)", () => {
+    // RWF-004a stopped here; RWF-012 continues, because `b` and `a` are
+    // both module-scope, declared-once, never-reassigned bindings. The
+    // hop's proof obligation is unchanged -- only the hop COUNT is.
     expect(
       originOf(
         `const a = require("./lib");\nconst b = a;\nexports.vulnerable = b.vulnerable;`,
         "vulnerable",
       ),
+    ).toEqual({ specifier: "./lib", importedName: "vulnerable" });
+  });
+
+  it("follows an arbitrarily long chain of proven hops (RWF-012)", () => {
+    expect(
+      originOf(
+        `const h0 = require("./lib").vulnerable;\n` +
+          Array.from({ length: 40 }, (_, i) => `const h${i + 1} = h${i};`).join(
+            "\n",
+          ) +
+          `\nexports.vulnerable = h40;`,
+        "vulnerable",
+      ),
+    ).toEqual({ specifier: "./lib", importedName: "vulnerable" });
+  });
+
+  it("refuses the whole chain when ONE hop is reassigned (RWF-012)", () => {
+    // Middle-hop mutation. `c` and `a` are impeccable; `b` is not, and
+    // that is enough to invalidate everything downstream of it.
+    expect(
+      originOf(
+        `const a = require("./lib");\nlet b = a;\nb = other;\nconst c = b;\nexports.vulnerable = c.vulnerable;`,
+        "vulnerable",
+      ),
     ).toBeUndefined();
+  });
+
+  it("terminates on a cyclic alias chain rather than picking a member (RWF-012)", () => {
+    // `const a = b; const b = a;` -- both bindings individually satisfy
+    // every per-hop condition, so only the cycle guard stops the walk.
+    expect(
+      originOf(
+        `const a = b;\nconst b = a;\nexports.vulnerable = a.vulnerable;`,
+        "vulnerable",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("terminates on a LONG cycle rather than overflowing the stack (RWF-012)", () => {
+    const ring = Array.from(
+      { length: 200 },
+      (_, i) => `const n${i} = n${(i + 1) % 200};`,
+    ).join("\n");
+    expect(
+      originOf(`${ring}\nexports.vulnerable = n0.vulnerable;`, "vulnerable"),
+    ).toBeUndefined();
+  });
+
+  it("refuses a chain whose terminal is a dynamic value (RWF-012)", () => {
+    // The chain itself is perfectly proven; what it bottoms out in is
+    // not a require() at all, so there is no origin to report.
+    expect(
+      originOf(
+        `const a = getPkg();\nconst b = a;\nexports.vulnerable = b.vulnerable;`,
+        "vulnerable",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("composes a chain with a destructured require binding (RWF-012)", () => {
+    expect(
+      originOf(
+        `const { vulnerable } = require("./lib");\nconst a = vulnerable;\nconst b = a;\nexports.vulnerable = b;`,
+        "vulnerable",
+      ),
+    ).toEqual({ specifier: "./lib", importedName: "vulnerable" });
+  });
+
+  it("follows a chained ASSIGNMENT to its value (RWF-012)", () => {
+    // `exports.a = exports.b = <value>` -- the value of `x = v` IS `v`.
+    // Real ini@1.3.5 spells its whole export table this way.
+    expect(
+      originOf(
+        `exports.other = exports.vulnerable = require("./lib").vulnerable;`,
+        "vulnerable",
+      ),
+    ).toEqual({ specifier: "./lib", importedName: "vulnerable" });
+    expect(
+      originOf(
+        `exports.other = exports.vulnerable = require("./lib").vulnerable;`,
+        "other",
+      ),
+    ).toEqual({ specifier: "./lib", importedName: "vulnerable" });
   });
 
   it("a locally-declared `exports` object disables the relation for the whole file", () => {

@@ -31,6 +31,14 @@ function defaultBinding(text: string) {
   return buildModuleModel(index).exports.find((e) => e.kind === "default");
 }
 
+/** The named export binding `exportedName` in the model built for `text`. */
+function namedBinding(text: string, exportedName: string) {
+  const index = indexSourceFile("/pkg/index.js", text);
+  return buildModuleModel(index).exports.find(
+    (e) => e.exportedName === exportedName,
+  );
+}
+
 describe("RWF-013: a reassigned local binding is never attributed by name", () => {
   it("refuses a reassigned `let` function expression (matrix 1)", () => {
     // The stale initializer is indexed under the name "fn" -- the exact
@@ -270,20 +278,40 @@ describe("RWF-013: every legitimately attributable export keeps resolving", () =
     ).toBe("1:15");
   });
 
-  it("leaves an alias chain longer than one hop exactly as conservative as before (matrix 12, RWF-012 boundary)", () => {
-    // `b` IS provably single-assignment -- its initializer is just an
-    // identifier, not a function. Unchanged: unresolved, not refused, and
-    // deliberately not chased.
+  it("chases an alias chain longer than one hop, and still does not refuse it (matrix 12, RWF-012)", () => {
+    // `b` and `a` are both provably single-assignment, so RWF-012 walks
+    // the pair and lands on the function node. Nothing was REFUSED here:
+    // the chain is clean, so `localIdentifierProvenanceRefused` stays
+    // absent exactly as it was -- refusal remains reserved for a binding
+    // the file's own text contradicts.
     const source = [
       "const a = function () { return 'x'; };",
       "const b = a;",
       "module.exports = b;",
     ].join("\n");
 
-    expect(exportPosition(source)).toBeUndefined();
+    expect(exportPosition(source)).toBe("1:11");
     expect(defaultBinding(source)?.localIdentifierProvenanceRefused).toBe(
       undefined,
     );
+  });
+
+  it("refuses a chain that reaches a reassigned binding through a clean first hop (RWF-012)", () => {
+    // RWF-013 saw only `alias`, which is impeccable, and left the name
+    // search free to bind `stale` -- the anonymous function that source
+    // indexing names after the very variable the file reassigns away
+    // from. The chain, not the first hop, is what touches the mutation.
+    const source = [
+      "let stale = function () { return 'x'; };",
+      "stale = somethingElse;",
+      "const alias = stale;",
+      "exports.stale = alias;",
+    ].join("\n");
+
+    expect(exportPosition(source, "stale")).toBeUndefined();
+    expect(
+      namedBinding(source, "stale")?.localIdentifierProvenanceRefused,
+    ).toBe(true);
   });
 
   it("leaves ambient CommonJS shadowing exactly as conservative as before (matrix 13)", () => {
