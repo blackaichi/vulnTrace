@@ -59,7 +59,7 @@ vulnerable symbol.
   entrypoint. RWB-07.
 - `rwb-08-debug-ms-nested/` — real `debug@2.0.0` pulling in real, vulnerable
   `ms@0.6.2` transitively (GHSA-3fx5-fwvr-xrjg / CVE-2015-8315), reached
-  only via `debug`'s own re-export (`debug.humanize`). RWB-08.
+  only via `debug`'s own re-export (`debug.humanize`). RWB-08 — the cross-package half of the CommonJS re-export chase (RWF-004b).
 - `rwb-09-semver-multi-instance/` — real `semver@7.5.2` (direct) and real
   `semver@7.5.1` (npm-aliased as `semver-vulnerable`) coexisting
   (GHSA-c2qf-rxjj-qqgw / CVE-2022-25883). RWB-09a (vulnerable instance,

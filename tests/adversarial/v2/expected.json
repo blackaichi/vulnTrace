@@ -779,5 +779,19 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp (the value `impls.native` holds, i.e. lib/native.js's function)",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+  },
+  {
+    "id": "ADV2-072",
+    "dir": "adv2-072-cross-package-cjs-facade-duplicate-instances",
+    "category": "72. RWF-004b: a cross-package CommonJS facade over duplicate same-name, same-version PackageInstances",
+    "description": "The application names only vt2-facade-lib and calls facade.dangerousOp(userInput). vt2-facade-lib publishes that name with `exports.dangerousOp = require('vt2-vuln-lib').dangerousOp` -- so the value is another package's function, and WHICH installed vt2-vuln-lib it is depends entirely on where the facade's own require resolves. Two installs of vt2-vuln-lib@1.0.0 exist, identical in name, version and vulnerable export name: node_modules/vt2-vuln-lib and node_modules/vt2-facade-lib/node_modules/vt2-vuln-lib. Node consults the nested one, because a package's own node_modules is searched before its parents'. Three wrong answers are on offer and all three read as resolved rather than failed: vt2-facade-lib's own private `function dangerousOp` helper, which exists only to share the export's spelling (RWF-011); the top-level twin, which any resolution by package metadata rather than by path would find; and vt2-facade-lib itself, where the export is physically declared. This scenario asserts the AFFECTED verdict for the reached instance. The complementary direction -- that the unreached twin never inherits it, and that its own finding's evidence contains no node from the reached one -- is asserted deterministically, per exact packageInstance, in src/analysis/verdict.cross-package-reexport.integration.test.ts, because this suite's findingSelector addresses a finding by package name and version alone and therefore cannot itself tell two same-version instances apart.",
+    "expected": "AFFECTED",
+    "reason": "A human analyst reads src/index.js, sees main() pass userInput straight into facade.dangerousOp, reads vt2-facade-lib/index.js and sees that name bound to require('vt2-vuln-lib').dangerousOp, then applies Node's resolution rule to that require from that file: it reaches vt2-facade-lib/node_modules/vt2-vuln-lib, whose dangerousOp is a real function called with the caller's own input. That is AFFECTED, for that install and no other. Nothing about this conclusion depends on the two installs' shared name and version, which is the point: they are indistinguishable by metadata and distinguishable only by path, so an analyzer that keys on the former reports the same verdict for the wrong instance and has proved nothing. NOT_AFFECTED is not available on any reading -- the call is direct, unconditional, and its target is installed.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp, in the NESTED install at node_modules/vt2-facade-lib/node_modules/vt2-vuln-lib",
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   }
 ]

@@ -200,8 +200,8 @@
     "vulnerableTarget": "ms#default (reached via debug's own re-export, debug.humanize)",
     "description": "Real-world benchmark RWB-08 (nested/transitive dependency instance): ms is never a direct dependency of this application -- it is pulled in transitively by debug, and reached only via debug's own re-export (debug.humanize = require('ms')).",
     "expected": "AFFECTED",
-    "knownFailure": true,
-    "reason": "parseWindow() calls debug.humanize(userSuppliedDuration) directly and unconditionally. Confirmed by reading the real installed debug@2.0.0's debug.js line 14 (`exports.humanize = require('ms')`) and the real resolved node_modules/ms/package.json (version 0.6.2, within GHSA-3fx5-fwvr-xrjg/CVE-2015-8315's vulnerable range). A human analyst reading both files together has no ambiguity: debug.humanize IS ms's own vulnerable function, reached through a real cross-package re-export, not a coincidence of naming. Currently returns UNKNOWN instead -- a known, tracked gap. See FINDINGS.md RWF-004 (cross-package re-export chasing).",
+    "knownFailure": false,
+    "reason": "parseWindow() calls debug.humanize(userSuppliedDuration) directly and unconditionally. Confirmed by reading the real installed debug@2.0.0's node.js line 15 (`exports = module.exports = require('./debug')`), its debug.js line 14 (`exports.humanize = require('ms')`) and the real resolved node_modules/ms/package.json (version 0.6.2, within GHSA-3fx5-fwvr-xrjg/CVE-2015-8315's vulnerable range). A human analyst reading those files together has no ambiguity: debug.humanize IS ms's own vulnerable function, reached through a real cross-package re-export, not a coincidence of naming. Resolved by RWF-004b: the chase now follows the second hop across the package boundary, landing on ms's own anonymous default export (RWF-003) in ms's own canonical PackageInstance. The finding is attributed to ms@0.6.2 -- never to debug, whose file merely spells the re-export -- with the evidence path running src/rate-limit.js:9 -> node_modules/ms/index.js:24.",
     "findingSelector": {
       "package": "ms",
       "version": "0.6.2",

@@ -79,7 +79,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-001 | `lodash` (the main package) | UMD `module.exports` assignment via a locally-aliased variable is invisible to export detection | Precision only — degrades to UNKNOWN in both directions, never a false AFFECTED/NOT_AFFECTED | Open, not yet scoped as a task |
 | RWF-002 | any (`node-forge` isolates it cleanly) | One unresolved/dynamic construct *anywhere* in an entrypoint's reachable call graph forces `UNKNOWN` for every vulnerability checked against that entrypoint, even when the construct is entirely unrelated to the target | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below |
 | RWF-003 | `minimist` | `module.exports = function (...) {...}` (an anonymous function expression, not a named local declaration) isn't matched by export-to-function resolution | Precision only — degrades to UNKNOWN, never a false verdict | **Fixed** — see below |
-| RWF-004 | `qs`, `debug`→`ms`, `semver` | An exported value that is itself a re-export of a function declared in a *different* file (same-package sibling file or a different package entirely) is never chased to its real declaration | Precision only — degrades to UNKNOWN, never a false verdict | **RWF-004a (same package) fixed**; RWF-004b (cross-package) open |
+| RWF-004 | `qs`, `debug`→`ms`, `semver` | An exported value that is itself a re-export of a function declared in a *different* file (same-package sibling file or a different package entirely) is never chased to its real declaration | Precision only — degrades to UNKNOWN, never a false verdict | **Fixed — RWF-004a (same package) and RWF-004b (cross package)** — see below |
 | RWF-005 | `trim-newlines` | TypeScript module resolution prefers a package's hand-authored `.d.ts` over its real `.js` implementation when resolving a bare specifier from a plain `.js` importer | Precision only — degrades to UNKNOWN (analysis operates on a file with no real function bodies) | **Fixed (VT-304)** |
 | RWF-006 | `fast-xml-parser` | A webpack-bundled, `Object.defineProperty`-getter-defined class export isn't recognized as a constructible/method-bearing target | Precision only — degrades to UNKNOWN, never a false verdict | Open, not yet scoped as a task |
 | RWF-007 | `RWB-10` (`fs`, `path`) | `ts.resolveModuleName` never resolves Node builtin specifiers (`fs`, `node:fs`, ...) — every builtin `require`/`import` call produced an `unresolved_module` edge, a **closure-widening** blocker, in essentially every real Node application | Precision, universal blast radius (also a soundness *prerequisite*: combined with RWF-002, no realistic Node application could ever reach `NOT_AFFECTED` while this stood) | **Fixed (VT-305)** |
@@ -341,7 +341,7 @@ Both `parse` and `stringify` are **local variables whose values come from `requi
 
 **Relevant files:** `src/code-intelligence/module-model.ts` (`mapExportsToFunctions`'s documented, confirmed-real limitation), `src/analysis/verdict.ts` (`findExportNodeInFile`).
 
-**Proposed direction (RWF-004a: implemented as described; RWF-004b: still open):** when an export's local binding resolves to a `require(...)` call expression (directly, or via one level of local-variable indirection), follow that `require()` to the target file and repeat the same-file function lookup there — a bounded, one-or-few-hop chase (matching `VT-214`'s existing alias-tracking precedent), not unbounded points-to analysis. The cross-package (`RWB-08`) variant is strictly harder (crosses into a different package's own `node_modules` resolution) and was scoped as a separate, later step (**RWF-004b**) from the same-package sibling-file case (**RWF-004a**, now implemented).
+**Direction taken (RWF-004a and RWF-004b, both implemented as described):** when an export's local binding resolves to a `require(...)` call expression (directly, or via one level of local-variable indirection), follow that `require()` to the target file and repeat the same-file function lookup there — a bounded, one-or-few-hop chase (matching `VT-214`'s existing alias-tracking precedent), not unbounded points-to analysis. The cross-package (`RWB-08`) variant was scoped as a separate, later step (**RWF-004b**) from the same-package sibling-file case (**RWF-004a**), on the expectation that crossing into a different package's own `node_modules` resolution would be strictly harder. It was not: the hop is resolved by the same authoritative resolver, from the same file, and the extra step turned out to be a *conservatism* one — see "RWF-004b — what changed, and what did not" below.
 
 **Why `RWB-05` (`qs`) still fails after RWF-004a AND RWF-003:** the export
 half of this case is now fully resolved. `qs`'s re-export chain reaches
@@ -380,11 +380,70 @@ independent reasons, neither of which is RWF-003 or RWF-004:
 `RWB-05` expects `NOT_AFFECTED`, so it needs both of the above, not more
 export attribution.
 
-**Why `RWB-08` (`debug`→`ms`) still fails after RWF-004a:** its first hop
+**`RWB-08` (`debug`→`ms`) — fixed by RWF-004b.** Its first hop
 (`node.js`'s `exports = module.exports = require('./debug')`) is
-same-package and now resolves; its second hop
+same-package and resolved from RWF-004a; its second hop
 (`debug.js:14`'s `exports.humanize = require('ms')`) crosses a package
-boundary and is refused by design — that is exactly `RWF-004b`.
+boundary and was refused by design until RWF-004b. `RWB-08` is now
+`AFFECTED`, attributed to `ms@0.6.2` — never to `debug`, whose file merely
+spells the re-export — over the evidence path
+`src/rate-limit.js:9` → `node_modules/ms/index.js:24`, i.e. `ms`'s own
+anonymous `module.exports = function (val, options)` (RWF-003) inside `ms`'s
+own canonical PackageInstance.
+
+### RWF-004b — what changed, and what did not
+
+The same-instance test in `call-graph.ts`'s re-export chase was **scoping,
+not a soundness guard**, and removing it is the whole of RWF-004b's
+resolution change. What kept attribution honest was never that test: it is
+**resolver relativity**. Each hop's specifier is resolved *from the file
+that physically spells the `require()`*, so `require("vuln-pkg")` inside
+`app/node_modules/wrapper/index.js` reaches
+`app/node_modules/wrapper/node_modules/vuln-pkg` when that nested install
+exists and `app/node_modules/vuln-pkg` only when it does not — Node's own
+answer, never a search for an installed package by name or version. Package
+identity is then derived downstream from the resolved file's path alone by
+`identifyModule`, so two installs sharing a name *and* a version remain
+distinct instances end to end. The chase forms no package-identity opinion
+of its own; a second opinion at that layer is exactly the parallel source of
+truth `SDD-v0.2.md` § 5 forbids.
+
+**A real false `NOT_AFFECTED` was found and closed while implementing
+this**, and it is the reason the change is not a one-line deletion. Every
+export-provenance fact in `module-model.ts` is read out of a
+**last-write-wins** map keyed by source order, which is Node's semantics for
+straight-line module-scope code and nothing else. For
+
+```js
+if (cond) { exports.parse = require("pkg-a").parse; }
+else      { exports.parse = require("pkg-b").parse; }
+```
+
+the map keeps only `pkg-b`. `localName`/`localFunctionLocation` were already
+gated on an unconditional-module-scope test (RWF-011); `commonJsReExport`
+was not. Ungated, the chase forwarded `wrapper.parse` to `pkg-b` alone and
+thereby asserted that `pkg-a`'s function is *not* what the export holds:
+`pkg-a`'s target then resolved to a real node nothing pointed at, and
+Family C proved it unreachable with `reachableSubgraphComplete: true`.
+Reproduced end to end before the fix (`UNKNOWN` on the pre-RWF-004b main,
+`NOT_AFFECTED` with the gate removed and nothing else changed). Under
+RWF-004a the same shape was harmless — both branches sat inside one
+instance, so the finding's own package matched either way; crossing a
+package boundary is what made it reachable. `commonJsReExport` is now gated
+on the same `isUnconditionalExportAssignment` test as its neighbours, which
+also refuses `try`/`catch` and single-branch `if` forms while still
+accepting the chained `exports = module.exports = require(...)` idiom real
+`debug@2.0.0` uses. Permanent coverage:
+`src/analysis/verdict.cross-package-reexport.integration.test.ts` and
+`src/code-intelligence/call-graph.cross-package-reexport.test.ts`.
+
+**Deliberately still out of scope**, and unchanged by RWF-004b: dynamic
+specifiers (`require(name)`), a second local alias hop (`RWF-012`), a
+reassigned alias or declaration (`RWF-013`/`RWF-013b`), a coincidental
+export-name match (`RWF-011`), and the separate **target-side** re-export
+chase `RWB-05` needs — `verdict.ts`'s `findExportNodeInFile` still attributes
+a rule target with a per-file lookup and does not chase re-exports, which is
+a different direction from the call-side chase RWF-004a/b implement.
 
 **MVP-readiness relevance:** does not violate any adversarial-suite invariant (still 79/79) — no adversarial fixture splits a vulnerable library's implementation across multiple files.
 
