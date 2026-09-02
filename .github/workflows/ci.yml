@@ -1,10 +1,18 @@
 name: CI
 
 on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   test:
@@ -41,6 +49,9 @@ jobs:
 
       - name: Test
         run: npm test
+
+      - name: Performance regression guards
+        run: npm run test:performance
 
       - name: Adversarial validation suites
         run: npm run test:adversarial
