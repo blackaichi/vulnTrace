@@ -30,6 +30,22 @@ import { runScanCommand } from "./scan.js";
  * because the tool has genuinely grown slower for a legitimate reason,
  * raise this threshold deliberately and note why, rather than silently
  * increasing it to make the test pass.
+ *
+ * This file is NOT part of the default `npm test` run. It has its own
+ * config (vitest.performance.config.ts) and its own script,
+ * `npm run test:performance`, so that these wall-clock assertions get a
+ * run to themselves. Under the default run vitest executes ~90 test files
+ * concurrently, and the elapsed time these tests measure then reflects
+ * how busy the machine was rather than what the analyzer cost: the single
+ * large file guard measures ~1.8-2.3s alone and ~4.6s inside the full
+ * parallel suite on the same commit and machine. Keep any new timing
+ * assertion in this file, not in a suite that runs alongside others.
+ */
+/*
+ * Left at 5_000ms when this suite moved onto CI, unlike the single-large-
+ * file guard below, and checked rather than assumed: seven isolated runs
+ * measured 313-623ms, so even the slowest sample keeps ~8x headroom and a
+ * hosted runner being 2-3x slower still clears it comfortably.
  */
 const REGRESSION_THRESHOLD_MS = 5_000;
 const FEATURE_FILE_COUNT = 300;
@@ -252,8 +268,44 @@ describe("performance baseline: single large file with many local declarations/c
    * all of its original discriminating power. Isolated measurements at
    * the time of the change: 675ms before VT-307d, 1247ms after -- the new
    * headroom is ~3.6x, comfortably wider than the ~4.4x it had before.
+   *
+   * Raised again, deliberately and for the same stated reason rather than
+   * a silent nudge, from 4_500ms to 20_000ms when this suite started
+   * running on GitHub Actions (`.github/workflows/ci.yml`, on every push
+   * and PR to main). Nothing about the analyzer changed. What changed is
+   * that the number now has to hold somewhere other than one quiet dev
+   * machine, and measuring the run-to-run spread revealed that the old
+   * threshold was never as safe as its "~3.6x headroom" claim implied.
+   *
+   * Six consecutive ISOLATED runs of this file on one machine, one
+   * commit, no source changes between them: 2130, 2264, 2830, 4996, 5110,
+   * 5926ms. That is a 2.8x spread with nothing varying but the machine's
+   * own state (CPU frequency scaling and cache effects after a heavy test
+   * run dominate; the slowest samples all came directly after the full
+   * `npm test` suite). Two of those six samples exceed the old 4_500ms
+   * threshold outright -- so this guard was already a coin-flip on a
+   * loaded machine, and would have been a reliably red CI step on a
+   * shared 2-4 vCPU hosted runner that is slower again on single-threaded
+   * work.
+   *
+   * 20_000ms is ~3.4x the slowest observed good sample, which is the
+   * actual quantity that has to be covered -- not 3.4x the fastest one,
+   * which is what a threshold sized off a single lucky measurement ends
+   * up being.
+   *
+   * The guard's discriminating power survives this intact, which is the
+   * whole reason the change is safe to make rather than a capitulation:
+   * the O(n^2) blowup it exists to catch fails at 40-60+ SECONDS, so
+   * 20_000ms still separates "regressed" from "slow day on the runner" by
+   * 2-3x. A threshold that cannot tell those two apart does not protect
+   * the codebase -- it just teaches everyone to re-run CI.
+   *
+   * Note also that this file is deliberately run on its own (see the
+   * module docblock). Cross-file contention was a separate and larger
+   * noise source, and it has been removed rather than absorbed into this
+   * number; the spread quoted above is what remains after removing it.
    */
-  const SINGLE_FILE_THRESHOLD_MS = 4_500;
+  const SINGLE_FILE_THRESHOLD_MS = 20_000;
   const DECLARATION_COUNT = 3_000;
 
   let tmpDir: string | undefined;
