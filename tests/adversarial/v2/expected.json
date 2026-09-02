@@ -768,5 +768,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp (whatever value the export holds after the conditional reassignment)",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+  },
+  {
+    "id": "ADV2-071",
+    "dir": "adv2-071-coincidental-export-name",
+    "category": "71. RWF-011: a CommonJS export attributed to an unrelated same-file function purely because the two share a name",
+    "description": "The third member of the family ADV2-069 and ADV2-070 opened, and the one that needs no reassignment at all. vt2-vuln-lib/index.js declares `function dangerousOp(input) {...}` -- a private safe-path helper the package never publishes, never reassigns and never calls -- then assembles its real implementations into a dispatch table (`const impls = { native: require('./lib/native'), fallback: dangerousOp }`) and writes `exports.dangerousOp = impls.native`. Nothing in this file is stale or conditional, so RWF-013/RWF-013b's reassignment refusal has nothing to act on: `impls` is a `const` the file never writes to. The export simply has NO provenance, because a property of a local object is an expression VulnTrace models no value flow through. `mapExportsToFunctions`'s lookup key was `localName ?? exportedName`, and a CommonJS property export carries no `localName` -- so the key became the export's own PUBLIC NAME, and the name search found the helper. lib/native.js's real implementation is anonymous, so that helper is the only node in the entire installed package carrying the name, and the search had nothing better to find. The package publishes the real implementation under a second, statically resolvable name, which the application calls -- so the call graph reaches lib/native.js correctly while the rule target binds to a helper nothing invokes, and Family C proves THAT node unreachable with reachableSubgraphComplete: true.",
+    "expected": "UNKNOWN",
+    "reason": "A human analyst reading index.js can see that `exports.dangerousOp` is `impls.native`, i.e. lib/native.js's function, and that main() passes userInput straight into that same function object through `dangerousOpNative` -- so AFFECTED is the runtime truth. VulnTrace cannot follow a value through an object property and is not asked to; UNKNOWN is the honest answer for an export it cannot resolve. What no reading of this file supports is NOT_AFFECTED, which is reachable only by deciding that a private helper IS the published export because the two are spelled alike. The exported name is a property key an importer writes; it is not evidence about any symbol inside the package, and treating it as evidence converts a value the analyzer just admitted it cannot determine into a confident clean bill of health. AFFECTED would also be acceptable from an analysis that could authoritatively resolve the property access; guessing from the name is not that analysis.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp (the value `impls.native` holds, i.e. lib/native.js's function)",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
   }
 ]
