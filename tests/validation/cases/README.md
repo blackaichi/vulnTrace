@@ -60,7 +60,7 @@ are in `../REPORT.md` and, for any failure, root-caused in `../FINDINGS.md`.
 | RWB-05 | qs@6.10.1 | UNUSED_API | NOT_AFFECTED | UNKNOWN | known (RWF-004) |
 | RWB-06 | node-forge@1.3.3 | UNREACHED_DEPENDENCY | NOT_AFFECTED | UNKNOWN | known (RWF-002) |
 | RWB-07 | ini@1.3.5 | OTHER (entrypoint-unreached) | NOT_AFFECTED | NOT_AFFECTED | **pass** |
-| RWB-08 | ms@0.6.2 (via debug@2.0.0) | OTHER (nested dependency) | AFFECTED | UNKNOWN | known (RWF-004) |
+| RWB-08 | ms@0.6.2 (via debug@2.0.0) | OTHER (nested dependency) | AFFECTED | AFFECTED | pass (RWF-004b) |
 | RWB-09a | semver@7.5.1 (aliased) | MULTI_INSTANCE | AFFECTED | UNKNOWN | known (RWF-004) |
 | RWB-09b | semver@7.5.2 | MULTI_INSTANCE | NOT_AFFECTED | NO_FINDING | known — benchmark design issue, not a defect; see `../FINDINGS.md` |
 | RWB-10 | handlebars@4.7.6 | UNKNOWN | UNKNOWN | UNKNOWN | **pass** |
