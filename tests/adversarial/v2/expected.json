@@ -757,5 +757,16 @@
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp (whatever value the export holds after the conditional reassignment)",
     "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+  },
+  {
+    "id": "ADV2-070",
+    "dir": "adv2-070-reassigned-declaration-cjs-export",
+    "category": "70. RWF-013b: a CommonJS export through a FUNCTION DECLARATION that is reassigned to the vulnerable implementation before the export runs",
+    "description": "The sibling of ADV2-069, differing in exactly one respect that turns out to decide soundness: the stale binding is a FUNCTION DECLARATION rather than a `let` initializer. vt2-vuln-lib/index.js declares `function dangerousOp(input) {...}` -- a safe pure-JS fallback -- conditionally replaces it with the native addon (`if (process.env.VT2_NATIVE === '1') { dangerousOp = require('./native'); }`), and only then writes `exports.dangerousOp = dangerousOp`. RWF-013 closed this defect for `var`/`let`/`const` bindings by classifying an identifier's provenance from HOW IT WAS DECLARED, so a reassigned function declaration -- which JavaScript rebinds just as freely -- was reported 'unmodeled' and still fell through to the legacy name search. Here that search has an even easier target than ADV2-069's: the declaration is literally named `dangerousOp`, requiring no name inference at all, and native.js's real implementation is anonymous, so the stale declaration is the ONLY thing in the entire installed package carrying that name. The package publishes the real implementation under a second, statically resolvable name, which the application calls -- so the call graph reaches native.js correctly while the rule target binds to a declaration nothing calls.",
+    "expected": "UNKNOWN",
+    "reason": "A human analyst reading index.js cannot decide what `exports.dangerousOp` holds: it is the safe declaration or native.js's function depending on `process.env.VT2_NATIVE`, which the analyst is not given. If that branch ran, `dangerousOp` and `dangerousOpNative` are the SAME function object and main() passes userInput straight into it, so the vulnerability cannot be ruled out; if it did not, the safe fallback is exported and never called, so neither can it be confirmed. NOT_AFFECTED is the one answer that is definitely unjustified: it is reachable only by treating the stale declaration as the export's identity, which discards a reassignment the file performs in plain sight. That the binding happens to be a function declaration rather than a variable changes nothing a reader would conclude, and so must change nothing the analyzer concludes.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp (whatever value the export holds after the conditional reassignment)",
+    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
   }
 ]
