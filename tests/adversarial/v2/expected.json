@@ -793,5 +793,19 @@
       "package": "vt2-vuln-lib",
       "version": "1.0.0"
     }
+  },
+  {
+    "id": "ADV2-073",
+    "dir": "adv2-073-chained-alias-cross-package-duplicate-instances",
+    "category": "73. RWF-012: a multi-hop local alias chain over a cross-package require, between duplicate same-name, same-version PackageInstances",
+    "description": "ADV2-072's shape with the one-line facade replaced by a FOUR-hop local alias chain, so that following the chain and attributing the instance are exercised as one problem rather than two. The application names only vt2-chain-lib and calls chain.dangerousOp(userInput). vt2-chain-lib does not publish that name from a require expression: it binds `const dep = require('vt2-vuln-lib')`, then `hopOne = dep`, `hopTwo = hopOne`, `impl = hopTwo.dangerousOp`, `published = impl`, and only then writes `exports.dangerousOp = published`. Two installs of vt2-vuln-lib@1.0.0 exist -- node_modules/vt2-vuln-lib and node_modules/vt2-chain-lib/node_modules/vt2-vuln-lib -- identical in name, version and vulnerable export name, distinguishable only by path. Node consults the nested one, because a package's own node_modules is searched before its parents'. Four wrong answers are on offer and every one of them reads as resolved rather than failed: TRUNCATION (stop after one hop and the export has no value, i.e. UNKNOWN); NAME FALLBACK (abandon the chain and take the file's own private `function dangerousOp` helper, declared before the chain and never published, whose only tie to the export is its spelling -- RWF-011); WRONG INSTANCE (resolve the chain, then attribute it to the top-level twin, which is what any resolution keyed on package metadata rather than on path would find); and WRONG PACKAGE (attribute the target to vt2-chain-lib, where the export is physically spelled). This scenario asserts the AFFECTED verdict for the reached instance. The complementary direction -- that the unreached twin never inherits it, and that its own finding's evidence contains no node from the reached one -- is asserted deterministically, per exact packageInstance, in src/analysis/verdict.cross-package-reexport.integration.test.ts, because this suite's findingSelector addresses a finding by package name and version alone and therefore cannot itself tell two same-version instances apart.",
+    "expected": "AFFECTED",
+    "reason": "A human analyst reads src/index.js, sees main() pass userInput straight into chain.dangerousOp, then reads vt2-chain-lib/index.js top to bottom. Every binding on the chain is a module-scope `const` the file declares exactly once and never writes to again, so `published` holds `impl` holds `hopTwo.dangerousOp` holds `dep.dangerousOp` holds `require('vt2-vuln-lib').dangerousOp` -- there is no branch, no mutation and no dynamic value anywhere on it, and the reading is forced rather than inferred. Applying Node's resolution rule to that require from that file reaches vt2-chain-lib/node_modules/vt2-vuln-lib, whose dangerousOp is a real function called with the caller's own input. That is AFFECTED, for that install and no other. Nothing about this conclusion depends on the two installs' shared name and version, which is the point: they are indistinguishable by metadata and distinguishable only by path, so an analyzer that keys on the former reports the same verdict for the wrong instance and has proved nothing. NOT_AFFECTED is not available on any reading -- the call is direct, unconditional, and its target is installed. UNKNOWN would be the honest answer only for an analyzer that declines to follow the chain at all; it is not the answer the source supports.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp, in the NESTED install at node_modules/vt2-chain-lib/node_modules/vt2-vuln-lib",
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   }
 ]
