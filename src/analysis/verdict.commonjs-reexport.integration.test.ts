@@ -17,10 +17,11 @@ import { buildFindingForTest } from "../testing/finding.js";
  * RWF-004a's permanent real-world-shaped fixture assertion (see
  * fixtures/commonjs-reexport-same-package/README.md).
  *
- * Kept deliberately separate from any RWF-004b (cross-package re-export)
- * coverage: the fixture contains a cross-package re-export precisely so
- * this suite can assert it stays UNRESOLVED, and the two gaps must never
- * be confounded in one assertion.
+ * Kept deliberately separate from RWF-004b's own coverage
+ * (verdict.cross-package-reexport.integration.test.ts): the fixture
+ * contains a cross-package re-export precisely so this suite can assert
+ * that a fixture-lib finding never borrows other-lib's identically-named
+ * function, which stays true after RWF-004b made that hop resolvable.
  */
 
 const FIXTURE = "commonjs-reexport-same-package";
@@ -149,10 +150,13 @@ describe("RWF-004a fixture: same-package CommonJS re-export (fixtures/commonjs-r
     expect(finding?.verdict).not.toBe("AFFECTED");
   });
 
-  it("leaves the cross-package re-export unattributed -- RWF-004b is NOT implemented here", async () => {
+  it("never reports a fixture-lib finding AFFECTED through its cross-package re-export", async () => {
     // `fromOtherPackage` re-exports other-lib's identically-named
-    // `vulnerable`. Binding it would silently make this task implement the
-    // cross-package case; it must stay UNKNOWN instead.
+    // `vulnerable`. Since RWF-004b that hop IS chased -- but the node it
+    // lands on belongs to other-lib, so a rule aimed at
+    // `fixture-lib#fromOtherPackage` finds nothing inside fixture-lib's own
+    // instance and stays UNKNOWN. The finding must never borrow the foreign
+    // package's function to answer a question about this one.
     const { finding } = await scan({ target: "fromOtherPackage" });
 
     expect(finding?.verdict).toBe("UNKNOWN");

@@ -164,6 +164,41 @@ describe("buildCallGraph: anonymous module.exports function targets (RWF-003)", 
     });
   });
 
+  it("composes with RWF-004b: a CROSS-PACKAGE facade re-exporting an anonymous callable", async () => {
+    // The same composition one package boundary further out, and RWB-08's
+    // own shape: vuln-lib publishes nothing of its own, other-lib's whole
+    // API is one anonymous function. Needs the cross-package whole-module
+    // chase (RWF-004b) AND RWF-003's anonymous-default attribution, and the
+    // node it lands on must belong to other-lib's own installed instance --
+    // never vuln-lib's, whose file merely spells the re-export.
+    const root = tempProject();
+    write(root, "node_modules/vuln-lib/package.json", packageJson("vuln-lib"));
+    write(
+      root,
+      "node_modules/vuln-lib/index.js",
+      'module.exports = require("other-lib");\n',
+    );
+    write(
+      root,
+      "node_modules/other-lib/package.json",
+      packageJson("other-lib"),
+    );
+    write(
+      root,
+      "node_modules/other-lib/index.js",
+      "module.exports = function (args) {\n  return args;\n};\n",
+    );
+    const entry = write(root, "src/app.js", appCalling("pkg(input)"));
+
+    const graph = await graphFor(root, [entry]);
+
+    const target = anonymousFunctionIn(graph, "index.js");
+    expect(target?.module).toContain(path.join("node_modules", "other-lib"));
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "resolved", target: target?.id },
+    });
+  });
+
   it("composes across MULTIPLE same-package re-export hops", async () => {
     const root = tempProject();
     write(root, "node_modules/vuln-lib/package.json", packageJson("vuln-lib"));
@@ -364,33 +399,6 @@ describe("buildCallGraph: anonymous module.exports function targets (RWF-003)", 
 });
 
 describe("buildCallGraph: RWF-003 boundaries that must stay conservative", () => {
-  it("does not cross a package boundary to reach another package's anonymous export (RWF-004b)", async () => {
-    const root = tempProject();
-    write(root, "node_modules/vuln-lib/package.json", packageJson("vuln-lib"));
-    write(
-      root,
-      "node_modules/vuln-lib/index.js",
-      'module.exports = require("other-lib");\n',
-    );
-    write(
-      root,
-      "node_modules/other-lib/package.json",
-      packageJson("other-lib"),
-    );
-    write(
-      root,
-      "node_modules/other-lib/index.js",
-      "module.exports = function (args) {\n  return args;\n};\n",
-    );
-    const entry = write(root, "src/app.js", appCalling("pkg(input)"));
-
-    const graph = await graphFor(root, [entry]);
-
-    expect(mainEdge(graph)).toMatchObject({
-      resolution: { kind: "unknown", reason: "unresolved_target" },
-    });
-  });
-
   it("does not bind an anonymous export in a file that shadows the CommonJS ambient names", async () => {
     const root = tempProject();
     write(root, "node_modules/vuln-lib/package.json", packageJson("vuln-lib"));

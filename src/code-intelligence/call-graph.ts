@@ -6,11 +6,7 @@ import type {
   GraphNode,
   GraphNodeId,
 } from "../domain/graph.js";
-import {
-  identifyModule,
-  type KnownPackageRoots,
-  type PackageInstanceId,
-} from "../domain/resolved-target.js";
+import type { KnownPackageRoots } from "../domain/resolved-target.js";
 import {
   classifyClosureWideningCall,
   isStaticRequireCall,
@@ -395,7 +391,7 @@ async function resolveCommonJsReExport(
     const origin = own.commonJsReExport;
     return origin === undefined
       ? undefined
-      : followSamePackageReExport(
+      : followCommonJsReExport(
           prepared,
           origin.specifier,
           origin.importedName ?? "default",
@@ -416,7 +412,7 @@ async function resolveCommonJsReExport(
   }
 
   if (origin.importedName === undefined) {
-    return followSamePackageReExport(
+    return followCommonJsReExport(
       prepared,
       origin.specifier,
       exportName,
@@ -426,7 +422,7 @@ async function resolveCommonJsReExport(
   }
 
   return exportName === "default"
-    ? followSamePackageReExport(
+    ? followCommonJsReExport(
         prepared,
         origin.specifier,
         origin.importedName,
@@ -438,58 +434,70 @@ async function resolveCommonJsReExport(
 
 /**
  * Resolves one CommonJS re-export hop and continues the chase in the
- * target file — but ONLY when that file belongs to the exact same
- * canonical PackageInstance as the file re-exporting from it.
+ * target file, wherever Node's own resolution of that hop's specifier
+ * actually lands — including inside a DIFFERENT installed package
+ * (RWF-004b; RWB-08's `debug`'s `exports.humanize = require('ms')`).
  *
- * The same-package rule is the authoritative guard for this whole
- * relation, and it is deliberately expressed as PackageInstance identity
- * rather than as a specifier-shape test (`./`-relative) or a package-name
- * comparison. A relative specifier can climb out of its own package
- * (`require("../other/lib")`); two installs of the same name AND the same
- * version at different paths are different instances (SDD-v0.2.md § 4.2);
- * and a pnpm/workspace/`file:` install reaches its real code through a
- * symlink. {@link identifyModule} already resolves all three correctly and
- * is this codebase's single identity authority — its
- * `canonicalizePackageInstancePath` realpaths both sides, so a symlinked
- * and a physical reference to the same install compare equal, and two
- * same-name installs at different paths never do.
+ * RWF-004a shipped this relation gated on both sides belonging to the
+ * exact same canonical PackageInstance. That gate was scoping, never a
+ * soundness requirement, and it is what RWF-004b removes: a façade package
+ * whose export IS another package's callable
+ * (`exports.parse = require("vuln-pkg").parse`) is the same statically
+ * known, single-valued binding as the sibling-file form, differing only in
+ * where the specifier resolves to. Refusing it produced an honest but
+ * imprecise `unresolved_target`, and with it an UNKNOWN, for the dominant
+ * real-world wrapper/façade shape.
  *
- * Both sides must have a DEFINED instance: a file outside any installed
- * package (the scanned project's own source) has no PackageInstance, so
- * `undefined === undefined` is explicitly not treated as a match. That
- * keeps this relation to exactly the shape RWF-004a scopes — inside one
- * installed package — and, together with the equality test, is what
- * prevents the cross-package case (RWF-004b) from being implemented here
- * as a side effect.
+ * The invariant the gate was mistakenly credited with — never attributing
+ * a target to the wrong installed instance — is upheld instead by what it
+ * was always actually upheld by: **resolver relativity**. The specifier is
+ * resolved FROM the file that physically contains the `require()`
+ * (`prepared.index.filePath`), so `require("vuln-pkg")` inside
+ * `app/node_modules/wrapper/index.js` reaches
+ * `app/node_modules/wrapper/node_modules/vuln-pkg` when that nested
+ * install exists and `app/node_modules/vuln-pkg` only when it does not —
+ * exactly Node's own answer, never a search for an installed package by
+ * name or version. Every node this function returns is keyed by that
+ * resolved file's real path, and package identity is derived downstream
+ * from that path alone by `identifyModule` (verdict.ts's
+ * `graphPackageInstances`/`resolveTargetNodes`), this codebase's single
+ * identity authority. Two installs sharing a name AND a version at
+ * different paths therefore remain distinct instances end to end, and a
+ * symlinked (pnpm/workspace/`file:`) install compares equal to its
+ * physical target because that authority realpaths it — neither fact
+ * depends on anything computed here. This function deliberately performs
+ * NO package-identity test of its own: a second identity opinion at this
+ * layer is precisely the parallel source of truth SDD-v0.2.md § 5
+ * forbids.
  *
- * Returns `undefined` for every other outcome (unresolved specifier,
- * declaration-only resolution, a different instance, a file that could not
- * be indexed or that a resource limit stopped this graph from preparing),
- * which leaves the caller's existing `unresolved_target` edge and its
- * downstream UNKNOWN exactly as they were before RWF-004a.
+ * Nothing else about the chase changes. The caller's `visited` set still
+ * bounds it — a cross-package cycle (`pkg-a` -> `pkg-b` -> `pkg-a`)
+ * terminates on the repeated (file, export name) hop and yields
+ * `unresolved_target`, not recursion — and a hop is still only ever taken
+ * from an explicit, statically-literal `CommonJsReExportOrigin`, so
+ * a dynamic specifier, a conditional assignment or a reassigned alias
+ * still produces no origin and no hop at all.
+ *
+ * Returns `undefined` for every non-hop outcome (unresolved specifier,
+ * builtin, declaration-only resolution — the same VT-304 discipline as the
+ * ESM half — or a file that could not be indexed or that a resource limit
+ * stopped this graph from preparing), which leaves the caller's existing
+ * `unresolved_target` edge and its downstream UNKNOWN exactly as they were.
  */
-async function followSamePackageReExport(
+async function followCommonJsReExport(
   prepared: FileGraphData,
   specifier: string,
   targetExportName: string,
   ctx: WalkContext,
   visited: Set<string>,
 ): Promise<GraphNodeId | undefined> {
-  const fromFile = prepared.index.filePath;
-  const resolution = await ctx.resolver.resolve(specifier, fromFile);
+  const resolution = await ctx.resolver.resolve(
+    specifier,
+    prepared.index.filePath,
+  );
   // Same VT-304 discipline as the ESM half: a declaration-only resolution
   // is not a runtime implementation and must never be chased.
   if (resolution.kind !== "resolved") {
-    return undefined;
-  }
-
-  const fromInstance = ctx.packageInstanceOf(fromFile);
-  const toInstance = ctx.packageInstanceOf(resolution.resolvedFileName);
-  if (
-    fromInstance === undefined ||
-    toInstance === undefined ||
-    fromInstance !== toInstance
-  ) {
     return undefined;
   }
 
@@ -1122,19 +1130,6 @@ interface WalkContext {
    * file, so it must never run unconditionally.
    */
   readonly getProgram: () => ts.Program | undefined;
-  /**
-   * The canonical {@link PackageInstanceId} owning a resolved file, or
-   * `undefined` for a file that belongs to no installed package (the
-   * scanned project's own source). Always {@link identifyModule}'s answer
-   * — this codebase's single package-identity authority — never a
-   * separately-derived one; memoized per `buildCallGraph` invocation
-   * because that function realpaths the instance root and reads its
-   * `package.json`, and RWF-004a's re-export chase asks the question once
-   * per hop per unresolved call site.
-   */
-  readonly packageInstanceOf: (
-    filePath: string,
-  ) => PackageInstanceId | undefined;
 }
 
 /**
@@ -1854,19 +1849,24 @@ export interface BuildCallGraphOptions {
    */
   readonly project?: TsProject;
   /**
-   * The scan's dependency-provenance registry (see
-   * `domain/resolved-target.ts`'s `buildKnownPackageRoots`), used only to
-   * answer "which installed package instance does this file belong to?"
-   * for RWF-004a's same-package CommonJS re-export rule. Required for that
-   * rule to recognize a LINKED install (an npm workspace member, a `file:`
-   * dependency) whose physical target has no `node_modules` segment of its
-   * own; an ordinary `node_modules/<pkg>` install is identified from the
-   * path alone and needs no registry.
+   * Accepted, and deliberately unused (RWF-004b).
    *
-   * Optional, and omitting it can only ever make the re-export chase
-   * MORE conservative (an unidentifiable instance fails the same-instance
-   * test and the chase stops), never less — so every caller predating
-   * RWF-004a keeps a sound, merely-less-precise result.
+   * RWF-004a's same-package CommonJS re-export rule asked this graph to
+   * answer "which installed package instance does this file belong to?"
+   * for both sides of every re-export hop, and needed the scan's
+   * dependency-provenance registry (see `domain/resolved-target.ts`'s
+   * `buildKnownPackageRoots`) to answer it for a LINKED install. RWF-004b
+   * removed that same-instance gate — see {@link followCommonJsReExport}
+   * — so this graph no longer forms a package-identity opinion at all:
+   * every node it emits is keyed by a resolved file path, and identity is
+   * derived from that path downstream by the single authority
+   * (`identifyModule`, via verdict.ts/module-load-closure.ts), which
+   * receives the registry directly from the scan.
+   *
+   * Kept on this interface purely so existing callers (`cli/scan.ts` and
+   * the suites that mirror it) keep compiling and keep passing the scan's
+   * real registry along; it can never change this graph's output. Removing
+   * it is a separate cleanup, not part of RWF-004b.
    */
   readonly knownPackageRoots?: KnownPackageRoots;
 }
@@ -1985,23 +1985,9 @@ export async function buildCallGraph(
     return program;
   }
 
-  const packageInstanceCache = new Map<string, PackageInstanceId | undefined>();
-  function packageInstanceOf(filePath: string): PackageInstanceId | undefined {
-    if (packageInstanceCache.has(filePath)) {
-      return packageInstanceCache.get(filePath);
-    }
-    const instance = identifyModule(
-      filePath,
-      options.knownPackageRoots,
-    ).packageInstance;
-    packageInstanceCache.set(filePath, instance);
-    return instance;
-  }
-
   const ctx: WalkContext = {
     edges,
     resolver: options.resolver,
-    packageInstanceOf,
     ensurePrepared,
     onDiscoverFile: (filePath) => {
       const prepared = ensurePrepared(filePath);
