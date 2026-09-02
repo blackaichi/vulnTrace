@@ -339,6 +339,160 @@ describe("buildCallGraph: same-package CommonJS re-export chase (RWF-004a)", () 
   });
 });
 
+describe("buildCallGraph: RWF-012 alias chains compose with the same-package chase (RWF-004a)", () => {
+  it("binds a three-hop whole-module alias chain to the sibling implementation", async () => {
+    const root = tempProject();
+    writePackage(
+      root,
+      `const dep = require("./lib");\nconst a = dep;\nconst b = a;\nmodule.exports = b;\n`,
+    );
+    const entry = write(
+      root,
+      "src/app.js",
+      appCalling("pkg.vulnerable(input)"),
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const target = findNode(
+      graph,
+      (n) => n.name === "vulnerable" && n.module.endsWith("lib.js"),
+    );
+    expect(target).toBeDefined();
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "resolved", target: target?.id },
+    });
+  });
+
+  it("binds a property selected off an aliased whole-module require", async () => {
+    // `const dep = require("./lib"); const a = dep; exports.x = a.vulnerable`
+    // -- the property selection rides on the chain's proven origin, not on
+    // any modelling of object properties.
+    const root = tempProject();
+    writePackage(
+      root,
+      `const dep = require("./lib");\nconst a = dep;\nexports.vulnerable = a.vulnerable;\n`,
+    );
+    const entry = write(
+      root,
+      "src/app.js",
+      appCalling("pkg.vulnerable(input)"),
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const target = findNode(
+      graph,
+      (n) => n.name === "vulnerable" && n.module.endsWith("lib.js"),
+    );
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "resolved", target: target?.id },
+    });
+  });
+
+  it("binds a chain over a property-selecting alias", async () => {
+    // `const dep = require("./lib"); const a = dep.vulnerable; const b = a;`
+    const root = tempProject();
+    writePackage(
+      root,
+      `const dep = require("./lib");\nconst a = dep.vulnerable;\nconst b = a;\nexports.vulnerable = b;\n`,
+    );
+    const entry = write(
+      root,
+      "src/app.js",
+      appCalling("pkg.vulnerable(input)"),
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const target = findNode(
+      graph,
+      (n) => n.name === "vulnerable" && n.module.endsWith("lib.js"),
+    );
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "resolved", target: target?.id },
+    });
+  });
+
+  it("stays unresolved when a CONDITIONAL export assigns the chain's value (RWF-004b guard)", async () => {
+    // The chain is impeccable; the EXPORT is not. RWF-004b's
+    // `isUnconditionalExportAssignment` gate must still refuse this, or a
+    // branch would be chosen arbitrarily and presented as certainty.
+    const root = tempProject();
+    writePackage(
+      root,
+      `const dep = require("./lib");\nconst a = dep.vulnerable;\nif (process.env.FLAG) {\n  exports.vulnerable = a;\n}\n`,
+    );
+    const entry = write(
+      root,
+      "src/app.js",
+      appCalling("pkg.vulnerable(input)"),
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "unknown", reason: "unresolved_target" },
+    });
+  });
+
+  it("stays unresolved when the chain's terminal is a dynamic value", async () => {
+    const root = tempProject();
+    writePackage(
+      root,
+      `const dep = loadIt();\nconst a = dep;\nexports.vulnerable = a.vulnerable;\n`,
+    );
+    const entry = write(
+      root,
+      "src/app.js",
+      appCalling("pkg.vulnerable(input)"),
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "unknown", reason: "unresolved_target" },
+    });
+  });
+
+  it("never falls back to a same-name local when the chain is unresolved (RWF-011)", async () => {
+    // `registry.impl` is not modelled, so the chain has no value -- and the
+    // wrapper's own `function vulnerable()` decoy must NOT be bound just
+    // because it shares the exported name.
+    const root = tempProject();
+    writePackage(
+      root,
+      `function vulnerable(x) { return x; }\nconst a = registry.impl;\nconst b = a;\nexports.vulnerable = b;\n`,
+    );
+    const entry = write(
+      root,
+      "src/app.js",
+      appCalling("pkg.vulnerable(input)"),
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const decoy = findNode(
+      graph,
+      (n) => n.name === "vulnerable" && n.module.endsWith("index.js"),
+    );
+    const edge = mainEdge(graph);
+    expect(edge?.resolution).toMatchObject({
+      kind: "unknown",
+      reason: "unresolved_target",
+    });
+    if (decoy) {
+      expect(
+        graph.edges.some(
+          (e) =>
+            e.resolution.kind === "resolved" &&
+            e.resolution.target === decoy.id,
+        ),
+      ).toBe(false);
+    }
+  });
+});
+
 describe("buildCallGraph: the CommonJS re-export chase never guesses (RWF-004a negative controls)", () => {
   it("does not chase a dynamic require specifier", async () => {
     const root = tempProject();

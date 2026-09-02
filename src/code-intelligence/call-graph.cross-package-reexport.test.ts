@@ -453,6 +453,46 @@ describe("buildCallGraph: RWF-004b never collapses a PackageInstance to name+ver
     expect(hasResolvedEdgeTo(graph, topLevel)).toBe(false);
   });
 
+  it("RWF-012: a multi-hop alias chain still binds the NESTED twin, never the top-level one", async () => {
+    const root = tempProject();
+    // Identical name, identical version, identical vulnerable export name,
+    // two install paths. The wrapper reaches its own nested install through
+    // a THREE-hop local alias chain -- the exact combination RWF-012 could
+    // get wrong: truncate the chain (unresolved), or resolve it and then
+    // borrow the wrong instance because both twins answer to "vuln-pkg@1.0.0".
+    // The instance must come from the resolver's answer for the wrapper's
+    // own `require`, never from the alias's name.
+    writeVulnPkg(root, "node_modules/vuln-pkg");
+    writeVulnPkg(root, "node_modules/wrapper/node_modules/vuln-pkg");
+    writeWrapper(
+      root,
+      `const dep = require("vuln-pkg");\nconst a = dep;\nconst b = a;\nmodule.exports = b;\n`,
+    );
+    const entry = appCallingWrapper(root);
+
+    const graph = await graphFor(root, entry);
+
+    const nested = parseNodeIn(
+      graph,
+      root,
+      path.join("node_modules", "wrapper", "node_modules", "vuln-pkg"),
+    );
+    expect(nested).toBeDefined();
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "resolved", target: nested?.id },
+    });
+
+    const topLevel = findNode(
+      graph,
+      (n) =>
+        n.name === "parse" &&
+        n.module.startsWith(
+          path.join(root, "node_modules", "vuln-pkg") + path.sep,
+        ),
+    );
+    expect(hasResolvedEdgeTo(graph, topLevel)).toBe(false);
+  });
+
   it("inverse: the TOP-LEVEL twin holding the dangerous body is never substituted for the nested one", async () => {
     const root = tempProject();
     // The top-level instance's `parse` calls a distinctive sink; the nested
@@ -657,12 +697,43 @@ describe("buildCallGraph: RWF-004b keeps every existing refusal closed", () => {
     });
   });
 
-  it("RWF-012: a second alias hop is still not followed across a package boundary", async () => {
+  it("RWF-012: a second alias hop IS followed across a package boundary", async () => {
     const root = tempProject();
     writeWrapper(
       root,
       `const a = require("vuln-pkg");\nconst b = a;\nmodule.exports = b;\n`,
     );
+    writeVulnPkg(root);
+    const entry = appCallingWrapper(root);
+
+    const graph = await graphFor(root, entry);
+
+    const target = parseNodeIn(graph, root, "node_modules/vuln-pkg");
+    expect(target).toBeDefined();
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "resolved", target: target?.id },
+    });
+  });
+
+  it("RWF-012: a chain with ONE mutated hop stays unresolved across a package boundary", async () => {
+    const root = tempProject();
+    writeWrapper(
+      root,
+      `const a = require("vuln-pkg");\nlet b = a;\nb = somethingElse;\nconst c = b;\nmodule.exports = c;\n`,
+    );
+    writeVulnPkg(root);
+    const entry = appCallingWrapper(root);
+
+    const graph = await graphFor(root, entry);
+
+    expect(mainEdge(graph)).toMatchObject({
+      resolution: { kind: "unknown", reason: "unresolved_target" },
+    });
+  });
+
+  it("RWF-012: a cyclic wrapper alias chain terminates and stays unresolved", async () => {
+    const root = tempProject();
+    writeWrapper(root, `const a = b;\nconst b = a;\nmodule.exports = a;\n`);
     writeVulnPkg(root);
     const entry = appCallingWrapper(root);
 

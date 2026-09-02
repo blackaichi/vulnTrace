@@ -197,12 +197,142 @@ describe("RWF-003: shapes that must NOT produce a function identity", () => {
     ).toBeUndefined();
   });
 
-  it("refuses an alias chain longer than one hop (RWF-012 boundary)", () => {
+  it("follows a two-hop alias chain to the function node (RWF-012)", () => {
     expect(
       defaultExportPosition(
         "const a = function () {};\nconst b = a;\nmodule.exports = b;\n",
       ),
+    ).toBe("1:11");
+  });
+
+  it("follows a three-hop alias chain to the function node (RWF-012)", () => {
+    expect(
+      defaultExportPosition(
+        "const a = () => {};\nconst b = a;\nconst c = b;\nmodule.exports = c;\n",
+      ),
+    ).toBe("1:11");
+  });
+
+  it("refuses a chain whose FIRST hop is reassigned (RWF-012)", () => {
+    expect(
+      defaultExportPosition(
+        "const a = function () {};\nlet b = a;\nb = other;\nmodule.exports = b;\n",
+      ),
     ).toBeUndefined();
+  });
+
+  it("refuses a chain whose MIDDLE hop is reassigned (RWF-012)", () => {
+    expect(
+      defaultExportPosition(
+        "const a = function () {};\nlet b = a;\nb = other;\nconst c = b;\nmodule.exports = c;\n",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a chain whose TERMINAL hop is reassigned (RWF-012)", () => {
+    expect(
+      defaultExportPosition(
+        "let a = function () {};\na = other;\nconst b = a;\nconst c = b;\nmodule.exports = c;\n",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a conditionally-initialized binding anywhere on the chain (RWF-012)", () => {
+    expect(
+      defaultExportPosition(
+        "let a;\nif (cond) {\n  a = function () {};\n}\nconst b = a;\nmodule.exports = b;\n",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("terminates on a cyclic alias chain instead of overflowing (RWF-012)", () => {
+    expect(
+      defaultExportPosition(
+        "const a = b;\nconst b = a;\nmodule.exports = a;\n",
+      ),
+    ).toBeUndefined();
+    expect(
+      defaultExportPosition("let a = b;\nconst b = a;\nmodule.exports = a;\n"),
+    ).toBeUndefined();
+  });
+
+  it("terminates on a LONG cycle instead of overflowing the stack (RWF-012)", () => {
+    const ring = Array.from(
+      { length: 200 },
+      (_, i) => `const n${i} = n${(i + 1) % 200};`,
+    ).join("\n");
+    expect(
+      defaultExportPosition(`${ring}\nmodule.exports = n0;\n`),
+    ).toBeUndefined();
+  });
+
+  it("refuses when a hop's name is declared more than once in the file (RWF-012)", () => {
+    // The nested `const a` makes "a" ambiguous for a relation with no
+    // scope model, so the chain must stop rather than pick a binding.
+    expect(
+      defaultExportPosition(
+        "const a = function () {};\nfunction nested() {\n  const a = other;\n  return a;\n}\nconst b = a;\nmodule.exports = b;\n",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does not chase a chain whose terminal is a function DECLARATION (RWF-012 limitation)", () => {
+    // `const a = fn` over `function fn() {}` is "unmodeled", not proven:
+    // {@link CommonJsFacts.localBindings} covers variable bindings, and a
+    // function declaration leaves no entry there. The chain therefore stops
+    // with no function identity, and the export's `localName` is still the
+    // right-hand side's own text ("b"), which matches no function -- so the
+    // export stays unattributed rather than name-matching its way to `fn`.
+    //
+    // Deliberate: making a declaration an authoritative terminal would be a
+    // NEW terminal form, and it would have to prove the declaration is the
+    // file's only one. Recorded here so the boundary is explicit rather
+    // than accidental.
+    expect(
+      defaultExportPosition(
+        "function fn() {}\nconst a = fn;\nconst b = a;\nmodule.exports = b;\n",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("keeps the ONE-hop function-declaration export resolving, unchanged (RWF-012)", () => {
+    // The counterpart to the case above: `module.exports = fn` still
+    // resolves through `localName`, exactly as it did before RWF-012.
+    expect(
+      defaultExportPosition("function fn() {}\nmodule.exports = fn;\n"),
+    ).toBe("1:1");
+  });
+
+  it("does not chase a chain whose terminal is a CLASS declaration (RWF-012 limitation)", () => {
+    // Same boundary, plus RWF-003's own standing decision not to extend
+    // identity-based attribution to classes. The one-hop
+    // `module.exports = C` form is unaffected and still resolves.
+    expect(
+      defaultExportPosition(
+        "class C { m() {} }\nconst A = C;\nconst B = A;\nmodule.exports = B;\n",
+      ),
+    ).toBeUndefined();
+    expect(
+      defaultExportPosition("class C { m() {} }\nmodule.exports = C;\n"),
+    ).toBe("1:7");
+  });
+
+  it("refuses a chain that bottoms out in a non-function value (RWF-012)", () => {
+    expect(
+      defaultExportPosition(
+        "const a = makeHandler();\nconst b = a;\nmodule.exports = b;\n",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("follows a chained ASSIGNMENT to the function it publishes (RWF-012)", () => {
+    // `module.exports = exports.decode = function () {}` -- the value of
+    // `x = v` IS `v`.
+    expect(
+      defaultExportPosition(
+        "module.exports = exports.decode = function () {};\n",
+      ),
+    ).toBe("1:35");
   });
 
   it("refuses a local binding that is reassigned elsewhere in the file", () => {

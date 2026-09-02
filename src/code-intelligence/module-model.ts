@@ -1,14 +1,15 @@
 import ts from "typescript";
 import type { SourceLocation } from "../domain/graph.js";
 import {
-  classifyLocalBinding,
   commonJsModuleReExportOrigin,
   commonJsPropertyExportRhs,
   commonJsPropertyReExportOrigin,
   declaresCommonJsAmbientShadow,
   refusesLocalIdentifierProvenance,
   resolveCommonJsReExportExpression,
+  resolveLocalValue,
   unwrapParentheses,
+  unwrapValue,
   type CommonJsReExportOrigin,
 } from "./commonjs-reexports.js";
 import {
@@ -331,6 +332,17 @@ function classConstructorNode(
  *   something the exported-name fallback could never do. RWF-013's
  *   refusal is unaffected and still consulted first, so a reassigned
  *   identifier stays refused rather than becoming newly attributable.
+ *
+ *   The identifier is read off {@link unwrapValue}'s result rather than
+ *   the raw right-hand side (RWF-012), so real `ini@1.3.5`'s
+ *   `exports.parse = exports.decode = decode` publishes `parse` under the
+ *   local name `decode` — the same name, from the same expression, that
+ *   `exports.decode` itself already resolved through. This is still the
+ *   RHS's own text: the value of `exports.decode = decode` IS `decode`,
+ *   by the language's own rules, so no new name-coincidence surface is
+ *   created. The chained assignment is otherwise invisible here — it is
+ *   neither an identifier nor a function node, which is exactly why
+ *   `parse` carried no provenance at all before.
  * - **A directly-referenced function/class value** becomes
  *   {@link ExportBinding.localFunctionLocation} via
  *   {@link directValueFunctionLocation}, an exact identity. This also
@@ -339,6 +351,14 @@ function classConstructorNode(
  *   TWO functions named `foo` (source-index.ts names the anonymous one
  *   after the property it is assigned to), and the name search returned
  *   whichever came first in the file — the decoy.
+ *
+ *   RWF-012 additionally lets that value be reached through a chain of
+ *   local aliases (`exports.foo = b`, `const b = a`,
+ *   `const a = function () {}`) via
+ *   {@link chasedValueFunctionLocation}. Every hop carries the same
+ *   module-scope single-assignment proof the one-hop form always did, and
+ *   the result is still an exact function-node position — never a name
+ *   match.
  *
  * Gated on the assignment being an unconditional module-scope statement,
  * for the same reason {@link directExportedFunctionLocation} is: this
@@ -356,11 +376,51 @@ function propertyExportProvenance(
   if (rhs === undefined || !isUnconditionalExportAssignment(rhs)) {
     return {};
   }
-  const value = unwrapParentheses(rhs);
+  const value = unwrapValue(rhs);
   return {
     localName: ts.isIdentifier(value) ? value.text : undefined,
-    localFunctionLocation: directValueFunctionLocation(index.sourceFile, value),
+    localFunctionLocation:
+      directValueFunctionLocation(index.sourceFile, value) ??
+      chasedValueFunctionLocation(index, value),
   };
+}
+
+/**
+ * {@link directValueFunctionLocation} applied to the far end of an alias
+ * chain rather than to the expression itself — RWF-012's function-identity
+ * half.
+ *
+ * ```js
+ * const impl = function () {};
+ * const a = impl;
+ * const b = a;
+ * exports.parse = b;   // -> that FunctionExpression's own position
+ * ```
+ *
+ * Only a `"value"` chain answers: `"refused"` (a reassigned hop, a cycle,
+ * a rejected binding) and `"unmodeled"` (a `function` declaration, an
+ * import, a free name) both leave the export exactly as unattributed as
+ * before, which is an unresolved target and therefore UNKNOWN — never a
+ * verdict. See {@link resolveLocalValue} for the per-hop obligation.
+ *
+ * Gated on {@link declaresCommonJsAmbientShadow} because it is the chase
+ * over LOCAL bindings that this guard protects (RWF-004a): in a file that
+ * declares its own `module`/`exports`/`require`, a module-scope binding is
+ * not the ambient-CommonJS fact the chase assumes it is. The guard is
+ * applied only to the chased path — a directly-referenced function value
+ * needs no chase and keeps the behaviour it had before RWF-012.
+ */
+function chasedValueFunctionLocation(
+  index: SourceIndex,
+  value: ts.Expression,
+): SourceLocation | undefined {
+  if (!ts.isIdentifier(value) || declaresCommonJsAmbientShadow(index)) {
+    return undefined;
+  }
+  const resolved = resolveLocalValue(index, value);
+  return resolved.kind === "value"
+    ? directValueFunctionLocation(index.sourceFile, resolved.value)
+    : undefined;
 }
 
 /**
@@ -889,11 +949,14 @@ function buildExportBindings(
  *    `const module = { exports: null }; module.exports = function () {}`
  *    creates no export identity at all — the RWF-004a protection, applied
  *    to this relation too (see `declaresCommonJsAmbientShadow`).
- * 3. **Exactly one alias hop.** The identifier form goes through
- *    commonjs-reexports.ts's existing module-scope single-assignment
- *    proof and never recurses, so `const a = fn; const b = a;
- *    module.exports = b` resolves to nothing here. Broadening that is
- *    RWF-012, deliberately not done.
+ * 3. **A fully proven alias chain.** The identifier form goes through
+ *    commonjs-reexports.ts's module-scope single-assignment proof at
+ *    EVERY hop (RWF-012's {@link resolveLocalValue}), so
+ *    `const fn = function () {}; const a = fn; const b = a;
+ *    module.exports = b` now lands on that function node, while a chain
+ *    with one reassigned, multiply-declared, conditionally-initialized,
+ *    destructured or cyclic hop anywhere along it resolves to nothing
+ *    here — exactly as unattributed as before RWF-003.
  *
  * A class expression (`module.exports = class {}`) is deliberately NOT
  * matched: its callable target is an implicit or explicit constructor and
@@ -911,7 +974,7 @@ function directExportedFunctionLocation(
     return undefined;
   }
 
-  const value = unwrapParentheses(assignment.rhs);
+  const value = unwrapValue(assignment.rhs);
 
   if (isDirectFunctionValue(value)) {
     return declaresCommonJsAmbientShadow(index)
@@ -923,13 +986,12 @@ function directExportedFunctionLocation(
     return undefined;
   }
 
-  const bound = classifyLocalBinding(index, value.text);
-  if (bound.kind !== "single-assignment") {
+  const bound = resolveLocalValue(index, value);
+  if (bound.kind !== "value") {
     return undefined;
   }
-  const boundValue = unwrapParentheses(bound.value);
-  return isDirectFunctionValue(boundValue)
-    ? toSourceLocation(index.sourceFile, boundValue)
+  return isDirectFunctionValue(bound.value)
+    ? toSourceLocation(index.sourceFile, bound.value)
     : undefined;
 }
 
@@ -949,14 +1011,20 @@ function wholeModuleDefaultExport(
 ): ExportBinding {
   let localName: string | undefined;
 
-  if (ts.isIdentifier(assignment.rhs)) {
-    localName = assignment.rhs.text;
+  // RWF-012: read through parentheses and chained assignments, so
+  // `module.exports = exports.decode = decode` names `decode` exactly as
+  // the bare `module.exports = decode` form does. The value of `x = v` is
+  // `v`, so this is the same fact, differently spelled — see
+  // {@link unwrapValue}.
+  const rhsValue = unwrapValue(assignment.rhs);
+
+  if (ts.isIdentifier(rhsValue)) {
+    localName = rhsValue.text;
   } else if (
-    (ts.isFunctionExpression(assignment.rhs) ||
-      ts.isClassExpression(assignment.rhs)) &&
-    assignment.rhs.name
+    (ts.isFunctionExpression(rhsValue) || ts.isClassExpression(rhsValue)) &&
+    rhsValue.name
   ) {
-    localName = assignment.rhs.name.text;
+    localName = rhsValue.name.text;
   }
 
   return {

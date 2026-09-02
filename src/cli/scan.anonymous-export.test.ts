@@ -253,10 +253,28 @@ describe("scan: RWF-003 shapes that must never produce a confident verdict", () 
     expect((await scan(root)).verdict).toBe("UNKNOWN");
   });
 
-  it("stays UNKNOWN for an alias chain longer than one hop (RWF-012 boundary)", async () => {
+  it("stays UNKNOWN when a MUTATED hop breaks the alias chain (RWF-012)", async () => {
     const root = callingProject({
       "node_modules/anon-lib/index.js":
-        "const a = function (x) { return x; };\nconst b = a;\nmodule.exports = b;\n",
+        "const a = function (x) { return x; };\nlet b = a;\nb = other;\nconst c = b;\nmodule.exports = c;\n",
+    });
+
+    expect((await scan(root)).verdict).toBe("UNKNOWN");
+  });
+
+  it("stays UNKNOWN when the alias chain is a CYCLE (RWF-012)", async () => {
+    const root = callingProject({
+      "node_modules/anon-lib/index.js":
+        "const a = b;\nconst b = a;\nmodule.exports = a;\n",
+    });
+
+    expect((await scan(root)).verdict).toBe("UNKNOWN");
+  });
+
+  it("stays UNKNOWN when a hop is conditionally initialized (RWF-012)", async () => {
+    const root = callingProject({
+      "node_modules/anon-lib/index.js":
+        "let a;\nif (process.env.FLAG) {\n  a = function (x) { return x; };\n}\nconst b = a;\nmodule.exports = b;\n",
     });
 
     expect((await scan(root)).verdict).toBe("UNKNOWN");
@@ -265,6 +283,39 @@ describe("scan: RWF-003 shapes that must never produce a confident verdict", () 
   it("stays UNKNOWN for a CROSS-PACKAGE re-export of an anonymous export (RWF-004b boundary)", async () => {
     const root = callingProject({
       "node_modules/anon-lib/index.js": 'module.exports = require("other");\n',
+      "node_modules/other/package.json": manifest("other"),
+      "node_modules/other/index.js":
+        "module.exports = function (a) {\n  return a;\n};\n",
+    });
+
+    expect((await scan(root)).verdict).toBe("UNKNOWN");
+  });
+});
+
+describe("scan: RWF-012 alias chains, end to end through the real scan", () => {
+  it("reaches AFFECTED through a THREE-hop alias chain to an anonymous export", async () => {
+    // Every hop is a module-scope, declared-once, never-reassigned
+    // binding, so the chain is a proof and the anonymous function at the
+    // end of it is the module's real exported callable.
+    const root = callingProject({
+      "node_modules/anon-lib/index.js":
+        "const a = function (x) { return x; };\nconst b = a;\nconst c = b;\nmodule.exports = c;\n",
+    });
+
+    const { verdict, evidence } = await scan(root);
+    expect(verdict).toBe("AFFECTED");
+    expect(evidence.some((step) => step.includes("anon-lib"))).toBe(true);
+  });
+
+  it("an alias chain does not invent an anon-lib target for a CROSS-PACKAGE re-export", async () => {
+    // The sibling RWF-004b boundary case above, with a three-hop chain in
+    // front of it. The rule names `anon-lib#default`, but the real callable
+    // lives in `other` -- so anon-lib's own finding must stay UNKNOWN. A
+    // chain that resolved to something inside anon-lib here would be a
+    // phantom target manufactured by alias chasing.
+    const root = callingProject({
+      "node_modules/anon-lib/index.js":
+        'const dep = require("other");\nconst a = dep;\nconst b = a;\nmodule.exports = b;\n',
       "node_modules/other/package.json": manifest("other"),
       "node_modules/other/index.js":
         "module.exports = function (a) {\n  return a;\n};\n",

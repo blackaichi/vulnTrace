@@ -457,16 +457,117 @@ describe("RWF-011: positive provenance still resolves", () => {
     expect(exportPosition(text, "encode")).toBe("3:1");
   });
 
-  it("does not resolve the OUTER name of a chained assignment through the assignment's value", () => {
-    // `exports.parse`'s own right-hand side is the inner assignment
-    // EXPRESSION, not an identifier or a function node. Resolving through
-    // an assignment's value is a separate relation, deliberately not
-    // attempted -- so this stays unattributed rather than guessing.
+  it("resolves a PROPERTY export through a two-hop alias chain (RWF-012)", () => {
+    // `exports.p = a` where `const a = fn` and `const fn = function () {}`.
+    // Before RWF-012 the property path did no chasing at all: its
+    // `localName` was "a", which names no function, so this was
+    // unattributed. The result is now an exact function-node position.
     expect(
       exportPosition(
         [
+          "const fn = function (x) { return x; };",
+          "const a = fn;",
+          "exports.parse = a;",
+        ].join("\n"),
+        "parse",
+      ),
+    ).toBe("1:12");
+  });
+
+  it("resolves a PROPERTY export through a three-hop alias chain (RWF-012)", () => {
+    expect(
+      exportPosition(
+        [
+          "const fn = (x) => x;",
+          "const a = fn;",
+          "const b = a;",
+          "exports.parse = b;",
+        ].join("\n"),
+        "parse",
+      ),
+    ).toBe("1:12");
+  });
+
+  it("refuses a PROPERTY export whose chain touches a reassigned hop (RWF-012)", () => {
+    expect(
+      exportPosition(
+        [
+          "const fn = function (x) { return x; };",
+          "let a = fn;",
+          "a = other;",
+          "const b = a;",
+          "exports.parse = b;",
+        ].join("\n"),
+        "parse",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a PROPERTY export whose chain is a cycle (RWF-012)", () => {
+    expect(
+      exportPosition(
+        ["const a = b;", "const b = a;", "exports.parse = a;"].join("\n"),
+        "parse",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("resolves the OUTER name of a chained assignment through the assignment's value (RWF-012)", () => {
+    // Real `ini@1.3.5` line 1, and RWB-07's whole blocker. `exports.parse`'s
+    // own right-hand side is the inner assignment EXPRESSION -- neither an
+    // identifier nor a function node -- so before RWF-012 it carried no
+    // provenance at all and `ini#parse` was an unresolved target.
+    //
+    // The value of `x = v` IS `v`, unconditionally, so reading through the
+    // assignment yields the very same local name `exports.decode` already
+    // resolved through. The name still comes from the right-hand side's own
+    // text (RWF-011), never from the exported name -- the decoy below
+    // proves it.
+    const text = [
+      "exports.parse = exports.decode = decode",
+      "function decode (str) { return str }",
+    ].join("\n");
+
+    expect(exportPosition(text, "parse")).toBe("2:1");
+    expect(exportPosition(text, "decode")).toBe("2:1");
+  });
+
+  it("does not let a chained assignment reintroduce the exported-name fallback (RWF-011 + RWF-012)", () => {
+    // The chain's value is a member access this analyzer models nothing
+    // about, so `parse` must stay unattributed -- NOT bound to the
+    // same-named decoy sitting right there in the file.
+    expect(
+      exportPosition(
+        [
+          "function parse (str) { return str }",
+          "exports.parse = exports.impl = registry.impl",
+        ].join("\n"),
+        "parse",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a chained assignment whose value is a reassigned binding (RWF-012 + RWF-013)", () => {
+    expect(
+      exportPosition(
+        [
+          "let decode = function (str) { return str }",
+          "decode = somethingElse",
           "exports.parse = exports.decode = decode",
+        ].join("\n"),
+        "parse",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("does not read through a COMPOUND assignment, whose value is not its right-hand side (RWF-012)", () => {
+    // `x += v` evaluates to the sum, not to `v`. Unwrapping it would
+    // assert an identity that does not hold.
+    expect(
+      exportPosition(
+        [
           "function decode (str) { return str }",
+          "exports.parse = (count += decode)",
         ].join("\n"),
         "parse",
       ),
