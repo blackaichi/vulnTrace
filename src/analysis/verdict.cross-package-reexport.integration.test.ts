@@ -272,6 +272,130 @@ describe("RWF-004b: duplicate same-name, same-version instances stay separate fi
   });
 });
 
+describe("RWF-012: an alias chain never borrows the wrong PackageInstance", () => {
+  /**
+   * ADV2-073's shape, asserted per exact instance -- the adversarial suite
+   * addresses a finding by package name and version alone, and these two
+   * installs share both.
+   *
+   * The wrapper reaches its own nested install through a FOUR-hop local
+   * alias chain, with a private same-named decoy function declared ahead of
+   * it. Following the chain and attributing the instance are one problem
+   * here, not two: a chase that resolves the value but keys the instance on
+   * package metadata rather than on the resolver's answer lands on the twin
+   * and reports a confident, complete, wrong-instance verdict.
+   */
+  function writeChainedDuplicateInstanceProject(root: string): void {
+    write(root, "node_modules/vuln-pkg/package.json", pkgJson("vuln-pkg"));
+    write(
+      root,
+      "node_modules/vuln-pkg/index.js",
+      "function topLevelOnlySink(x) { return x; }\nfunction parse(x) { return topLevelOnlySink(x); }\nexports.parse = parse;\n",
+    );
+    write(
+      root,
+      "node_modules/wrapper/node_modules/vuln-pkg/package.json",
+      pkgJson("vuln-pkg"),
+    );
+    write(
+      root,
+      "node_modules/wrapper/node_modules/vuln-pkg/index.js",
+      "function parse(x) { return x; }\nexports.parse = parse;\n",
+    );
+    write(root, "node_modules/wrapper/package.json", pkgJson("wrapper"));
+    write(
+      root,
+      "node_modules/wrapper/index.js",
+      // The decoy is declared FIRST, so "first same-named function in the
+      // file" finds it rather than anything the chain reaches.
+      `function parse(x) { return "wrapper-local:" + x; }\n` +
+        `const dep = require("vuln-pkg");\n` +
+        `const hopOne = dep;\n` +
+        `const hopTwo = hopOne;\n` +
+        `const impl = hopTwo.parse;\n` +
+        `const published = impl;\n` +
+        `exports.localHelper = parse;\n` +
+        `exports.parse = published;\n`,
+    );
+    write(
+      root,
+      "src/app.js",
+      `const wrapper = require("wrapper");\nfunction main(input) {\n  return wrapper.parse(input);\n}\nmodule.exports = { main };\n`,
+    );
+  }
+
+  it("reports AFFECTED for the exact NESTED instance the chain resolves", async () => {
+    const root = tempProject();
+    writeChainedDuplicateInstanceProject(root);
+
+    const { finding } = await scan({
+      root,
+      packageName: "vuln-pkg",
+      exportName: "parse",
+      packageInstance: canonicalizePackageInstancePath(
+        path.join(root, "node_modules", "wrapper", "node_modules", "vuln-pkg"),
+      ),
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+    expect(finding?.evidence?.path.at(-1)).toContain(
+      path.join("wrapper", "node_modules", "vuln-pkg"),
+    );
+  });
+
+  it("never reports AFFECTED for the same-name, same-version twin the chain never reaches", async () => {
+    const root = tempProject();
+    writeChainedDuplicateInstanceProject(root);
+
+    const { finding } = await scan({
+      root,
+      packageName: "vuln-pkg",
+      exportName: "parse",
+      packageInstance: canonicalizePackageInstancePath(
+        path.join(root, "node_modules", "vuln-pkg"),
+      ),
+    });
+
+    expect(finding?.verdict).not.toBe("AFFECTED");
+  });
+
+  it("keeps the reached instance's evidence out of the twin's finding", async () => {
+    const root = tempProject();
+    writeChainedDuplicateInstanceProject(root);
+
+    const { finding } = await scan({
+      root,
+      packageName: "vuln-pkg",
+      exportName: "parse",
+      packageInstance: canonicalizePackageInstancePath(
+        path.join(root, "node_modules", "vuln-pkg"),
+      ),
+    });
+
+    for (const step of finding?.evidence?.path ?? []) {
+      expect(step).not.toContain(
+        path.join("wrapper", "node_modules", "vuln-pkg"),
+      );
+    }
+  });
+
+  it("never attributes the chain to the wrapper's own same-named decoy (RWF-011)", async () => {
+    const root = tempProject();
+    writeChainedDuplicateInstanceProject(root);
+
+    const { finding } = await scan({
+      root,
+      packageName: "wrapper",
+      exportName: "parse",
+      packageInstance: canonicalizePackageInstancePath(
+        path.join(root, "node_modules", "wrapper"),
+      ),
+    });
+
+    expect(finding?.verdict).not.toBe("AFFECTED");
+  });
+});
+
 describe("RWF-004b: a conditional export assignment never manufactures a clean bill of health", () => {
   /**
    * The soundness case that shaped this task's implementation.

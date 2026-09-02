@@ -86,7 +86,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-009 | `semver` (`RWB-09a`, npm alias `semver-vulnerable`) | `identifyModule()` derived package *identity* purely from the install *directory* name, not the installed package's own declared `package.json` `"name"` — an npm-aliased install (`"semver-vulnerable": "npm:semver@7.5.1"`) was therefore invisible to `graphPackageInstances(graph, "semver")` even though the call graph genuinely traversed it | **Soundness** — a genuinely-reached aliased instance was silently treated as `confirmedAbsentInstance` (VT-212's guard, meant for a never-touched instance), producing a false `NOT_AFFECTED` for a package that was, in fact, reached and vulnerable | **Fixed (VT-306)** |
 | RWF-013 | any CommonJS file that reassigns an exported local (real shapes in `es-define-property`, `gopd`) | An export whose value is an identifier the file itself REASSIGNS fell through to a same-file name search, which lands on the binding's STALE initializer — an anonymous function expression is indexed under the name of the variable it was assigned to, so the stale node matches the export name exactly | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C unreachability proof over a function the module does not export | **Fixed for variable bindings (RWF-013)**; the declaration-form half is RWF-013b below |
 | RWF-013b | any CommonJS file that reassigns an exported `function`/`class` DECLARATION | RWF-013 classified an identifier's provenance by asking how the name was DECLARED, so a reassigned function/class declaration was reported "unmodeled" — silence — and still fell through to the legacy name search, even though the same fact collector had already recorded the reassignment | **Soundness** — the identical false `NOT_AFFECTED` with a complete Family C proof, surviving RWF-013 | **Fixed (RWF-013b)** |
-| RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | Open, not yet scoped as a task |
+| RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two. The same relation stopped after ONE hop of local-variable indirection, so `const a = require("pkg"); const b = a; module.exports = b` was equally unattributable | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | **Fixed (RWF-012)** |
 
 ---
 
@@ -593,6 +593,8 @@ The dependency-graph layer already derived identity correctly (`entry.name`, whi
 
 ## RWF-012 — CommonJS chained export alias (`exports.foo = exports.bar = impl`) isn't attributed to its implementing function
 
+**Status: Fixed.**
+
 **Discovered:** scanning real `ini@1.3.5` (`RWB-07`) against real GHSA-qqgx-2p2h-9c37 / CVE-2020-7788 (prototype pollution in `ini.parse`).
 
 **Symptom:** VT-301B's independent architecture review surfaced this while auditing the phantom-target Site A fix (see `docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md`): `RWB-07`'s prior `PASS` (`NOT_AFFECTED`) turned out to be built on an unresolved target, not a genuinely identified one. Before VT-301B, the rule's `ini#parse` target fell through to a phantom node; a reachability search against that phantom happened to conclude `NOT_AFFECTED` only because the configured `{file: src/config.js, symbol: loadModernConfig}` entrypoint's own reachable subgraph is trivially edge-less (`loadModernConfig` calls only `JSON.parse`, a known global with no call-graph edge at all) — the *target itself* was never actually resolved, before or after VT-301B. After VT-301B, the same unresolved-target state correctly reports `unresolvedReason` directly (SDD.md § 23's "vulnerable target known? NO → UNKNOWN"), so `RWB-07` now (correctly) reports `UNKNOWN` instead of an accidental `NOT_AFFECTED`.
@@ -612,9 +614,123 @@ The rule's target names the **public, canonical export** (`parse`) — but the f
 
 **Relevant files:** `src/code-intelligence/source-index.ts` (`buildIndex`'s `commonjs-exports-property` case never records a `localName` for a chained/aliased RHS), `src/code-intelligence/module-model.ts` (`mapExportsToFunctions`'s `localKey` fallback to `exportedName`, which only coincidentally works when the assigned identifier's own name matches the export name).
 
-**Proposed direction (not scoped, not implemented):** when an `exports.foo = <expr>` (or `module.exports.foo = <expr>`) assignment's RHS is itself another assignment expression (`exports.bar = decode`) or a bare identifier referencing a locally-declared function, capture that identifier as the binding's `localName` (chasing through one or more chained assignment layers, bounded the same way VT-214's alias tracking already is) rather than defaulting to the export's own name — a targeted extension to `buildExportBindings`/`describeCommonJsExportTarget`, not a general aliasing/points-to feature.
+### The fix (RWF-012)
 
-**MVP-readiness relevance:** does not violate any adversarial-suite invariant (still 79/79) — no adversarial fixture uses a chained/aliased `exports.foo = exports.bar = impl` assignment. `RWB-07`'s own oracle (`expected: NOT_AFFECTED`) is unchanged by this finding: a human analyst reading `src/config.js` with the configured entrypoint in mind still concludes `NOT_AFFECTED` with no ambiguity (`loadLegacyIniConfig` is genuinely unreachable from `loadModernConfig`) — this finding is about *why the analyzer itself* can no longer reach that same conclusion with adequate coverage, now that it correctly refuses to guess at an unresolved target.
+Two related indirections were closed, both by extending relations that
+already existed rather than adding a value-flow engine.
+
+**1. An alias CHAIN, not one hop.** RWF-004a admitted exactly one hop of
+local-variable indirection between an export and the value it publishes,
+and RWF-003 did the same for a function identity. `resolveLocalValue`
+(`src/code-intelligence/commonjs-reexports.ts`) now walks the whole chain
+by ITERATING the existing per-hop `classifyLocalBinding` under a cycle
+guard, and `resolveOrigin` threads the same walk through the re-export
+relation. The hop count changed; the per-hop obligation did not. Every
+identifier on a chain must still be a module-scope binding the file
+declares exactly once — in any form, any scope — at its own top level,
+with an initializer, and never writes to again. One unproven hop anywhere
+stops the whole chase at nothing, which is the same unresolved target,
+and therefore the same UNKNOWN, as before.
+
+Building the walker out of `classifyLocalBinding` rather than
+re-deriving its facts is deliberate: RWF-013's and RWF-013b's refusal
+grounds cannot drift out of sync with the chain walker if there is only
+one implementation of them.
+
+Termination is a visited set of names, checked before each hop. A cycle
+(`const a = b; const b = a;`) is two individually impeccable bindings —
+each `const`, each declared once, neither ever written to — so no per-hop
+proof can catch it, and refusing is the only answer that is not an
+arbitrary pick from the cycle. The walk is iterative, so there is no
+stack to overflow however long the chain, and within one file's facts a
+name IS binding identity, because the single-assignment proof admits a
+name only when the whole file declares it exactly once.
+
+**2. The chained assignment itself.** `unwrapValue` reads through a chained
+plain assignment, so `exports.parse = exports.decode = decode` publishes
+`parse` under the local name `decode` — the same name, from the same
+expression, that `exports.decode` already resolved through. The value of
+`x = v` IS `v`, for every left-hand side, so this is exact language
+semantics rather than dataflow; only `=` is unwrapped, never a compound
+assignment, whose value is the result of the operation and not its
+right-hand side. Every caller is already gated on
+`isUnconditionalExportAssignment`, which climbs exactly these links before
+requiring an unconditional module-scope statement — so a branch-local
+`if (cond) { exports.a = exports.b = impl; }` is refused before this ever
+runs, and RWF-004b's conditional-export guard is untouched.
+
+Crucially, the name still comes from the right-hand side's OWN text.
+`exports.parse = exports.impl = registry.impl` stays unattributed rather
+than binding a same-named local `function parse()`: RWF-011's rule is that
+a public export name is not provenance for any local symbol, and reading
+through an assignment does not change what the right-hand side says.
+
+**Refusal got strictly wider, never narrower.**
+`refusesLocalIdentifierProvenance` now asks about the whole chain, which
+closes a real gap RWF-013 left open: a clean first hop onto a reassigned
+binding —
+
+```js
+let stale = function () {};   // indexed under the name "stale"
+stale = somethingElse;
+const alias = stale;
+exports.stale = alias;        // RWF-013 saw only `alias`, which is clean
+```
+
+— left the same-file name search free to bind the stale initializer that
+source indexing names after the very variable the file reassigns away
+from. The chain, not the first hop, is what touches the mutation.
+
+**No new authoritative terminal.** The chase still ends only at a direct
+function/arrow value, a `require()` origin, or a destructured require
+property. A chain ending in a `function`/`class` DECLARATION therefore
+stays unattributed — that would be a new terminal form, and it would have
+to prove the declaration is the file's only one — while the one-hop forms
+that resolved through `localName` (`module.exports = fn` over
+`function fn() {}`) are untouched. Both boundaries are pinned as tests.
+
+**Result:** `RWB-07` (`ini`) moved `UNKNOWN` → `NOT_AFFECTED`, the oracle's
+answer. The rule's `ini#parse` target now binds `ini.js`'s real
+`function decode` at line 69 — the identical node `ini#decode` already
+resolved to, which is correct at runtime (`ini.parse === ini.decode`, and
+`ini.js` contains no function named `parse` at all, so no name coincidence
+is available). `RWB-07` is the ONLY validation case that moved: 11 → 12
+PASS, 6 → 5 known failures, 0 unexpected, 17 total.
+
+**That `UNKNOWN` → `NOT_AFFECTED` is the one movement into a negative
+verdict, and it is correct.** Attribution is a precondition for BOTH
+verdicts, exactly as RWF-003 established. The proof is Family C's
+positive route, not an inference from failure: the target is a real node;
+the configured `{file: src/config.js, symbol: loadModernConfig}`
+entrypoint's reachable subgraph is complete (`reachableSubgraphComplete:
+true`, `modulesUnresolved: 0`); and no path in it reaches that node,
+because `loadModernConfig` calls only `JSON.parse` and nothing in the
+file calls `loadLegacyIniConfig`. The many `unsupported_construct`
+diagnostics in the output are all inside `ini.js`, which is not in the
+reachable subgraph at all — RWF-002's rule, unchanged. Nothing new was
+added to the verdict layer, the proof context, the reachability search or
+the negative-proof schema. Every shape this relation refuses — a mutated
+hop, a cycle, a conditional initialization, a multiply-declared name, a
+destructured hop, a dynamic terminal, a conditional export — stays
+`UNKNOWN`.
+
+**Permanent coverage:** `ADV2-073` puts all four wrong answers in one
+fixture (truncation, name fallback, wrong instance, wrong package): a
+four-hop chain over a cross-package `require`, between two installs of the
+same name and version, with a private same-named decoy declared ahead of
+the chain. Its per-instance half — the unreached twin never inheriting the
+AFFECTED, and its evidence containing no node from the reached one — is
+asserted in `src/analysis/verdict.cross-package-reexport.integration.test.ts`,
+because the adversarial suite addresses a finding by package name and
+version alone and cannot itself tell two same-version instances apart.
+
+**MVP-readiness relevance:** no adversarial-suite invariant moved (v1 + v2
+both fully green, 107/107 with ADV2-073 added). `RWB-07`'s own oracle
+(`expected: NOT_AFFECTED`) was never in question and is unchanged: a human
+analyst reading `src/config.js` with the configured entrypoint in mind
+concludes `NOT_AFFECTED` with no ambiguity. What changed is that the
+analyzer can now reach that conclusion on a target it has actually
+identified, rather than declining because it could not.
 
 ---
 

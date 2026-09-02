@@ -56,7 +56,8 @@ vulnerable symbol.
 - `rwb-07-ini-entrypoint-unreached/` — real `ini@1.3.5`
   (GHSA-qqgx-2p2h-9c37 / CVE-2020-7788); `ini.parse()` is genuinely called,
   but only from a function unreachable from the configured `{file, symbol}`
-  entrypoint. RWB-07.
+  entrypoint. RWB-07 — the chained CommonJS export alias
+  (`exports.parse = exports.decode = decode`) whose attribution is RWF-012.
 - `rwb-08-debug-ms-nested/` — real `debug@2.0.0` pulling in real, vulnerable
   `ms@0.6.2` transitively (GHSA-3fx5-fwvr-xrjg / CVE-2015-8315), reached
   only via `debug`'s own re-export (`debug.humanize`). RWB-08 — the cross-package half of the CommonJS re-export chase (RWF-004b).
