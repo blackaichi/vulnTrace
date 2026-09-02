@@ -1,0 +1,9 @@
+{
+  "name": "commonjs-coincidental-export-name-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0",
+    "nested-consumer": "1.0.0"
+  }
+}

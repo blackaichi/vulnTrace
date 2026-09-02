@@ -167,6 +167,12 @@ describe("buildModuleModel: module.exports object literal unpacking", () => {
         syntax: "commonjs",
         exportedName: "vulnerable",
         localName: "vulnerable",
+        // RWF-011: a method IS its own function node, so the binding also
+        // carries that node's exact position. `localName` alone is the
+        // method's own name, which for this shape necessarily equals the
+        // exported name and so cannot distinguish the method from an
+        // unrelated same-file `function vulnerable() {}`.
+        localFunctionLocation: expect.any(Object),
         location: expect.any(Object),
       },
     ]);
@@ -257,6 +263,11 @@ describe("buildModuleModel: module.exports object literal unpacking", () => {
         syntax: "commonjs",
         exportedName: "vulnerable",
         localName: "vulnerable",
+        // RWF-011: load-bearing for this shape rather than merely more
+        // precise — source indexing records a computed method under its
+        // literal source text (`[NAME]`), so no name search could ever
+        // find it and position is the only thing that resolves it.
+        localFunctionLocation: expect.any(Object),
         location: expect.any(Object),
       },
     ]);

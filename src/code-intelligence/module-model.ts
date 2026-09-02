@@ -224,6 +224,181 @@ function isDirectFunctionValue(
   return ts.isFunctionExpression(node) || ts.isArrowFunction(node);
 }
 
+/**
+ * The exact source position of the function-like node a *property*
+ * export's right-hand side IS, when the right-hand side is one
+ * structurally (RWF-011). The property-export counterpart of
+ * {@link directExportedFunctionLocation}, and the same kind of fact: a
+ * position identifies exactly one AST node, so this is an identity, never
+ * a same-file text match.
+ *
+ * ```text
+ * exports.foo = function () {}      -> that FunctionExpression
+ * exports.foo = function bar() {}   -> that FunctionExpression
+ * exports.foo = async function () {}-> that FunctionExpression
+ * exports.foo = () => {}            -> that ArrowFunction
+ * exports.Foo = class { m() {} }    -> that class's constructor
+ * module.exports = { foo() {} }     -> that MethodDeclaration
+ * ```
+ *
+ * A class expression IS matched here, unlike in
+ * {@link directExportedFunctionLocation}: the callable node a class
+ * exports is its constructor, and source-index.ts indexes one for every
+ * class — the explicit `constructor() {}` member when the class declares
+ * it, and otherwise a synthesized entry positioned at the class's own name
+ * (or, for an anonymous class, at the class node itself; see
+ * `extractImplicitConstructor`). {@link classConstructorNode} reproduces
+ * that choice exactly, so the position resolves to the very entry source
+ * indexing recorded. This is what keeps `exports.Foo = class { ... }`
+ * attributable — and therefore keeps
+ * {@link findExportedClassMembers}'s exported-class set populated — once
+ * the coincidental name fallback is gone.
+ *
+ * `undefined` for every other right-hand side, which is the whole point:
+ * `exports.foo = registry.impl`, `exports.foo = makeFoo()`,
+ * `exports.foo = obj.foo` and `exports.foo = cond ? a : b` name no
+ * function node at all, and this relation says so rather than letting the
+ * export's public NAME go looking for one.
+ */
+function directValueFunctionLocation(
+  sourceFile: ts.SourceFile,
+  value: ts.Expression,
+): SourceLocation | undefined {
+  const node = unwrapParentheses(value);
+  if (isDirectFunctionValue(node)) {
+    return toSourceLocation(sourceFile, node);
+  }
+  if (ts.isClassExpression(node)) {
+    return toSourceLocation(sourceFile, classConstructorNode(node));
+  }
+  return undefined;
+}
+
+/**
+ * The node source-index.ts positions a class's constructor entry at — the
+ * explicit `constructor() {}` member when there is one, and otherwise the
+ * class's own name identifier, or the class node itself when it is
+ * anonymous. Mirrors `extractConstructor`/`extractImplicitConstructor`
+ * there; the two must agree, because {@link mapExportsToFunctions}
+ * resolves this position against the index's own entries.
+ */
+function classConstructorNode(
+  node: ts.ClassExpression | ts.ClassDeclaration,
+): ts.Node {
+  const explicit = node.members.find((member) =>
+    ts.isConstructorDeclaration(member),
+  );
+  return explicit ?? node.name ?? node;
+}
+
+/**
+ * The positive provenance a CommonJS *property* export
+ * (`exports.X = RHS` / `module.exports.X = RHS`) establishes for its own
+ * value (RWF-011).
+ *
+ * Before this, a property export carried NEITHER of these facts, and
+ * {@link mapExportsToFunctions} fell back to searching the file for a
+ * function whose own name equalled the EXPORTED name. That fallback is
+ * unsound in exactly the way this whole relation exists to prevent: the
+ * public property name an export is published under is not provenance for
+ * any local symbol, so
+ *
+ * ```js
+ * function parse(input) { return "safe:" + input; }   // unrelated decoy
+ * const registry = { impl: require("./lib/parse") };
+ * exports.parse = registry.impl;                      // the REAL value
+ * ```
+ *
+ * bound `exports.parse` to the decoy, and proving the decoy unreachable
+ * produced a complete, correct — and completely wrong-target — Family C
+ * NOT_AFFECTED for a vulnerability that is reachable at runtime.
+ *
+ * Two shapes, both of which the right-hand side itself establishes:
+ *
+ * - **A bare identifier** (`exports.foo = foo`,
+ *   `exports.publicName = internal`, `exports.Klass = Klass`) names a
+ *   local symbol explicitly, so it becomes {@link ExportBinding.localName}
+ *   — the RHS's OWN text, never the exported name. `exports.publicName =
+ *   internal` therefore looks up `internal`, which is both correct and
+ *   something the exported-name fallback could never do. RWF-013's
+ *   refusal is unaffected and still consulted first, so a reassigned
+ *   identifier stays refused rather than becoming newly attributable.
+ * - **A directly-referenced function/class value** becomes
+ *   {@link ExportBinding.localFunctionLocation} via
+ *   {@link directValueFunctionLocation}, an exact identity. This also
+ *   repairs a wrong-target case the name search got silently wrong:
+ *   `function foo() {}` alongside `exports.foo = function () {}` indexes
+ *   TWO functions named `foo` (source-index.ts names the anonymous one
+ *   after the property it is assigned to), and the name search returned
+ *   whichever came first in the file — the decoy.
+ *
+ * Gated on the assignment being an unconditional module-scope statement,
+ * for the same reason {@link directExportedFunctionLocation} is: this
+ * module has no control-flow semantics, and
+ * `commonJsPropertyExportRhs`'s last-write-wins map picks the last
+ * assignment in SOURCE order. Binding a right-hand side that sits inside
+ * an `if`/`try`/loop/function body would be choosing a branch
+ * arbitrarily, which is the same manufactured certainty in a different
+ * shape.
+ */
+function propertyExportProvenance(
+  index: SourceIndex,
+  rhs: ts.Expression | undefined,
+): Pick<ExportBinding, "localName" | "localFunctionLocation"> {
+  if (rhs === undefined || !isUnconditionalPropertyAssignment(rhs)) {
+    return {};
+  }
+  const value = unwrapParentheses(rhs);
+  return {
+    localName: ts.isIdentifier(value) ? value.text : undefined,
+    localFunctionLocation: directValueFunctionLocation(index.sourceFile, value),
+  };
+}
+
+/**
+ * {@link isUnconditionalModuleScopeStatement} for the `exports.X = rhs`
+ * form, climbing out through CHAINED assignments first.
+ *
+ * `exports.parse = exports.decode = decode` (real ini, and a staple
+ * CommonJS idiom for publishing one function under two names) parses as
+ * `exports.parse = (exports.decode = decode)`, so the inner assignment's
+ * enclosing node is the outer ASSIGNMENT, not the statement. Asking about
+ * it directly reports "not module scope" and refuses a binding whose
+ * provenance is in fact perfect: the whole chain is one unconditional
+ * top-level statement, and `decode` is a bare identifier naming a local
+ * function.
+ *
+ * Only assignment links are climbed, and only from the right-hand side —
+ * exactly the positions whose value IS the value being assigned. Anything
+ * else between the assignment and the source file (an `if`, a `try`, a
+ * function body, a comma expression) still means the assignment may not
+ * run, and still refuses.
+ *
+ * Note this deliberately does NOT make `exports.parse` itself
+ * attributable: its own right-hand side is the inner assignment
+ * expression, not an identifier or a function node, so
+ * {@link propertyExportProvenance} finds nothing to bind and the export
+ * stays unresolved. Resolving THROUGH an assignment expression's value is
+ * a separate relation and is not attempted here.
+ */
+function isUnconditionalPropertyAssignment(rhs: ts.Expression): boolean {
+  let node: ts.Node | undefined = rhs.parent;
+  if (node === undefined) {
+    return false;
+  }
+  let parent = node.parent as ts.Node | undefined;
+  while (
+    parent !== undefined &&
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === node
+  ) {
+    node = parent;
+    parent = node.parent as ts.Node | undefined;
+  }
+  return isUnconditionalModuleScopeStatement(node);
+}
+
 /** Whether `node`'s own statement is a direct child of the source file (module scope, unconditional). */
 function isUnconditionalModuleScopeStatement(node: ts.Node): boolean {
   const parent = node.parent as ts.Node | undefined;
@@ -360,6 +535,16 @@ function unpackObjectLiteralExports(
         localName: ts.isIdentifier(property.initializer)
           ? property.initializer.text
           : undefined,
+        // RWF-011: `{ foo: function () {} }` / `{ foo: () => {} }` /
+        // `{ Foo: class {} }` — the property's VALUE is the function node,
+        // an identity. Without it the only remaining key would be the
+        // property name, which is the exported name and therefore no
+        // provenance at all (see {@link propertyExportProvenance}).
+        localFunctionLocation: objectLiteralValueLocation(
+          sourceFile,
+          assignment,
+          property.initializer,
+        ),
         commonJsReExport: resolveCommonJsReExportExpression(
           index,
           property.initializer,
@@ -385,9 +570,21 @@ function unpackObjectLiteralExports(
           localName: ts.isIdentifier(property.initializer)
             ? property.initializer.text
             : undefined,
+          localFunctionLocation: objectLiteralValueLocation(
+            sourceFile,
+            assignment,
+            property.initializer,
+          ),
           commonJsReExport: resolveCommonJsReExportExpression(
             index,
             property.initializer,
+          ),
+          // RWF-013, extended to the computed-key form (VT-217) that
+          // shipped without it: `module.exports = { [NAME]: fn }` binds an
+          // export to an identifier exactly as the literal-key form does,
+          // and a reassigned `fn` must be refused in both.
+          localIdentifierProvenanceRefused: refusedProvenanceFlag(
+            refusesLocalIdentifierProvenance(index, property.initializer),
           ),
           location: toSourceLocation(sourceFile, property),
         });
@@ -420,6 +617,17 @@ function unpackObjectLiteralExports(
         syntax: "commonjs",
         exportedName: property.name.text,
         localName: property.name.text,
+        // RWF-011: a method IS its own function node, so bind it by
+        // position. Its `localName` above is the method's own name, which
+        // for this shape is necessarily also the exported name — so a
+        // name search could not tell the method apart from an unrelated
+        // same-file `function foo() {}` and returned whichever came
+        // first, silently attributing the wrong node.
+        localFunctionLocation: methodValueLocation(
+          sourceFile,
+          assignment,
+          property,
+        ),
         location: toSourceLocation(sourceFile, property),
       });
     } else if (
@@ -436,6 +644,15 @@ function unpackObjectLiteralExports(
           syntax: "commonjs",
           exportedName,
           localName: exportedName,
+          // The computed form additionally has no usable name at all:
+          // source indexing records the method under its literal source
+          // text (`[NAME]`), so position is the only thing that can
+          // resolve it.
+          localFunctionLocation: methodValueLocation(
+            sourceFile,
+            assignment,
+            property,
+          ),
           location: toSourceLocation(sourceFile, property),
         });
       }
@@ -445,6 +662,36 @@ function unpackObjectLiteralExports(
   }
 
   return results.length > 0 ? results : undefined;
+}
+
+/**
+ * {@link directValueFunctionLocation} for one property of a
+ * `module.exports = { ... }` object literal, gated on the enclosing
+ * assignment being unconditional module scope — the same guard the other
+ * two identity relations apply, for the same reason: an object literal
+ * assigned inside an `if`/`try`/loop may never be the module's exported
+ * value at all, and `findLastModuleExportsAssignment` picks by source
+ * order, not by control flow.
+ */
+function objectLiteralValueLocation(
+  sourceFile: ts.SourceFile,
+  assignment: ModuleExportsAssignment,
+  value: ts.Expression,
+): SourceLocation | undefined {
+  return assignment.isModuleScope
+    ? directValueFunctionLocation(sourceFile, value)
+    : undefined;
+}
+
+/** The identity of a `module.exports = { foo() {} }` method — the method node itself, under the same module-scope guard. */
+function methodValueLocation(
+  sourceFile: ts.SourceFile,
+  assignment: ModuleExportsAssignment,
+  method: ts.MethodDeclaration,
+): SourceLocation | undefined {
+  return assignment.isModuleScope
+    ? toSourceLocation(sourceFile, method)
+    : undefined;
 }
 
 function buildExportBindings(
@@ -464,11 +711,16 @@ function buildExportBindings(
         // `exports.parse = parse` binds an export to an identifier
         // exactly as `module.exports = parse` does, and is the shape the
         // RWF-013 reproducer actually hits (see
-        // fixtures/commonjs-stale-alias-export/). There is no `localName`
-        // here — TASK-014 infers the assigned function's own name from
-        // the assignment target — so the fallback's lookup key is the
-        // EXPORTED name, which matches the stale initializer just as
-        // readily whenever the two coincide.
+        // fixtures/commonjs-stale-alias-export/).
+        //
+        // RWF-011: the export's own right-hand side is the ONLY thing
+        // allowed to establish what it holds — as `localName` when it
+        // names a local symbol, or as `localFunctionLocation` when it IS
+        // a function/class node. Before this, a property export carried
+        // neither, and `mapExportsToFunctions` searched the file for a
+        // function named after the EXPORTED name, which bound
+        // `exports.parse = registry.impl` to any unrelated same-file
+        // `function parse()`. See {@link propertyExportProvenance}.
         const propertyRhs =
           exp.exportedName === undefined
             ? undefined
@@ -477,6 +729,7 @@ function buildExportBindings(
           kind: "named",
           syntax: "commonjs",
           exportedName: exp.exportedName,
+          ...propertyExportProvenance(index, propertyRhs),
           commonJsReExport:
             exp.exportedName === undefined
               ? undefined
@@ -750,11 +1003,25 @@ export function mapExportsToFunctions(
       continue;
     }
 
-    // Prefer the actual local identifier; for CommonJS `exports.foo = ...`
-    // there is no separate localName, but TASK-014 already infers the
-    // assigned function's own name as "foo" from the assignment target,
-    // so exportedName doubles as the correct lookup key there too.
-    const localKey = exp.localName ?? exp.exportedName;
+    // RWF-011: ONLY a local name the export's own right-hand side
+    // established may drive a same-file function search. This used to
+    // read `exp.localName ?? exp.exportedName`, and that fallback is the
+    // defect: a public export name is not provenance for any local
+    // symbol, so `exports.parse = registry.impl` — whose value this
+    // analyzer models nothing about — bound itself to an unrelated
+    // same-file `function parse()` purely because the two strings match.
+    // Family C would then prove that decoy unreachable and report a
+    // complete, internally consistent, and false NOT_AFFECTED.
+    //
+    // Dropping the fallback costs nothing that had provenance: every
+    // shape that legitimately resolved through it now arrives here with a
+    // real `localName` (an identifier right-hand side, an object-literal
+    // shorthand, an ESM local) or was already resolved above by exact
+    // position (a directly-referenced function, arrow, class or method).
+    // An export with neither is one nothing in this file attributes, and
+    // an unattributed export is an unresolved target — UNKNOWN, never a
+    // verdict. See {@link propertyExportProvenance}.
+    const localKey = exp.localName;
     if (!localKey) {
       continue;
     }
