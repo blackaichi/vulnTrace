@@ -104,8 +104,8 @@ export interface ExportBinding {
   readonly localFunctionLocation?: SourceLocation;
   /**
    * Whether this export's value is an identifier whose same-file binding
-   * the single-assignment model EXAMINED AND REFUSED (RWF-013; see
-   * `classifyLocalBinding` in commonjs-reexports.ts).
+   * the local-provenance model EXAMINED AND REFUSED (RWF-013, widened by
+   * RWF-013b; see `classifyLocalBinding` in commonjs-reexports.ts).
    *
    * Purely internal analysis state: never serialized, never surfaced in
    * evidence, and read by exactly one consumer —
@@ -120,8 +120,8 @@ export interface ExportBinding {
    * attribution handles perfectly well and soundly:
    *
    * ```text
-   * function fn() {}          module.exports = fn   -- a function DECLARATION,
-   *                                                    not a variable binding
+   * function fn() {}          module.exports = fn   -- an un-reassigned function
+   *                                                    DECLARATION, still bound by name
    * const C = class {};       module.exports = C    -- a class, attributed by
    *                                                    name via its constructor
    * exports.foo = function () {}                    -- a property export, which
@@ -134,13 +134,24 @@ export interface ExportBinding {
    * text contradicts any claim about what this name holds". Only the
    * second one is grounds for refusing to guess.
    *
-   * The refused shape RWF-013 exists for:
+   * The refused shapes, and what each one taught:
    *
    * ```js
-   * let fn = function () {};   // indexed under the name "fn"
+   * let fn = function () {};   // RWF-013: indexed under the name "fn"
    * fn = other;                // ...and immediately stale
    * module.exports = fn;       // binds "fn" -> the STALE node, by name
+   *
+   * function fn() {}           // RWF-013b: the SAME defect, and the
+   * fn = other;                // declaration form is irrelevant to it --
+   * module.exports = fn;       // JavaScript reassigns this just as freely
    * ```
+   *
+   * The second shape is why the underlying question is "does this file
+   * write to this name?", asked before and independently of "how was this
+   * name declared?". Restricting the refusal to variable bindings left
+   * reassigned `function`/`class` declarations attributing their stale
+   * node, which reproduced a false NOT_AFFECTED carrying a complete
+   * Family C proof.
    *
    * Deliberately independent of the module-scope and ambient-shadow
    * guards that gate {@link localFunctionLocation}: a conditional

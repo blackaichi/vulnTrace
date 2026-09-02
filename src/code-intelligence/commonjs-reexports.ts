@@ -92,14 +92,17 @@ interface CommonJsFacts {
    * in ANY scope and through any binding pattern — the exact set of names
    * {@link localBindings}'s single-assignment proof has an OPINION about.
    *
-   * This is what separates "the proof refused this name" from "the proof
-   * was never asked about this name at all" (RWF-013). A name in here but
-   * NOT in {@link localBindings} was examined and found wanting:
-   * reassigned, declared more than once, declared outside module scope,
-   * or declared with no initializer. A name absent from here was never a
-   * variable at all — a `function` declaration, a class declaration, an
-   * import, or a free/global reference — and this model therefore has
-   * nothing to say about it, sound or otherwise.
+   * One of the two things that separate "the proof refused this name"
+   * from "the proof was never asked about this name at all" (RWF-013).
+   * A name in here but NOT in {@link localBindings} was examined and
+   * found wanting: declared more than once, declared outside module
+   * scope, or declared with no initializer.
+   *
+   * Absence from this set does NOT mean the name is unexamined — see
+   * {@link reassignedNames}, which is the other, declaration-form-blind
+   * half of that question (RWF-013b). A name absent from BOTH was never
+   * modeled at all: an un-reassigned `function`/`class` declaration, an
+   * import, or a free/global reference.
    *
    * Deliberately excludes parameters: `function f(fn) {}` says nothing
    * about a module-scope `function fn() {}` that an export elsewhere in
@@ -107,6 +110,32 @@ interface CommonJsFacts {
    * real attribution for no soundness gain.
    */
   readonly variableDeclaredNames: ReadonlySet<string>;
+  /**
+   * Every name this file demonstrably WRITES TO after binding it —
+   * `x = ...`, `x += ...`, `x ||= ...`, `++x`, `x--`, a destructuring
+   * assignment target, a `for..of`/`for..in` loop variable (see
+   * `markAssigned`). Property mutation (`x.y = ...`) is excluded: it
+   * changes the object, not the binding.
+   *
+   * This is the authoritative NEGATIVE provenance fact, and RWF-013b's
+   * whole point is that it is **independent of how the name was
+   * originally declared**. A reassignment is direct evidence that the
+   * name's original declaration is not what the name holds later in the
+   * file — equally true whether that declaration was a `var`, a `let`, a
+   * `const`, a `function` declaration or a `class` declaration. JavaScript
+   * lets all of them be reassigned, and a reader of the file can see it
+   * happen in every case.
+   *
+   * RWF-013 collected this set but consumed it only when filtering
+   * {@link localBindings}, which is built exclusively from VARIABLE
+   * declarations. A reassigned `function`/`class` declaration therefore
+   * left no trace in {@link variableDeclaredNames}, was classified
+   * "unmodeled", and fell through to the legacy name search — which found
+   * the stale declaration under exactly the exported name and bound it.
+   * Exposing the set here is what lets {@link classifyLocalBinding} act
+   * on evidence the file model already had.
+   */
+  readonly reassignedNames: ReadonlySet<string>;
   /**
    * Whether this file declares a binding of its own named `exports`,
    * `module` or `require` anywhere in it — a user object that merely
@@ -397,6 +426,7 @@ function collectFacts(sourceFile: ts.SourceFile): CommonJsFacts {
     propertyRhsByName,
     localBindings,
     variableDeclaredNames,
+    reassignedNames,
     shadowsCommonJsNames,
   };
 }
@@ -464,19 +494,29 @@ export function declaresCommonJsAmbientShadow(index: SourceIndex): boolean {
  *   `const a = f; const b = a; module.exports = b` stops here with `a` —
  *   an identifier, not a function — rather than becoming the arbitrary
  *   chained-alias resolution RWF-012 scopes separately.
- * - `"refused"` means this file DOES bind `name` with a
- *   `var`/`let`/`const`, and the proof above rejected it: reassigned,
- *   declared more than once, declared outside module scope, declared with
- *   no initializer, or destructured (whose value is a property of some
- *   other object, which this relation models nothing about). The refusal
- *   is a fact in its own right — it says the file's own text contradicts
- *   any claim about what `name` holds — and callers must not discard it
- *   in favour of a weaker mechanism (RWF-013).
- * - `"unmodeled"` means this file binds no variable called `name` at all,
- *   so the single-assignment proof was never applicable: a `function`
- *   declaration, a class declaration, an import, or a free reference.
- *   This is silence, NOT a refusal, and callers may fall back to whatever
- *   older mechanism they used before this relation existed.
+ * - `"refused"` means the file's own text contradicts any claim about
+ *   what `name` holds. Two independent grounds produce it:
+ *
+ *   1. **Reassignment, whatever the declaration form** (RWF-013b) — the
+ *      file writes to `name` somewhere (`=`, `+=`, `||=`, `++`, a
+ *      destructuring target, a `for..of` variable). This is checked FIRST
+ *      and applies to a `var`/`let`/`const`, a `function` declaration and
+ *      a `class` declaration alike, because JavaScript lets every one of
+ *      them be reassigned and the export carries the CURRENT value, not
+ *      the declared one.
+ *   2. **A variable binding the single-assignment proof rejected**
+ *      (RWF-013) — declared more than once, outside module scope, with no
+ *      initializer, or destructured (whose value is a property of some
+ *      other object, which this relation models nothing about).
+ *
+ *   Either way the refusal is a fact in its own right, and callers must
+ *   not discard it in favour of a weaker mechanism.
+ * - `"unmodeled"` means this file neither binds a variable called `name`
+ *   nor ever writes to it, so nothing here has an opinion: an
+ *   un-reassigned `function` declaration, an un-reassigned class
+ *   declaration, an import, or a free reference. This is silence, NOT a
+ *   refusal, and callers may fall back to whatever older mechanism they
+ *   used before this relation existed.
  *
  * Collapsing the last two is precisely the RWF-013 defect: both used to
  * surface as `undefined`, so a caller could not tell "I proved this name
@@ -492,6 +532,19 @@ export function classifyLocalBinding(
   name: string,
 ): LocalBindingProvenance {
   const facts = factsOf(index.sourceFile);
+
+  // RWF-013b: reassignment is authoritative negative provenance, and it is
+  // asked FIRST — before anything that depends on how the name was
+  // declared. A name this file writes to is not a stable alias for
+  // whatever it was bound to originally, and that is equally true of a
+  // `function`/`class` declaration as of a `var`/`let`/`const`. Asking
+  // about the declaration form first is exactly what let a reassigned
+  // function declaration escape as "unmodeled" (see
+  // {@link CommonJsFacts.reassignedNames}).
+  if (facts.reassignedNames.has(name)) {
+    return { kind: "refused" };
+  }
+
   const binding = facts.localBindings.get(name);
   if (binding?.kind === "value") {
     return { kind: "single-assignment", value: binding.initializer };
