@@ -51,18 +51,26 @@ export interface ExportBinding {
   readonly specifier?: string;
   /**
    * For a CommonJS export whose value came from a `require()` of another
-   * module (RWF-004a): where that value originates. `undefined` for every
-   * export defined locally, and for every CommonJS export whose right-hand
-   * side has no single statically-known origin (a dynamic specifier, a
-   * conditional, a chained alias) — see
-   * {@link CommonJsReExportOrigin} and commonjs-reexports.ts.
+   * module (RWF-004a/RWF-004b): where that value originates. `undefined`
+   * for every export defined locally, and for every CommonJS export whose
+   * right-hand side has no single statically-known origin (a dynamic
+   * specifier, a chained alias) — see {@link CommonJsReExportOrigin} and
+   * commonjs-reexports.ts.
+   *
+   * Also `undefined` for an export assignment this file cannot prove runs
+   * unconditionally, once, at module scope — see
+   * {@link isUnconditionalExportAssignment}, whose doc comment carries the
+   * reasoning and the false NOT_AFFECTED it prevents. Every provenance
+   * field on this interface is gated on that same test, for the same
+   * reason: they all read a last-write-wins map.
    *
    * Deliberately separate from {@link specifier}, which carries the ESM
-   * `export { a } from "./x"` form: the two are different syntaxes with
-   * different resolution rules (the CommonJS one is restricted to the
-   * SAME canonical PackageInstance — see call-graph.ts's
-   * `resolveReExportChain`), and collapsing them would silently give the
-   * CommonJS form the ESM form's cross-package reach.
+   * `export { a } from "./x"` form: the two are different syntaxes read
+   * out of different AST shapes, and each is resolved by its own relation
+   * in call-graph.ts's `resolveReExportChain`. Both now reach across
+   * package boundaries (RWF-004b), each landing on whatever installed
+   * instance Node's own resolution of its specifier reaches from the file
+   * that spells it.
    */
   readonly commonJsReExport?: CommonJsReExportOrigin;
   /**
@@ -345,7 +353,7 @@ function propertyExportProvenance(
   index: SourceIndex,
   rhs: ts.Expression | undefined,
 ): Pick<ExportBinding, "localName" | "localFunctionLocation"> {
-  if (rhs === undefined || !isUnconditionalPropertyAssignment(rhs)) {
+  if (rhs === undefined || !isUnconditionalExportAssignment(rhs)) {
     return {};
   }
   const value = unwrapParentheses(rhs);
@@ -356,8 +364,9 @@ function propertyExportProvenance(
 }
 
 /**
- * {@link isUnconditionalModuleScopeStatement} for the `exports.X = rhs`
- * form, climbing out through CHAINED assignments first.
+ * {@link isUnconditionalModuleScopeStatement} for an export assignment's
+ * right-hand side — `exports.X = rhs`, `module.exports = rhs` — climbing
+ * out through CHAINED assignments first.
  *
  * `exports.parse = exports.decode = decode` (real ini, and a staple
  * CommonJS idiom for publishing one function under two names) parses as
@@ -366,13 +375,35 @@ function propertyExportProvenance(
  * it directly reports "not module scope" and refuses a binding whose
  * provenance is in fact perfect: the whole chain is one unconditional
  * top-level statement, and `decode` is a bare identifier naming a local
- * function.
+ * function. Real `debug@2.0.0`'s `node.js` opens with the same idiom for
+ * the whole-module form (`exports = module.exports = require('./debug')`).
  *
  * Only assignment links are climbed, and only from the right-hand side —
  * exactly the positions whose value IS the value being assigned. Anything
  * else between the assignment and the source file (an `if`, a `try`, a
  * function body, a comma expression) still means the assignment may not
  * run, and still refuses.
+ *
+ * This is the ONE test every export-provenance fact is gated on, because
+ * every one of them reads a LAST-WRITE-WINS map keyed by source order
+ * (`commonJsPropertyExportRhs`, `findLastModuleExportsAssignment`,
+ * commonjs-reexports.ts's own `propertyRhsByName`). Last-write-wins is
+ * Node's real semantics for straight-line module-scope code and nothing
+ * else: for
+ *
+ * ```js
+ * if (cond) { exports.parse = require("pkg-a").parse; }
+ * else      { exports.parse = require("pkg-b").parse; }
+ * ```
+ *
+ * the map keeps only `pkg-b`, so a fact derived from it silently asserts
+ * that `pkg-a`'s function is NOT what this export holds — a branch chosen
+ * arbitrarily, presented as certainty. That is a false NOT_AFFECTED
+ * whenever `pkg-a` is the finding's own package: its target resolves to a
+ * real node that nothing then points at, and Family C proves it
+ * unreachable with `reachableSubgraphComplete: true` (reproduced directly;
+ * see the RWF-004b conditional-branch regressions). This module has no
+ * control-flow semantics and must not pretend to.
  *
  * Note this deliberately does NOT make `exports.parse` itself
  * attributable: its own right-hand side is the inner assignment
@@ -381,7 +412,7 @@ function propertyExportProvenance(
  * stays unresolved. Resolving THROUGH an assignment expression's value is
  * a separate relation and is not attempted here.
  */
-function isUnconditionalPropertyAssignment(rhs: ts.Expression): boolean {
+function isUnconditionalExportAssignment(rhs: ts.Expression): boolean {
   let node: ts.Node | undefined = rhs.parent;
   if (node === undefined) {
     return false;
@@ -545,8 +576,9 @@ function unpackObjectLiteralExports(
           assignment,
           property.initializer,
         ),
-        commonJsReExport: resolveCommonJsReExportExpression(
+        commonJsReExport: objectLiteralValueReExport(
           index,
+          assignment,
           property.initializer,
         ),
         localIdentifierProvenanceRefused: refusedProvenanceFlag(
@@ -575,8 +607,9 @@ function unpackObjectLiteralExports(
             assignment,
             property.initializer,
           ),
-          commonJsReExport: resolveCommonJsReExportExpression(
+          commonJsReExport: objectLiteralValueReExport(
             index,
+            assignment,
             property.initializer,
           ),
           // RWF-013, extended to the computed-key form (VT-217) that
@@ -599,8 +632,9 @@ function unpackObjectLiteralExports(
         // `const Range = require("./classes/range")` -- the dominant
         // real-world shape (semver, qs; see the audit's § 5.2). The
         // shorthand's own identifier IS the value expression.
-        commonJsReExport: resolveCommonJsReExportExpression(
+        commonJsReExport: objectLiteralValueReExport(
           index,
+          assignment,
           property.name,
         ),
         localIdentifierProvenanceRefused: refusedProvenanceFlag(
@@ -683,6 +717,29 @@ function objectLiteralValueLocation(
     : undefined;
 }
 
+/**
+ * {@link resolveCommonJsReExportExpression} for one object-literal
+ * property's value, gated on the enclosing `module.exports = { ... }`
+ * assignment running unconditionally at module scope (RWF-004b).
+ *
+ * The same gate {@link objectLiteralValueLocation} applies immediately
+ * above, for the same reason: `findLastModuleExportsAssignment` picks by
+ * source order, not by control flow, so a `module.exports = {...}` inside
+ * an `if`/`try`/function body describes one arbitrarily-chosen branch. A
+ * re-export origin read out of it forwards the export to that branch's
+ * package as though the other branch did not exist — see
+ * {@link isUnconditionalExportAssignment}.
+ */
+function objectLiteralValueReExport(
+  index: SourceIndex,
+  assignment: ModuleExportsAssignment,
+  value: ts.Expression,
+): CommonJsReExportOrigin | undefined {
+  return isUnconditionalExportAssignment(assignment.rhs)
+    ? resolveCommonJsReExportExpression(index, value)
+    : undefined;
+}
+
 /** The identity of a `module.exports = { foo() {} }` method — the method node itself, under the same module-scope guard. */
 function methodValueLocation(
   sourceFile: ts.SourceFile,
@@ -730,10 +787,17 @@ function buildExportBindings(
           syntax: "commonjs",
           exportedName: exp.exportedName,
           ...propertyExportProvenance(index, propertyRhs),
+          // Gated on the SAME unconditional-module-scope test as the
+          // provenance fields above it (RWF-004b): the origin is read out
+          // of the same last-write-wins map, so a branch-local assignment
+          // would forward the export to whichever branch came last in the
+          // file. See {@link isUnconditionalExportAssignment}.
           commonJsReExport:
-            exp.exportedName === undefined
-              ? undefined
-              : commonJsPropertyReExportOrigin(index, exp.exportedName),
+            exp.exportedName !== undefined &&
+            propertyRhs !== undefined &&
+            isUnconditionalExportAssignment(propertyRhs)
+              ? commonJsPropertyReExportOrigin(index, exp.exportedName)
+              : undefined,
           localIdentifierProvenanceRefused: refusedProvenanceFlag(
             propertyRhs !== undefined &&
               refusesLocalIdentifierProvenance(index, propertyRhs),
@@ -912,9 +976,20 @@ function wholeModuleDefaultExport(
       refusesLocalIdentifierProvenance(index, assignment.rhs),
     ),
     // `module.exports = require("./lib")` / `= require("./lib").foo`
-    // (RWF-004a): the module's whole exported value comes from another
-    // module. Unlike `localName`, this survives the value being anonymous.
-    commonJsReExport: commonJsModuleReExportOrigin(index),
+    // (RWF-004a/RWF-004b): the module's whole exported value comes from
+    // another module. Unlike `localName`, this survives the value being
+    // anonymous.
+    //
+    // Uses {@link isUnconditionalExportAssignment} rather than
+    // `assignment.isModuleScope` (RWF-004b): the two differ only for a
+    // CHAINED assignment, and real `debug@2.0.0`'s `node.js` is exactly
+    // that — `exports = module.exports = require('./debug')`, one
+    // unconditional top-level statement whose inner assignment's enclosing
+    // node is the outer assignment rather than the statement. A
+    // conditionally-assigned `module.exports` is refused by both.
+    commonJsReExport: isUnconditionalExportAssignment(assignment.rhs)
+      ? commonJsModuleReExportOrigin(index)
+      : undefined,
     location: assignment.location,
   };
 }

@@ -2,8 +2,8 @@
 
 The permanent fixture for **RWF-004a — same-package CommonJS re-export
 resolution** (see `docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md` § 5, R-5a).
-Deliberately kept separate from any RWF-004b (cross-package re-export)
-fixture, so one gap can never be confounded with the other.
+Deliberately kept separate from RWF-004b's own (cross-package re-export)
+coverage, so one relation can never be confounded with the other.
 
 ## Shape
 
@@ -45,10 +45,11 @@ resolved target must be the real implementation:
 
 `node_modules/other-lib` is a **different installed package** exporting a
 function with the **identical name** `vulnerable`, and `fixture-lib`'s
-facade re-exports it as `fromOtherPackage`. Chasing that hop is
-cross-package re-export (RWF-004b), which this task deliberately does not
-implement: it must stay unattributed rather than binding a `fixture-lib`
-rule target to `other-lib`'s function. A bare property-name match would
-fall for exactly this.
+facade re-exports it as `fromOtherPackage`. Since RWF-004b that hop is
+chased -- and it lands in **other-lib's own installed instance**, which is
+the point: a `fixture-lib` rule target must still never bind to
+`other-lib`'s function. A bare property-name match would fall for exactly
+this, and so would a chase that resolved a package by name rather than by
+where the `require()` actually points.
 
 The fixture must not execute during static analysis.
