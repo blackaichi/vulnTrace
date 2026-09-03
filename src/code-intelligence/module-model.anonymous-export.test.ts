@@ -373,19 +373,22 @@ describe("RWF-003: shapes that must NOT produce a function identity", () => {
     ).toBe("1:1");
   });
 
-  it("leaves the PLAIN-IDENTIFIER conditional form exactly as it was (out of RWF-012 scope)", () => {
-    // Deliberately unchanged, and pinned so the boundary is explicit: this
-    // relation has always taken a `localName` off a raw identifier
-    // right-hand side without asking whether the assignment is
-    // unconditional. That is a separate, older gap in the same relation --
-    // it reproduces identically on main -- and closing it here would be an
-    // unrelated behaviour change smuggled into RWF-012. RWF-012's guard
-    // covers only what RWF-012 introduced: reading THROUGH an assignment.
+  it("refuses the PLAIN-IDENTIFIER conditional form (RWF-014)", () => {
+    // RWF-012 pinned this shape as still-bound and explicitly out of its
+    // own scope: the relation had always taken a `localName` off a raw
+    // identifier right-hand side without asking whether the assignment is
+    // unconditional, and RWF-012's guard covered only what RWF-012
+    // introduced (reading THROUGH an assignment). RWF-014 is the task that
+    // closes it, so this assertion INVERTS by design.
+    //
+    // It bound `second` -- the last write in SOURCE order -- which is a
+    // branch chosen arbitrarily and then handed to Family C as the
+    // module's identity. Neither arm may win now.
     expect(
       defaultExportPosition(
         "function first() {}\nfunction second() {}\nif (c) {\n  module.exports = first;\n} else {\n  module.exports = second;\n}\n",
       ),
-    ).toBe("2:1");
+    ).toBeUndefined();
   });
 
   it("follows a chained ASSIGNMENT to the function it publishes (RWF-012)", () => {
