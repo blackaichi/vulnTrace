@@ -8,7 +8,10 @@
     "reason": "dangerousOp() is invoked directly inside main(), the configured entrypoint.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-002",
@@ -19,7 +22,10 @@
     "reason": "lib.dangerousOp() is invoked directly inside the CommonJS entrypoint module.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-003",
@@ -30,7 +36,10 @@
     "reason": "dangerousOp() is called, even though safeOp() is also called in the same function.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-004",
@@ -41,7 +50,10 @@
     "reason": "The renamed local binding still refers to the same vulnerable function, which is called.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-005",
@@ -52,7 +64,10 @@
     "reason": "lib.dangerousOp() is a direct call on the namespace object's real member.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-006",
@@ -63,7 +78,10 @@
     "reason": "const { dangerousOp } = require(...) binds the real vulnerable export, which is then invoked.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-007",
@@ -74,7 +92,10 @@
     "reason": "dangerousDefault() (the package's default export) is called directly.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#default",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-008",
@@ -85,7 +106,10 @@
     "reason": "Node's CJS-in-ESM default-import interop binds pkg to the package's whole module.exports object; pkg.dangerousOp() is a real call to the vulnerable export.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-009",
@@ -96,7 +120,10 @@
     "reason": "vt2-wrapper's re-export is a transparent alias for the real vt2-vuln-lib export; calling it through the wrapper still executes the vulnerable code.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-010",
@@ -107,7 +134,10 @@
     "reason": "Each hop is a transparent re-export of the same underlying function; the two-hop chain does not change what actually executes.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-011",
@@ -118,7 +148,10 @@
     "reason": "main() calls runA(), which calls dangerousOp() directly (after also calling into the circular b.ts/a.ts pair, which does not itself block or alter this call).",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-012",
@@ -129,7 +162,10 @@
     "reason": "The project is ESM and uses a static `import`, so Node/TypeScript resolve through the `import` condition to esm/index.js, whose dangerousOp() is called directly.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-013",
@@ -140,7 +176,10 @@
     "reason": "main() calls vt2-mid's useMid(), which calls dangerousOp() from the nested, non-hoisted vt2-vuln-lib instance under node_modules/vt2-mid/node_modules/.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-014",
@@ -151,7 +190,10 @@
     "reason": "main() calls vt2-holder's useHolder(), which imports vt2-vuln-lib from vt2-holder's own node_modules -- the nested 1.0.0 instance -- and calls its dangerousOp().",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-015",
@@ -162,7 +204,10 @@
     "reason": "main() calls wrapIt() (imported via the @lib/wrapper.js alias), which calls dangerousOp() directly.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-016",
@@ -173,7 +218,10 @@
     "reason": "main() calls wrapIt() (imported via the baseUrl-relative bare specifier \"lib/wrapper\"), which calls dangerousOp() directly.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-017",
@@ -184,7 +232,10 @@
     "reason": "invoke(dangerousOp) passes the real function reference; invoke's `fn()` call genuinely executes dangerousOp().",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-018",
@@ -195,7 +246,10 @@
     "reason": "The callback body `() => dangerousOp()` genuinely calls dangerousOp() once per array element.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-019",
@@ -206,7 +260,10 @@
     "reason": "new Danger() directly invokes the vulnerable constructor.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#Danger",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-020",
@@ -217,7 +274,10 @@
     "reason": "instance.runDangerous() calls the real vulnerable method on a locally-constructed instance.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#runDangerous",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-021",
@@ -228,7 +288,10 @@
     "reason": "Lib.staticDangerous() calls the real vulnerable static method directly.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#staticDangerous",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-022",
@@ -239,7 +302,10 @@
     "reason": "MySub has no dangerousOp of its own, so instance.dangerousOp() resolves through the JS prototype chain to Base.prototype.dangerousOp -- the real vulnerable implementation genuinely executes.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-023",
@@ -250,7 +316,10 @@
     "reason": "await dangerousOp() genuinely calls dangerousOp(); async/await changes timing, not whether the call executes.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-024",
@@ -261,7 +330,10 @@
     "reason": "The .then(() => dangerousOp()) callback genuinely calls dangerousOp() once the promise settles.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-025",
@@ -272,7 +344,10 @@
     "reason": "Which function fns[key] refers to depends on a runtime-supplied parameter; the analyzer cannot confirm or rule out dangerousOp being selected.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-026",
@@ -283,7 +358,10 @@
     "reason": "require(modName) cannot be statically resolved to a specific module because modName's value is only known at runtime.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-027",
@@ -294,7 +372,10 @@
     "reason": "import(moduleName) cannot be statically resolved to a specific module because moduleName's value is only known at runtime.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-028",
@@ -305,7 +386,10 @@
     "reason": "NAME is a literal (\"dangerousOp\") fixed at the package's own module scope, so the export is unambiguously named dangerousOp; lib.dangerousOp() is a fully static, unambiguous call to it.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-029",
@@ -316,7 +400,10 @@
     "reason": "unusedWrapper() calls dangerousOp(), but unusedWrapper is never called by main() or anything reachable from it.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-030",
@@ -327,7 +414,10 @@
     "reason": "A statically-false condition means the branch containing dangerousOp() never executes at runtime, regardless of the call lexically present inside it.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-031",
@@ -338,7 +428,10 @@
     "reason": "riskyStep(input) only throws when input === \"bad\"; for any other input, execution falls through to dangerousOp(), so the call is genuinely reachable and must not be assumed dead just because it follows a throwing statement.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-032",
@@ -349,7 +442,10 @@
     "reason": "Entrypoint reachability search must be a union across every configured entrypoint; worker.ts's main() calls dangerousOp() directly, even though cli.ts's main() does not.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-033",
@@ -360,7 +456,10 @@
     "reason": "When an entrypoint names a specific symbol, only that symbol's own reachable calls count; unused()'s call to dangerousOp() is irrelevant because unused() is not the configured entrypoint and nothing calls it.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-034",
@@ -371,7 +470,10 @@
     "reason": "dangerousOp is imported and referenced as a bare identifier (via `void dangerousOp`) but is never invoked.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-035",
@@ -382,7 +484,10 @@
     "reason": "main() calls riskyWrapper(), which calls dangerousOp() directly -- a two-hop, same-project call chain.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-036",
@@ -393,7 +498,10 @@
     "reason": "const doIt = dangerousOp; doIt(); -- doIt is exactly dangerousOp, so calling doIt() genuinely executes the vulnerable function.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-037",
@@ -404,7 +512,10 @@
     "reason": "const obj = { run: dangerousOp }; obj.run(); -- obj.run is exactly dangerousOp, so calling it genuinely executes the vulnerable function.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-038",
@@ -415,7 +526,10 @@
     "reason": "doIt is a destructured alias for the real lib.dangerousOp; calling doIt() genuinely executes the vulnerable function.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-039",
@@ -426,7 +540,10 @@
     "reason": "main() (in index.ts) calls helperCall() (in helper.js, plain JS), which calls dangerousOp() directly -- the call graph must traverse the JS/TS file-extension boundary within one project.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-040",
@@ -437,7 +554,10 @@
     "reason": "The effective function name depends on the process's real argv at runtime, which is unknowable during static analysis; the analyzer must not assert AFFECTED without evidence nor silently assume NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-041",
@@ -448,7 +568,10 @@
     "reason": "instance.runSafe() is called, never instance.runDangerous(); constructing an instance does not make every one of its methods reachable.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#runDangerous",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-042",
@@ -459,7 +582,10 @@
     "reason": "KEY is a literal (\"dangerousOp\") that is never reassigned; fns[KEY] is fully statically determined to be dangerousOp, and fn() genuinely calls it -- there is no real ambiguity, only syntactic indirection.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-043",
@@ -470,7 +596,10 @@
     "reason": "modName's value depends entirely on the process environment at runtime, which is unknowable during static analysis; the correct response is UNKNOWN, not a silent NOT_AFFECTED just because no edge could be built.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-044",
@@ -481,7 +610,10 @@
     "reason": "dangerousOp is referenced only as a bare identifier (via `void dangerousOp`) and mentioned in a comment and a string; it is never invoked. safeOp() is the only call actually made.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-045",
@@ -492,7 +624,10 @@
     "reason": "No source file in the project imports the top-level vt2-vuln-lib@1.9.0 instance at all; only the nested 1.0.0 instance (reached via vt2-holder) is ever called.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-046",
@@ -503,7 +638,10 @@
     "reason": "main() calls holder.useHolder(), which requires the nested vt2-vuln-lib@1.0.0 instance directly and calls its dangerousOp() unconditionally -- a fully resolved chain, independent of loadPlugin's own unrelated dynamic require.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-047",
@@ -514,7 +652,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but loadPlugin's require(pluginName) is reachable from this same entrypoint (no configured symbol narrows sources to main() alone) and could load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here: absence from the statically-discovered graph is not, by itself, proof this instance is unreachable, because the analyzer cannot see what value pluginName takes at runtime. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-048",
@@ -525,7 +666,10 @@
     "reason": "main() calls holder.useHolder(), which requires the nested vt2-vuln-lib@1.0.0 instance directly and calls its dangerousOp() unconditionally.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-049",
@@ -536,7 +680,10 @@
     "reason": "No source file in the project imports the top-level vt2-vuln-lib@1.9.0 instance, and the entrypoint's entire reachable subgraph (main() -> holder.useHolder() -> the nested instance's dangerousOp()) is fully, statically resolved with zero unresolved edges of any kind.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-050",
@@ -547,7 +694,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own require(pluginName), which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), could load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here: absence from the statically-discovered graph is not, by itself, proof this instance is unreachable. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-051",
@@ -558,7 +708,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own aliased require call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), could load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here merely because the require call is indirect. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-052",
@@ -569,7 +722,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own require.main.require(pluginName) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), could load ANY installed module at runtime through the entrypoint's own require cache, including this exact instance. A human analyst cannot rule out reachability here. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-053",
@@ -580,7 +736,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own module.constructor._load(pluginName) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), could load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here merely because the loader is reached through module.constructor rather than a plain require() call. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-054",
@@ -591,7 +750,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own module._compile(code, filename) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), compiles and executes arbitrary generated source with a live require, and could require/load ANY installed module at runtime, including this exact instance. A human analyst cannot rule out reachability here merely because the loader is reached through module._compile rather than a plain require() call. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-055",
@@ -602,7 +764,10 @@
     "reason": "vt2-holder is loaded via TypeScript's `import x = require(...)` syntax, which is a real, statically-resolvable CommonJS module load exactly like `const x = require(...)` -- and useHolder() genuinely, statically calls the nested vt2-vuln-lib@1.0.0 instance's dangerousOp(). A human analyst reading this file sees an unambiguous, direct static call path with no dynamic construct anywhere on it: this must be AFFECTED, not UNKNOWN and not NOT_AFFECTED, regardless of which import syntax the entrypoint happens to use.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-056",
@@ -613,7 +778,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own module.paths.unshift(pluginDir) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), can redirect a SUBSEQUENT bare require() in that same module to an attacker-chosen installed package, including this exact instance. A human analyst cannot rule out reachability here merely because the redirection happens through a search-path mutation rather than a plain require() call. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-057",
@@ -624,7 +792,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own process.mainModule.paths.unshift(pluginDir) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), can redirect a SUBSEQUENT bare require() in that same module to an attacker-chosen installed package, including this exact instance. A human analyst cannot rule out reachability here merely because the redirection happens through process.mainModule rather than the plain module binding. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-058",
@@ -635,7 +806,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own Module.registerHooks(...) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), installs a resolve hook that can redirect a SUBSEQUENT, otherwise perfectly ordinary require() in that same module to an attacker-chosen installed package, including this exact instance. A human analyst cannot rule out reachability here merely because the redirection happens through an in-source loader hook rather than a plain require() call. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-059",
@@ -646,7 +820,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own configure(Module) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), hands Node's own Module constructor to a function this analyzer cannot prove does nothing dangerous with it. A human analyst cannot rule out reachability here merely because the capability escaped through an ordinary-looking function call rather than a directly-named loader API. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-060",
@@ -657,7 +834,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own configure({ loader: Module }) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), hands Node's own Module constructor -- nested inside an ordinary object literal -- to a function this analyzer cannot prove does nothing dangerous with it. A human analyst cannot rule out reachability here merely because the capability escaped through a composite argument rather than a bare one. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-061",
@@ -668,7 +848,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own configure(process.env.VT_LOADER_OVERRIDE || { loader: Module }) call, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), hands Node's own Module constructor to a function this analyzer cannot prove does nothing dangerous with it. A human analyst cannot rule out reachability here merely because the capability reached that argument through a logical-OR default rather than a bare reference or a plain object literal. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-062",
@@ -679,7 +862,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `const proto = Module.prototype; proto.constructor._preloadModules(['vt2-vuln-lib']);`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), directly loads a package by name using Node's own module-loading primitive, reached through an aliased `Module.prototype`. A human analyst cannot rule out reachability here merely because the constructor was reached through a stored `.prototype` alias rather than a direct `Module.<member>` spelling. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-063",
@@ -690,7 +876,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `const launch = cp.fork; launch(workerScript);`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), starts a separate Node execution context on a script this analyzer never traverses. A human analyst cannot rule out reachability here merely because `fork` was reached through a stored member value rather than a direct `cp.fork(...)` call. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-064",
@@ -701,7 +890,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `const p = process; p.mainModule.constructor._preloadModules(['vt2-vuln-lib']);`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), directly loads a package by name using Node's own module-loading primitive. A human analyst cannot rule out reachability here merely because the entry Module instance was reached through an aliased `process` rather than the literal `process.mainModule` spelling. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-065",
@@ -712,7 +904,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `const F = Function; F(src)();`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), compiles and executes generated source that this analyzer never reads. A human analyst cannot rule out reachability here merely because the Function constructor was reached through a local alias rather than the bare `Function(...)` spelling. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-066",
@@ -723,7 +918,10 @@
     "reason": "No statically-resolved import chain reaches the top-level vt2-vuln-lib@1.9.0 instance -- but vt2-holder's own `M['_preloadModules'](['vt2-vuln-lib']);`, which runs unconditionally the moment vt2-holder is loaded (a real, load-bearing module-load edge from the entrypoint's own module), directly loads a package by name using Node's own module-loading primitive. A human analyst cannot rule out reachability here merely because the member was written with brackets rather than a dot. The correct answer is UNKNOWN, never a confident NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.9.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.9.0"
+    }
   },
   {
     "id": "ADV2-067",
@@ -734,7 +932,10 @@
     "reason": "main() passes userInput straight into lib.dangerousOp(), and lib.dangerousOp IS vt2-vuln-lib's own impl.js dangerousOp -- reached through two statically-written, literal-specifier require() hops that never leave the installed package. A human analyst reading index.js, internal/ops.js and impl.js together has no ambiguity: the call lands on the exact function GHSA-vt2v2-0001 names, in this exact installed instance. Neither the never-exported decoy in unused.js nor vt2-decoy-lib's same-named function is on that path, and neither may be substituted for it.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-068",
@@ -745,7 +946,10 @@
     "reason": "main() passes userInput straight into lib(), and lib IS vt2-vuln-lib's own impl.js anonymous function -- reached through two statically-written, literal-specifier require() hops that never leave the installed package. A human analyst reading index.js, internal/ops.js and impl.js together has no ambiguity: the call lands on the exact function GHSA-vt2v2-0001 names, in this exact installed instance. The function having no name changes nothing about that: its identity is its position in impl.js. Neither the never-exported named decoy, nor the never-required second anonymous export in unused.js, nor vt2-decoy-lib's same-shaped function is on that path, and none may be substituted for it.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#default (the anonymous module.exports function)",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-069",
@@ -756,7 +960,10 @@
     "reason": "A human analyst reading index.js cannot decide what `exports.dangerousOp` holds: it is the safe fallback or native.js's function depending on `process.env.VT2_NATIVE`, which the analyst is not given. If the addon branch ran, `dangerousOp` and `dangerousOpNative` are the SAME function object and main() passes userInput straight into it, so the vulnerability cannot be ruled out; if it did not, the safe fallback is exported and never called, so neither can it be confirmed. NOT_AFFECTED is the one answer that is definitely unjustified: it is reachable only by treating the stale initializer as the export's identity, which discards the reassignment the file plainly performs.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp (whatever value the export holds after the conditional reassignment)",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-070",
@@ -767,7 +974,10 @@
     "reason": "A human analyst reading index.js cannot decide what `exports.dangerousOp` holds: it is the safe declaration or native.js's function depending on `process.env.VT2_NATIVE`, which the analyst is not given. If that branch ran, `dangerousOp` and `dangerousOpNative` are the SAME function object and main() passes userInput straight into it, so the vulnerability cannot be ruled out; if it did not, the safe fallback is exported and never called, so neither can it be confirmed. NOT_AFFECTED is the one answer that is definitely unjustified: it is reachable only by treating the stale declaration as the export's identity, which discards a reassignment the file performs in plain sight. That the binding happens to be a function declaration rather than a variable changes nothing a reader would conclude, and so must change nothing the analyzer concludes.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp (whatever value the export holds after the conditional reassignment)",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-071",
@@ -778,7 +988,10 @@
     "reason": "A human analyst reading index.js can see that `exports.dangerousOp` is `impls.native`, i.e. lib/native.js's function, and that main() passes userInput straight into that same function object through `dangerousOpNative` -- so AFFECTED is the runtime truth. VulnTrace cannot follow a value through an object property and is not asked to; UNKNOWN is the honest answer for an export it cannot resolve. What no reading of this file supports is NOT_AFFECTED, which is reachable only by deciding that a private helper IS the published export because the two are spelled alike. The exported name is a property key an importer writes; it is not evidence about any symbol inside the package, and treating it as evidence converts a value the analyzer just admitted it cannot determine into a confident clean bill of health. AFFECTED would also be acceptable from an analysis that could authoritatively resolve the property access; guessing from the name is not that analysis.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp (the value `impls.native` holds, i.e. lib/native.js's function)",
-    "findingSelector": { "package": "vt2-vuln-lib", "version": "1.0.0" }
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
   },
   {
     "id": "ADV2-072",
@@ -803,6 +1016,20 @@
     "reason": "A human analyst reads src/index.js, sees main() pass userInput straight into chain.dangerousOp, then reads vt2-chain-lib/index.js top to bottom. Every binding on the chain is a module-scope `const` the file declares exactly once and never writes to again, so `published` holds `impl` holds `hopTwo.dangerousOp` holds `dep.dangerousOp` holds `require('vt2-vuln-lib').dangerousOp` -- there is no branch, no mutation and no dynamic value anywhere on it, and the reading is forced rather than inferred. Applying Node's resolution rule to that require from that file reaches vt2-chain-lib/node_modules/vt2-vuln-lib, whose dangerousOp is a real function called with the caller's own input. That is AFFECTED, for that install and no other. Nothing about this conclusion depends on the two installs' shared name and version, which is the point: they are indistinguishable by metadata and distinguishable only by path, so an analyzer that keys on the former reports the same verdict for the wrong instance and has proved nothing. NOT_AFFECTED is not available on any reading -- the call is direct, unconditional, and its target is installed. UNKNOWN would be the honest answer only for an analyzer that declines to follow the chain at all; it is not the answer the source supports.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp, in the NESTED install at node_modules/vt2-chain-lib/node_modules/vt2-vuln-lib",
+    "findingSelector": {
+      "package": "vt2-vuln-lib",
+      "version": "1.0.0"
+    }
+  },
+  {
+    "id": "ADV2-074",
+    "dir": "adv2-074-conditional-whole-module-export",
+    "category": "74. RWF-014: a whole-module CommonJS export written from both arms of a runtime conditional",
+    "description": "The application names only vt2-cond-lib and calls the package's WHOLE EXPORTED VALUE: `cond(userInput)`. vt2-cond-lib does not decide what that value is until load time. It declares two structurally interchangeable functions -- `fastPath`, which calls `dep.dangerousOp(input)` on the vulnerable package, and `slowPath`, which does not -- and then writes `module.exports` from BOTH arms of `if (process.env.VT2_MODE === 'fast') { ... } else { ... }`. Neither write is chained, so this is NOT ADV2-073's shape: both right-hand sides are already bare identifiers naming a same-file function declaration, RWF-012's `unwrapValue` guard never engages, and the defect is purely one of authority -- which of two writes, if either, gets to be the module's identity. Before RWF-014 the answer was decided by SOURCE ORDER: `findLastModuleExportsAssignment` kept the last write it saw, the export bound to `slowPath`, and the application's `cond(userInput)` call got a fully RESOLVED edge to it. `fastPath` was left with no incoming edge at all, so nothing reached vt2-vuln-lib, and the reachability search returned unreachable with reachableSubgraphComplete: true -- a complete Family C negative proof, and NOT_AFFECTED. A third wrong answer is on offer and also reads as resolved rather than failed: vt2-cond-lib declares a private `function dangerousOp` helper, before everything real and published by nothing, whose only tie to the vulnerable export is its spelling (RWF-011).",
+    "expected": "UNKNOWN",
+    "reason": "A human analyst reading vt2-cond-lib/index.js sees immediately that this package has TWO possible callable APIs and that the source does not say which one an importer gets -- `process.env.VT2_MODE` is a runtime value, not a static fact. On the run where it is \"fast\", `module.exports` IS `fastPath`, the application's `cond(userInput)` calls it, and userInput flows straight into vt2-vuln-lib's dangerousOp: that run is genuinely AFFECTED. On any other run it is not. An analyzer that cannot evaluate the flag cannot choose between those worlds, and UNKNOWN is the honest name for exactly that. What no reading of this file supports is NOT_AFFECTED, which is reachable only by declaring the `else` arm to be the module's export because it happens to be written second -- source order is last-write order only when every write definitely runs, and here neither does. That converts a value the analyzer just admitted it cannot determine into a confident clean bill of health for a package that calls the sink on every fast-path load. AFFECTED would also be defensible for an analysis that treats every reachable branch as taken; guessing the last one and proving the other unreachable is not that analysis.",
+    "vulnerability": "GHSA-vt2v2-0001",
+    "vulnerableTarget": "vt2-vuln-lib#dangerousOp, reached through vt2-cond-lib's `fastPath` branch",
     "findingSelector": {
       "package": "vt2-vuln-lib",
       "version": "1.0.0"
