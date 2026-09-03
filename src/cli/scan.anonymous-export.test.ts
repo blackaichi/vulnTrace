@@ -128,6 +128,8 @@ function callingProject(
 async function scan(root: string): Promise<{
   readonly verdict: string;
   readonly evidence: readonly string[];
+  /** Present only when a Family C negative proof was actually issued. */
+  readonly hasNegativeProof: boolean;
 }> {
   const stdout: string[] = [];
   await runScanCommand({
@@ -141,13 +143,18 @@ async function scan(root: string): Promise<{
     findings: ReadonlyArray<{
       package: string;
       verdict: string;
-      evidence?: { path: string[] };
+      evidence?: {
+        path: string[];
+        confirmedUnreachableTarget?: unknown;
+      };
     }>;
   };
   const finding = output.findings.find((f) => f.package === "anon-lib");
   return {
     verdict: finding ? finding.verdict : "NO_FINDING",
     evidence: finding?.evidence?.path ?? [],
+    hasNegativeProof:
+      finding?.evidence?.confirmedUnreachableTarget !== undefined,
   };
 }
 
@@ -322,6 +329,85 @@ describe("scan: RWF-012 alias chains, end to end through the real scan", () => {
     });
 
     expect((await scan(root)).verdict).toBe("UNKNOWN");
+  });
+});
+
+describe("scan: RWF-012 chained whole-module exports need an unconditional assignment", () => {
+  /**
+   * The blocker an independent soundness audit reproduced against the
+   * first RWF-012 commit, pinned end to end through the real scan.
+   *
+   * `module.exports` is assigned in BOTH branches, so
+   * `findLastModuleExportsAssignment`'s last-write-wins choice is a branch
+   * picked by source order. Before the guard, reading through the chained
+   * assignment handed that arbitrary choice a `localName`, the same-file
+   * name search bound `second`, and -- because the application never calls
+   * the library at all -- Family C proved THAT node unreachable and issued
+   * a complete NOT_AFFECTED. The run that took the other branch exports
+   * `first`, so the clean bill of health was for a value the module may
+   * never have exported.
+   *
+   * The assertion is deliberately two-part: the verdict must be UNKNOWN,
+   * AND no negative proof may be issued at all. A verdict check alone
+   * would still pass if some future change produced UNKNOWN while leaving
+   * a stale `confirmedUnreachableTarget` in the evidence.
+   */
+  const CONDITIONAL_CHAIN =
+    "function first(a) {\n  return a;\n}\n" +
+    "function second(a) {\n  return a;\n}\n" +
+    "if (process.env.FLAG) {\n  module.exports = alias = first;\n} else {\n  module.exports = alias = second;\n}\n";
+
+  it("stays UNKNOWN, with NO negative proof, for a conditional chained assignment", async () => {
+    const root = callingProject(
+      { "node_modules/anon-lib/index.js": CONDITIONAL_CHAIN },
+      "return input;",
+    );
+
+    const { verdict, hasNegativeProof } = await scan(root);
+    expect(verdict).toBe("UNKNOWN");
+    expect(hasNegativeProof).toBe(false);
+  });
+
+  it("stays UNKNOWN, with NO negative proof, for a chained assignment in a function body", async () => {
+    const root = callingProject(
+      {
+        "node_modules/anon-lib/index.js":
+          "function impl(a) {\n  return a;\n}\n" +
+          "function configure() {\n  module.exports = alias = impl;\n}\nconfigure();\n",
+      },
+      "return input;",
+    );
+
+    const { verdict, hasNegativeProof } = await scan(root);
+    expect(verdict).toBe("UNKNOWN");
+    expect(hasNegativeProof).toBe(false);
+  });
+
+  it("still reaches AFFECTED through an UNCONDITIONAL chained assignment", async () => {
+    // The control: RWF-012's intended improvement must survive the guard.
+    const root = callingProject({
+      "node_modules/anon-lib/index.js":
+        "function impl(a) {\n  return a;\n}\nmodule.exports = alias = impl;\n",
+    });
+
+    expect((await scan(root)).verdict).toBe("AFFECTED");
+  });
+
+  it("still reaches NOT_AFFECTED through an UNCONDITIONAL chained assignment nothing calls", async () => {
+    // The other half of the control: an unconditional chained export is
+    // authoritative enough to carry a NEGATIVE proof too, exactly as the
+    // direct form does. This is the transition the guard must NOT undo.
+    const root = callingProject(
+      {
+        "node_modules/anon-lib/index.js":
+          "function impl(a) {\n  return a;\n}\nmodule.exports = alias = impl;\n",
+      },
+      "return input;",
+    );
+
+    const { verdict, hasNegativeProof } = await scan(root);
+    expect(verdict).toBe("NOT_AFFECTED");
+    expect(hasNegativeProof).toBe(true);
   });
 });
 

@@ -325,6 +325,69 @@ describe("RWF-003: shapes that must NOT produce a function identity", () => {
     ).toBeUndefined();
   });
 
+  it("refuses a CONDITIONAL chained assignment's value (RWF-012 blocker)", () => {
+    // The value of `x = v` is `v`, but WHICH `module.exports = ...`
+    // statement runs is a control-flow question this module has no
+    // semantics for. `findLastModuleExportsAssignment` keeps only the LAST
+    // one in SOURCE order, so trusting the chained value here would bind
+    // the export to `second` and assert that `first` is not what the
+    // module exports -- a branch chosen arbitrarily, presented as
+    // certainty. Reproduced end to end as a false NOT_AFFECTED before the
+    // `isUnconditionalExportAssignment` guard was added to this path.
+    expect(
+      defaultExportPosition(
+        "function first() {}\nfunction second() {}\nif (c) {\n  module.exports = alias = first;\n} else {\n  module.exports = alias = second;\n}\n",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a chained assignment inside a FUNCTION BODY (RWF-012 blocker)", () => {
+    // Same guard, different non-authoritative position: an assignment in a
+    // function body may never run at all.
+    expect(
+      defaultExportPosition(
+        "function impl() {}\nfunction configure() {\n  module.exports = alias = impl;\n}\nconfigure();\n",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("refuses a chained assignment inside try/catch and loops (RWF-012 blocker)", () => {
+    for (const wrapper of [
+      "try {\n  module.exports = alias = impl;\n} catch (e) {}\n",
+      "for (;;) {\n  module.exports = alias = impl;\n}\n",
+      "switch (k) {\n  case 1:\n    module.exports = alias = impl;\n}\n",
+    ]) {
+      expect(
+        defaultExportPosition(`function impl() {}\n${wrapper}`),
+      ).toBeUndefined();
+    }
+  });
+
+  it("still reads an UNCONDITIONAL top-level chained assignment (RWF-012 control)", () => {
+    // The shape RWF-012 exists to resolve, and the one real `ini@1.3.5`
+    // uses. One unconditional module-scope statement: no branch to choose.
+    expect(
+      defaultExportPosition(
+        "function impl() {}\nmodule.exports = alias = impl;\n",
+      ),
+    ).toBe("1:1");
+  });
+
+  it("leaves the PLAIN-IDENTIFIER conditional form exactly as it was (out of RWF-012 scope)", () => {
+    // Deliberately unchanged, and pinned so the boundary is explicit: this
+    // relation has always taken a `localName` off a raw identifier
+    // right-hand side without asking whether the assignment is
+    // unconditional. That is a separate, older gap in the same relation --
+    // it reproduces identically on main -- and closing it here would be an
+    // unrelated behaviour change smuggled into RWF-012. RWF-012's guard
+    // covers only what RWF-012 introduced: reading THROUGH an assignment.
+    expect(
+      defaultExportPosition(
+        "function first() {}\nfunction second() {}\nif (c) {\n  module.exports = first;\n} else {\n  module.exports = second;\n}\n",
+      ),
+    ).toBe("2:1");
+  });
+
   it("follows a chained ASSIGNMENT to the function it publishes (RWF-012)", () => {
     // `module.exports = exports.decode = function () {}` -- the value of
     // `x = v` IS `v`.
