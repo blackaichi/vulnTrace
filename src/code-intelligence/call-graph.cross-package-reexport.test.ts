@@ -586,7 +586,7 @@ describe("buildCallGraph: RWF-004b keeps every existing refusal closed", () => {
     // Node's semantics for straight-line code and nothing else. Chasing it
     // here would forward `parse` to pkg-b and silently deny that pkg-a's
     // function is ever what the export holds -- see module-model.ts's
-    // `isUnconditionalExportAssignment`.
+    // `isDefinitelyReachedExportAssignment`.
     const root = tempProject();
     writeWrapper(
       root,
