@@ -86,7 +86,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-009 | `semver` (`RWB-09a`, npm alias `semver-vulnerable`) | `identifyModule()` derived package *identity* purely from the install *directory* name, not the installed package's own declared `package.json` `"name"` — an npm-aliased install (`"semver-vulnerable": "npm:semver@7.5.1"`) was therefore invisible to `graphPackageInstances(graph, "semver")` even though the call graph genuinely traversed it | **Soundness** — a genuinely-reached aliased instance was silently treated as `confirmedAbsentInstance` (VT-212's guard, meant for a never-touched instance), producing a false `NOT_AFFECTED` for a package that was, in fact, reached and vulnerable | **Fixed (VT-306)** |
 | RWF-013 | any CommonJS file that reassigns an exported local (real shapes in `es-define-property`, `gopd`) | An export whose value is an identifier the file itself REASSIGNS fell through to a same-file name search, which lands on the binding's STALE initializer — an anonymous function expression is indexed under the name of the variable it was assigned to, so the stale node matches the export name exactly | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C unreachability proof over a function the module does not export | **Fixed for variable bindings (RWF-013)**; the declaration-form half is RWF-013b below |
 | RWF-013b | any CommonJS file that reassigns an exported `function`/`class` DECLARATION | RWF-013 classified an identifier's provenance by asking how the name was DECLARED, so a reassigned function/class declaration was reported "unmodeled" — silence — and still fell through to the legacy name search, even though the same fact collector had already recorded the reassignment | **Soundness** — the identical false `NOT_AFFECTED` with a complete Family C proof, surviving RWF-013 | **Fixed (RWF-013b)** |
-| RWF-014 | any CommonJS file whose `module.exports = <identifier>` sits in a CONDITIONAL or nested position (real shapes in UMD/feature-detect boilerplate) | `wholeModuleDefaultExport` reads a `localName` off the assignment's right-hand side without asking whether that assignment is unconditional, while every other export-provenance fact in the same relation is gated on `isUnconditionalExportAssignment`. `findLastModuleExportsAssignment` keeps only the LAST assignment in SOURCE order, so a two-branch `module.exports` picks a branch arbitrarily and presents it as certainty | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over a function the module may never export | Open — **P0**, pre-existing on `main`, found by the RWF-012 audit |
+| RWF-014 | any CommonJS file whose `module.exports = <identifier>` sits in a CONDITIONAL or nested position (real shapes in UMD/feature-detect boilerplate) | `wholeModuleDefaultExport` reads a `localName` off the assignment's right-hand side without asking whether that assignment is unconditional, while every other export-provenance fact in the same relation is gated on `isUnconditionalExportAssignment`. `findLastModuleExportsAssignment` keeps only the LAST assignment in SOURCE order, so a two-branch `module.exports` picks a branch arbitrarily and presents it as certainty | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over a function the module may never export | **Fixed (RWF-014)** |
 | RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two. The same relation stopped after ONE hop of local-variable indirection, so `const a = require("pkg"); const b = a; module.exports = b` was equally unattributable | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | **Fixed (RWF-012)** |
 
 ---
@@ -762,84 +762,107 @@ identified, rather than declining because it could not.
 
 ## RWF-014 — A CONDITIONAL `module.exports = <identifier>` is attributed as if it were unconditional
 
-**Status: Open. P0 (soundness). Pre-existing on `main` — NOT introduced by
-RWF-012, and deliberately NOT fixed by it.**
+**Status: Fixed.** P0 (soundness). Was pre-existing on `main` — NOT
+introduced by RWF-012, and deliberately not fixed by it.
 
 **Discovered:** an independent soundness audit of the RWF-012 branch. The
 audit's own blocker (RWF-012 reading THROUGH a chained assignment in a
 conditional position) was fixed there; this is the adjacent, older half of
 the same relation that the blocker's investigation exposed, and it
-reproduces identically on `origin/main` at `7492f77`.
+reproduced identically on `origin/main` at `71014f0`.
 
-**Symptom, reproduced end to end through the real scan command:**
+**Symptom, reproduced end to end before the fix** — see
+`fixtures/commonjs-conditional-whole-module-export/` and `ADV2-074`:
 
 ```js
-function dangerousOp(x) { return x; }
-function safeOp(x) { return x; }
-function runLegacy(x) { return dangerousOp(x); }
+function dangerousOp(input) { return danger.explode(input); }
+function safeOp(input) { return "safe:" + input; }
 
-if (process.env.FLAG) {
+if (process.env.FIXTURE_LIB_MODE === "fast") {
   module.exports = dangerousOp;
 } else {
   module.exports = safeOp;
 }
-module.exports.runLegacy = runLegacy;
 ```
 
-with an application that calls only `pkg.runLegacy(input)` and a rule
-naming the package's `default` export.
+with an application that calls the package's whole exported value.
 
-- **Actual, on `main` and on the RWF-012 branch alike:** `NOT_AFFECTED`,
-  with `confirmedUnreachableTarget` and `reachableSubgraphComplete: true`.
-- **Correct:** `UNKNOWN`. Under `FLAG` the module's default export IS
-  `dangerousOp`, and `dangerousOp` is genuinely reached from the
-  entrypoint through `runLegacy`. The analyzer has no control-flow
-  semantics and cannot know which branch runs, so it cannot certify
-  either.
+- **Actual, on `main`:** `NOT_AFFECTED`, with `confirmedUnreachableTarget`
+  and `reachableSubgraphComplete: true`.
+- **Correct, and delivered:** `UNKNOWN`. Under the flag the module's
+  exported value IS `dangerousOp`, which calls the sink. The analyzer has
+  no control-flow semantics and cannot know which branch runs, so it
+  cannot certify either.
 
-**Root cause:** `wholeModuleDefaultExport`
-(`src/code-intelligence/module-model.ts`) derives `localName` from the
-assignment's right-hand side with **no unconditional-assignment test**:
+**Root cause.** Not one ungated field — the SELECTION feeding all of them.
+`findLastModuleExportsAssignment` kept whichever `module.exports` write it
+saw LAST in source order, including writes nested in an `if`/`try`/`switch`
+/loop or in a function body, and handed that one write to every consumer as
+the module's exported value. Node's `module.exports` really is
+last-write-wins, but source order IS last-write order only when every write
+definitely runs, in that order. The moment one is conditional or deferred,
+"last in the file" is a branch picked arbitrarily and then presented as the
+module's identity.
 
-```ts
-if (ts.isIdentifier(rhsValue)) {
-  localName = rhsValue.text;
-}
-```
+The individually-ungated `localName` derivation in
+`wholeModuleDefaultExport` was the most visible consequence (it drives
+`mapExportsToFunctions`'s same-file name search), but gating that one field
+— the direction this entry originally proposed — would have left three
+other paths reading the same wrongly-selected assignment: an unconditional
+write followed by a CONDITIONAL overwrite, a DEFERRED write in a function
+body that an importer can call after module evaluation, and
+`unpackObjectLiteralExports` publishing one branch's export table as the
+module's.
 
-That `localName` then drives `mapExportsToFunctions`'s same-file name
-search, which binds a real function node. Every neighbouring fact in the
-same relation IS gated — `localFunctionLocation` on
-`assignment.isModuleScope`, `commonJsReExport` and (since RWF-012)
-the chained-assignment unwrap on `isUnconditionalExportAssignment` — so
-this is a gap in one field, not a missing concept. `findLastModuleExportsAssignment`
-resolves the two branches by taking the LAST in source order, which is
-exactly the arbitrary choice `isUnconditionalExportAssignment`'s own doc
-comment describes as "a branch chosen arbitrarily, presented as
-certainty".
+**The fix.** One centralized authority gate, in
+`src/code-intelligence/module-model.ts`:
 
-**Why it was not fixed in RWF-012:** RWF-012's guard covers precisely what
-RWF-012 introduced — reading THROUGH an assignment expression. Extending
-the same guard to the raw-identifier form is a behaviour change to a path
-that predates the task, with its own blast radius (any package whose
-`module.exports = X` is feature-detected or wrapped in a `try`), and it
-belongs in a task that can measure that radius against the full benchmark
-rather than being smuggled into an alias-chain change. The boundary is
-pinned by a test in `module-model.anonymous-export.test.ts` so it cannot
-drift silently.
+- `collectModuleExportsAssignments` collects EVERY `module.exports = X` /
+  `export = X` write in source order (one pre-order traversal), each
+  classified by `classifyWholeModuleExportAuthority` as `"unconditional"`
+  (a direct statement of the file, modulo RWF-012's chained-assignment
+  climb), `"deferred"` (inside a function, class body or class static
+  block — execution time not ordered by source position at all), or
+  `"conditional"` (nested, but still in the module's own top-level
+  statement list).
+- `selectAuthoritativeWholeModuleExport` returns a write only when the LAST
+  collected write is `"unconditional"` AND no `"deferred"` write exists
+  anywhere in the file. Otherwise it returns nothing, and
+  `ambiguousWholeModuleExport` records that the module HAS a whole-module
+  export while attributing no identity to it.
 
-**Proposed direction (not scoped, not implemented):** gate the `localName`
-derivation on `isUnconditionalExportAssignment(assignment.rhs)`, matching
-the sibling fields, and measure the resulting `AFFECTED`/`NOT_AFFECTED` →
-`UNKNOWN` movements across the validation and adversarial suites before
-accepting them. Expect precision loss on legitimate single-branch
-`try { module.exports = X } catch {}` shapes, which may warrant a narrower
-rule (e.g. accepting an assignment whose enclosing statement is the only
-`module.exports` write in the file).
+**Why this is sound without a CFG.** Module evaluation runs each top-level
+statement exactly once, in order. So a final unconditional write definitely
+runs, and definitely runs after everything above it — which is why
+`if (f) { module.exports = a; } module.exports = b;` still resolves to `b`,
+while the mirror image `module.exports = a; if (f) { module.exports = b; }`
+must not resolve at all. Requiring the LAST collected write to be
+unconditional expresses both directions in one test. Deferred writes are
+excluded from that reasoning entirely because position does not order them:
+`function configure() { module.exports = a; }` can be called by an importer
+after evaluation, so a single deferred write withdraws the whole file's
+whole-module identity.
+
+**Measured impact.** Across all 108 adversarial scenarios (v1 + v2) and all
+17 benchmark cases, exactly ONE verdict moved: `ADV2-074`
+`NOT_AFFECTED` → `UNKNOWN`, the intended correction. Zero
+`UNKNOWN` → `NOT_AFFECTED` movements. Benchmark unchanged at 12 PASS / 5
+KNOWN_FAIL / 0 UNEXPECTED. RWB-02 (RWF-003) stays `AFFECTED`, RWB-07
+(RWF-012) stays `NOT_AFFECTED` with its Family C proof intact.
+
+**Known remaining conservatism** (precision, never soundness): a write
+inside a top-level `try`/`switch`/loop/bare block that is genuinely the
+file's only write is refused, as is an IIFE's write and a class static
+block's, and a single conditional `module.exports = X` with no other write.
+Each would need either a real CFG or an immediate-invocation proof to
+accept, and both are out of this task's scope.
 
 **Relevant files:** `src/code-intelligence/module-model.ts`
-(`wholeModuleDefaultExport`, `isUnconditionalExportAssignment`,
-`findLastModuleExportsAssignment`).
+(`classifyWholeModuleExportAuthority`, `collectModuleExportsAssignments`,
+`selectAuthoritativeWholeModuleExport`, `ambiguousWholeModuleExport`);
+regressions in `module-model.conditional-whole-module-export.test.ts`,
+`verdict.conditional-whole-module-export.integration.test.ts`,
+`fixtures/commonjs-conditional-whole-module-export/`, and `ADV2-074`.
 
 ---
 
