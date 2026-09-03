@@ -87,6 +87,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-013 | any CommonJS file that reassigns an exported local (real shapes in `es-define-property`, `gopd`) | An export whose value is an identifier the file itself REASSIGNS fell through to a same-file name search, which lands on the binding's STALE initializer — an anonymous function expression is indexed under the name of the variable it was assigned to, so the stale node matches the export name exactly | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C unreachability proof over a function the module does not export | **Fixed for variable bindings (RWF-013)**; the declaration-form half is RWF-013b below |
 | RWF-013b | any CommonJS file that reassigns an exported `function`/`class` DECLARATION | RWF-013 classified an identifier's provenance by asking how the name was DECLARED, so a reassigned function/class declaration was reported "unmodeled" — silence — and still fell through to the legacy name search, even though the same fact collector had already recorded the reassignment | **Soundness** — the identical false `NOT_AFFECTED` with a complete Family C proof, surviving RWF-013 | **Fixed (RWF-013b)** |
 | RWF-014 | any CommonJS file whose `module.exports = <identifier>` sits in a CONDITIONAL or nested position (real shapes in UMD/feature-detect boilerplate) | `wholeModuleDefaultExport` reads a `localName` off the assignment's right-hand side without asking whether that assignment is unconditional, while every other export-provenance fact in the same relation is gated on `isUnconditionalExportAssignment`. `findLastModuleExportsAssignment` keeps only the LAST assignment in SOURCE order, so a two-branch `module.exports` picks a branch arbitrarily and presents it as certainty | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over a function the module may never export | **Fixed (RWF-014)** |
+| RWF-015 | `dunder-proto` (real, vendored under the `RWB-05` fixture); any CommonJS file with a top-level `return`/`throw` above a later export write (browser/node feature-detect boilerplate is the common real shape) | RWF-014 made whole-module export authority depend on the last write being an UNCONDITIONAL top-level statement. Node wraps every CommonJS module in a function, so a module-scope `return` is legal and ends module evaluation, and an uncaught module-scope `throw` propagates out of the `require()` — either one leaves a later, syntactically unconditional write unexecuted. Every export-provenance gate asked whether a write was unconditional when the property it needed was whether the write is REACHED | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over the value the module exports on every early-exit load; shared verbatim by property exports, object-literal, class, chained-alias and require-re-export attribution | **Fixed (RWF-015)** |
 | RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two. The same relation stopped after ONE hop of local-variable indirection, so `const a = require("pkg"); const b = a; module.exports = b` was equally unattributable | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | **Fixed (RWF-012)** |
 
 ---
@@ -863,6 +864,188 @@ accept, and both are out of this task's scope.
 regressions in `module-model.conditional-whole-module-export.test.ts`,
 `verdict.conditional-whole-module-export.integration.test.ts`,
 `fixtures/commonjs-conditional-whole-module-export/`, and `ADV2-074`.
+
+---
+
+## RWF-015 — A top-level export write is attributed even when an early exit can prevent it running
+
+**Status: Fixed.** P0 (soundness). Was pre-existing on `main` — NOT
+introduced by RWF-014, but left standing by it: RWF-014's own authority
+rule is what accepted this shape.
+
+**Discovered:** an independent soundness audit of the RWF-014 branch,
+which observed that "the last write is unconditional" does not imply "the
+last write runs". Reproduced independently on `origin/main` at `4874569`
+before any change, in both the `return` and the `throw` form.
+
+**Symptom, reproduced end to end before the fix** — see
+`fixtures/commonjs-early-exit-whole-module-export/` and `ADV2-075`:
+
+```js
+function dangerousOp(input) { return danger.explode(input); }
+function safeOp(input) { return "safe:" + input; }
+
+if (process.env.FIXTURE_LIB_MODE === "fast") {
+  module.exports = dangerousOp;
+  return;                        // ends module evaluation
+}
+module.exports = safeOp;         // top-level, unconditional, NOT always run
+```
+
+with an application that calls the package's whole exported value. The
+`throw` form (`throw new Error("stop")` in place of the `return`) behaves
+identically at runtime and reproduced identically.
+
+- **Actual, on `main` at `4874569`:** `NOT_AFFECTED`, with
+  `confirmedUnreachableTarget` and `reachableSubgraphComplete: true`, from
+  both the `return` and the `throw` entrypoint. The whole-module export
+  bound to `safeOp`, the caller's `fixture(input)` got a fully RESOLVED
+  edge to it, and `dangerousOp` was left with no incoming edge at all.
+- **Correct, and delivered:** `UNKNOWN`. Under the flag the module's
+  exported value IS `dangerousOp`, which calls the sink, and the statement
+  below never executes.
+
+**Why RWF-014 did not already cover it.** RWF-014's fixture writes
+`module.exports` from both arms of an `if`/`else`, so NEITHER write is a
+top-level statement and its rule ("the last write in the file must be
+`unconditional`") refuses on sight. Here the last write **is** a direct
+child of the source file. It is unconditional by every syntactic test the
+model had, it is last in the file, and no deferred write exists anywhere —
+so all three of RWF-014's conditions are satisfied by a write that does not
+always run.
+
+**Root cause.** Node wraps every CommonJS module in a function, which makes
+a module-scope `return` legal and module-terminating; an uncaught
+module-scope `throw` terminates evaluation too, propagating out of the
+`require()` that triggered the load. Either one leaves whatever
+`module.exports` already held as the module's exported value. The gate
+every export-provenance fact passes through
+(`isUnconditionalExportAssignment`) asked only whether the assignment was a
+top-level statement — never whether module evaluation could still be
+running when that statement was reached. "Unconditional" and "definitely
+reached" are different properties, and this is precisely where they come
+apart.
+
+**Direction taken.** The gate now asks the second question, and is renamed
+`isDefinitelyReachedExportAssignment` to say so.
+`firstModuleEvaluationCutoff` computes, in one linear pass over the file's
+top-level statements, the start position of the FIRST statement that can
+complete abruptly. Module evaluation runs top-level statements in order, so
+that one position partitions the file: a top-level write starting before it
+runs on every load, and one starting at or after it does not. The
+comparison is the whole reachability model — no control-flow graph, no path
+enumeration, no dataflow, no evaluation of any flag. Because the cutoff is
+monotone in source position, no extra scan is needed: if the last write is
+definitely reached, every write above it is too.
+`WholeModuleExportAuthority` gains a fourth value, `"bypassable"`, so a
+refusal reports "top-level, but an earlier statement can end evaluation
+first" rather than being folded into `"conditional"`.
+
+**What is and is not treated as module-terminating.** Only abrupt
+completions whose behavior is intrinsic to the syntax, requiring no
+knowledge of any value or call target:
+
+- `return` — always, and always a module-scope one, since `return` is a
+  syntax error outside a function body and function bodies are not walked
+  into;
+- `throw` — unless caught by a `try` with a `catch` clause whose own block
+  lexically contains it. A `try`/`finally` with no `catch` does not stop
+  the exception; a `throw` inside a `catch` or `finally` clause is not
+  caught by its own `try`, so a rethrow terminates exactly as the original
+  would have; nesting resolves outward, so an inner rethrow caught by an
+  outer `try` correctly keeps authority.
+
+Deliberately NOT modeled: `process.exit()` or any other call (whether a
+call returns is a property of the callee, not of the call syntax — treating
+calls as terminators would withdraw almost every real module's identity and
+would still be a guess), and `break`/`continue` (they transfer control
+within the enclosing loop, switch or label, which for a top-level `break`
+is inside the same top-level statement; execution continues with the next
+statement either way).
+
+Function and method bodies, arrow bodies and accessors are skipped, so a
+nested, deferred or callback `return`/`throw` never poisons a module's
+identity — `function configure() { throw err; }` above a later
+`module.exports = b` leaves `b` authoritative, because `configure` has not
+run. Class bodies are NOT skipped, for the symmetric reason: a `static { }`
+block runs at class-definition time, i.e. during module evaluation, so a
+throw inside one really can abort the load.
+
+**This was never only a whole-module defect.** Property exports read the
+same last-write-wins map through the same gate and shared it verbatim:
+
+```js
+if (flag) { exports.foo = dangerous; return; }
+exports.foo = safe;                      // pre-fix: bound to `safe`
+```
+
+Because the gate is one function, fixing it centrally closed the
+whole-module, object-literal, class, chained-alias (RWF-012),
+require-re-export (RWF-004a/RWF-004b) and property-export surfaces in a
+single change rather than five. This was classified as *same root cause,
+safe to fix centrally* rather than a separate P0 — verified case by case in
+`module-model.early-exit-whole-module-export.test.ts`.
+
+**Measured impact.** Across all 109 adversarial scenarios (v1 + v2) and all
+17 benchmark cases, exactly ONE verdict moved: `ADV2-075`
+`NOT_AFFECTED` → `UNKNOWN`, the intended correction. Zero
+`UNKNOWN` → `NOT_AFFECTED` movements, and no new `AFFECTED`. Benchmark
+unchanged at 12 PASS / 5 KNOWN_FAIL / 0 UNEXPECTED. `ADV2-074` (RWF-014)
+stays `UNKNOWN`, `RWB-07` (RWF-012) stays `NOT_AFFECTED` with its Family C
+proof intact, and `RWB-02` (RWF-003) stays `AFFECTED`.
+
+**Real-corpus incidence.** An AST-accurate scan of all 449 vendored
+CommonJS files that write `module.exports`/`exports.*` across
+`tests/validation/fixtures/`, `fixtures/` and `tests/adversarial/` found
+exactly one genuine instance outside this task's own fixtures: real
+`dunder-proto`'s `get.js` and `set.js` (vendored under the `RWB-05` `qs`
+fixture), whose top-level `try`/`catch` rethrows any error that is not
+`ERR_PROTO_ACCESS` and therefore can abort the load before the file's
+`module.exports`. That rethrow almost never fires in practice, but proving
+so requires reasoning about `e.code`, so the conservative refusal is
+correct. Its right-hand side is a conditional expression rather than an
+identifier or function node, so it carried no attribution before the change
+either and no verdict moved. Correctness here is deliberately not
+conditional on this count being small.
+
+**Performance.** The walk descends only through statement-bearing
+constructs, since a `return`/`throw` cannot hide inside an expression once
+function bodies are excluded; a `\bstatic\b` text test selects the full
+expression walk for the one exception (a class static block in expression
+position), which is a sound over-approximation because a static block
+cannot exist without that token in the file. Walking expressions
+unconditionally cost ~190ms per module model on the scan-performance
+suite's single-file fixture (9,001 top-level statements), multiplied by
+every model a scan builds; with the statement-position walk the suite's
+timings are indistinguishable from before. The result stays
+O(top-level statements), memoized per `ts.SourceFile` in a `WeakMap`.
+
+**Known remaining conservatism** (precision, never soundness):
+
+- a `throw` inside an IIFE is skipped along with every other function
+  expression, so an IIFE that throws above a later export write does not
+  withdraw authority. Distinguishing it would mean proving the function
+  expression is invoked immediately — call-graph work, and the same line
+  `classifyWholeModuleExportAuthority` already draws by classifying an
+  IIFE-nested write as `"deferred"`. A module that guards its exports with a
+  throwing IIFE and then rewrites `module.exports` below it is not a shape
+  this analyzer claims to model;
+- a bare conditional `return`/`throw` above a file's only export write
+  withdraws that write's identity even though nothing competes with it —
+  correct (the module may export the default `exports` object instead), but
+  a real precision cost on feature-detect boilerplate;
+- `finally`-clause semantics are not modeled beyond refusal: a write held
+  in a `finally` block is `"conditional"` under RWF-014's existing rule and
+  stays refused, rather than being reasoned about.
+
+**Relevant files:** `src/code-intelligence/module-model.ts`
+(`isDefinitelyReachedModuleScopeStatement`, `firstModuleEvaluationCutoff`,
+`mayEndModuleEvaluation`, `isCaughtWithin`, `mayContainNestedStatements`,
+`isDefinitelyReachedExportAssignment`, `isTopLevelExportAssignment`,
+`classifyWholeModuleExportAuthority`); regressions in
+`module-model.early-exit-whole-module-export.test.ts`,
+`verdict.early-exit-whole-module-export.integration.test.ts`,
+`fixtures/commonjs-early-exit-whole-module-export/`, and `ADV2-075`.
 
 ---
 
