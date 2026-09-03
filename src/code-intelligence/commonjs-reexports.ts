@@ -483,7 +483,7 @@ export function unwrapParentheses(expr: ts.Expression): ts.Expression {
  *
  * Unwrapping an assignment is safe here without any control-flow test of
  * its own because every caller is already gated on
- * {@link module-model.ts}'s `isUnconditionalExportAssignment` (or
+ * {@link module-model.ts}'s `isDefinitelyReachedExportAssignment` (or
  * `ModuleExportsAssignment.isModuleScope`), which climbs out through
  * exactly these chained assignment links before asking whether the whole
  * statement is an unconditional module-scope one. A branch-local

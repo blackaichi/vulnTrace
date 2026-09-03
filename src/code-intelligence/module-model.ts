@@ -60,7 +60,7 @@ export interface ExportBinding {
    *
    * Also `undefined` for an export assignment this file cannot prove runs
    * unconditionally, once, at module scope — see
-   * {@link isUnconditionalExportAssignment}, whose doc comment carries the
+   * {@link isDefinitelyReachedExportAssignment}, whose doc comment carries the
    * reasoning and the false NOT_AFFECTED it prevents. Every provenance
    * field on this interface is gated on that same test, for the same
    * reason: they all read a last-write-wins map.
@@ -219,7 +219,7 @@ function toImportBinding(imp: SourceIndex["imports"][number]): ImportBinding {
  *
  * - `"unconditional"` — the write's own statement is a direct child of the
  *   source file (modulo a chained-assignment climb; see
- *   {@link isUnconditionalExportAssignment}). Module evaluation runs every
+ *   {@link isDefinitelyReachedExportAssignment}). Module evaluation runs every
  *   such statement, exactly once, in source order. This write DEFINITELY
  *   happens, and definitely happens before every later top-level one.
  * - `"conditional"` — nested inside an `if`/`else`/`try`/`catch`/`finally`/
@@ -234,8 +234,16 @@ function toImportBinding(imp: SourceIndex["imports"][number]): ImportBinding {
  *   assignment that appears later in the file. An IIFE is classified here
  *   too — proving that a function expression is invoked immediately is
  *   call-graph work this relation deliberately does not do.
+ * - `"bypassable"` — a direct child of the source file exactly as
+ *   `"unconditional"` is, but with an earlier top-level statement that can
+ *   end module evaluation before it (a module-scope `return`, or an
+ *   uncaught `throw`) — so it runs on SOME loads and not others (RWF-015).
+ *   Being written at top level is what makes this distinct from
+ *   `"conditional"`, and being skippable is what stops it being
+ *   `"unconditional"`; see {@link isDefinitelyReachedModuleScopeStatement}.
  */
-type WholeModuleExportAuthority = "unconditional" | "conditional" | "deferred";
+type WholeModuleExportAuthority =
+  "unconditional" | "bypassable" | "conditional" | "deferred";
 
 interface ModuleExportsAssignment {
   readonly rhs: ts.Expression;
@@ -406,7 +414,7 @@ function propertyExportProvenance(
   index: SourceIndex,
   rhs: ts.Expression | undefined,
 ): Pick<ExportBinding, "localName" | "localFunctionLocation"> {
-  if (rhs === undefined || !isUnconditionalExportAssignment(rhs)) {
+  if (rhs === undefined || !isDefinitelyReachedExportAssignment(rhs)) {
     return {};
   }
   const value = unwrapValue(rhs);
@@ -457,9 +465,9 @@ function chasedValueFunctionLocation(
 }
 
 /**
- * {@link isUnconditionalModuleScopeStatement} for an export assignment's
- * right-hand side — `exports.X = rhs`, `module.exports = rhs` — climbing
- * out through CHAINED assignments first.
+ * {@link isDefinitelyReachedModuleScopeStatement} for an export
+ * assignment's right-hand side — `exports.X = rhs`, `module.exports = rhs`
+ * — climbing out through CHAINED assignments first.
  *
  * `exports.parse = exports.decode = decode` (real ini, and a staple
  * CommonJS idiom for publishing one function under two names) parses as
@@ -505,10 +513,44 @@ function chasedValueFunctionLocation(
  * stays unresolved. Resolving THROUGH an assignment expression's value is
  * a separate relation and is not attempted here.
  */
-function isUnconditionalExportAssignment(rhs: ts.Expression): boolean {
+function isDefinitelyReachedExportAssignment(rhs: ts.Expression): boolean {
+  const node = exportAssignmentStatementNode(rhs);
+  return node !== undefined && isDefinitelyReachedModuleScopeStatement(node);
+}
+
+/**
+ * {@link isDefinitelyReachedExportAssignment} minus its reachability half
+ * (RWF-015): whether the assignment is written as a top-level statement at
+ * all, regardless of whether module evaluation can still be running by the
+ * time that statement is reached.
+ *
+ * The two differ for exactly the shape RWF-015 exists for, and the
+ * difference is what {@link WholeModuleExportAuthority} reports as
+ * `"bypassable"` rather than silently folding into `"conditional"` —
+ * "written at top level, but an earlier top-level statement can end module
+ * evaluation first" is a different fact about the file than "written
+ * inside an `if`", and an analyzer whose refusals are read by humans
+ * should say which one it saw.
+ */
+function isTopLevelExportAssignment(rhs: ts.Expression): boolean {
+  const node = exportAssignmentStatementNode(rhs);
+  return node !== undefined && isUnconditionalModuleScopeStatement(node);
+}
+
+/**
+ * The node whose STATEMENT position decides when an export assignment
+ * runs: the assignment itself, or — for a chained
+ * `exports.a = exports.b = value` — the outermost assignment it is the
+ * right-hand side of. See {@link isDefinitelyReachedExportAssignment}'s
+ * doc comment for why the climb exists and why only assignment links are
+ * climbed.
+ */
+function exportAssignmentStatementNode(
+  rhs: ts.Expression,
+): ts.Node | undefined {
   let node: ts.Node | undefined = rhs.parent;
   if (node === undefined) {
-    return false;
+    return undefined;
   }
   let parent = node.parent as ts.Node | undefined;
   while (
@@ -520,7 +562,7 @@ function isUnconditionalExportAssignment(rhs: ts.Expression): boolean {
     node = parent;
     parent = node.parent as ts.Node | undefined;
   }
-  return isUnconditionalModuleScopeStatement(node);
+  return node;
 }
 
 /** Whether `node`'s own statement is a direct child of the source file (module scope, unconditional). */
@@ -541,12 +583,313 @@ function isUnconditionalModuleScopeStatement(node: ts.Node): boolean {
 }
 
 /**
+ * {@link isUnconditionalModuleScopeStatement} PLUS the thing being a
+ * top-level statement does not by itself establish (RWF-015): that module
+ * evaluation actually gets this far.
+ *
+ * Node wraps every CommonJS module in a function, so a module-scope
+ * `return` is legal and ends module evaluation on the spot; an uncaught
+ * module-scope `throw` ends it too, propagating out of the `require()`
+ * that triggered the load. Either one leaves whatever `module.exports`
+ * already held as the module's exported value, and leaves every top-level
+ * statement below it unexecuted:
+ *
+ * ```js
+ * if (flag) {
+ *   module.exports = dangerousOp;
+ *   return;
+ * }
+ * module.exports = safeOp;      // <- syntactically unconditional; NOT always run
+ * ```
+ *
+ * The final write here is a direct child of the source file, so
+ * {@link isUnconditionalModuleScopeStatement} accepts it and RWF-014's
+ * authority rule ("the last write must be unconditional") accepted it too
+ * — and the module then exported `dangerousOp` on every run with the flag
+ * set. Reproduced end to end on the commit before this one, as a
+ * NOT_AFFECTED carrying a complete Family C proof over a function the
+ * module exports whenever the early branch is taken; see
+ * fixtures/commonjs-early-exit-whole-module-export/.
+ *
+ * So the property every export-provenance gate actually needs is not "is
+ * this statement unconditional" but "is this statement DEFINITELY
+ * REACHED", and the two come apart exactly when some earlier top-level
+ * statement can complete abruptly. {@link firstModuleEvaluationCutoff}
+ * finds the first such statement in one linear pass; everything starting
+ * before it definitely runs (module evaluation executes top-level
+ * statements in order, and nothing above it can abort), and everything
+ * from it onward may not. That comparison is the whole reachability
+ * model: no control-flow graph, no path enumeration, no dataflow, and no
+ * evaluation of the flag.
+ */
+function isDefinitelyReachedModuleScopeStatement(node: ts.Node): boolean {
+  if (!isUnconditionalModuleScopeStatement(node)) {
+    return false;
+  }
+  const sourceFile = node.getSourceFile();
+  const cutoff = firstModuleEvaluationCutoff(sourceFile);
+  return cutoff === undefined || node.getStart(sourceFile) < cutoff;
+}
+
+/**
+ * Memoizes {@link firstModuleEvaluationCutoff} per source file. Keyed on
+ * the `ts.SourceFile` node itself and weakly held, so the entry dies with
+ * the AST it describes and a re-parse of the same path never reads a stale
+ * answer. The wrapper object distinguishes "computed, and the answer is
+ * `undefined`" (the common case — most files contain no top-level abrupt
+ * completion at all) from "not yet computed".
+ */
+const moduleEvaluationCutoffs = new WeakMap<
+  ts.SourceFile,
+  { readonly start: number | undefined }
+>();
+
+/**
+ * The start position of the FIRST top-level statement of `sourceFile` that
+ * can end module evaluation before the statement after it begins, or
+ * `undefined` when no top-level statement can (RWF-015).
+ *
+ * Only the first one is needed. Module evaluation runs top-level
+ * statements in order, so this position partitions the file: a top-level
+ * statement starting before it is reached on every load, and one starting
+ * at or after it is reached only on the loads where nothing above it
+ * completed abruptly. That is exactly the question
+ * {@link isDefinitelyReachedModuleScopeStatement} asks, and answering it
+ * with one number rather than a per-statement predicate is what keeps the
+ * whole model a single comparison.
+ *
+ * Deliberately NOT computed over the whole file: it walks each top-level
+ * statement's subtree only until it finds an abrupt completion, and stops
+ * at the first statement that has one — so it is linear in the file at
+ * worst and usually reads much less.
+ */
+function firstModuleEvaluationCutoff(
+  sourceFile: ts.SourceFile,
+): number | undefined {
+  const cached = moduleEvaluationCutoffs.get(sourceFile);
+  if (cached !== undefined) {
+    return cached.start;
+  }
+
+  const scanExpressions = mayContainClassStaticBlock(sourceFile);
+  let start: number | undefined;
+  for (const statement of sourceFile.statements) {
+    if (mayEndModuleEvaluation(statement, scanExpressions)) {
+      start = statement.getStart(sourceFile);
+      break;
+    }
+  }
+
+  moduleEvaluationCutoffs.set(sourceFile, { start });
+  return start;
+}
+
+/**
+ * Whether evaluating this one top-level statement can end module
+ * evaluation rather than falling through to the next statement (RWF-015).
+ *
+ * Two constructs qualify, and only two — both of them ABRUPT COMPLETIONS
+ * whose behavior is intrinsic to the syntax, requiring no knowledge of any
+ * value, name or call target:
+ *
+ * - **`return`** — legal at CommonJS module scope because Node evaluates
+ *   the module inside a wrapper function, and ends module evaluation
+ *   wherever it appears. A `return` reached by this walk is necessarily a
+ *   module-scope one: `return` is a syntax error anywhere but a function
+ *   body, and function bodies are not walked into.
+ * - **`throw`** whose exception is not caught inside this same statement.
+ *   An uncaught module-scope throw propagates out of the `require()` that
+ *   started the load, so nothing below it runs either.
+ *
+ * What is deliberately NOT modeled, because the answer would need
+ * semantics this relation does not have:
+ *
+ * - **`process.exit()`, `assert(...)`, or any other call.** Whether a call
+ *   returns is a property of the function it reaches, not of the call
+ *   syntax. Treating calls as possible terminators would make almost every
+ *   real module's exports unattributable and would still be a guess.
+ * - **`break` / `continue`.** These transfer control WITHIN the enclosing
+ *   loop, switch or labeled statement — which, for a top-level `break`,
+ *   is inside this same statement. Execution continues with the next
+ *   top-level statement either way, so they are not module-terminating and
+ *   are not treated as such. (Outside a loop/switch/label they are a
+ *   syntax error, so there is no third case.)
+ *
+ * The walk stops at every function-like node — function and method bodies,
+ * arrow bodies, accessors — because a `return`/`throw` inside one belongs
+ * to THAT function's execution, which may be an importer calling it long
+ * after this module finished loading, or may never happen at all:
+ *
+ * ```js
+ * function configure() { throw new Error("not configured"); }
+ * module.exports = b;   // still definitely reached; `configure` has not run
+ * ```
+ *
+ * Class bodies are NOT skipped, for the symmetric reason: a
+ * `static { ... }` block runs at class-definition time, i.e. during module
+ * evaluation, so a throw inside one really can abort the load. Methods and
+ * accessors inside that same class body are skipped by the function-like
+ * test, as they should be.
+ *
+ * An IIFE is skipped along with every other function expression. That is
+ * the conservative direction here rather than the risky one: skipping it
+ * can only make this relation report FEWER cutoffs, so the worst case is
+ * a bypassable write treated as definitely reached — which is precisely
+ * the unsound direction. It is accepted deliberately and narrowly: a
+ * `throw` inside an IIFE does abort module evaluation, but an IIFE's
+ * `return` does not, and telling the two apart means proving the function
+ * expression is invoked immediately — call-graph work, and the same line
+ * {@link classifyWholeModuleExportAuthority} already draws by classifying
+ * an IIFE-nested write as `"deferred"`. A module that guards its exports
+ * with a throwing IIFE and then rewrites `module.exports` below it is not
+ * a shape this analyzer claims to model; see RWF-015's remaining-limitations
+ * note in tests/validation/FINDINGS.md.
+ */
+function mayEndModuleEvaluation(
+  statement: ts.Statement,
+  scanExpressions: boolean,
+): boolean {
+  let found = false;
+
+  function visit(node: ts.Node): void {
+    if (found || ts.isFunctionLike(node)) {
+      return;
+    }
+    if (
+      ts.isReturnStatement(node) ||
+      (ts.isThrowStatement(node) && !isCaughtWithin(node, statement))
+    ) {
+      found = true;
+      return;
+    }
+    if (scanExpressions || mayContainNestedStatements(node)) {
+      ts.forEachChild(node, visit);
+    }
+  }
+
+  visit(statement);
+  return found;
+}
+
+/**
+ * Whether `node` is one of the constructs that can hold STATEMENTS — the
+ * only places a `return`/`throw` can be, once function bodies are excluded
+ * (RWF-015).
+ *
+ * This is what keeps {@link firstModuleEvaluationCutoff} off the hot path
+ * of large files. `return` and `throw` are statements, and a statement can
+ * only appear in a statement position: a block, an `if` arm, a loop or
+ * `with` body, a `switch` clause, a `try`/`catch`/`finally` block, or a
+ * labeled statement. It can never appear inside an EXPRESSION — with two
+ * exceptions, and both are handled elsewhere: a function body (skipped
+ * deliberately, see {@link mayEndModuleEvaluation}) and a class `static`
+ * block (the reason for the `scanExpressions` escape hatch, since a class
+ * EXPRESSION can sit anywhere an expression can).
+ *
+ * So descending only through these is not an approximation — it reaches
+ * every node that could hold the thing being looked for, and skips the
+ * expression trees that make up the bulk of a real file. On the
+ * scan-performance suite's single-file fixture (9,001 top-level
+ * statements, nearly all of them object literals and call expressions)
+ * walking expressions too cost ~190ms per module model, multiplied by
+ * every model a scan builds; this walk is a per-statement kind check.
+ */
+function mayContainNestedStatements(node: ts.Node): boolean {
+  return (
+    ts.isBlock(node) ||
+    ts.isIfStatement(node) ||
+    ts.isIterationStatement(node, false) ||
+    ts.isSwitchStatement(node) ||
+    ts.isCaseBlock(node) ||
+    ts.isCaseClause(node) ||
+    ts.isDefaultClause(node) ||
+    ts.isTryStatement(node) ||
+    ts.isCatchClause(node) ||
+    ts.isLabeledStatement(node) ||
+    ts.isWithStatement(node)
+  );
+}
+
+/**
+ * Whether this file could contain a class `static` block, and therefore
+ * needs {@link mayEndModuleEvaluation}'s full expression walk to be
+ * classified correctly (RWF-015).
+ *
+ * A static block is the one construct that puts statements inside an
+ * expression without a function body around them, and it cannot exist
+ * unless the token `static` appears in the file. Testing the raw text for
+ * that word is a sound over-approximation: a `static` in a comment, a
+ * string, or an ordinary static METHOD modifier costs that one file the
+ * fast walk and changes no answer, while a file containing no `static` at
+ * all provably has no static block — which makes the cheap
+ * statement-position walk exactly complete rather than merely close.
+ */
+function mayContainClassStaticBlock(sourceFile: ts.SourceFile): boolean {
+  return /\bstatic\b/.test(sourceFile.text);
+}
+
+/**
+ * Whether `node`'s exception is caught by a `try`/`catch` lying between it
+ * and `boundary` (RWF-015) — the one piece of real control-flow semantics
+ * this model needs, and the reason a file that merely CONTAINS a `throw`
+ * does not lose its exports:
+ *
+ * ```js
+ * try { if (flag) { throw err; } } catch { }
+ * module.exports = b;   // still definitely reached -- the throw is handled
+ * ```
+ *
+ * A `throw` counts as caught only when an enclosing `try` has a `catch`
+ * clause AND the throw is inside that `try`'s own block. Both halves
+ * matter and both are the conservative reading:
+ *
+ * - a `try { ... } finally { ... }` with no `catch` does not stop the
+ *   exception, so a throw inside it still ends module evaluation;
+ * - a throw inside a CATCH or FINALLY clause is not caught by its own
+ *   `try` — `catch (e) { throw e; }` rethrows, and the rethrow ends module
+ *   evaluation exactly as the original would have.
+ *
+ * Both of those keep working when nested, because the walk continues
+ * outward: a rethrow inside an inner `catch` that itself sits in an outer
+ * `try`'s block is caught by the outer one, and reported as caught.
+ *
+ * `boundary` is the top-level statement being classified. There is never a
+ * `try` above it — a `try` spanning several statements IS a single
+ * top-level `TryStatement`, and its contents are walked as part of it — so
+ * the boundary is a stop condition rather than a semantic limit.
+ */
+function isCaughtWithin(
+  node: ts.ThrowStatement,
+  boundary: ts.Statement,
+): boolean {
+  let child: ts.Node = node;
+  let parent: ts.Node | undefined = node.parent as ts.Node | undefined;
+
+  while (parent !== undefined) {
+    if (
+      ts.isTryStatement(parent) &&
+      parent.catchClause !== undefined &&
+      parent.tryBlock === child
+    ) {
+      return true;
+    }
+    if (parent === boundary) {
+      return false;
+    }
+    child = parent;
+    parent = parent.parent as ts.Node | undefined;
+  }
+
+  return false;
+}
+
+/**
  * {@link WholeModuleExportAuthority} for one `module.exports = X` /
  * `export = X` write (RWF-014).
  *
  * `node` is the write itself (the assignment expression, or the
  * `ExportAssignment`); `rhs` is its right-hand side, which is what
- * {@link isUnconditionalExportAssignment} needs in order to climb out
+ * {@link isDefinitelyReachedExportAssignment} needs in order to climb out
  * through a chained assignment first.
  *
  * The `"deferred"` walk stops at the source file and asks only about node
@@ -558,8 +901,16 @@ function classifyWholeModuleExportAuthority(
   node: ts.Node,
   rhs: ts.Expression,
 ): WholeModuleExportAuthority {
-  if (isUnconditionalExportAssignment(rhs)) {
+  if (isDefinitelyReachedExportAssignment(rhs)) {
     return "unconditional";
+  }
+  // Written as a top-level statement, but some earlier top-level statement
+  // can end module evaluation before this one runs (RWF-015). Checked
+  // before the `"deferred"` walk because the two are mutually exclusive: a
+  // direct child of the source file has no function or class body between
+  // it and the file.
+  if (isTopLevelExportAssignment(rhs)) {
+    return "bypassable";
   }
   for (
     let ancestor: ts.Node | undefined = node.parent as ts.Node | undefined;
@@ -985,14 +1336,14 @@ function objectLiteralValueLocation(
  * an `if`/`try`/function body describes one arbitrarily-chosen branch. A
  * re-export origin read out of it forwards the export to that branch's
  * package as though the other branch did not exist — see
- * {@link isUnconditionalExportAssignment}.
+ * {@link isDefinitelyReachedExportAssignment}.
  */
 function objectLiteralValueReExport(
   index: SourceIndex,
   assignment: ModuleExportsAssignment,
   value: ts.Expression,
 ): CommonJsReExportOrigin | undefined {
-  return isUnconditionalExportAssignment(assignment.rhs)
+  return isDefinitelyReachedExportAssignment(assignment.rhs)
     ? resolveCommonJsReExportExpression(index, value)
     : undefined;
 }
@@ -1048,11 +1399,11 @@ function buildExportBindings(
           // provenance fields above it (RWF-004b): the origin is read out
           // of the same last-write-wins map, so a branch-local assignment
           // would forward the export to whichever branch came last in the
-          // file. See {@link isUnconditionalExportAssignment}.
+          // file. See {@link isDefinitelyReachedExportAssignment}.
           commonJsReExport:
             exp.exportedName !== undefined &&
             propertyRhs !== undefined &&
-            isUnconditionalExportAssignment(propertyRhs)
+            isDefinitelyReachedExportAssignment(propertyRhs)
               ? commonJsPropertyReExportOrigin(index, exp.exportedName)
               : undefined,
           localIdentifierProvenanceRefused: refusedProvenanceFlag(
@@ -1225,7 +1576,7 @@ function wholeModuleDefaultExport(
   // `v`, so this is the same fact, differently spelled — see
   // {@link unwrapValue}.
   //
-  // Gated on {@link isUnconditionalExportAssignment}, for the same reason
+  // Gated on {@link isDefinitelyReachedExportAssignment}, for the same reason
   // every other export-provenance fact in this module is, and this is the
   // ONE place RWF-012 could have skipped it. Reading through an assignment
   // turns a right-hand side this relation previously had nothing to say
@@ -1253,7 +1604,7 @@ function wholeModuleDefaultExport(
   // whose raw right-hand side is already an identifier — that is a
   // separate, older gap in this same relation, and closing it here would
   // be an unrelated behaviour change smuggled into RWF-012.
-  const rhsValue = isUnconditionalExportAssignment(assignment.rhs)
+  const rhsValue = isDefinitelyReachedExportAssignment(assignment.rhs)
     ? unwrapValue(assignment.rhs)
     : assignment.rhs;
 
@@ -1287,14 +1638,14 @@ function wholeModuleDefaultExport(
     // another module. Unlike `localName`, this survives the value being
     // anonymous.
     //
-    // Uses {@link isUnconditionalExportAssignment} rather than
+    // Uses {@link isDefinitelyReachedExportAssignment} rather than
     // `assignment.isModuleScope` (RWF-004b): the two differ only for a
     // CHAINED assignment, and real `debug@2.0.0`'s `node.js` is exactly
     // that — `exports = module.exports = require('./debug')`, one
     // unconditional top-level statement whose inner assignment's enclosing
     // node is the outer assignment rather than the statement. A
     // conditionally-assigned `module.exports` is refused by both.
-    commonJsReExport: isUnconditionalExportAssignment(assignment.rhs)
+    commonJsReExport: isDefinitelyReachedExportAssignment(assignment.rhs)
       ? commonJsModuleReExportOrigin(index)
       : undefined,
     location: assignment.location,

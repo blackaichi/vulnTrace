@@ -333,7 +333,7 @@ describe("RWF-003: shapes that must NOT produce a function identity", () => {
     // the export to `second` and assert that `first` is not what the
     // module exports -- a branch chosen arbitrarily, presented as
     // certainty. Reproduced end to end as a false NOT_AFFECTED before the
-    // `isUnconditionalExportAssignment` guard was added to this path.
+    // `isDefinitelyReachedExportAssignment` guard was added to this path.
     expect(
       defaultExportPosition(
         "function first() {}\nfunction second() {}\nif (c) {\n  module.exports = alias = first;\n} else {\n  module.exports = alias = second;\n}\n",

@@ -416,7 +416,7 @@ describe("buildCallGraph: RWF-012 alias chains compose with the same-package cha
 
   it("stays unresolved when a CONDITIONAL export assigns the chain's value (RWF-004b guard)", async () => {
     // The chain is impeccable; the EXPORT is not. RWF-004b's
-    // `isUnconditionalExportAssignment` gate must still refuse this, or a
+    // `isDefinitelyReachedExportAssignment` gate must still refuse this, or a
     // branch would be chosen arbitrarily and presented as certainty.
     const root = tempProject();
     writePackage(

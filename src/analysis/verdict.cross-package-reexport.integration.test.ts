@@ -409,7 +409,7 @@ describe("RWF-004b: a conditional export assignment never manufactures a clean b
    * at, and Family C proves it unreachable with
    * `reachableSubgraphComplete: true` -- a false NOT_AFFECTED for code that
    * calls `pkg-a.parse` whenever the condition is true. Reproduced
-   * directly before `isUnconditionalExportAssignment` was extended to gate
+   * directly before `isDefinitelyReachedExportAssignment` was extended to gate
    * `commonJsReExport` too.
    */
   function writeConditionalBranchProject(root: string): void {
