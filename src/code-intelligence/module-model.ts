@@ -210,6 +210,33 @@ function toImportBinding(imp: SourceIndex["imports"][number]): ImportBinding {
   };
 }
 
+/**
+ * How much a single `module.exports = X` / `export = X` write can be
+ * trusted to describe the module's exported value, judged purely
+ * syntactically (RWF-014). The three cases differ in WHEN the write runs,
+ * which is the only thing that decides whether a later write overwrites
+ * it:
+ *
+ * - `"unconditional"` — the write's own statement is a direct child of the
+ *   source file (modulo a chained-assignment climb; see
+ *   {@link isUnconditionalExportAssignment}). Module evaluation runs every
+ *   such statement, exactly once, in source order. This write DEFINITELY
+ *   happens, and definitely happens before every later top-level one.
+ * - `"conditional"` — nested inside an `if`/`else`/`try`/`catch`/`finally`/
+ *   `switch`/loop/bare block, but still inside the module's own top-level
+ *   statement list. It MAY not run; if it does run, it runs at the point
+ *   its enclosing top-level statement is reached, so source order still
+ *   orders it against the unconditional writes around it.
+ * - `"deferred"` — nested inside a function, class body, or class static
+ *   block. Source position says NOTHING about when it runs: a
+ *   `function configure() { module.exports = fn; }` can be called by an
+ *   IMPORTER, long after module evaluation finished, and overwrite an
+ *   assignment that appears later in the file. An IIFE is classified here
+ *   too — proving that a function expression is invoked immediately is
+ *   call-graph work this relation deliberately does not do.
+ */
+type WholeModuleExportAuthority = "unconditional" | "conditional" | "deferred";
+
 interface ModuleExportsAssignment {
   readonly rhs: ts.Expression;
   readonly location: SourceLocation;
@@ -218,12 +245,18 @@ interface ModuleExportsAssignment {
    * its own statement is a direct child of the source file, not nested
    * inside an `if`/`try`/loop/function body (RWF-003).
    *
-   * `false` means this task cannot know whether the assignment runs at
-   * all, so it cannot know the final value of `module.exports`. Only the
-   * function-identity binding below consults this; the pre-existing
-   * name-based attribution is deliberately left exactly as it was.
+   * Deliberately NOT the same test as {@link authority}, which climbs out
+   * through chained assignments first: the two differ for exactly one
+   * real shape, `exports = module.exports = require("./debug")` (real
+   * `debug@2.0.0`), where the inner `module.exports` write is
+   * unconditional by execution but its enclosing node is the outer
+   * assignment rather than a statement. The re-export relation accepts
+   * that shape and the function-identity relation does not — see
+   * {@link wholeModuleDefaultExport}'s two gates.
    */
   readonly isModuleScope: boolean;
+  /** This write's execution-time authority — see {@link WholeModuleExportAuthority}. */
+  readonly authority: WholeModuleExportAuthority;
 }
 
 /** Whether a node is a function-like *expression* — the only value shape a `module.exports = X` assignment can directly make callable. */
@@ -508,18 +541,73 @@ function isUnconditionalModuleScopeStatement(node: ts.Node): boolean {
 }
 
 /**
- * Finds the last `module.exports = X` (or TypeScript's `export = X`)
- * assignment in the file — real Node.js semantics are last-write-wins for
- * `module.exports` reassignment, so this task represents the module's
- * final exported value, not every intermediate assignment. Interleaved
- * `exports.foo = ...` mutations before a later `module.exports = ...`
- * reassignment are not specially reconciled — see TASK-015 completion
- * report for this scope boundary.
+ * {@link WholeModuleExportAuthority} for one `module.exports = X` /
+ * `export = X` write (RWF-014).
+ *
+ * `node` is the write itself (the assignment expression, or the
+ * `ExportAssignment`); `rhs` is its right-hand side, which is what
+ * {@link isUnconditionalExportAssignment} needs in order to climb out
+ * through a chained assignment first.
+ *
+ * The `"deferred"` walk stops at the source file and asks only about node
+ * KINDS, never about names or call sites — a function/class body between
+ * the write and the file means the write's execution time is not tied to
+ * module evaluation at all.
  */
-function findLastModuleExportsAssignment(
+function classifyWholeModuleExportAuthority(
+  node: ts.Node,
+  rhs: ts.Expression,
+): WholeModuleExportAuthority {
+  if (isUnconditionalExportAssignment(rhs)) {
+    return "unconditional";
+  }
+  for (
+    let ancestor: ts.Node | undefined = node.parent as ts.Node | undefined;
+    ancestor !== undefined && !ts.isSourceFile(ancestor);
+    ancestor = ancestor.parent as ts.Node | undefined
+  ) {
+    if (
+      ts.isFunctionLike(ancestor) ||
+      ts.isClassLike(ancestor) ||
+      ts.isClassStaticBlockDeclaration(ancestor)
+    ) {
+      return "deferred";
+    }
+  }
+  return "conditional";
+}
+
+/**
+ * Every `module.exports = X` (or TypeScript's `export = X`) write in the
+ * file, in SOURCE ORDER, each carrying its own
+ * {@link WholeModuleExportAuthority}.
+ *
+ * `ts.forEachChild` visits children in syntactic order and this walk is
+ * pre-order, so the emitted sequence is already ordered by source start
+ * position (an ancestor starts before its descendants, and siblings are
+ * visited in order) — no sort is needed, and the whole pass stays one
+ * linear traversal.
+ *
+ * This deliberately collects CONDITIONAL and DEFERRED writes too, which
+ * the pre-RWF-014 `findLastModuleExportsAssignment` also did — but that
+ * function returned whichever write it saw LAST and let every consumer
+ * treat it as the module's exported value. Keeping them visible is the
+ * point: they are exactly the evidence
+ * {@link selectAuthoritativeWholeModuleExport} needs in order to REFUSE.
+ */
+function collectModuleExportsAssignments(
   sourceFile: ts.SourceFile,
-): ModuleExportsAssignment | undefined {
-  let found: ModuleExportsAssignment | undefined;
+): readonly ModuleExportsAssignment[] {
+  const found: ModuleExportsAssignment[] = [];
+
+  function record(node: ts.Node, rhs: ts.Expression): void {
+    found.push({
+      rhs,
+      location: toSourceLocation(sourceFile, node),
+      isModuleScope: isUnconditionalModuleScopeStatement(node),
+      authority: classifyWholeModuleExportAuthority(node, rhs),
+    });
+  }
 
   function visit(node: ts.Node): void {
     if (
@@ -530,23 +618,132 @@ function findLastModuleExportsAssignment(
       node.left.expression.text === "module" &&
       node.left.name.text === "exports"
     ) {
-      found = {
-        rhs: node.right,
-        location: toSourceLocation(sourceFile, node),
-        isModuleScope: isUnconditionalModuleScopeStatement(node),
-      };
+      record(node, node.right);
     } else if (ts.isExportAssignment(node) && node.isExportEquals) {
-      found = {
-        rhs: node.expression,
-        location: toSourceLocation(sourceFile, node),
-        isModuleScope: isUnconditionalModuleScopeStatement(node),
-      };
+      record(node, node.expression);
     }
     ts.forEachChild(node, visit);
   }
 
   visit(sourceFile);
   return found;
+}
+
+/**
+ * The ONE `module.exports = X` write that provably decides the module's
+ * exported value, or `undefined` when no single write can be proven to
+ * (RWF-014) — the single authority gate every whole-module export fact
+ * passes through.
+ *
+ * Node's `module.exports` really is last-write-wins, and the pre-RWF-014
+ * code took that as licence to keep the last write in SOURCE order. Those
+ * are not the same thing. Source order is last-write order only when
+ * every write definitely runs, in that order; the moment a write is
+ * conditional or deferred, "last in the file" is a branch picked
+ * arbitrarily and then presented as the module's identity. That is a false
+ * NOT_AFFECTED whenever the branch NOT picked is the one that reaches the
+ * finding's sink:
+ *
+ * ```js
+ * function dangerousOp() { danger.explode(); }   // reaches the sink
+ * function safeOp() {}
+ * if (FLAG) { module.exports = dangerousOp; }
+ * else      { module.exports = safeOp; }
+ * ```
+ *
+ * Here the export bound to `safeOp`, the caller's `fixture(input)` got a
+ * fully RESOLVED edge to it, `dangerousOp` was left with no incoming edge,
+ * and the reachability search returned unreachable with
+ * `reachableSubgraphComplete: true` — a complete Family C proof for a
+ * package that calls `explode` on every run that takes the other branch.
+ * Reproduced end to end before this gate existed; see
+ * fixtures/commonjs-conditional-whole-module-export/.
+ *
+ * Two conditions, and both are about EXECUTION ORDER rather than text
+ * order:
+ *
+ * 1. **The last write in the file must be `"unconditional"`.** It then
+ *    definitely runs, and — because module evaluation executes top-level
+ *    statements in order — it runs AFTER every write above it, so it
+ *    overwrites all of them whether or not they ran. Anything textually
+ *    before it is therefore irrelevant, which is what makes the legitimate
+ *    shapes below still work with no special-casing:
+ *
+ *    ```js
+ *    module.exports = first;  module.exports = second;   // -> second
+ *    if (flag) { module.exports = first; }
+ *    module.exports = second;                            // -> second
+ *    ```
+ *
+ *    and equally what refuses the mirror image, where the conditional
+ *    write is the one that runs last:
+ *
+ *    ```js
+ *    module.exports = first;
+ *    if (flag) { module.exports = second; }               // -> ambiguous
+ *    ```
+ *
+ *    Requiring the LAST collected write to be unconditional expresses both
+ *    at once: if it is, no conditional write survives after it; if it is
+ *    not, a write whose execution this module cannot decide is the final
+ *    one. (Note this is strictly a check on the last element, not "the
+ *    last unconditional write plus a scan for conditional writes after it"
+ *    — the two are the same statement, and the shorter one cannot be got
+ *    wrong.)
+ *
+ * 2. **No `"deferred"` write anywhere in the file.** A write inside a
+ *    function body is not ordered by source position at all: nothing stops
+ *    an importer from calling `configure()` after module evaluation and
+ *    replacing an exported value that a later top-level statement had
+ *    "definitively" set. Position cannot dominate what position does
+ *    not order, so a single deferred write withdraws the whole file's
+ *    whole-module identity — including from an otherwise perfect
+ *    unconditional final assignment.
+ *
+ * Refusing is cheap and never invents a verdict: an unattributed
+ * whole-module export is an unresolved target, and an unresolved target is
+ * UNKNOWN (see verdict.ts's Site A). It is also honest downstream —
+ * call-graph.ts turns a call through an export it cannot attribute into an
+ * `unknown(unresolved_target)` edge, which makes the reachable subgraph
+ * incomplete and withdraws Family C rather than silently narrowing it.
+ *
+ * Linear in the number of collected writes, with no CFG, no dataflow, and
+ * no target execution.
+ */
+function selectAuthoritativeWholeModuleExport(
+  assignments: readonly ModuleExportsAssignment[],
+): ModuleExportsAssignment | undefined {
+  const last = assignments.at(-1);
+  if (last === undefined || last.authority !== "unconditional") {
+    return undefined;
+  }
+  return assignments.some((a) => a.authority === "deferred") ? undefined : last;
+}
+
+/**
+ * The whole-module export binding for a file whose `module.exports` writes
+ * {@link selectAuthoritativeWholeModuleExport} refused to collapse into
+ * one value (RWF-014).
+ *
+ * The export still EXISTS — this file assigns `module.exports`, and
+ * dropping the binding entirely would be its own unsound claim (a module
+ * that exports nothing, which downstream absence reasoning could read as
+ * positive evidence). What it carries is nothing: no `localName`, no
+ * `localFunctionLocation`, no `commonJsReExport`. Every one of those would
+ * name one branch, and naming one branch is precisely the defect.
+ *
+ * `location` anchors to the LAST write observed, purely so the binding
+ * points somewhere real in the file; it is a position, not an attribution,
+ * and nothing resolves a target through it.
+ */
+function ambiguousWholeModuleExport(
+  observed: ModuleExportsAssignment,
+): ExportBinding {
+  return {
+    kind: "default",
+    syntax: "commonjs",
+    location: observed.location,
+  };
 }
 
 /**
@@ -882,12 +1079,23 @@ function buildExportBindings(
   }
 
   if (sawCommonJsModuleExports) {
-    const assignment = findLastModuleExportsAssignment(sourceFile);
-    if (assignment) {
-      const unpacked = unpackObjectLiteralExports(index, assignment);
+    // RWF-014: the module's whole exported value comes from the ONE write
+    // that provably decides it, or from nothing at all. Object-literal
+    // unpacking sits inside this gate rather than beside it: the named
+    // bindings it produces (`module.exports = { foo }` -> export `foo`)
+    // describe the contents of ONE assigned object, so a conditionally
+    // assigned literal would publish a branch's export table as the
+    // module's. See {@link selectAuthoritativeWholeModuleExport}.
+    const assignments = collectModuleExportsAssignments(sourceFile);
+    const authoritative = selectAuthoritativeWholeModuleExport(assignments);
+    const observed = assignments.at(-1);
+    if (authoritative) {
+      const unpacked = unpackObjectLiteralExports(index, authoritative);
       results.push(
-        ...(unpacked ?? [wholeModuleDefaultExport(index, assignment)]),
+        ...(unpacked ?? [wholeModuleDefaultExport(index, authoritative)]),
       );
+    } else if (observed) {
+      results.push(ambiguousWholeModuleExport(observed));
     }
   }
 
