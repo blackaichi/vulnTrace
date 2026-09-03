@@ -1020,23 +1020,37 @@ every model a scan builds; with the statement-position walk the suite's
 timings are indistinguishable from before. The result stays
 O(top-level statements), memoized per `ts.SourceFile` in a `WeakMap`.
 
-**Known remaining conservatism** (precision, never soundness):
+**Known remaining limitations.** The second and third below are pure
+precision costs — they refuse more than they strictly must, which is always
+the safe direction. The first is a real boundary of the model and is
+deliberately not claimed as a soundness guarantee:
 
 - a `throw` inside an IIFE is skipped along with every other function
   expression, so an IIFE that throws above a later export write does not
-  withdraw authority. Distinguishing it would mean proving the function
-  expression is invoked immediately — call-graph work, and the same line
-  `classifyWholeModuleExportAuthority` already draws by classifying an
-  IIFE-nested write as `"deferred"`. A module that guards its exports with a
-  throwing IIFE and then rewrites `module.exports` below it is not a shape
-  this analyzer claims to model;
-- a bare conditional `return`/`throw` above a file's only export write
-  withdraws that write's identity even though nothing competes with it —
-  correct (the module may export the default `exports` object instead), but
-  a real precision cost on feature-detect boilerplate;
-- `finally`-clause semantics are not modeled beyond refusal: a write held
-  in a `finally` block is `"conditional"` under RWF-014's existing rule and
-  stays refused, rather than being reasoned about.
+  withdraw authority. This behavior is **unchanged from before this task** —
+  the cutoff model neither introduces nor widens it — and no false
+  NOT_AFFECTED was reproduced for it: an IIFE is a call whose callee is a
+  function expression, which call-graph.ts records as
+  `unknown(unsupported_construct)`, so the reachable subgraph is incomplete
+  and Family C is withdrawn before any negative proof can be issued. That
+  mitigation is incidental rather than designed, which is exactly why this
+  is stated as a limitation and not as "precision only": an uncaught
+  module-scope throw does not by itself make the pre-throw export
+  unobservable, because a CommonJS cycle can capture and retain a
+  partially-initialised `module.exports` (verified against real Node
+  execution). If the IIFE call ever becomes resolvable, or the surrounding
+  uncertainty is otherwise narrowed, this bullet needs re-examining rather
+  than reclassifying. Distinguishing the case properly would mean proving a
+  function expression is invoked immediately — call-graph work, and the same
+  line `classifyWholeModuleExportAuthority` already draws by classifying an
+  IIFE-nested write as `"deferred"`;
+- *(precision)* a bare conditional `return`/`throw` above a file's only
+  export write withdraws that write's identity even though nothing competes
+  with it — correct (the module may export the default `exports` object
+  instead), but a real precision cost on feature-detect boilerplate;
+- *(precision)* `finally`-clause semantics are not modeled beyond refusal: a
+  write held in a `finally` block is `"conditional"` under RWF-014's existing
+  rule and stays refused, rather than being reasoned about.
 
 **Relevant files:** `src/code-intelligence/module-model.ts`
 (`isDefinitelyReachedModuleScopeStatement`, `firstModuleEvaluationCutoff`,
