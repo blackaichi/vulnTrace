@@ -1016,7 +1016,38 @@ function wholeModuleDefaultExport(
   // the bare `module.exports = decode` form does. The value of `x = v` is
   // `v`, so this is the same fact, differently spelled — see
   // {@link unwrapValue}.
-  const rhsValue = unwrapValue(assignment.rhs);
+  //
+  // Gated on {@link isUnconditionalExportAssignment}, for the same reason
+  // every other export-provenance fact in this module is, and this is the
+  // ONE place RWF-012 could have skipped it. Reading through an assignment
+  // turns a right-hand side this relation previously had nothing to say
+  // about into a local NAME, and that name goes on to drive
+  // `mapExportsToFunctions`'s same-file name search. In a conditional or
+  // nested position that would be a branch chosen arbitrarily by source
+  // order and then presented as certainty:
+  //
+  // ```js
+  // if (FLAG) { module.exports = alias = dangerousOp; }
+  // else      { module.exports = alias = safeOp; }
+  // ```
+  //
+  // `findLastModuleExportsAssignment` keeps only the LAST assignment, so
+  // the export would bind to `safeOp` and a complete Family C proof over
+  // that node would report NOT_AFFECTED — while the run that took the
+  // other branch reaches `dangerousOp`. Reproduced end to end as exactly
+  // that false NOT_AFFECTED before this guard existed.
+  //
+  // Un-gated, the raw right-hand side is used instead, which is precisely
+  // the pre-RWF-012 behaviour: a chained assignment is a `BinaryExpression`
+  // and names nothing, so a conditional chained export goes back to
+  // carrying no provenance at all. This deliberately does NOT change the
+  // plain-identifier conditional form (`if (c) { module.exports = fn; }`),
+  // whose raw right-hand side is already an identifier — that is a
+  // separate, older gap in this same relation, and closing it here would
+  // be an unrelated behaviour change smuggled into RWF-012.
+  const rhsValue = isUnconditionalExportAssignment(assignment.rhs)
+    ? unwrapValue(assignment.rhs)
+    : assignment.rhs;
 
   if (ts.isIdentifier(rhsValue)) {
     localName = rhsValue.text;
