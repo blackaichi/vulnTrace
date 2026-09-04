@@ -91,6 +91,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two. The same relation stopped after ONE hop of local-variable indirection, so `const a = require("pkg"); const b = a; module.exports = b` was equally unattributable | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | **Fixed (RWF-012)** |
 | RWF-016 | any CommonJS file with a top-level call to a local, non-reassigned function/arrow whose entire body always throws, above a later export write (real shape: UMD/feature-detect boilerplate that calls a `fail()`/`bail()`-style helper instead of writing a bare `return`/`throw`) | RWF-015 made module-evaluation reachability depend on a literal syntactic `return`/`throw` (`firstModuleEvaluationCutoff`). A CALL to a local function whose own body always throws ends module evaluation exactly as a literal `throw` inlined at the call site would, but RWF-015's model deliberately does not reason about calls at all (and is right not to, for an ARBITRARY call) — so this one narrow, provably-safe exception was still a gap | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over the value the module exports whenever the throwing call's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer can retain the bypassed dangerous export before the call throws | **Fixed (RWF-016)** |
 | RWF-017 | any CommonJS file where the RWF-016 shape's throwing call is written as a variable declaration's initializer (`const x = bail();`) rather than as a bare statement (`bail();`), above a later export write — the same UMD/feature-detect boilerplate family, where the helper's return value is captured instead of discarded | RWF-016 proved the CALLEE (`resolveExactLocalCallable` + `cannotCompleteNormally`) but recognised the CALL in one syntactic position only: `isDefinitelyAbruptCallStatement` opened with `if (!ts.isExpressionStatement(node)) return false`, so a `VariableStatement` whose declarator initializer is that exact call was refused on shape alone. Abrupt module-evaluation behavior is a property of execution semantics — JavaScript evaluates a declarator's initializer as part of executing the declaration — not of whether the `CallExpression` happens to be wrapped in an `ExpressionStatement` | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the initializer's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it | **Fixed (RWF-017)** |
+| RWF-018 | any CommonJS file where the RWF-016/017 shape's throwing call is written as a class STATIC FIELD initializer (`class C { static x = bail(); }`) rather than as a statement, above a later export write — the same UMD/feature-detect family, where the helper's result is captured on a class instead of in a variable | RWF-016 proved the CALLEE and RWF-017 proved that the call's syntactic POSITION does not change the outcome, but both recognised the call only in STATEMENT positions: `isDefinitelyAbruptCallStatement` dispatched on `ExpressionStatement` or `VariableStatement` and refused everything else on shape alone. A static field initializer is neither — it hangs off a `PropertyDeclaration` — and it is executed by CLASS EVALUATION, which is itself part of module evaluation: evaluating a class definition runs its static elements, blocks and field initializers alike, in declaration order. An INSTANCE field is genuinely different and must stay excluded: it is installed by class evaluation and executed per-instance during construction | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it, and — in the same process — that the INSTANCE-field twin genuinely does complete and publish its later export | **Fixed (RWF-018)** |
 
 ---
 
@@ -1779,3 +1780,311 @@ principle leave a later export over-attributed, and each is UNCHANGED from
 `fixtures/commonjs-initializer-throwing-call-export-authority/`,
 `fixtures/commonjs-circular-import-initializer-throw-ground-truth/`, and
 `ADV2-077`.
+
+## RWF-018 — A throwing local call in a CLASS STATIC FIELD INITIALIZER invalidates later CommonJS export authority
+
+**Status: Fixed.** P0 (soundness). Was pre-existing on `main` — NOT
+introduced by RWF-017, but left standing by it, and named there in
+advance: RWF-017's own remaining-limitations note recorded the static-field
+shape as a **separate P0 candidate**, on the grounds that it turns on
+class-evaluation semantics rather than statement-position semantics and
+needs its own runtime ground truth. This entry is that follow-up.
+
+**Discovered:** the final RWF-017 audit. Reproduced independently on
+`origin/main` at `21940fd` (current merged main, with RWF-017 fully in
+place) before any change — both against `buildModuleModel`'s own output
+and end-to-end through the scan.
+
+**Symptom, reproduced end to end before the fix** — see
+`fixtures/commonjs-static-field-throwing-call-export-authority/` and
+`ADV2-078`:
+
+```js
+function dangerousOp(input) { return danger.explode(input); }
+function safeOp(input) { return "safe:" + input; }
+function bail() { throw new Error("fast mode is not supported here"); }
+
+if (process.env.FIXTURE_LIB_MODE === "fast") {
+  module.exports = dangerousOp;
+  class Mode {
+    static probe = "fast";
+    static ready = bail();       // never returns -- ends module evaluation
+    static trailing = "never initialized";
+  }
+}
+module.exports = safeOp;         // top-level, unconditional, NOT always run
+```
+
+with an application that calls the package's whole exported value. The
+file is RWF-016/017's fixture with the call moved into a class body, and
+that is the point: only the position of the `CallExpression` differs.
+
+- **Actual, pre-fix** (verified on the commit before this one, by
+  reverting only `module-model.ts` and re-running this task's own
+  integration test): `NOT_AFFECTED`, with `confirmedUnreachableTarget`
+  present and `reachableSubgraphComplete: true`, over target
+  `fixture-lib/danger#explode`. The whole-module export bound to `safeOp`,
+  the caller's `fixture(input)` got a fully RESOLVED edge to it, and
+  `dangerousOp` was left with no incoming edge at all. Scanning the
+  whole-module target instead returned `AFFECTED` over `safeOp` — a
+  definitive attribution to the wrong branch. `ADV2-078` scored
+  `NOT_AFFECTED` against an expected `UNKNOWN`.
+- **Correct, and delivered:** `UNKNOWN`. Under the flag the module's
+  exported value IS `dangerousOp`, which calls the sink, and the class's
+  static field initializer never returns, so the statement below never
+  executes.
+
+**Root cause, exactly.** `mayEndModuleEvaluation` in
+`src/code-intelligence/module-model.ts` already WALKS into class bodies —
+it must, because a `static { ... }` block has run at class-definition time
+since RWF-015 — and `mayContainClassStaticBlock`'s `/\bstatic\b/` text gate
+already turns the full expression walk on for any file containing the
+token, so the `PropertyDeclaration` for `static ready = bail();` was
+already being visited. The only predicate applied at that node was
+`isDefinitelyAbruptCallStatement`, which opens with:
+
+```ts
+if (ts.isExpressionStatement(node)) { ... }
+if (ts.isVariableStatement(node)) { ... }
+return false;
+```
+
+A `PropertyDeclaration` is neither statement kind, so it fell straight
+through to `return false`. Everything after that — `resolveExactLocalCallable`'s
+lexical-scope walk, the reassignment check, the `async`/generator
+exclusion, `cannotCompleteNormally`'s three-outcome body classifier,
+`isCaughtWithin`'s try/catch rule — was already correct and already
+sufficient. No traversal change was needed; only the predicate applied at
+a node the walker already reached.
+
+**Why a static field is module-evaluation time.** Evaluating a class
+DEFINITION — declaration or expression alike — runs each static element in
+declaration order as part of that evaluation: `static { ... }` blocks and
+`static x = ...` field initializers together. A class at module scope
+therefore executes its static field initializers during module evaluation,
+exactly as a static block does, and a throw out of one propagates out of
+the class definition and out of the `require()` that started the load.
+
+**Why an INSTANCE field is not, and why that distinction is the whole
+argument.** An instance field initializer is INSTALLED by class evaluation
+and evaluated per-instance, during construction. Evaluating
+`class C { x = bail(); }` defines `C` and runs nothing; `bail()` executes
+only if someone later writes `new C()`, which is a caller's decision made
+after this module finished loading — the same reason
+`mayEndModuleEvaluation` skips function bodies. Conflating the two would
+withdraw authority from exports that really are reached, which is a false
+refusal rather than conservatism, so it is refused explicitly and pinned by
+tests at every level (unit, integration fixture, `ADV2-078`'s own
+`class Installed { ready = bail(); }` decoy, and the runtime fixture's
+`c.js`).
+
+**Why ordering inside the class needs no model.**
+`firstModuleEvaluationCutoff` records the enclosing top-level STATEMENT's
+start position, so which static field throws — first, middle or last —
+cannot change the answer: static elements run in declaration order, every
+one of them during this same class definition, and any abrupt one means the
+class definition does not complete. `static a = safe(); static b = bail();
+static c = later();` and `static a = bail(); static b = safe();` therefore
+agree, with no intra-class control-flow graph and no class evaluator.
+
+**Runtime ground truth.** A real, coherent CommonJS circular-import fixture
+was built and executed with actual `node` v26.7.0 (not VulnTrace) — see
+`fixtures/commonjs-circular-import-static-field-throw-ground-truth/README.md`
+for the verbatim transcript. It is RWF-017's ground-truth fixture with the
+call moved into a static field, so the run isolates the question this task
+asks, and it carries the instance-field control in the same process. It
+establishes, non-vacuously:
+
+1. `a.js` assigns `module.exports = dangerousOp` before the class is
+   reached;
+2. class evaluation invokes `bail()` — proven by the log line printed
+   immediately before the class and the absence of the line after it, so
+   the class definition provably did not complete and `C` was never bound;
+   `static before` had already initialized and `static after` never did,
+   which is the declaration-order execution this depends on;
+3. `bail()` throws, and the exception propagates out of the class
+   definition and out of `a.js`'s own `require()`;
+4. the later `module.exports = safeOp` is skipped — `require("./a")`
+   yields `undefined` to the importer, and re-requiring re-throws
+   deterministically, so `safeOp` is never the module's value on this
+   path;
+5. the cycle retains the dangerous export: `b.js` completed loading and
+   holds `retained === dangerousOp`;
+6. the vulnerable sink is genuinely CALLED through it, returning real
+   output (`"EXPLODED:payload-from-entrypoint"`);
+7. the INSTANCE-field twin `c.js`, identical but for the `static` token,
+   completes its class definition, prints that it did NOT call `bail()`,
+   publishes `safeOp`, and throws only when `new C()` is later evaluated.
+
+**The fix.** One new predicate, and it reuses RWF-016/017's proof rather
+than duplicating any part of it. The callee half is untouched:
+`resolveExactLocalCallable` and `cannotCompleteNormally` are called exactly
+as before, through the shared `isDefinitelyAbruptCall`, with every existing
+constraint intact (lexical identity, no same-name guessing, no stale
+reassignment, no methods, no computed calls, no aliases, no imported
+functions, `async`/generator excluded, `const`-only function-expression
+callees, parentheses normalization). What widened is the CALL SITE:
+
+- `isDefinitelyAbruptStaticFieldInitializer(node)` (new) — a
+  `PropertyDeclaration` + `static` modifier + present initializer shape
+  test in front of the shared `isDefinitelyAbruptCall`;
+- `mayEndModuleEvaluation` — now applies that predicate alongside
+  `isDefinitelyAbruptCallStatement` at the nodes it already visits, under
+  the SAME `isCaughtWithin` guard, so a caught class-evaluation throw keeps
+  a later export's authority and a rethrowing `catch` withdraws it, with no
+  separate try/catch rule;
+- `mayContainClassStaticBlock` → `mayContainClassStaticEvaluation`
+  (renamed, same `/\bstatic\b/` test) — the gate now honestly names both
+  constructs it admits, static blocks and static field initializers.
+
+No parallel static-block model was created: static blocks continue to be
+handled exactly as RWF-015/016/017 handle them, through the same walk and
+the same statement predicates, and a class mixing a static block with an
+abrupt static field is answered by whichever the walk reaches first.
+
+**Why this cannot introduce a false NOT_AFFECTED, structurally.**
+Reachability in this model is one comparison:
+`isDefinitelyReachedModuleScopeStatement` returns
+`cutoff === undefined || node.getStart(sf) < cutoff`, where `cutoff` is
+`firstModuleEvaluationCutoff`'s single number. RWF-018 can only make
+`mayEndModuleEvaluation` answer `true` for nodes it previously answered
+`false` for — it removes no case — so the cutoff can only move EARLIER or
+come into existence, never move later or disappear. The set of
+definitely-reached statements therefore only shrinks, and no export can
+gain authority it did not already have on `main`. Every verdict movement
+this change can produce runs `NOT_AFFECTED → UNKNOWN`, never the reverse.
+
+**Verdict movements measured.** `NOT_AFFECTED → UNKNOWN`: 1 (`ADV2-078`,
+plus the analyzer fixture's three integration assertions).
+`UNKNOWN → NOT_AFFECTED`: 0. New false `AFFECTED`: 0. The real-world
+validation baseline is bit-identical (12 PASS / 5 KNOWN_FAIL / 0
+UNEXPECTED / 17 total), adversarial v1 is 34/34 and v2 is 78/78, and the
+full unit/integration suite is 2,300/2,300 across 103 files.
+
+**Real-corpus incidence.** An AST pass (not a regex) over 3,198
+`.js`/`.cjs`/`.mjs` files — the full vendored dependency tree plus every
+fixture and real-world benchmark package — looking for a class
+declaration/expression with a `static` `PropertyDeclaration` whose
+initializer is a direct identifier `CallExpression` resolving to a local
+top-level throw-only function, with a later export write, found:
+
+- 237 files containing the token `static` at all;
+- 1,557 class declarations/expressions;
+- 481 STATIC fields with an initializer (and 791 INSTANCE fields with one
+  — the shape that must NOT be acted on, and by a wide margin the more
+  common of the two in real code);
+- 4 whose static-field initializer is a direct identifier call;
+- **4** where that callee is throw-only above a later export write — and
+  all four are RWF-018's own fixtures (one of them, `ADV2-078`'s
+  `class Deferred` inside `configure`, is a deliberately DEFERRED decoy the
+  analyzer correctly does not act on; this probe is a superset and does not
+  model deferral).
+
+Zero real-world matches, hence zero attribution or verdict delta on the
+corpus, which is exactly what the unchanged validation baseline shows.
+Correctness here is deliberately not conditional on that count being small:
+the shape is a genuine, coherent CommonJS idiom, it is the same
+UMD/feature-detect family RWF-015, RWF-016 and RWF-017 found in the wild,
+and the runtime fixture proves the hazard independently of how often it is
+currently vendored here.
+
+**Performance.** The added work is a `ts.isPropertyDeclaration` kind check
+plus a modifier scan on nodes the cutoff walker already visits, and only in
+files whose text contains `static` at all (237 of 3,198 here — the gate was
+already there for static blocks and is unchanged). When a static field's
+initializer really is a direct identifier call, it reuses RWF-016's
+existing, already-memoized callable-summary lookups. No new traversal, no
+class CFG, no expression interpreter, no whole-file rescan per field, no
+fixed point. `scan-performance`'s large-single-file fixture — whose text
+contains no `static` at all, so this code path is provably unreachable for
+it — measured 1,764ms / 1,846ms / 2,454ms with the fix against 2,019ms for
+the same fixture with the fix reverted (4,500ms threshold): run-to-run
+noise, no measurable regression. (One 6,392ms reading was observed for that
+test inside the fully parallel 103-file suite run and did not reproduce in
+isolation on either branch or base; it is scheduling contention, not this
+change.)
+
+**Newly characterised, all still open, all UNCHANGED from `main`.** Each
+was probed directly against `main` rather than assumed, using the same
+reproducer shape. None is introduced or worsened here; they are recorded so
+the next task can pick them up rather than rediscover them:
+
+- *(soundness, separate P0 follow-up)* a COMPUTED static field key,
+  `class C { static [bail()] = 1; }`, reproduces a false `NOT_AFFECTED` on
+  `main` and still does. It is deliberately NOT fixed here: computed keys
+  are evaluated at class-definition time for INSTANCE members, METHODS and
+  ACCESSORS too — `static [bail()] = 1`, `[bail()] = 1`, `[bail()]() {}`,
+  `static [bail()]() {}` and `get [bail()]() {}` were each probed directly
+  and all five behave identically, on `main` and on this branch — so a
+  correct fix is a key-position rule covering every class element, not a
+  static-field rule; folding a partial version of it in behind
+  `isDefinitelyAbruptStaticFieldInitializer` would have shipped
+  inconsistent coverage under a name that does not describe it. Recorded as
+  the RWF-019 candidate;
+- *(soundness, same expression-boundary family RWF-017 already recorded)*
+  `static x = bail() || 1;` and `static x = (bail(), value);` both evaluate
+  the call unconditionally at runtime and both keep authority on `main` and
+  on this branch. These are the LHS/first-operand positions, which are
+  genuinely always evaluated, unlike `flag && bail()` and
+  `flag ? bail() : v` (correctly refused — the call genuinely may not
+  happen). They belong to the one arbitrary-expression-evaluation gap
+  RWF-017 named, and closing it properly means an evaluation-order model
+  over expression trees rather than a shape test;
+- *(precision)* `static x = foo(bail());`, `static x = [bail()];`,
+  `static x = { v: bail() };` and ``static x = `v${bail()}` `` are all
+  evaluated at runtime and all keep authority — the same boundary, listed
+  separately because argument, element, property and template-hole
+  positions are the shapes most likely to appear first in real code;
+- *(precision)* `static x = new bail();` is a `NewExpression`, not a
+  `CallExpression`, and is not recognised — unchanged from RWF-017;
+- *(precision, the one shape this branch makes MORE conservative)* a
+  nested class carrying an abrupt static field, written inside an INSTANCE
+  field's initializer — `class C { x = class { static y = bail(); }; }` —
+  now reports a cutoff where `main` did not. At runtime the outer instance
+  field never evaluates at class-definition time, so the inner class is
+  never evaluated either and the later export really is reached; the cutoff
+  is therefore an over-approximation. It is accepted deliberately: the
+  walker does not model which expressions are evaluated, only which
+  constructs execute at class-definition time, and `main` already behaves
+  exactly this way for the static-BLOCK spelling of the same shape
+  (`class C { x = class { static { throw ...; } }; }` reports a cutoff on
+  `main` today). Making the static-field case match it keeps one model
+  rather than two, and errs toward UNKNOWN, never toward a negative proof.
+  Confirmed by direct differential probe: base `second`, branch refused,
+  static-block spelling refused on both;
+- *(precision)* a throwing IIFE in a static field initializer
+  (`static x = (() => { throw ...; })();`) does not withdraw authority, for
+  exactly the reason RWF-015 documented for IIFEs generally and RWF-016/017
+  left unchanged;
+- *(unchanged from `main`)* a CLASS NAME shadow (`class bail { static x =
+  bail(); }`) is not modeled by `scopeDeclares`, which does not treat a
+  class's own name binding as shadowing inside its body. This branch
+  deliberately does NOT change it: `scopeDeclares` is part of the lexical
+  resolution RWF-018 is scoped to reuse verbatim, and adding the shadow
+  would make the analyzer KEEP authority for a later export that a real
+  Node run never reaches (calling a class without `new` throws a
+  TypeError), i.e. it would introduce the very false `NOT_AFFECTED` this
+  task exists to remove. The pre-existing "calling a class throws" gap is
+  its own separate question and is untouched either way; on this branch the
+  shape happens to be refused, which is the sound direction;
+- *(unchanged from `main`)* a transitive `a() -> b() -> throw` chain is
+  still not recognised (direct local body proof only), a conditional-throw
+  callee is still correctly kept, a throwing shadow declared in the call's
+  OWN block still fails closed through `resolveExactLocalCallable`, and a
+  `for` statement's own initializer is still unmodeled. RWF-018 reuses
+  `resolveExactLocalCallable` verbatim and changes none of them.
+
+**Relevant files:** `src/code-intelligence/module-model.ts`
+(`isDefinitelyAbruptStaticFieldInitializer` (new), `mayEndModuleEvaluation`
+(one predicate added at an already-visited node),
+`mayContainClassStaticBlock` → `mayContainClassStaticEvaluation` (renamed,
+same test), `isDefinitelyAbruptCallStatement` (doc only);
+`isDefinitelyAbruptCall`, `declarationListCannotCompleteNormally`,
+`resolveExactLocalCallable`, `cannotCompleteNormally`, `isCaughtWithin`,
+`reassignedModuleReachableNames`, `topLevelCallableCandidates`,
+`isAsyncOrGeneratorCallable` all reused UNCHANGED); regressions in
+`module-model.static-field-throwing-call-export-authority.test.ts`,
+`verdict.static-field-throwing-call-export-authority.integration.test.ts`,
+`fixtures/commonjs-static-field-throwing-call-export-authority/`,
+`fixtures/commonjs-circular-import-static-field-throw-ground-truth/`, and
+`ADV2-078`.
