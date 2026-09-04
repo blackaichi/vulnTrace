@@ -1,0 +1,6 @@
+{
+  "name": "rwf-016-circular-import-ground-truth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs"
+}
