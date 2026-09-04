@@ -671,7 +671,7 @@ function firstModuleEvaluationCutoff(
     return cached.start;
   }
 
-  const scanExpressions = mayContainClassStaticBlock(sourceFile);
+  const scanExpressions = mayContainClassStaticEvaluation(sourceFile);
   let start: number | undefined;
   for (const statement of sourceFile.statements) {
     if (mayEndModuleEvaluation(statement, scanExpressions)) {
@@ -687,10 +687,11 @@ function firstModuleEvaluationCutoff(
 /**
  * Whether evaluating this one top-level statement can end module
  * evaluation rather than falling through to the next statement (RWF-015;
- * widened by RWF-016).
+ * widened by RWF-016, RWF-017 and RWF-018).
  *
  * Three constructs qualify — all of them ABRUPT COMPLETIONS, and the third
- * only when {@link isDefinitelyAbruptCallStatement} has PROVEN it is one,
+ * only when {@link isDefinitelyAbruptCallStatement} or
+ * {@link isDefinitelyAbruptStaticFieldInitializer} has PROVEN it is one,
  * never merely suspected it might be:
  *
  * - **`return`** — legal at CommonJS module scope because Node evaluates
@@ -704,10 +705,13 @@ function firstModuleEvaluationCutoff(
  * - **a call to `bail()`** whose callee this file's own text proves is
  *   an exact, non-reassigned local function/arrow that can only ever
  *   itself throw (RWF-016; see {@link isDefinitelyAbruptCallStatement}) —
- *   written either as a bare statement (`bail();`, RWF-016) or as a
+ *   written either as a bare statement (`bail();`, RWF-016), as a
  *   variable declaration's initializer (`const x = bail();`, RWF-017,
- *   which the language evaluates when the declaration executes). Such a
- *   call is exactly as terminal as the literal `throw` inside `bail`'s
+ *   which the language evaluates when the declaration executes), or as a
+ *   class STATIC FIELD's initializer (`class C { static x = bail(); }`,
+ *   RWF-018, which the language evaluates when the class DEFINITION
+ *   executes — see {@link isDefinitelyAbruptStaticFieldInitializer}). Such
+ *   a call is exactly as terminal as the literal `throw` inside `bail`'s
  *   body would be if inlined at the call site, and is caught by an
  *   enclosing `try`/`catch` under the identical rule
  *   {@link isCaughtWithin} already applies to a literal `throw`.
@@ -740,10 +744,13 @@ function firstModuleEvaluationCutoff(
  * ```
  *
  * Class bodies are NOT skipped, for the symmetric reason: a
- * `static { ... }` block runs at class-definition time, i.e. during module
- * evaluation, so a throw inside one really can abort the load. Methods and
+ * `static { ... }` block and a `static x = ...` FIELD INITIALIZER both run
+ * at class-definition time, i.e. during module evaluation, so an abrupt
+ * completion in either really can abort the load (RWF-018). Methods and
  * accessors inside that same class body are skipped by the function-like
- * test, as they should be.
+ * test, as they should be, and so — for the opposite reason — is the
+ * per-instance execution of an INSTANCE field initializer, which
+ * {@link isDefinitelyAbruptStaticFieldInitializer} declines to act on.
  *
  * An IIFE is skipped along with every other function expression. That is
  * the conservative direction here rather than the risky one: skipping it
@@ -772,7 +779,8 @@ function mayEndModuleEvaluation(
     if (
       ts.isReturnStatement(node) ||
       (ts.isThrowStatement(node) && !isCaughtWithin(node, statement)) ||
-      (isDefinitelyAbruptCallStatement(node) &&
+      ((isDefinitelyAbruptCallStatement(node) ||
+        isDefinitelyAbruptStaticFieldInitializer(node)) &&
         !isCaughtWithin(node, statement))
     ) {
       found = true;
@@ -827,20 +835,24 @@ function mayContainNestedStatements(node: ts.Node): boolean {
 }
 
 /**
- * Whether this file could contain a class `static` block, and therefore
- * needs {@link mayEndModuleEvaluation}'s full expression walk to be
- * classified correctly (RWF-015).
+ * Whether this file could contain a class element that EXECUTES at
+ * class-definition time — a `static { ... }` block (RWF-015) or a
+ * `static x = ...` field initializer (RWF-018) — and therefore needs
+ * {@link mayEndModuleEvaluation}'s full expression walk to be classified
+ * correctly.
  *
- * A static block is the one construct that puts statements inside an
- * expression without a function body around them, and it cannot exist
- * unless the token `static` appears in the file. Testing the raw text for
- * that word is a sound over-approximation: a `static` in a comment, a
- * string, or an ordinary static METHOD modifier costs that one file the
- * fast walk and changes no answer, while a file containing no `static` at
- * all provably has no static block — which makes the cheap
- * statement-position walk exactly complete rather than merely close.
+ * Those two are the only constructs that run code inside an EXPRESSION
+ * without a function body around them: a static block is the only place a
+ * statement can sit there, and a static field initializer the only place
+ * an expression is evaluated there. Neither can exist unless the token
+ * `static` appears in the file, so the same one-line text test gates both.
+ * It is a sound over-approximation: a `static` in a comment, a string, or
+ * an ordinary static METHOD modifier costs that one file the fast walk and
+ * changes no answer, while a file containing no `static` at all provably
+ * has neither — which makes the cheap statement-position walk exactly
+ * complete rather than merely close.
  */
-function mayContainClassStaticBlock(sourceFile: ts.SourceFile): boolean {
+function mayContainClassStaticEvaluation(sourceFile: ts.SourceFile): boolean {
   return /\bstatic\b/.test(sourceFile.text);
 }
 
@@ -1003,7 +1015,7 @@ function reassignedModuleReachableNames(
     return cached;
   }
 
-  const scanExpressions = mayContainClassStaticBlock(sourceFile);
+  const scanExpressions = mayContainClassStaticEvaluation(sourceFile);
   const reassigned = new Set<string>();
 
   /**
@@ -1562,6 +1574,78 @@ function declarationListCannotCompleteNormally(
     }
   }
   return false;
+}
+
+/**
+ * Whether `node` is a class STATIC FIELD whose initializer necessarily
+ * invokes a definitely-abrupt local callee, so that evaluating the
+ * enclosing class ends module evaluation rather than completing (RWF-018).
+ *
+ * ```js
+ * class C { static x = bail(); }   // qualifies
+ * const C = class { static x = bail(); };  // qualifies -- same evaluation
+ * class C { x = bail(); }          // does NOT qualify: instance field
+ * class C { static x; }            // does NOT qualify: no initializer
+ * ```
+ *
+ * **Why a static field is module-evaluation time.** Evaluating a class
+ * DEFINITION — a declaration or an expression alike — runs each static
+ * element in declaration order as part of that evaluation, static blocks
+ * and static field initializers together. So a `class` sitting at module
+ * scope executes its static field initializers during module evaluation,
+ * exactly as a `static { ... }` block does, and a throw out of one
+ * propagates out of the class definition and out of the `require()` that
+ * started the load. Nothing below the class runs — including a later
+ * `module.exports = safeOp`, which a cyclic importer therefore never sees.
+ *
+ * **Why an INSTANCE field is not.** An instance field initializer is
+ * installed on the class and evaluated per-INSTANCE, during construction.
+ * Evaluating `class C { x = bail(); }` defines `C` and runs nothing;
+ * `bail()` executes only if someone later writes `new C()`, which is a
+ * caller's decision made after this module finished loading — the same
+ * reason {@link mayEndModuleEvaluation} skips function bodies. Conflating
+ * the two would withdraw authority from exports that really are reached.
+ *
+ * **Ordering needs no model.** {@link firstModuleEvaluationCutoff} records
+ * the enclosing top-level STATEMENT's start, so which static field throws
+ * — first, middle or last — cannot change the answer: static elements run
+ * in declaration order, every one of them during this same class
+ * definition, and any abrupt one means the class definition does not
+ * complete. `static a = safe(); static b = bail(); static c = later();`
+ * and `static a = bail(); static b = safe();` therefore agree, with no
+ * intra-class control-flow graph.
+ *
+ * Everything about the CALL is RWF-016/017's, reused verbatim through
+ * {@link isDefinitelyAbruptCall}: the exact non-reassigned local callee
+ * ({@link resolveExactLocalCallable}), the always-throws body proof
+ * ({@link cannotCompleteNormally}), the `async`/generator exclusions, and
+ * the parentheses normalization that makes `static x = (bail());` work.
+ * A caught class-evaluation throw is likewise handled by the existing
+ * {@link isCaughtWithin} at the call site in {@link mayEndModuleEvaluation}
+ * — `try { class C { static x = bail(); } } catch {}` keeps a later
+ * export's authority, and a rethrowing `catch` withdraws it.
+ *
+ * Only the field's INITIALIZER is inspected, and only when it is that call
+ * written directly. A COMPUTED KEY (`static [bail()] = 1`) is deliberately
+ * NOT recognised here even though it is also evaluated at class-definition
+ * time: computed keys evaluate for instance members and methods too, which
+ * makes them a different rule with a different scope, recorded as a
+ * separate follow-up in tests/validation/FINDINGS.md rather than folded in
+ * behind a static-field name. Nor is an initializer the call merely
+ * appears somewhere inside (`static x = foo(bail())`, `[bail()]`,
+ * `` `${bail()}` ``) — that is the same arbitrary-expression-evaluation
+ * boundary {@link isDefinitelyAbruptCall} already draws and documents.
+ */
+function isDefinitelyAbruptStaticFieldInitializer(node: ts.Node): boolean {
+  return (
+    ts.isPropertyDeclaration(node) &&
+    node.initializer !== undefined &&
+    ts
+      .getModifiers(node)
+      ?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ===
+      true &&
+    isDefinitelyAbruptCall(node.initializer)
+  );
 }
 
 /**

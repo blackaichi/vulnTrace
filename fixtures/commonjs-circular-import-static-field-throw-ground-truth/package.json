@@ -1,0 +1,6 @@
+{
+  "name": "rwf-018-circular-import-static-field-ground-truth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs"
+}
