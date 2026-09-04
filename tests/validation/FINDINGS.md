@@ -90,6 +90,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-015 | `dunder-proto` (real, vendored under the `RWB-05` fixture); any CommonJS file with a top-level `return`/`throw` above a later export write (browser/node feature-detect boilerplate is the common real shape) | RWF-014 made whole-module export authority depend on the last write being an UNCONDITIONAL top-level statement. Node wraps every CommonJS module in a function, so a module-scope `return` is legal and ends module evaluation, and an uncaught module-scope `throw` propagates out of the `require()` — either one leaves a later, syntactically unconditional write unexecuted. Every export-provenance gate asked whether a write was unconditional when the property it needed was whether the write is REACHED | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over the value the module exports on every early-exit load; shared verbatim by property exports, object-literal, class, chained-alias and require-re-export attribution | **Fixed (RWF-015)** |
 | RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two. The same relation stopped after ONE hop of local-variable indirection, so `const a = require("pkg"); const b = a; module.exports = b` was equally unattributable | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | **Fixed (RWF-012)** |
 | RWF-016 | any CommonJS file with a top-level call to a local, non-reassigned function/arrow whose entire body always throws, above a later export write (real shape: UMD/feature-detect boilerplate that calls a `fail()`/`bail()`-style helper instead of writing a bare `return`/`throw`) | RWF-015 made module-evaluation reachability depend on a literal syntactic `return`/`throw` (`firstModuleEvaluationCutoff`). A CALL to a local function whose own body always throws ends module evaluation exactly as a literal `throw` inlined at the call site would, but RWF-015's model deliberately does not reason about calls at all (and is right not to, for an ARBITRARY call) — so this one narrow, provably-safe exception was still a gap | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over the value the module exports whenever the throwing call's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer can retain the bypassed dangerous export before the call throws | **Fixed (RWF-016)** |
+| RWF-017 | any CommonJS file where the RWF-016 shape's throwing call is written as a variable declaration's initializer (`const x = bail();`) rather than as a bare statement (`bail();`), above a later export write — the same UMD/feature-detect boilerplate family, where the helper's return value is captured instead of discarded | RWF-016 proved the CALLEE (`resolveExactLocalCallable` + `cannotCompleteNormally`) but recognised the CALL in one syntactic position only: `isDefinitelyAbruptCallStatement` opened with `if (!ts.isExpressionStatement(node)) return false`, so a `VariableStatement` whose declarator initializer is that exact call was refused on shape alone. Abrupt module-evaluation behavior is a property of execution semantics — JavaScript evaluates a declarator's initializer as part of executing the declaration — not of whether the `CallExpression` happens to be wrapped in an `ExpressionStatement` | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the initializer's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it | **Fixed (RWF-017)** |
 
 ---
 
@@ -1541,3 +1542,240 @@ than they strictly must, which is always the safe direction:
 `fixtures/commonjs-local-throwing-call-export-authority/`,
 `fixtures/commonjs-circular-import-throwing-export-ground-truth/`, and
 `ADV2-076`.
+
+---
+
+## RWF-017 — A throwing local call in a VARIABLE DECLARATION'S INITIALIZER invalidates later CommonJS export authority
+
+**Status: Fixed.** P0 (soundness). Was pre-existing on `main` — NOT
+introduced by RWF-016, but left standing by it: RWF-016 proved the callee
+and then recognised the call in exactly one syntactic position.
+
+**Discovered:** the final RWF-016 audit, which observed that the same
+resolvable, always-throwing local call has the same runtime consequence
+when its return value is captured (`const result = bail();`) as when it is
+discarded (`bail();`). Reproduced independently on `origin/main` at
+`1e80f7a` (current merged main, with RWF-016 fully in place) before any
+change.
+
+**Symptom, reproduced end to end before the fix** — see
+`fixtures/commonjs-initializer-throwing-call-export-authority/` and
+`ADV2-077`:
+
+```js
+function dangerousOp(input) { return danger.explode(input); }
+function safeOp(input) { return "safe:" + input; }
+function bail() { throw new Error("fast mode is not supported here"); }
+
+if (process.env.FIXTURE_LIB_MODE === "fast") {
+  module.exports = dangerousOp;
+  const result = bail();         // never returns -- ends module evaluation
+}
+module.exports = safeOp;         // top-level, unconditional, NOT always run
+```
+
+with an application that calls the package's whole exported value. The
+file is RWF-016's fixture with one character-level change, and that is the
+point: only the syntactic position of the `CallExpression` differs.
+
+- **Actual, pre-fix** (verified on the commit before this one, and against
+  `buildModuleModel`'s own output as well as the final verdict):
+  `NOT_AFFECTED`, with `confirmedUnreachableTarget` present and
+  `reachableSubgraphComplete: true`. The whole-module export bound to
+  `safeOp`, the caller's `fixture(input)` got a fully RESOLVED edge to it,
+  and `dangerousOp` was left with no incoming edge at all. Scanning the
+  whole-module target instead returned `AFFECTED` over `safeOp` — a
+  definitive attribution to the wrong branch.
+- **Correct, and delivered:** `UNKNOWN`. Under the flag the module's
+  exported value IS `dangerousOp`, which calls the sink, and the
+  initializer's call never returns, so the statement below never executes.
+
+**Root cause, exactly.** `isDefinitelyAbruptCallStatement` in
+`src/code-intelligence/module-model.ts` opened with:
+
+```ts
+if (!ts.isExpressionStatement(node)) {
+  return false;
+}
+```
+
+Everything after that line — `resolveExactLocalCallable`'s lexical-scope
+walk, the reassignment check, the `async`/generator exclusion,
+`cannotCompleteNormally`'s three-outcome body classifier — was already
+correct and already sufficient. The single shape test in front of it was
+the whole defect: a `VariableStatement` never reached any of it.
+`mayEndModuleEvaluation` already VISITS the `VariableStatement` (it is a
+statement, and the walk descends through blocks, `if` arms, `switch`
+clauses and `try` blocks to reach it), so no traversal change was needed
+either — only the predicate applied at that node.
+
+**Runtime ground truth.** A real, coherent CommonJS circular-import
+fixture was built and executed with actual `node` (not VulnTrace) — see
+`fixtures/commonjs-circular-import-initializer-throw-ground-truth/README.md`
+for the verbatim transcript. It is RWF-016's ground-truth fixture with the
+same one change, so the run isolates the question this task asks. It
+establishes, non-vacuously:
+
+1. `a.js` assigns `module.exports = dangerousOp` before the initializer
+   statement is reached;
+2. the declaration `const result = bail();` invokes `bail()` — proven by
+   the log line printed immediately before it and the absence of the line
+   after it, so the declaration provably did not complete and `result` was
+   never bound;
+3. `bail()` throws, and the exception propagates out of `a.js`'s own
+   `require()`;
+4. the later `module.exports = safeOp` is skipped — `require("./a")`
+   yields `undefined` to the importer, and re-requiring re-throws
+   deterministically, so `safeOp` is never the module's value on this
+   path;
+5. the cycle retains the dangerous export: `b.js` completed loading and
+   holds `retained === dangerousOp`;
+6. the vulnerable sink is genuinely CALLED through it, returning real
+   output (`"EXPLODED:payload-from-entrypoint"`).
+
+**The fix.** RWF-016's proof is factored out rather than duplicated. The
+callee half is untouched: `resolveExactLocalCallable` and
+`cannotCompleteNormally` are called exactly as before, with every existing
+constraint intact (lexical identity, no same-name guessing, no stale
+reassignment, no methods, no computed calls, no aliases, no imported
+functions, `async`/generator excluded, `const`-only function-expression
+callees). What widened is the CALL SITE:
+
+- `isDefinitelyAbruptCall(expression)` — the shared core, an
+  unwrap-parentheses + direct-`CallExpression` + identifier-callee shape
+  test in front of RWF-016's two proofs;
+- `declarationListCannotCompleteNormally(list)` — scans declarators LEFT
+  TO RIGHT, the order the language evaluates them in, and answers `true`
+  at the first one whose initializer is a proven-abrupt call;
+- `isDefinitelyAbruptCallStatement(node)` — now dispatches on
+  `ExpressionStatement` (RWF-016) or `VariableStatement` (RWF-017).
+
+**Why left-to-right scanning needs no expression evaluator.** For
+`const a = safe(), b = bail(), c = later();`, every declarator before the
+abrupt one either completed normally — in which case `b` is reached and
+throws — or was itself abrupt. Both readings agree that the statement
+cannot complete normally, so the relation never has to decide which one
+holds. `const a = bail(), b = safe();` and `const a = other(), b = bail();`
+follow from the same argument.
+
+**Why this cannot introduce a false NOT_AFFECTED, structurally.**
+Reachability in this model is one comparison:
+`isDefinitelyReachedModuleScopeStatement` returns
+`cutoff === undefined || node.getStart(sf) < cutoff`, where `cutoff` is
+`firstModuleEvaluationCutoff`'s single number. RWF-017 can only make
+`mayEndModuleEvaluation` answer `true` for statements it previously
+answered `false` for — it removes no case — so the cutoff can only move
+EARLIER or come into existence, never move later or disappear. The set of
+definitely-reached statements therefore only shrinks, and no export can
+gain authority it did not already have on `main`. Every verdict movement
+this change can produce runs `NOT_AFFECTED → UNKNOWN`, never the reverse.
+
+**Verdict movements measured.** `NOT_AFFECTED → UNKNOWN`: 1 (`ADV2-077`,
+plus the analyzer fixture's three integration assertions).
+`UNKNOWN → NOT_AFFECTED`: 0. New false `AFFECTED`: 0. The real-world
+validation baseline is bit-identical (12 PASS / 5 KNOWN_FAIL / 0
+UNEXPECTED / 17 total), adversarial v1 is 34/34 and v2 is 77/77.
+
+**Real-corpus incidence.** An AST pass (not a regex) over 3,173
+`.js`/`.cjs`/`.mjs` files — the full vendored dependency tree plus every
+real-world benchmark package (`lodash`, `qs`, `semver`, `node-forge`,
+`handlebars`, `ini`, `ms`, `fast-xml-parser`, ...) — looking for a
+module-reachable `VariableDeclaration` whose initializer is a direct
+`CallExpression` resolving to a local top-level throw-only function, with
+a later export write, found:
+
+- 17,545 module-reachable `VariableStatement`s;
+- 7,167 whose initializer is a direct `CallExpression`;
+- 1,167 whose callee is a plain identifier bound to a local top-level
+  function/arrow;
+- **2** where that callee is throw-only above a later export write — and
+  both are RWF-017's own fixtures.
+
+Zero real-world matches, hence zero attribution or verdict delta on the
+corpus, which is exactly what the unchanged validation baseline shows.
+Correctness here is deliberately not conditional on that count being
+small: the shape is a genuine, coherent CommonJS idiom, it is the same
+UMD/feature-detect family RWF-015 and RWF-016 found in the wild, and the
+runtime fixture proves the hazard independently of how often it is
+currently vendored here.
+
+**Performance.** The added work is a `ts.isVariableStatement` kind check
+on nodes the cutoff walker already visits, plus, only when an initializer
+really is a direct identifier call, RWF-016's existing (already memoized)
+callable-summary lookups. No new traversal, no expression CFG, no
+whole-file scan per initializer, no fixed point, no target execution. The
+corpus numbers above bound the extra resolutions at ~1,167 across 3,173
+files. `scan-performance`'s large-single-file fixture measured 1,811ms
+with the fix against 2,426ms for the same fixture with the fix reverted
+(4,500ms threshold) — run-to-run noise, no measurable regression.
+
+**Known remaining limitations.** All precision costs except where marked.
+They refuse more than they strictly must, which for a cutoff relation is
+the direction that loses precision rather than soundness *only* where
+noted — the unmarked entries are shapes where a missed cutoff could in
+principle leave a later export over-attributed, and each is UNCHANGED from
+`main` rather than introduced here:
+
+- *(precision)* only a DIRECT initializer call is recognised. `const x =
+  foo(bail());` and `const x = (bail(), value);` do evaluate `bail()`
+  under ordinary JS evaluation order, but recognising them means walking
+  arbitrary expression trees with a real evaluation-order model rather
+  than a shape test; deliberately unmodeled. `const x = flag && bail();`,
+  `const x = flag ? bail() : v;` and `const x = obj?.bail();` are
+  correctly refused — the call genuinely may not happen;
+- *(precision, sound)* `const x = bail?.()` IS recognised, and needs no
+  special case: an exactly-resolved local callee is a hoisted function
+  declaration or a never-reassigned `const`-bound function expression, so
+  it is never nullish and the optional call always executes;
+- *(unchanged from `main`)* a `for` statement's own initializer
+  (`for (let x = bail(); ...)`) is a `VariableDeclarationList`, not a
+  `VariableStatement`, and is not recognised. Loops keep the conservative
+  treatment RWF-015 already gives them; `for (const x of bail())`'s RHS is
+  likewise unmodeled;
+- *(unchanged from `main`, worth a follow-up)* a class STATIC FIELD
+  initializer (`class C { static x = bail(); }`) executes during class
+  evaluation, i.e. during module evaluation, and is NOT recognised — the
+  initializer sits on a `PropertyDeclaration`, which is neither statement
+  kind. A class `static { ... }` BLOCK is recognised, both for `bail();`
+  (RWF-016) and now for `const q = bail();` (RWF-017). The static-field
+  shape can in principle reproduce a false `NOT_AFFECTED` and is recorded
+  here as a **separate P0 candidate**: it turns on class-evaluation
+  semantics (field ordering, `this` binding, computed keys) rather than on
+  statement-position semantics, needs its own runtime ground truth, and
+  fixing it here would have widened this task past the boundary it was
+  scoped to;
+- *(unchanged from `main`, worth a follow-up)* an object-literal property
+  initializer (`const x = { value: bail() };`) is evaluated during object
+  construction but is not recognised, for the same
+  no-expression-evaluator reason as the argument-position case;
+- *(unchanged from `main`)* `const x = new bail();` is a `NewExpression`,
+  not a `CallExpression`, and is not recognised;
+- *(unchanged from `main`)* the three shapes the RWF-016 audit recorded
+  are all still open and all still behave exactly as they do on `main`,
+  verified directly rather than assumed: a conditional-throw callee
+  (correctly keeps authority), a throwing shadow declared in the call's
+  OWN block (`resolveExactLocalCallable` refuses on the shadow and the
+  later export keeps authority — the pre-existing fail-open the audit
+  named), and a transitive `a() -> b() -> throw` chain (not recognised;
+  direct local body proof only). RWF-017 reuses
+  `resolveExactLocalCallable` verbatim and changes none of them. The
+  shadow case does not block RWF-017: the new path fails closed through
+  the same resolver, so it can only decline to act, never resolve to the
+  wrong callee;
+- *(unchanged from RWF-015/016)* a throwing IIFE still does not withdraw a
+  later export's authority, and `scopeDeclares` still does not consider
+  function parameters — latent, because no call site offered to it sits in
+  a parameter scope; deliberately not broadened here.
+
+**Relevant files:** `src/code-intelligence/module-model.ts`
+(`isDefinitelyAbruptCall` (new), `declarationListCannotCompleteNormally`
+(new), `isDefinitelyAbruptCallStatement` (widened),
+`mayEndModuleEvaluation` (doc only); `resolveExactLocalCallable`,
+`cannotCompleteNormally`, `isCaughtWithin`,
+`reassignedModuleReachableNames`, `topLevelCallableCandidates`,
+`isAsyncOrGeneratorCallable` all reused UNCHANGED); regressions in
+`module-model.initializer-throwing-call-export-authority.test.ts`,
+`verdict.initializer-throwing-call-export-authority.integration.test.ts`,
+`fixtures/commonjs-initializer-throwing-call-export-authority/`,
+`fixtures/commonjs-circular-import-initializer-throw-ground-truth/`, and
+`ADV2-077`.
