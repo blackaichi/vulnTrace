@@ -701,12 +701,15 @@ function firstModuleEvaluationCutoff(
  * - **`throw`** whose exception is not caught inside this same statement.
  *   An uncaught module-scope throw propagates out of the `require()` that
  *   started the load, so nothing below it runs either.
- * - **a bare call `bail();`** whose callee this file's own text proves is
+ * - **a call to `bail()`** whose callee this file's own text proves is
  *   an exact, non-reassigned local function/arrow that can only ever
- *   itself throw (RWF-016; see {@link isDefinitelyAbruptCallStatement}).
- *   Such a call is exactly as terminal as the literal `throw` inside
- *   `bail`'s body would be if inlined at the call site, and is caught by
- *   an enclosing `try`/`catch` under the identical rule
+ *   itself throw (RWF-016; see {@link isDefinitelyAbruptCallStatement}) —
+ *   written either as a bare statement (`bail();`, RWF-016) or as a
+ *   variable declaration's initializer (`const x = bail();`, RWF-017,
+ *   which the language evaluates when the declaration executes). Such a
+ *   call is exactly as terminal as the literal `throw` inside `bail`'s
+ *   body would be if inlined at the call site, and is caught by an
+ *   enclosing `try`/`catch` under the identical rule
  *   {@link isCaughtWithin} already applies to a literal `throw`.
  *
  * What is deliberately NOT modeled, because the answer would need
@@ -1458,37 +1461,145 @@ function cannotCompleteNormally(
 }
 
 /**
- * Whether `node` is a bare call statement (`bail();`) that RWF-016 proves
- * always ends module evaluation, uncaught. Deliberately narrow — only a
- * top-level EXPRESSION STATEMENT whose (unwrapped) expression is directly
- * a `CallExpression` with a plain identifier callee qualifies:
+ * Whether evaluating `expression` — exactly as written, with no
+ * surrounding operator or branch to get in the way — necessarily invokes a
+ * callee this file's own text proves can only ever throw (RWF-016's
+ * proof, factored out by RWF-017 so both call POSITIONS can share it).
+ *
+ * Only a directly-written `CallExpression` with a plain identifier callee
+ * qualifies; `unwrapParentheses` is applied first because parentheses
+ * change nothing about evaluation:
  *
  * ```text
- * bail();                 -- qualifies, when resolveExactLocalCallable +
+ * bail()                   -- qualifies, when resolveExactLocalCallable +
  *                             cannotCompleteNormally both prove out
- * obj.bail();              -- refused: not a plain identifier callee
- * registry[name]();        -- refused: not a plain identifier callee
- * const x = bail();        -- refused: not a bare ExpressionStatement
- * if (bail()) { ... }      -- refused: the call is not itself a statement
+ * (bail())                 -- qualifies: parentheses are transparent
+ * obj.bail()               -- refused: not a plain identifier callee
+ * registry[name]()         -- refused: not a plain identifier callee
+ * flag && bail()           -- refused: the call may not be evaluated
+ * flag ? bail() : other    -- refused: the call may not be evaluated
+ * foo(bail())              -- refused: see the note below
+ * (bail(), value)          -- refused: see the note below
  * ```
  *
- * This is the sole new construct {@link mayEndModuleEvaluation} treats as
+ * The last two ARE evaluated under ordinary JS evaluation order, but
+ * recognising them means walking arbitrary expression trees with a real
+ * evaluation-order model rather than a shape test, and getting that
+ * subtly wrong in the permissive direction is exactly the failure this
+ * relation exists to prevent. They are deliberately left unmodeled and
+ * recorded as precision limitations in tests/validation/FINDINGS.md.
+ *
+ * `bail?.()` is NOT special-cased, and needs no special case: the optional
+ * call short-circuits only on a nullish callee, and
+ * {@link resolveExactLocalCallable} only ever returns a hoisted local
+ * function declaration or a never-reassigned `const`-bound function
+ * expression — neither of which can be nullish at the call site. The call
+ * therefore always happens, exactly as the plain form does.
+ */
+function isDefinitelyAbruptCall(expression: ts.Expression): boolean {
+  const unwrapped = unwrapParentheses(expression);
+  if (
+    !ts.isCallExpression(unwrapped) ||
+    !ts.isIdentifier(unwrapped.expression)
+  ) {
+    return false;
+  }
+  const target = resolveExactLocalCallable(unwrapped.expression);
+  return target !== undefined && cannotCompleteNormally(target);
+}
+
+/**
+ * Whether executing `list` — the declaration list of a `const`/`let`/`var`
+ * statement — necessarily invokes a definitely-abrupt local callee before
+ * the declaration can complete (RWF-017).
+ *
+ * A declarator's INITIALIZER is evaluated as part of executing the
+ * declaration, so the call in `const x = bail();` happens whenever the
+ * statement is reached — the same execution fact RWF-016 already relies on
+ * for `bail();`, in a different syntactic position. Which is the whole
+ * point: abrupt module-evaluation behavior is a property of execution
+ * semantics, not of whether the `CallExpression` happens to be wrapped in
+ * an `ExpressionStatement`.
+ *
+ * Declarators are scanned LEFT TO RIGHT, which is the order the language
+ * evaluates them in, and the FIRST one whose initializer is proven
+ * definitely abrupt answers the whole statement:
+ *
+ * ```text
+ * const a = bail(), b = safe();          -- abrupt: `a`'s initializer throws
+ * const a = safe(), b = bail(), c = x();  -- abrupt: `b` is reached only if
+ *                                            `a` completed normally, and
+ *                                            then `b` throws, so `c` never
+ *                                            runs either way
+ * let x;                                  -- no initializer: nothing is
+ *                                            evaluated, keep scanning
+ * const a = safe();                       -- not PROVEN abrupt: may fall
+ *                                            through, keep scanning
+ * ```
+ *
+ * The middle case is the one worth stating explicitly, because it is why
+ * scanning left to right needs no expression evaluator: every declarator
+ * before the abrupt one either completed normally (so the abrupt one is
+ * reached and throws) or was itself abrupt (so the statement never
+ * completes either way). Both readings agree, so the statement cannot
+ * complete normally without needing to know which one holds.
+ *
+ * A binding PATTERN is fine too — `const { x } = bail();` and
+ * `const [x] = bail();` both evaluate the right-hand side before any
+ * destructuring happens, and only the right-hand side is inspected here.
+ * Nothing about destructuring semantics is modeled beyond that guaranteed
+ * RHS evaluation.
+ */
+function declarationListCannotCompleteNormally(
+  list: ts.VariableDeclarationList,
+): boolean {
+  for (const declaration of list.declarations) {
+    if (
+      declaration.initializer !== undefined &&
+      isDefinitelyAbruptCall(declaration.initializer)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * Whether executing `node` — one statement — necessarily invokes a local
+ * callee that RWF-016 proves can only ever throw, so that the statement
+ * cannot complete normally and module evaluation ends there (uncaught).
+ *
+ * Two statement positions qualify, and they qualify for the SAME reason —
+ * evaluating the statement necessarily performs the call:
+ *
+ * ```text
+ * bail();                  -- RWF-016: a bare expression statement
+ * const x = bail();        -- RWF-017: a variable declaration whose
+ * let x = bail();             initializer is that call (`const`/`let`/`var`
+ * var x = bail();             alike -- this is about the CALL SITE's
+ *                             enclosing declaration, not about how `bail`
+ *                             itself was declared)
+ * if (bail()) { ... }      -- refused: the call is not itself a statement,
+ *                             and this relation models statements
+ * for (let x = bail();;) {} -- refused: a `for` initializer is a
+ *                             declaration LIST, not a VariableStatement,
+ *                             and loops are deliberately left to the
+ *                             conservative treatment RWF-015 already gives
+ *                             them (see FINDINGS.md)
+ * ```
+ *
+ * These are the only constructs {@link mayEndModuleEvaluation} treats as
  * able to end module evaluation, alongside the pre-existing `return`/
  * uncaught-`throw` pair.
  */
 function isDefinitelyAbruptCallStatement(node: ts.Node): boolean {
-  if (!ts.isExpressionStatement(node)) {
-    return false;
+  if (ts.isExpressionStatement(node)) {
+    return isDefinitelyAbruptCall(node.expression);
   }
-  const expression = unwrapParentheses(node.expression);
-  if (
-    !ts.isCallExpression(expression) ||
-    !ts.isIdentifier(expression.expression)
-  ) {
-    return false;
+  if (ts.isVariableStatement(node)) {
+    return declarationListCannotCompleteNormally(node.declarationList);
   }
-  const target = resolveExactLocalCallable(expression.expression);
-  return target !== undefined && cannotCompleteNormally(target);
+  return false;
 }
 
 /**
