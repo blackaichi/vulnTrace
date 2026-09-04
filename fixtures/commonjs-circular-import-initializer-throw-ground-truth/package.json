@@ -1,0 +1,6 @@
+{
+  "name": "rwf-017-circular-import-initializer-ground-truth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs"
+}
