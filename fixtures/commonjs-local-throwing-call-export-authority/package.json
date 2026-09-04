@@ -1,0 +1,8 @@
+{
+  "name": "commonjs-local-throwing-call-export-authority-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}

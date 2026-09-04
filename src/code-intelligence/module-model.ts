@@ -686,11 +686,12 @@ function firstModuleEvaluationCutoff(
 
 /**
  * Whether evaluating this one top-level statement can end module
- * evaluation rather than falling through to the next statement (RWF-015).
+ * evaluation rather than falling through to the next statement (RWF-015;
+ * widened by RWF-016).
  *
- * Two constructs qualify, and only two — both of them ABRUPT COMPLETIONS
- * whose behavior is intrinsic to the syntax, requiring no knowledge of any
- * value, name or call target:
+ * Three constructs qualify — all of them ABRUPT COMPLETIONS, and the third
+ * only when {@link isDefinitelyAbruptCallStatement} has PROVEN it is one,
+ * never merely suspected it might be:
  *
  * - **`return`** — legal at CommonJS module scope because Node evaluates
  *   the module inside a wrapper function, and ends module evaluation
@@ -700,14 +701,24 @@ function firstModuleEvaluationCutoff(
  * - **`throw`** whose exception is not caught inside this same statement.
  *   An uncaught module-scope throw propagates out of the `require()` that
  *   started the load, so nothing below it runs either.
+ * - **a bare call `bail();`** whose callee this file's own text proves is
+ *   an exact, non-reassigned local function/arrow that can only ever
+ *   itself throw (RWF-016; see {@link isDefinitelyAbruptCallStatement}).
+ *   Such a call is exactly as terminal as the literal `throw` inside
+ *   `bail`'s body would be if inlined at the call site, and is caught by
+ *   an enclosing `try`/`catch` under the identical rule
+ *   {@link isCaughtWithin} already applies to a literal `throw`.
  *
  * What is deliberately NOT modeled, because the answer would need
  * semantics this relation does not have:
  *
- * - **`process.exit()`, `assert(...)`, or any other call.** Whether a call
+ * - **`process.exit()`, `assert(...)`, or any other call whose callee is
+ *   not an exact local definitely-abrupt function.** Whether a call
  *   returns is a property of the function it reaches, not of the call
- *   syntax. Treating calls as possible terminators would make almost every
- *   real module's exports unattributable and would still be a guess.
+ *   syntax in general. Treating an arbitrary call as a possible terminator
+ *   would make almost every real module's exports unattributable and would
+ *   still be a guess; RWF-016's exception is narrow by construction
+ *   because it is not a guess — see {@link cannotCompleteNormally}.
  * - **`break` / `continue`.** These transfer control WITHIN the enclosing
  *   loop, switch or labeled statement — which, for a top-level `break`,
  *   is inside this same statement. Execution continues with the next
@@ -757,7 +768,9 @@ function mayEndModuleEvaluation(
     }
     if (
       ts.isReturnStatement(node) ||
-      (ts.isThrowStatement(node) && !isCaughtWithin(node, statement))
+      (ts.isThrowStatement(node) && !isCaughtWithin(node, statement)) ||
+      (isDefinitelyAbruptCallStatement(node) &&
+        !isCaughtWithin(node, statement))
     ) {
       found = true;
       return;
@@ -829,10 +842,10 @@ function mayContainClassStaticBlock(sourceFile: ts.SourceFile): boolean {
 }
 
 /**
- * Whether `node`'s exception is caught by a `try`/`catch` lying between it
- * and `boundary` (RWF-015) — the one piece of real control-flow semantics
- * this model needs, and the reason a file that merely CONTAINS a `throw`
- * does not lose its exports:
+ * Whether `node`'s abrupt completion is caught by a `try`/`catch` lying
+ * between it and `boundary` (RWF-015; widened by RWF-016) — the one piece
+ * of real control-flow semantics this model needs, and the reason a file
+ * that merely CONTAINS a `throw` does not lose its exports:
  *
  * ```js
  * try { if (flag) { throw err; } } catch { }
@@ -857,11 +870,16 @@ function mayContainClassStaticBlock(sourceFile: ts.SourceFile): boolean {
  * `try` above it — a `try` spanning several statements IS a single
  * top-level `TryStatement`, and its contents are walked as part of it — so
  * the boundary is a stop condition rather than a semantic limit.
+ *
+ * `node` was a `ts.ThrowStatement` for every RWF-015 call site; RWF-016
+ * widens the parameter to `ts.Node` so the exact same ancestry walk can
+ * also answer the question for a definitely-abrupt CALL statement (e.g.
+ * `bail();`), which propagates its callee's abrupt completion out to
+ * whichever `try` (if any) encloses the call, exactly as a literal `throw`
+ * would. The walk itself only ever inspects `node.parent`, so it is
+ * correct for either input unchanged.
  */
-function isCaughtWithin(
-  node: ts.ThrowStatement,
-  boundary: ts.Statement,
-): boolean {
+function isCaughtWithin(node: ts.Node, boundary: ts.Statement): boolean {
   let child: ts.Node = node;
   let parent: ts.Node | undefined = node.parent as ts.Node | undefined;
 
@@ -881,6 +899,596 @@ function isCaughtWithin(
   }
 
   return false;
+}
+
+/**
+ * Whether an operator token assigns to its left-hand side (`=`, `+=`,
+ * `??=`, ...). Local copy of the same test commonjs-reexports.ts's
+ * `collectFacts` uses, kept independent rather than exported/shared: this
+ * relation and that one answer different questions and coupling their
+ * implementations would make either one harder to change without risking
+ * the other.
+ */
+function isAssignmentOperatorToken(kind: ts.SyntaxKind): boolean {
+  return (
+    kind >= ts.SyntaxKind.FirstAssignment &&
+    kind <= ts.SyntaxKind.LastAssignment
+  );
+}
+
+/** Every identifier a binding name introduces, however nested (`{ a, b: [c] }`). */
+function bindingNameIncludes(name: ts.BindingName, target: string): boolean {
+  if (ts.isIdentifier(name)) {
+    return name.text === target;
+  }
+  for (const element of name.elements) {
+    if (
+      ts.isBindingElement(element) &&
+      bindingNameIncludes(element.name, target)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whether `list` declares `name`, through any binding pattern. */
+function declarationListDeclares(
+  list: ts.VariableDeclarationList,
+  name: string,
+): boolean {
+  for (const decl of list.declarations) {
+    if (bindingNameIncludes(decl.name, name)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Marks every identifier `target` assigns to, however nested (`[a] = ...`, `({ b } = ...)`). Property mutation (`x.y = ...`) is excluded: it changes the object, not the binding. */
+function markLocallyReassigned(target: ts.Node, into: Set<string>): void {
+  if (ts.isIdentifier(target)) {
+    into.add(target.text);
+    return;
+  }
+  if (ts.isPropertyAccessExpression(target)) {
+    return;
+  }
+  ts.forEachChild(target, (child) => markLocallyReassigned(child, into));
+}
+
+/**
+ * Every name reassigned (`name = ...`, `name += ...`, `++name`, a
+ * destructuring assignment target, a `for..of`/`for..in` loop variable)
+ * ANYWHERE within the region module evaluation can reach WITHOUT calling
+ * into a function (RWF-016) — the exact same reach model
+ * {@link mayEndModuleEvaluation} already uses (a `return`/`throw`
+ * anywhere in this same region ends module evaluation; a reassignment
+ * anywhere in it can run before a later call), for the identical reason:
+ * a reassignment that only runs if some OTHER function is called first is
+ * not something this relation reasons about, exactly as it does not
+ * reason about a THROW inside one (see {@link mayEndModuleEvaluation}'s
+ * own doc comment) or about a transitive call chain (RWF-016's own
+ * remaining-limitations note in tests/validation/FINDINGS.md). Missing
+ * such a reassignment only ever makes this relation MORE conservative —
+ * it may still treat a callee as definitely abrupt when a deferred
+ * reassignment would in fact have changed what the name holds by the time
+ * the call runs — never less sound: the worst case is an UNKNOWN this
+ * relation could have avoided attributing away from, never a wrongly
+ * attributed later export.
+ *
+ * Restricting the walk to this reach model (rather than the whole file,
+ * any scope, the way {@link classifyLocalBinding}'s single-assignment
+ * proof does for a completely different question) is also what keeps it
+ * cheap: like {@link mayEndModuleEvaluation}, it never descends into a
+ * function body or an expression tree, so a file dominated by
+ * call-expression statements and object literals (real modules, and the
+ * scan-performance suite's own synthetic worst case) costs one
+ * statement-kind check per top-level statement, never a walk of the whole
+ * expression forest underneath them.
+ */
+const reassignedModuleReachableNamesBySourceFile = new WeakMap<
+  ts.SourceFile,
+  ReadonlySet<string>
+>();
+
+function reassignedModuleReachableNames(
+  sourceFile: ts.SourceFile,
+): ReadonlySet<string> {
+  const cached = reassignedModuleReachableNamesBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const scanExpressions = mayContainClassStaticBlock(sourceFile);
+  const reassigned = new Set<string>();
+
+  /**
+   * Checks a bare EXPRESSION-statement's own top-level shape for an
+   * assignment/increment/decrement — `bail = other;`, `bail += 1;`,
+   * `bail++;`. This is deliberately the ONLY place an expression is
+   * inspected: an `ExpressionStatement` is not itself a container
+   * {@link mayContainNestedStatements} descends into (by design — see its
+   * own doc comment), so without this direct check a top-level
+   * reassignment would never be seen at all. An assignment BURIED inside a
+   * larger expression (`foo(bail = other)`) is deliberately not chased
+   * further than this — missing one only makes this relation treat a
+   * callee as definitely abrupt when a reassignment would in fact have
+   * changed it, which costs precision, never soundness (see this
+   * function's own doc comment).
+   */
+  function checkAssignmentLike(expr: ts.Expression): void {
+    const unwrapped = unwrapParentheses(expr);
+    if (
+      ts.isBinaryExpression(unwrapped) &&
+      isAssignmentOperatorToken(unwrapped.operatorToken.kind)
+    ) {
+      markLocallyReassigned(unwrapped.left, reassigned);
+    } else if (
+      (ts.isPrefixUnaryExpression(unwrapped) ||
+        ts.isPostfixUnaryExpression(unwrapped)) &&
+      (unwrapped.operator === ts.SyntaxKind.PlusPlusToken ||
+        unwrapped.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      markLocallyReassigned(unwrapped.operand, reassigned);
+    }
+  }
+
+  function visit(node: ts.Node): void {
+    if (ts.isFunctionLike(node)) {
+      return;
+    }
+    if (ts.isExpressionStatement(node)) {
+      checkAssignmentLike(node.expression);
+    } else if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer)
+    ) {
+      markLocallyReassigned(node.initializer, reassigned);
+    }
+    if (
+      scanExpressions ||
+      mayContainNestedStatements(node) ||
+      ts.isSourceFile(node)
+    ) {
+      ts.forEachChild(node, visit);
+    }
+  }
+
+  visit(sourceFile);
+  reassignedModuleReachableNamesBySourceFile.set(sourceFile, reassigned);
+  return reassigned;
+}
+
+/**
+ * The module-TOP-LEVEL callable named `name` this file's own text can read
+ * a body out of directly (RWF-016) — the call-target candidate half of
+ * {@link resolveExactLocalCallable}'s proof, before reassignment and
+ * shadowing are even considered:
+ *
+ * - a module-TOP-LEVEL `function bail() {}` declaration, or
+ * - a module-TOP-LEVEL `const bail = function () {}` / `const bail = () =>
+ *   {}` — deliberately restricted to `const`, mirroring
+ *   commonjs-reexports.ts's own `isConstDeclaration` gate for the same
+ *   reason: a `const` can be reassigned nowhere in the language.
+ *
+ * `undefined` for every other shape sharing the name: a `let`/`var`
+ * binding, a destructured binding, an import, a class, or any initializer
+ * that isn't a function/arrow expression.
+ *
+ * Cheap and already properly scoped without any extra work: this only
+ * ever iterates `sourceFile.statements` itself (never recursing into a
+ * nested block or an expression), so it costs one shape check per
+ * top-level statement.
+ */
+const topLevelCallableCandidatesBySourceFile = new WeakMap<
+  ts.SourceFile,
+  ReadonlyMap<
+    string,
+    ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction
+  >
+>();
+
+function topLevelCallableCandidates(
+  sourceFile: ts.SourceFile,
+): ReadonlyMap<
+  string,
+  ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction
+> {
+  const cached = topLevelCallableCandidatesBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const candidates = new Map<
+    string,
+    ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction
+  >();
+  for (const statement of sourceFile.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name) {
+      candidates.set(statement.name.text, statement);
+    } else if (
+      ts.isVariableStatement(statement) &&
+      (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+    ) {
+      for (const decl of statement.declarationList.declarations) {
+        if (!ts.isIdentifier(decl.name) || decl.initializer === undefined) {
+          continue;
+        }
+        const initializer = unwrapParentheses(decl.initializer);
+        if (
+          ts.isFunctionExpression(initializer) ||
+          ts.isArrowFunction(initializer)
+        ) {
+          candidates.set(decl.name.text, initializer);
+        }
+      }
+    }
+  }
+
+  topLevelCallableCandidatesBySourceFile.set(sourceFile, candidates);
+  return candidates;
+}
+
+/**
+ * Whether `fn` is `async` or a generator (RWF-016) — either one means
+ * calling it can never itself be the abrupt completion this relation
+ * models:
+ *
+ * - an `async` function's body runs synchronously only up to its first
+ *   `await`/return/throw, but a synchronous `throw` inside one is caught
+ *   by the implicit promise wrapper and turned into a REJECTED PROMISE,
+ *   not a synchronous exception. The call `bail()` returns normally (with
+ *   a promise) and module evaluation continues; only an unawaited
+ *   rejection surfaces later, asynchronously, which cannot invalidate a
+ *   synchronous later export write.
+ * - a generator function's body does not run AT ALL when called — calling
+ *   `bail()` only constructs a generator object; the body (and any throw
+ *   in it) executes on `.next()`, if ever.
+ *
+ * Treating either as definitely abrupt would be exactly the unsound
+ * over-inference RWF-016 exists to avoid.
+ */
+function isAsyncOrGeneratorCallable(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+): boolean {
+  const isGenerator =
+    (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) &&
+    fn.asteriskToken !== undefined;
+  const isAsync =
+    ts.canHaveModifiers(fn) &&
+    (ts
+      .getModifiers(fn)
+      ?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ??
+      false);
+  return isGenerator || isAsync;
+}
+
+/** The statement list `node` directly, LEXICALLY owns as its own scope's body — never a NESTED block's statements. `undefined` for anything that owns no such list. */
+function ownStatementsOf(node: ts.Node): readonly ts.Statement[] | undefined {
+  if (ts.isBlock(node) || ts.isSourceFile(node)) {
+    return node.statements;
+  }
+  if (ts.isCaseClause(node) || ts.isDefaultClause(node)) {
+    return node.statements;
+  }
+  return undefined;
+}
+
+/**
+ * Whether `ancestor` — one node on the walk from a call site up toward the
+ * module's own top level — itself directly declares a binding named
+ * `name` (RWF-016), shadowing anything declared further out. Checked
+ * against a `catch` clause's own parameter, a `for`/`for..of`/`for..in`
+ * loop's own declaration, and — for every other scope-bearing ancestor —
+ * that scope's OWN statement list (never a further-nested block's, which
+ * the walk will visit on its own next iteration).
+ */
+function scopeDeclares(ancestor: ts.Node, name: string): boolean {
+  if (ts.isCatchClause(ancestor)) {
+    return (
+      ancestor.variableDeclaration !== undefined &&
+      bindingNameIncludes(ancestor.variableDeclaration.name, name)
+    );
+  }
+  if (
+    (ts.isForOfStatement(ancestor) || ts.isForInStatement(ancestor)) &&
+    ts.isVariableDeclarationList(ancestor.initializer)
+  ) {
+    return declarationListDeclares(ancestor.initializer, name);
+  }
+  if (
+    ts.isForStatement(ancestor) &&
+    ancestor.initializer !== undefined &&
+    ts.isVariableDeclarationList(ancestor.initializer)
+  ) {
+    return declarationListDeclares(ancestor.initializer, name);
+  }
+
+  const statements = ownStatementsOf(ancestor);
+  if (statements === undefined) {
+    return false;
+  }
+  for (const statement of statements) {
+    if (
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement)) &&
+      statement.name?.text === name
+    ) {
+      return true;
+    }
+    if (
+      ts.isVariableStatement(statement) &&
+      declarationListDeclares(statement.declarationList, name)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The exact function/arrow node a module-scope call `name()`, made from
+ * `callee`'s position, proves it invokes (RWF-016) — `undefined` for
+ * every case this relation is not willing to guess about.
+ *
+ * Three independent proofs must all hold:
+ *
+ * 1. **No real lexical shadow.** Walking from `callee` up to (but not
+ *    including) the source file, no intervening scope may declare `name`
+ *    — a `catch` parameter, a `for` loop variable, or a block/case-clause
+ *    declaration ({@link scopeDeclares}). This is genuine JS lexical
+ *    scoping, not a whole-file guess: it is bounded by `callee`'s own
+ *    nesting depth, which {@link mayEndModuleEvaluation}'s own reach model
+ *    already keeps shallow (a call site inside a function body is never
+ *    even offered to this relation — see its call site in
+ *    `isDefinitelyAbruptCallStatement`).
+ * 2. **Never reassigned** within the reach {@link mayEndModuleEvaluation}
+ *    already models ({@link reassignedModuleReachableNames}) — a
+ *    `function bail() {}` declaration can be reassigned too, and a `const`
+ *    candidate is exempted by construction (see
+ *    {@link topLevelCallableCandidates}'s own doc comment).
+ * 3. **A supported module-TOP-LEVEL callable shape actually exists**
+ *    ({@link topLevelCallableCandidates}), and is neither `async` nor a
+ *    generator ({@link isAsyncOrGeneratorCallable}).
+ *
+ * Deliberately ONE hop: `name` must itself be bound directly to a
+ * function/arrow, never to another identifier
+ * (`const x = bail; x();` resolves nothing here — see the module-level
+ * doc comment's ALIASES note). Chaining hops is exactly the alias
+ * resolution RWF-016 is scoped not to introduce.
+ */
+function resolveExactLocalCallable(
+  callee: ts.Identifier,
+):
+  | ts.FunctionDeclaration
+  | ts.FunctionExpression
+  | ts.ArrowFunction
+  | undefined {
+  const name = callee.text;
+
+  for (
+    let ancestor: ts.Node | undefined = callee.parent as ts.Node | undefined;
+    ancestor !== undefined && !ts.isSourceFile(ancestor);
+    ancestor = ancestor.parent as ts.Node | undefined
+  ) {
+    if (scopeDeclares(ancestor, name)) {
+      return undefined;
+    }
+  }
+
+  const sourceFile = callee.getSourceFile();
+  if (reassignedModuleReachableNames(sourceFile).has(name)) {
+    return undefined;
+  }
+
+  const candidate = topLevelCallableCandidates(sourceFile).get(name);
+  if (candidate === undefined || isAsyncOrGeneratorCallable(candidate)) {
+    return undefined;
+  }
+  return candidate;
+}
+
+/**
+ * The three-way answer to "how does executing this ONE statement, in
+ * isolation, end" (RWF-016) — the primitive
+ * {@link cannotCompleteNormally} is built out of:
+ *
+ * - `"throws"` — every path through this statement ends in an uncaught
+ *   `throw`; the statement never returns and never falls through.
+ * - `"returns"` — at least one path reaches a `return`, which is a NORMAL
+ *   completion for the function's caller (see RWF-016's case D/E in
+ *   tests/validation/FINDINGS.md): a definitely-abrupt determination must
+ *   refuse the instant one of these is reachable, regardless of what else
+ *   the body contains.
+ * - `"normal"` — neither of the above is proven: the statement may fall
+ *   through to whatever follows it. This is also the conservative default
+ *   for every construct this relation does not model (loops, `switch`,
+ *   plain expressions/declarations) — see {@link cannotCompleteNormally}'s
+ *   doc comment for why looping constructs in particular are deliberately
+ *   never classified any other way.
+ */
+type AbruptOutcome = "throws" | "returns" | "normal";
+
+/**
+ * Merges the two outcomes of an `if`/`else` pair (RWF-016). A `"returns"`
+ * on EITHER side wins outright — a reachable `return` is a normal
+ * completion for the caller no matter which branch it is in. Otherwise the
+ * statement is `"throws"` only if BOTH sides are, and `"normal"`
+ * otherwise (at least one side may fall through).
+ */
+function mergeAbruptOutcomes(
+  a: AbruptOutcome,
+  b: AbruptOutcome,
+): AbruptOutcome {
+  if (a === "returns" || b === "returns") {
+    return "returns";
+  }
+  if (a === "throws" && b === "throws") {
+    return "throws";
+  }
+  return "normal";
+}
+
+/**
+ * {@link AbruptOutcome} for one statement (RWF-016). Recurses only through
+ * the handful of constructs this relation actually models — `throw`,
+ * `return`, a block, an `if`/`else`, a `try`/`catch` with no `finally`,
+ * and a labeled statement (unwrapped to the statement it labels, since a
+ * label alone changes nothing about how the statement itself completes).
+ *
+ * Everything else — loops, `switch`, plain expression/variable statements,
+ * `debugger`, an empty statement, a `try` WITH a `finally` — answers
+ * `"normal"` by construction: not "this statement completes normally" but
+ * "this relation proves nothing about how it completes", which is the
+ * safe default for {@link classifyAbruptSequence}'s purposes either way
+ * (a sequence only ever needs to know whether a statement forces
+ * `"throws"`/`"returns"`, never whether it forces `"normal"`).
+ */
+function classifyAbruptOutcome(statement: ts.Statement): AbruptOutcome {
+  if (ts.isThrowStatement(statement)) {
+    return "throws";
+  }
+  if (ts.isReturnStatement(statement)) {
+    return "returns";
+  }
+  if (ts.isBlock(statement)) {
+    return classifyAbruptSequence(statement.statements);
+  }
+  if (ts.isIfStatement(statement)) {
+    const thenOutcome = classifyAbruptOutcome(statement.thenStatement);
+    const elseOutcome = statement.elseStatement
+      ? classifyAbruptOutcome(statement.elseStatement)
+      : "normal";
+    return mergeAbruptOutcomes(thenOutcome, elseOutcome);
+  }
+  if (ts.isTryStatement(statement)) {
+    // A `finally` can override any completion inside the `try`/`catch`
+    // (a `return`/absence of a throw in `finally` swallows an exception
+    // entirely) — reasoning about that safely is more control-flow work
+    // than RWF-016 is scoped to build, so a `finally` refuses outright.
+    if (statement.finallyBlock !== undefined) {
+      return "normal";
+    }
+    const tryOutcome = classifyAbruptSequence(statement.tryBlock.statements);
+    if (statement.catchClause === undefined) {
+      return tryOutcome;
+    }
+    // The `catch` only ever runs when the `try` block throws on every
+    // path; when it might not (`"returns"` or `"normal"`), the `catch`'s
+    // own body is irrelevant to how the `try` statement as a whole
+    // completes.
+    if (tryOutcome !== "throws") {
+      return tryOutcome;
+    }
+    return classifyAbruptSequence(statement.catchClause.block.statements);
+  }
+  if (ts.isLabeledStatement(statement)) {
+    return classifyAbruptOutcome(statement.statement);
+  }
+  return "normal";
+}
+
+/**
+ * {@link AbruptOutcome} for a LIST of statements executed in order
+ * (RWF-016) — a function body, a block, a `try`/`catch` arm. Walks the
+ * list once: the first statement that forces `"throws"` or `"returns"`
+ * decides the whole sequence (nothing after it can change that a path
+ * through the sequence reaches it), and a statement that answers
+ * `"normal"` simply means execution may continue to the next one. Reaching
+ * the end of the list without either means the sequence may fall off the
+ * end — an implicit `return undefined` — so the sequence itself is
+ * `"normal"`.
+ */
+function classifyAbruptSequence(
+  statements: readonly ts.Statement[],
+): AbruptOutcome {
+  for (const statement of statements) {
+    const outcome = classifyAbruptOutcome(statement);
+    if (outcome !== "normal") {
+      return outcome;
+    }
+  }
+  return "normal";
+}
+
+/**
+ * Whether `fn`'s body, on EVERY modeled execution path, propagates an
+ * abrupt completion (a `throw`) to its caller — never returns, never falls
+ * off its own end (RWF-016). This is the callee-side half of RWF-016's
+ * proof obligation; {@link resolveExactLocalCallable} is the call-site
+ * half establishing exact identity, and {@link isDefinitelyAbruptCallStatement}
+ * is where the two meet.
+ *
+ * `false` — never `true` by omission — for every function this relation
+ * does not have a definite proof for, including:
+ *
+ * - a conditional throw with no matching abrupt `else`/rethrow (`if
+ *   (flag) throw err;` with nothing after, or with normal code after);
+ * - any `return`, reachable on any path, anywhere in the body — a
+ *   `return` is what the CALLER experiences as a normal completion, so a
+ *   `bail` that sometimes returns can never poison a later export
+ *   (`if (flag) return; throw err;` is NOT abrupt — see
+ *   {@link classifyAbruptOutcome}'s `"returns"` handling);
+ * - a `try`/`catch` whose `catch` does not itself always rethrow, or that
+ *   has a `finally`;
+ * - a `while (true) {}` or any other loop that never returns for an
+ *   entirely different reason (never terminating) — deliberately NOT
+ *   inferred as abrupt. This relation proves abrupt completion from
+ *   SYNTAX (an uncaught `throw` reachable on every path), never from
+ *   nontermination, which would require reasoning this relation
+ *   deliberately does not attempt (see RWF-016's remaining-limitations
+ *   note in tests/validation/FINDINGS.md);
+ * - an `async`/generator function ({@link isAsyncOrGeneratorCallable});
+ * - an arrow function with a concise (non-block) body — `() => expr` can
+ *   only ever complete by returning the expression's value, so it is
+ *   trivially never abrupt and its body is not even inspected.
+ */
+function cannotCompleteNormally(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+): boolean {
+  if (isAsyncOrGeneratorCallable(fn)) {
+    return false;
+  }
+  const body = fn.body;
+  if (body === undefined || !ts.isBlock(body)) {
+    return false;
+  }
+  return classifyAbruptSequence(body.statements) === "throws";
+}
+
+/**
+ * Whether `node` is a bare call statement (`bail();`) that RWF-016 proves
+ * always ends module evaluation, uncaught. Deliberately narrow — only a
+ * top-level EXPRESSION STATEMENT whose (unwrapped) expression is directly
+ * a `CallExpression` with a plain identifier callee qualifies:
+ *
+ * ```text
+ * bail();                 -- qualifies, when resolveExactLocalCallable +
+ *                             cannotCompleteNormally both prove out
+ * obj.bail();              -- refused: not a plain identifier callee
+ * registry[name]();        -- refused: not a plain identifier callee
+ * const x = bail();        -- refused: not a bare ExpressionStatement
+ * if (bail()) { ... }      -- refused: the call is not itself a statement
+ * ```
+ *
+ * This is the sole new construct {@link mayEndModuleEvaluation} treats as
+ * able to end module evaluation, alongside the pre-existing `return`/
+ * uncaught-`throw` pair.
+ */
+function isDefinitelyAbruptCallStatement(node: ts.Node): boolean {
+  if (!ts.isExpressionStatement(node)) {
+    return false;
+  }
+  const expression = unwrapParentheses(node.expression);
+  if (
+    !ts.isCallExpression(expression) ||
+    !ts.isIdentifier(expression.expression)
+  ) {
+    return false;
+  }
+  const target = resolveExactLocalCallable(expression.expression);
+  return target !== undefined && cannotCompleteNormally(target);
 }
 
 /**
