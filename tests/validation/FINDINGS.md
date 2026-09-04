@@ -89,6 +89,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-014 | any CommonJS file whose `module.exports = <identifier>` sits in a CONDITIONAL or nested position (real shapes in UMD/feature-detect boilerplate) | `wholeModuleDefaultExport` reads a `localName` off the assignment's right-hand side without asking whether that assignment is unconditional, while every other export-provenance fact in the same relation is gated on `isUnconditionalExportAssignment`. `findLastModuleExportsAssignment` keeps only the LAST assignment in SOURCE order, so a two-branch `module.exports` picks a branch arbitrarily and presents it as certainty | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over a function the module may never export | **Fixed (RWF-014)** |
 | RWF-015 | `dunder-proto` (real, vendored under the `RWB-05` fixture); any CommonJS file with a top-level `return`/`throw` above a later export write (browser/node feature-detect boilerplate is the common real shape) | RWF-014 made whole-module export authority depend on the last write being an UNCONDITIONAL top-level statement. Node wraps every CommonJS module in a function, so a module-scope `return` is legal and ends module evaluation, and an uncaught module-scope `throw` propagates out of the `require()` — either one leaves a later, syntactically unconditional write unexecuted. Every export-provenance gate asked whether a write was unconditional when the property it needed was whether the write is REACHED | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over the value the module exports on every early-exit load; shared verbatim by property exports, object-literal, class, chained-alias and require-re-export attribution | **Fixed (RWF-015)** |
 | RWF-012 | `ini` | A chained CommonJS export alias (`exports.parse = exports.decode = decode`) assigns the exported name `parse` to a function whose own declared name is `decode`; export-symbol attribution has no way to bridge the two. The same relation stopped after ONE hop of local-variable indirection, so `const a = require("pkg"); const b = a; module.exports = b` was equally unattributable | Precision only — degrades to UNKNOWN, never a false verdict (VT-301B correctly closed the adjacent soundness gap that let this coincidentally read as `NOT_AFFECTED` before) | **Fixed (RWF-012)** |
+| RWF-016 | any CommonJS file with a top-level call to a local, non-reassigned function/arrow whose entire body always throws, above a later export write (real shape: UMD/feature-detect boilerplate that calls a `fail()`/`bail()`-style helper instead of writing a bare `return`/`throw`) | RWF-015 made module-evaluation reachability depend on a literal syntactic `return`/`throw` (`firstModuleEvaluationCutoff`). A CALL to a local function whose own body always throws ends module evaluation exactly as a literal `throw` inlined at the call site would, but RWF-015's model deliberately does not reason about calls at all (and is right not to, for an ARBITRARY call) — so this one narrow, provably-safe exception was still a gap | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof over the value the module exports whenever the throwing call's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer can retain the bypassed dangerous export before the call throws | **Fixed (RWF-016)** |
 
 ---
 
@@ -1300,3 +1301,243 @@ out at a literal `require()`, whereas a reassignment needs no `require()`
 anywhere in the file (`function fn() {} fn = x; exports.fn = fn;`). The
 walk is inherent to answering the question, and the measurement above is
 the cost of answering it.
+
+---
+
+## RWF-016 — A resolvable local throwing CALL invalidates later CommonJS export authority
+
+**Status: Fixed.** P0 (soundness). Was pre-existing on `main` — NOT
+introduced by RWF-015, but left standing by it: RWF-015 fixed the SYNTACTIC
+abrupt-completion case (`return`/`throw`) and explicitly declined to
+reason about calls at all.
+
+**Discovered:** an independent soundness audit of the RWF-015 branch,
+which observed that a CALL to a local function whose own body always
+throws ends module evaluation exactly as a literal `throw` inlined at the
+call site would — a gap RWF-015's own model, by design, does not close.
+Reproduced independently on `origin/main` at `69caeb9` (current merged
+main, with RWF-015 fully in place) before any change.
+
+**Symptom, reproduced end to end before the fix** — see
+`fixtures/commonjs-local-throwing-call-export-authority/` and `ADV2-076`:
+
+```js
+function dangerousOp(input) { return danger.explode(input); }
+function safeOp(input) { return "safe:" + input; }
+function bail() { throw new Error("fast mode is not supported here"); }
+
+if (process.env.FIXTURE_LIB_MODE === "fast") {
+  module.exports = dangerousOp;
+  bail();                        // never returns -- ends module evaluation
+}
+module.exports = safeOp;         // top-level, unconditional, NOT always run
+```
+
+with an application that calls the package's whole exported value.
+
+- **Actual, pre-fix:** `NOT_AFFECTED`, with `confirmedUnreachableTarget`
+  and `reachableSubgraphComplete: true`. The whole-module export bound to
+  `safeOp` (even carrying a `localName`/`localFunctionLocation`
+  attribution — verified directly against `buildModuleModel`'s output,
+  not just the final verdict), the caller's `fixture(input)` got a fully
+  RESOLVED edge to it, and `dangerousOp` was left with no incoming edge at
+  all.
+- **Correct, and delivered:** `UNKNOWN`. Under the flag the module's
+  exported value IS `dangerousOp`, which calls the sink, and `bail()`
+  never returns, so the statement below never executes.
+
+**Runtime ground truth.** Because an uncaught `throw` propagating out of a
+`require()` might look, at a glance, like it makes the bypassed dangerous
+export unobservable in practice (the importer's own `require()` call also
+throws), a real, coherent CommonJS circular-import fixture was built and
+executed with actual `node` (not VulnTrace) to establish that this is not
+so — see `fixtures/commonjs-circular-import-throwing-export-ground-truth/
+README.md` for the full transcript. `a.js` publishes the dangerous branch,
+then requires `b.js`; `b.js` requires `a.js` right back (a genuine
+circular dependency), and Node's own documented circular-require
+semantics hand `b.js` `a.js`'s CURRENT `module.exports` — the dangerous
+branch, published before the circular `require()` ran. `a.js` then calls
+`bail()`, which throws, and `a.js`'s own final (safe) export is never
+reached, on this run or on any subsequent `require("./a")` (Node evicts a
+module that threw during its first load from `require.cache`, so the
+throw is deterministic, not a fluke). `b.js`, already fully loaded before
+`a.js`'s own throw, retains and can call the dangerous export — verified
+by actually calling it and observing real output. This is the identical
+runtime mechanism RWF-015's own remaining-limitations note already
+identified for its IIFE boundary case, now independently confirmed against
+a coherent, non-vacuous fixture rather than asserted.
+
+**Root cause.** `firstModuleEvaluationCutoff`
+(`mayEndModuleEvaluation`) answers "can this top-level statement end
+module evaluation" by looking for exactly two syntactic constructs,
+`return` and uncaught `throw` — deliberately NOT a call, because whether a
+call returns is a property of the CALLEE, not of the call syntax, and
+guessing would make almost every real module's exports unattributable.
+That refusal is correct for an ARBITRARY call. It is not correct for the
+one narrow case where the callee's own body is PROVEN, by this file's own
+text, to never return: a bare identifier call whose target resolves,
+without any alias chasing, to a local, non-reassigned, non-`async`,
+non-generator function/arrow whose every modeled execution path ends in
+an uncaught `throw`.
+
+**Direction taken.** `mayEndModuleEvaluation` gains a third, narrowly-gated
+condition alongside `return`/uncaught-`throw`:
+`isDefinitelyAbruptCallStatement`, which fires only for a bare
+`ExpressionStatement` (`bail();`) whose callee is a plain identifier. Two
+independent proofs both have to hold before it fires:
+
+- **`resolveExactLocalCallable`** — exact callee identity. A REAL lexical
+  scope walk from the call site up to (but not including) the module's
+  own top level (`scopeDeclares`), refusing on any intervening `catch`
+  parameter, `for` loop variable, or block/case-clause declaration of the
+  same name — genuine JS shadowing, not a whole-file name-collision guess,
+  and bounded by the call site's own nesting depth (which
+  `mayEndModuleEvaluation`'s own reach model already keeps shallow: a call
+  inside a function body is never even offered to this relation). Then:
+  never reassigned anywhere `mayEndModuleEvaluation` can reach without
+  itself calling into a function (`reassignedModuleReachableNames` — the
+  same reach model, reused, so a `bail = other;` sibling statement
+  disqualifies the call); and a supported module-TOP-LEVEL callable shape
+  actually exists — a `function bail() {}` declaration, or a `const
+  bail = function () {}` / `const bail = () => {}` (deliberately `const`
+  only, mirroring commonjs-reexports.ts's own single-assignment gate,
+  since a `const` needs no separate reassignment proof). Deliberately ONE
+  hop: `const x = bail; x();` resolves nothing here — chasing that would
+  be new alias resolution, which this task is explicitly scoped not to
+  introduce.
+- **`cannotCompleteNormally`** — the callee's OWN body is proven, not
+  guessed, to always throw. A small, three-outcome (`"throws"`/
+  `"returns"`/`"normal"`) statement classifier
+  (`classifyAbruptOutcome`/`classifyAbruptSequence`) walks only `throw`,
+  `return`, a block, an `if`/`else`, and a `try`/`catch` with no
+  `finally` — a `return` reachable on ANY path refuses outright (a
+  `return` is a NORMAL completion for the caller), an `if` with no
+  matching `else` refuses (the false path falls through), a `try`/`catch`
+  is abrupt only when the `try` block is itself proven abrupt AND the
+  `catch` block is too (so a swallowing `catch` refuses and a rethrowing
+  one confirms), and a `finally` refuses outright rather than reasoning
+  about it. Everything else this relation does not model — loops,
+  `switch`, plain statements — answers `"normal"` by construction, which
+  is also why an infinite loop (`while (true) {}`) is never classified
+  abrupt: this relation proves abrupt completion from an uncaught `throw`
+  reachable on every path, never from non-termination. `async` and
+  generator functions are excluded before their body is even inspected: a
+  synchronous `throw` inside an `async` function becomes a rejected
+  promise, not a synchronous exception, and a generator's body does not
+  run at all until `.next()` is called.
+
+Both new relations reuse `mayEndModuleEvaluation`'s own "abrupt-completion
+propagates to `try`/`catch`" rule unchanged: `isCaughtWithin`'s parameter
+type was widened from `ts.ThrowStatement` to `ts.Node` (the ancestry walk
+it performs never depended on the node's kind), so a throwing call wrapped
+in a call-site `try { bail(); } catch {}` keeps the later export
+authoritative exactly as a literal caught `throw` would.
+
+**Feeds the SAME centralized authority gate RWF-015 built**, not a
+parallel one: `mayEndModuleEvaluation` is the sole relation
+`firstModuleEvaluationCutoff` — and therefore
+`isDefinitelyReachedModuleScopeStatement`,
+`isDefinitelyReachedExportAssignment`, and every export-provenance
+consumer gated on it (whole-module, property, object-literal, class,
+chained-alias and require-re-export attribution alike) — reads. One
+change closed all six surfaces, verified case by case in
+`module-model.local-throwing-call-export-authority.test.ts`.
+
+**Performance.** The naive first implementation resolved callee identity
+by counting every declaration of a name ANYWHERE in the whole file (any
+scope, any form) — provably safe, but expensive: measured on the
+scan-performance suite's 3,000-call single-file fixture, it cost ~280ms
+extra per `buildModuleModel` call (547ms baseline → 829ms), enough to push
+the suite's own 4,500ms threshold into occasional failure under load. The
+shipped design instead scopes BOTH new relations to exactly the reach
+`mayEndModuleEvaluation` already pays for: `resolveExactLocalCallable`'s
+shadow check walks only the call site's own ancestor chain (typically
+zero to a few nodes, never the whole file), and
+`reassignedModuleReachableNames` never descends into a function body or
+an expression tree, mirroring `mayContainNestedStatements`'s own
+statement-position walk. Re-measured on the same fixture: 581ms (~6% over
+the 547ms pre-RWF-016 baseline), and the scan-performance suite's own
+single-large-file case is back to its pre-existing 2.0-2.5s range against
+the 4,500ms threshold (confirmed identically flaky under full-suite
+parallel contention on UNMODIFIED `main`, i.e. pre-existing environmental
+noise, not a regression this task introduced).
+
+**Measured impact.** Across all 110 adversarial scenarios (34 v1 + 76 v2,
+including the new `ADV2-076`) and all 17 benchmark cases, the new case
+(`ADV2-076`) is `UNKNOWN`, correctly, and every one of the other 109
+pre-existing scenarios is unchanged — zero regressions, zero other verdict
+movements. Benchmark unchanged at 12 PASS / 5 KNOWN_FAIL / 0 UNEXPECTED.
+`ADV2-075` (RWF-015) stays `UNKNOWN`, `ADV2-074` (RWF-014) stays
+`UNKNOWN`, `RWB-07` (RWF-012) stays `NOT_AFFECTED` with its Family C proof
+intact, and `RWB-02` (RWF-003) stays `AFFECTED`.
+
+**Real-corpus incidence.** An AST-shape search (`function NAME(...) {`
+containing `throw` within ~200 characters) across every vendored
+CommonJS/JS file under `fixtures/`, `tests/validation/fixtures/` and
+`tests/adversarial/` found 24 candidate files; 3 are this task's own new
+fixtures. Of the remaining 21 real, independently-authored files, **zero**
+match the full RWF-016 pattern (a throwing-only local function CALLED at
+module top level, with a later export write). Every real hit fell into
+one of three shapes RWF-016 correctly does not need to act on:
+
+- the `throw` sits directly inside the EXPORTED function's own body
+  (`call-bind-apply-helpers`, `es-object-atoms`, `function-bind`,
+  `get-proto`, `qs/lib/stringify.js`, `get-intrinsic`) — never a top-level
+  CALL to a separately-named helper, so there is no call site for this
+  relation to examine at all;
+- real `dunder-proto/set.js` — RWF-015's own exhibit, a literal `throw`
+  inside a `catch` clause at module scope, not a call;
+- a `throw` nested inside a larger, multi-branch function (`node-forge`'s
+  `util.js`/`asn1.js`, `handlebars`'s `compiler.js`/`runtime.js`) that is
+  never itself called at module top level — the exact "deferred function"
+  shape RWF-015's own doc comment already establishes does not poison a
+  later export, for the identical reason.
+
+`lodash.js` (488 top-level function declarations) contains no zero-argument,
+throw-only function at all, and its whole-module export identity is
+already unattributable for the separate, pre-existing reason RWF-001
+tracks (a UMD-style locally-aliased `module.exports` assignment), so no
+verdict could move there regardless. Correctness here is deliberately not
+conditional on this count being small.
+
+**Known remaining limitations.** All precision costs — they refuse more
+than they strictly must, which is always the safe direction:
+
+- *(precision)* no transitive reasoning: `function a() { b(); } function
+  b() { throw err; } a();` is not recognized, even though `a` also always
+  throws. Direct local body proof only, per this task's own scope; a tiny,
+  cycle-safe transitive extension may be worth adding later, but nothing
+  here requires it for soundness;
+- *(precision)* a method call (`obj.bail()`), a computed/registry call
+  (`registry[name]()`), and an aliased call (`const x = bail; x();`) are
+  never resolved, even when the underlying target is in fact provably
+  exact — extending any of these is new alias/receiver resolution, which
+  RWF-016 is deliberately scoped not to introduce;
+- *(precision)* a `let`/`var`-bound throwing function expression is never
+  treated as definitely abrupt, only `const` — a `let`/`var` binding COULD
+  be proven single-assignment-in-fact the way commonjs-reexports.ts does
+  for RWF-012/013's different question, but RWF-016 does not extend that
+  proof to this relation;
+- *(unchanged from RWF-015)* a throwing IIFE still does not withdraw a
+  later export's authority, for the same reason RWF-015 documented — an
+  IIFE's callee is a function EXPRESSION, and proving it is invoked
+  immediately is call-graph work this relation does not do. The runtime
+  ground-truth fixture above independently confirms the underlying risk
+  this leaves unmitigated (a cyclic `require()` can retain a
+  pre-throw export) is real, not merely theoretical — but no false
+  NOT_AFFECTED was reproduced for the IIFE shape specifically, because an
+  IIFE call is `unknown(unsupported_construct)` in the call graph, which
+  already withdraws Family C before this relation's own answer matters.
+
+**Relevant files:** `src/code-intelligence/module-model.ts`
+(`isDefinitelyAbruptCallStatement`, `resolveExactLocalCallable`,
+`cannotCompleteNormally`, `classifyAbruptOutcome`,
+`classifyAbruptSequence`, `mergeAbruptOutcomes`, `scopeDeclares`,
+`reassignedModuleReachableNames`, `topLevelCallableCandidates`,
+`isAsyncOrGeneratorCallable`, `isCaughtWithin` (widened),
+`mayEndModuleEvaluation` (widened)); regressions in
+`module-model.local-throwing-call-export-authority.test.ts`,
+`verdict.local-throwing-call-export-authority.integration.test.ts`,
+`fixtures/commonjs-local-throwing-call-export-authority/`,
+`fixtures/commonjs-circular-import-throwing-export-ground-truth/`, and
+`ADV2-076`.
