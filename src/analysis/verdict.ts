@@ -671,16 +671,18 @@ function entrypointSourceNodes(
     return sources;
   }
 
-  // RWF-021: which NAMES count as roots is its own question, answered by
-  // `entrypointRootCandidateNames`, not by reading export-attribution
+  // RWF-021: which callables count as roots is its own question, answered
+  // by `entrypointRootCandidates`, not by reading export-attribution
   // provenance inline here. This used to be `exp.localName ??
   // exp.exportedName` over `model.exports`, which meant a soundness cutoff
   // that withdrew export ATTRIBUTION (RWF-014/015/016/017/018/019) also
   // deleted the ROOT — so the exported function's body went untraversed
   // and the target came back unreachable with a COMPLETE Family C proof.
   // Uncertainty about which callable is exported must widen the root set,
-  // never empty it; see that function's doc comment for the full argument
-  // and the reproduced false NOT_AFFECTED.
+  // never empty it — and the widening is bounded by what this file's own
+  // export writes could publish, so it cannot root a callable no run can
+  // hand an importer. See that function's doc comment for both invariants
+  // and the false NOT_AFFECTED and false AFFECTED each one prevents.
   const candidates = entrypointRootCandidates(index, model);
   for (const name of candidates.names) {
     const node = graph.nodes.find(
