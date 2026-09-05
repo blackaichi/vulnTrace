@@ -93,6 +93,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-017 | any CommonJS file where the RWF-016 shape's throwing call is written as a variable declaration's initializer (`const x = bail();`) rather than as a bare statement (`bail();`), above a later export write — the same UMD/feature-detect boilerplate family, where the helper's return value is captured instead of discarded | RWF-016 proved the CALLEE (`resolveExactLocalCallable` + `cannotCompleteNormally`) but recognised the CALL in one syntactic position only: `isDefinitelyAbruptCallStatement` opened with `if (!ts.isExpressionStatement(node)) return false`, so a `VariableStatement` whose declarator initializer is that exact call was refused on shape alone. Abrupt module-evaluation behavior is a property of execution semantics — JavaScript evaluates a declarator's initializer as part of executing the declaration — not of whether the `CallExpression` happens to be wrapped in an `ExpressionStatement` | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the initializer's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it | **Fixed (RWF-017)** |
 | RWF-018 | any CommonJS file where the RWF-016/017 shape's throwing call is written as a class STATIC FIELD initializer (`class C { static x = bail(); }`) rather than as a statement, above a later export write — the same UMD/feature-detect family, where the helper's result is captured on a class instead of in a variable | RWF-016 proved the CALLEE and RWF-017 proved that the call's syntactic POSITION does not change the outcome, but both recognised the call only in STATEMENT positions: `isDefinitelyAbruptCallStatement` dispatched on `ExpressionStatement` or `VariableStatement` and refused everything else on shape alone. A static field initializer is neither — it hangs off a `PropertyDeclaration` — and it is executed by CLASS EVALUATION, which is itself part of module evaluation: evaluating a class definition runs its static elements, blocks and field initializers alike, in declaration order. An INSTANCE field is genuinely different and must stay excluded: it is installed by class evaluation and executed per-instance during construction | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it, and — in the same process — that the INSTANCE-field twin genuinely does complete and publish its later export | **Fixed (RWF-018)** |
 | RWF-019 | any CommonJS file where the RWF-016/017/018 shape's throwing call is written as a class element's COMPUTED KEY (`class C { [bail()] = 1; }`, `class C { [bail()]() {} }`) rather than in a value position, above a later export write — the same UMD/feature-detect family, and NOT restricted to `static` elements | RWF-016 proved the CALLEE, RWF-017 proved the call's syntactic POSITION does not change the outcome, and RWF-018 carried it into a class STATIC FIELD initializer. All three read the call out of a VALUE position: `isDefinitelyAbruptCallStatement` dispatched on `ExpressionStatement`/`VariableStatement`, and `isDefinitelyAbruptStaticFieldInitializer` on a `PropertyDeclaration`'s `initializer` gated on the `static` modifier. A computed property name is neither. It is evaluated by ClassDefinitionEvaluation, in declaration order, as each element is defined — the key has to exist before the element can be installed on the class or its prototype — so it runs at class-definition time for an INSTANCE field, a method, a getter and a setter exactly as for a static field, even though those elements' VALUES and BODIES are genuinely deferred. RWF-018 recorded this as the RWF-019 candidate rather than folding a partial version of it in behind a static-field name | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it, that all eight element forms abort the class definition on the same key, and — in the same process — that the same element's instance-field VALUE, a method BODY and a class defined inside an uncalled function genuinely do complete and publish their later export | **Fixed (RWF-019)** |
+| RWF-021 | any CommonJS file used as a CONFIGURED ENTRYPOINT that exports a top-level callable and carries any RWF-014/015/016/017/018/019 authority-withdrawing construct above the export write — and, independently of any cutoff, any entrypoint exporting an ANONYMOUS callable | Entrypoint reachability ROOTS were read out of export ATTRIBUTION provenance (`exp.localName ?? exp.exportedName` in verdict.ts's `entrypointSourceNodes`). The two questions fail in opposite directions — attribution must REFUSE when it cannot name the exported value, root selection must WIDEN — so every soundness cutoff that correctly withdrew attribution silently deleted the entrypoint's root as well. The exported function's body was then never traversed, and an anonymous export (RWF-003's shape) had no name to be rooted by at all | **Soundness, cross-family** — reproduced end-to-end on `8d18130` as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) for **all four merged cutoff families** (RWF-016/017/018/019) plus the property-export and anonymous-export forms, over an entrypoint whose exported `main` really is published and really does reach the vulnerable sink on every run where the branch is not taken (asserted under real `node`) | **Fixed (RWF-021)** |
 
 ---
 
@@ -2425,3 +2426,212 @@ cases), `verdict.computed-class-key-throwing-call-export-authority.integration.t
 and `ADV2-079`. The two computed-key shapes RWF-018 pinned as unmodeled in
 `module-model.static-field-throwing-call-export-authority.test.ts` moved out
 of that file's boundary list, since they are now correctly refused.
+
+---
+
+## RWF-021 — Withdrawing export attribution deleted the entrypoint's reachability ROOT
+
+**Severity:** P0 / CRITICAL SOUNDNESS — a false `NOT_AFFECTED`. **Cross-family:**
+this is not a defect in any one cutoff rule; it is a defect in what every
+cutoff rule's output was wired into.
+
+**Discovered:** the independent RWF-020 audit, which built a
+configured-entrypoint attack against the (then unmerged) heritage-clause
+branch, found a false `NOT_AFFECTED`, and then established that the same
+attack already succeeded on **current main** through all four merged
+families. RWF-020 was blocked on that basis; the defect it exposed is this
+one, and it is older than RWF-020.
+
+### The defect
+
+```js
+// src/index.cjs -- the CONFIGURED ENTRYPOINT
+const dep = require("vuln-lib");
+
+function main(userInput) {          // the only path to the sink
+  return dep.dangerousOp(userInput);
+}
+function bail() { throw new Error("boom"); }
+
+if (process.env.FLAG === "1") { bail(); }   // RWF-016 cutoff
+
+module.exports = main;              // bypassable -> attribution withdrawn
+```
+
+Runtime, with `FLAG` unset (asserted, not argued — see
+`fixtures/commonjs-entrypoint-root-widening/verify.cjs`): the abrupt branch
+never executes, `module.exports` **is** `main`, and calling it returns
+`danger:payload`. The sink is genuinely reachable.
+
+The analyzer said otherwise:
+
+```text
+precise export     localName = "main"      -> root "main" -> path found -> AFFECTED
+authority withdrawn localName = undefined  -> NO root      -> `main` never traversed
+                                           -> target unreachable
+                                           -> reachableSubgraphComplete: true
+                                           -> NOT_AFFECTED   (FALSE)
+```
+
+Measured on `8d18130` for every merged cutoff family, all four identical:
+
+| Entrypoint cutoff | base `8d18130` | RWF-021 |
+| --- | --- | --- |
+| RWF-016 `bail();` | **NOT_AFFECTED**, Family C complete | AFFECTED |
+| RWF-017 `const x = bail();` | **NOT_AFFECTED**, Family C complete | AFFECTED |
+| RWF-018 `static x = bail();` | **NOT_AFFECTED**, Family C complete | AFFECTED |
+| RWF-019 `[bail()] = 1` | **NOT_AFFECTED**, Family C complete | AFFECTED |
+| `exports.run = main` + cutoff | **NOT_AFFECTED**, Family C complete | AFFECTED |
+| anonymous `module.exports = function (u) {…}` | **NOT_AFFECTED**, Family C complete | AFFECTED |
+
+### Root cause: two different questions answered by one expression
+
+`entrypointSourceNodes` derived its roots with
+`const name = exp.localName ?? exp.exportedName`. That expression is export
+**attribution** provenance, and attribution and root selection are not the
+same question — they fail in opposite directions:
+
+- **Export attribution** asks *"which function IS this module's exported
+  value?"*. Its correct failure mode is to **refuse**: naming a function the
+  module might not export manufactures a target out of nothing. RWF-011,
+  RWF-013 and RWF-014 are all fixes for having answered it too eagerly.
+- **Root selection** asks *"which of this file's functions might an outside
+  caller invoke?"*. Its correct failure mode is to **widen**: an
+  entrypoint's exports are by definition invocable from outside the analyzed
+  codebase, so a root this file cannot pin down is a root that might be any
+  of its top-level callables — not none of them.
+
+Reading the second off the first made every refusal a deletion. Worse, the
+deletion is **invisible in the evidence**: the resulting subgraph is
+smaller, so it is *more* likely to be judged complete, and the false
+negative arrives wearing a complete Family C proof.
+
+The anonymous case is the same asymmetry without any cutoff at all:
+`module.exports = function (u) {…}` has an exact function IDENTITY
+(RWF-003's `localFunctionLocation`) and no name, so a name-only root lookup
+lost it even when attribution was fully precise.
+
+### The fix
+
+Root selection becomes its own named relation,
+`entrypointRootCandidates` in module-model.ts, and `entrypointSourceNodes`
+consumes it instead of reading provenance inline:
+
+- every export that still carries a name contributes it — **the precise
+  case is byte-for-byte unchanged**, so a file whose authority is intact
+  widens nothing and costs nothing;
+- an export whose attribution was WITHDRAWN additionally contributes every
+  **top-level** callable the file declares
+  (`topLevelCallableCandidates`, reused rather than re-derived);
+- an anonymous exported callable contributes its **position**, matched
+  against the graph node's own location.
+
+Withdrawal is marked explicitly (`ExportBinding.exportAttributionWithdrawn`)
+rather than inferred from a missing `localName`, because those are not the
+same fact: `module.exports = 42` also has no `localName`, genuinely exports
+no callable, and must NOT widen. Both `ambiguousWholeModuleExport`
+(whole-module) and `propertyExportProvenance` (`exports.foo = …`) set it.
+
+**Monotonicity is the property, and it is asserted directly**
+(`module-model.entrypoint-root-candidates.test.ts`): for each of the four
+cutoff families, the ambiguous root set is a strict superset of the precise
+one, and it is never empty when the precise one was not.
+
+### What widening deliberately does NOT do
+
+- **No attribution is resurrected.** `mapExportsToFunctions` is untouched;
+  a widened root is a traversal start point, never an identity claim. No
+  target resolves through one, and no evidence names one as the export.
+- **`exportedName` is not turned into a local symbol.** The pre-existing
+  `?? exp.exportedName` fallback is kept as-is for roots (where landing on
+  a same-name local merely adds a start point) and remains correctly
+  removed from attribution by RWF-011 (where it manufactures a false
+  target). That asymmetry is the whole point of the split.
+- **No fallback to an earlier write, a stale binding, a re-export's origin,
+  or another PackageInstance.** The fix is widening, not fabricated export
+  identity.
+- **Nested/deferred functions are not rooted.**
+  `topLevelCallableCandidates` walks `sourceFile.statements` only, so
+  `function outer() { function hidden() {…} }` contributes `outer` and never
+  `hidden` — export ambiguity is no evidence at all that a nested helper is
+  exported.
+- **Nothing is manufactured.** An ambiguous export in a file with no
+  top-level callables contributes no names, leaving the module node as the
+  only root and the honest UNKNOWN/NOT_AFFECTED intact.
+
+### Family C is defended, not disabled
+
+The `unreachable.cjs` control has its authority withdrawn, so its roots DO
+widen — and none of the widened callables reaches the target, so it still
+returns `NOT_AFFECTED` with `reachableSubgraphComplete: true`. Widening
+costs no genuine negative proof; it removes only the ones whose
+completeness was manufactured by declining to look.
+
+### Verdict differential
+
+- Adversarial v1/v2, all 114 cases: **one** movement, `ADV2-080`
+  NOT_AFFECTED → AFFECTED. Nothing else moved.
+- Validation: **identical**, 12 PASS / 5 KNOWN_FAIL / 0 UNEXPECTED / 17
+  total; `RWB-07` still certified NOT_AFFECTED on a valid proof.
+- `UNKNOWN → NOT_AFFECTED`: **0**. `AFFECTED → UNKNOWN`: **0**. No new
+  false AFFECTED: every movement is onto a call path that exists in the
+  source and executes under real `node`.
+
+### Corpus
+
+AST search (not text matching) for all four facts coinciding in one file —
+a top-level CommonJS export of a locally-declared callable, a preceding
+module-evaluation cutoff, and that callable reaching a `require()`-bound
+dependency: **3,156 files scanned**, 2,044 exports of a local top-level
+callable, 22 of those with a preceding cutoff, **7** also reaching a
+dependency — all 7 this task's own fixtures, **0 elsewhere**. That is the
+expected shape of the result rather than a reassuring one: the defect bites
+APPLICATION entrypoints, and `node_modules` contains libraries, which are
+almost never the configured entrypoint. Its real-world reach is in
+first-party application code, which this repository's corpus does not
+contain.
+
+### Performance
+
+Widening is scoped to configured-entrypoint modules whose export provenance
+was actually withdrawn; every other file takes the identical path it did
+before. Root counts on the fixtures: 1 → 2 for the canonical shape, 1 → 3
+where a decoy and a sibling exist. `scan-performance`, median of three:
+1,922 ms base vs 2,223 ms branch on the large-file baseline (threshold
+4,500 ms).
+
+### RWF-020 interaction
+
+RWF-020 (class heritage `extends bail()`) is blocked on this finding: its
+branch added a fifth trigger for this same root-loss, which turned an input
+that was correctly AFFECTED on main into a false NOT_AFFECTED. Verified
+externally by stacking RWF-020's implementation commit on top of this
+branch — see the RWF-021 completion report. RWF-021 must merge first.
+
+**Documentation correction owed by RWF-020** (recorded here because the
+RWF-020 audit required it and the text lives on that branch, which this
+task must not modify): RWF-020's FINDINGS entry and its
+`isDefinitelyAbruptClassHeritage` doc comment describe
+`class C extends (bail() || Base) {}` as a shape that "genuinely may not
+call `bail` at all". That is wrong — the **left operand of `||` is always
+evaluated**, so `bail()` always runs and, when it is throw-only, the class
+definition always aborts and a later export write really is bypassed
+(measured: `ran=true, threw=true`). It belongs with `foo(bail())` and
+`(bail(), Base)` as a shape that ALWAYS evaluates the call and is a
+remaining soundness gap, not with `(flag && bail())` and
+`(flag ? bail() : Base)`, which genuinely may not. RWF-020 must adopt this
+classification on rebase. RWF-021 does not implement nested-expression
+heritage support.
+
+**Relevant files:** `src/analysis/verdict.ts` (`entrypointSourceNodes` — now
+consumes the new relation and matches by position as well as name);
+`src/code-intelligence/module-model.ts`
+(`entrypointRootCandidates` + `EntrypointRootCandidates` (new),
+`ExportBinding.exportAttributionWithdrawn` (new),
+`ambiguousWholeModuleExport` and `propertyExportProvenance` (marker only);
+`topLevelCallableCandidates`, `mapExportsToFunctions`,
+`selectAuthoritativeWholeModuleExport`, `isDefinitelyReachedExportAssignment`
+all reused UNCHANGED); regressions in
+`module-model.entrypoint-root-candidates.test.ts` (26 cases),
+`verdict.entrypoint-root-widening.integration.test.ts` (12 cases),
+`fixtures/commonjs-entrypoint-root-widening/`, and `ADV2-080`.

@@ -1,0 +1,5 @@
+{
+  "name": "adv2-080",
+  "version": "1.0.0",
+  "dependencies": { "vt2-runner-lib": "1.0.0", "vt2-vuln-lib": "1.0.0" }
+}
