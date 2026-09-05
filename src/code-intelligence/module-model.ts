@@ -1950,12 +1950,16 @@ function isDefinitelyAbruptComputedClassElementKey(node: ts.Node): boolean {
  * ({@link cannotCompleteNormally}), the `async`/generator exclusions, and
  * the parentheses normalization that makes `extends (bail())` work.
  * `extends foo(bail())`, `extends (bail(), Base)`,
- * `extends (bail() || Base)`, `extends (flag ? bail() : Base)` and
- * `extends new Bail()` are all left unrecognised at that same
- * arbitrary-expression boundary — the first two really do always evaluate
- * `bail`, the next two genuinely may not, and telling them apart needs the
- * evaluation-order model {@link isDefinitelyAbruptCall} deliberately does
- * not have.
+ * `extends (bail() || Base)`, `extends (flag && bail())`,
+ * `extends (flag ? bail() : Base)` and `extends new Bail()` are all left
+ * unrecognised at that same arbitrary-expression boundary. The first THREE
+ * really do always evaluate `bail` — an argument is evaluated before the
+ * call, a comma sequence evaluates its left operand, and so does `||`,
+ * whose short-circuit decides only whether the RIGHT operand runs — so
+ * those three are remaining soundness gaps. `flag && bail()` and
+ * `flag ? bail() : Base` genuinely may not call it at all. Telling the two
+ * groups apart needs the evaluation-order model
+ * {@link isDefinitelyAbruptCall} deliberately does not have.
  *
  * Scope is narrow in two further directions:
  *
