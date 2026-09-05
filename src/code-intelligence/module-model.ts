@@ -671,7 +671,7 @@ function firstModuleEvaluationCutoff(
     return cached.start;
   }
 
-  const scanExpressions = mayContainClassStaticEvaluation(sourceFile);
+  const scanExpressions = mayContainClassDefinitionTimeEvaluation(sourceFile);
   let start: number | undefined;
   for (const statement of sourceFile.statements) {
     if (mayEndModuleEvaluation(statement, scanExpressions)) {
@@ -687,11 +687,12 @@ function firstModuleEvaluationCutoff(
 /**
  * Whether evaluating this one top-level statement can end module
  * evaluation rather than falling through to the next statement (RWF-015;
- * widened by RWF-016, RWF-017 and RWF-018).
+ * widened by RWF-016, RWF-017, RWF-018 and RWF-019).
  *
  * Three constructs qualify — all of them ABRUPT COMPLETIONS, and the third
- * only when {@link isDefinitelyAbruptCallStatement} or
- * {@link isDefinitelyAbruptStaticFieldInitializer} has PROVEN it is one,
+ * only when {@link isDefinitelyAbruptCallStatement},
+ * {@link isDefinitelyAbruptStaticFieldInitializer} or
+ * {@link isDefinitelyAbruptComputedClassElementKey} has PROVEN it is one,
  * never merely suspected it might be:
  *
  * - **`return`** — legal at CommonJS module scope because Node evaluates
@@ -710,7 +711,12 @@ function firstModuleEvaluationCutoff(
  *   which the language evaluates when the declaration executes), or as a
  *   class STATIC FIELD's initializer (`class C { static x = bail(); }`,
  *   RWF-018, which the language evaluates when the class DEFINITION
- *   executes — see {@link isDefinitelyAbruptStaticFieldInitializer}). Such
+ *   executes — see {@link isDefinitelyAbruptStaticFieldInitializer}), or
+ *   as any class element's COMPUTED KEY (`class C { [bail()] = 1; }`,
+ *   `class C { [bail()]() {} }`, RWF-019, which the language likewise
+ *   evaluates when the class DEFINITION executes, for static and instance
+ *   elements alike — see
+ *   {@link isDefinitelyAbruptComputedClassElementKey}). Such
  *   a call is exactly as terminal as the literal `throw` inside `bail`'s
  *   body would be if inlined at the call site, and is caught by an
  *   enclosing `try`/`catch` under the identical rule
@@ -744,13 +750,17 @@ function firstModuleEvaluationCutoff(
  * ```
  *
  * Class bodies are NOT skipped, for the symmetric reason: a
- * `static { ... }` block and a `static x = ...` FIELD INITIALIZER both run
- * at class-definition time, i.e. during module evaluation, so an abrupt
- * completion in either really can abort the load (RWF-018). Methods and
- * accessors inside that same class body are skipped by the function-like
- * test, as they should be, and so — for the opposite reason — is the
- * per-instance execution of an INSTANCE field initializer, which
- * {@link isDefinitelyAbruptStaticFieldInitializer} declines to act on.
+ * `static { ... }` block, a `static x = ...` FIELD INITIALIZER and any
+ * element's COMPUTED KEY all run at class-definition time, i.e. during
+ * module evaluation, so an abrupt completion in any of them really can
+ * abort the load (RWF-018, RWF-019). Method and accessor BODIES inside
+ * that same class body are skipped by the function-like test, as they
+ * should be — but their computed KEYS are not, which is why
+ * {@link isDefinitelyAbruptComputedClassElementKey} is asked before that
+ * test rather than after it. And so — for the opposite reason — the
+ * per-instance execution of an INSTANCE field initializer is skipped,
+ * which {@link isDefinitelyAbruptStaticFieldInitializer} declines to act
+ * on even though that same element's computed key is acted on.
  *
  * An IIFE is skipped along with every other function expression. That is
  * the conservative direction here rather than the risky one: skipping it
@@ -773,7 +783,22 @@ function mayEndModuleEvaluation(
   let found = false;
 
   function visit(node: ts.Node): void {
-    if (found || ts.isFunctionLike(node)) {
+    if (found) {
+      return;
+    }
+    // Asked BEFORE the function-like stop below, and that order is the
+    // whole point: a computed METHOD/ACCESSOR key (`[bail()]() {}`) hangs
+    // off a node that IS function-like, so testing it after the stop would
+    // never see it. The stop still applies to the element's BODY, which is
+    // what it is for — see {@link isDefinitelyAbruptComputedClassElementKey}.
+    if (
+      isDefinitelyAbruptComputedClassElementKey(node) &&
+      !isCaughtWithin(node, statement)
+    ) {
+      found = true;
+      return;
+    }
+    if (ts.isFunctionLike(node)) {
       return;
     }
     if (
@@ -854,6 +879,46 @@ function mayContainNestedStatements(node: ts.Node): boolean {
  */
 function mayContainClassStaticEvaluation(sourceFile: ts.SourceFile): boolean {
   return /\bstatic\b/.test(sourceFile.text);
+}
+
+/**
+ * Whether this file could contain ANY construct that executes at
+ * class-definition time — the gate {@link firstModuleEvaluationCutoff}
+ * uses, widened from {@link mayContainClassStaticEvaluation} by RWF-019.
+ *
+ * RWF-015/018's `static` test was complete for the two constructs known
+ * then (a `static { ... }` block and a `static x = ...` field
+ * initializer), because neither can be written without that token.
+ * RWF-019 adds a third, and it has no `static` in it at all:
+ *
+ * ```js
+ * class C { [bail()] = 1; }   // computed KEY -- runs at class-definition time
+ * ```
+ *
+ * All three do share the `class` keyword, though — there is no other way
+ * to write a class in the language — so one token still gates all of them,
+ * and `class` is the token that actually names the construct doing the
+ * executing. It stays a sound over-approximation in the same way the
+ * narrower test was: a `class` in a comment or a string costs that one
+ * file the full expression walk and changes no answer, while a file
+ * containing no `class` at all provably has no class-definition-time
+ * evaluation to find, which keeps the cheap statement-position walk
+ * exactly complete rather than merely close.
+ *
+ * Deliberately NOT shared with {@link reassignedModuleReachableNames},
+ * which keeps the narrower `static` gate. Widening a walk that looks for
+ * ABRUPT COMPLETIONS can only find more cutoffs, i.e. refuse more exports
+ * — the safe direction. Widening the walk that looks for REASSIGNMENTS
+ * runs the other way: a name it newly marks as reassigned makes
+ * {@link resolveExactLocalCallable} refuse a callee and REMOVES a cutoff,
+ * which would turn a refused export into an attributed one. RWF-019 is a
+ * soundness fix and takes no movement in that direction, so the two gates
+ * are separate on purpose.
+ */
+function mayContainClassDefinitionTimeEvaluation(
+  sourceFile: ts.SourceFile,
+): boolean {
+  return /\bclass\b/.test(sourceFile.text);
 }
 
 /**
@@ -1629,9 +1694,10 @@ function declarationListCannotCompleteNormally(
  * written directly. A COMPUTED KEY (`static [bail()] = 1`) is deliberately
  * NOT recognised here even though it is also evaluated at class-definition
  * time: computed keys evaluate for instance members and methods too, which
- * makes them a different rule with a different scope, recorded as a
- * separate follow-up in tests/validation/FINDINGS.md rather than folded in
- * behind a static-field name. Nor is an initializer the call merely
+ * makes them a different rule with a different scope — RWF-019's
+ * {@link isDefinitelyAbruptComputedClassElementKey}, which covers every
+ * class element rather than being folded in behind a static-field name.
+ * Nor is an initializer the call merely
  * appears somewhere inside (`static x = foo(bail())`, `[bail()]`,
  * `` `${bail()}` ``) — that is the same arbitrary-expression-evaluation
  * boundary {@link isDefinitelyAbruptCall} already draws and documents.
@@ -1645,6 +1711,110 @@ function isDefinitelyAbruptStaticFieldInitializer(node: ts.Node): boolean {
       ?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ===
       true &&
     isDefinitelyAbruptCall(node.initializer)
+  );
+}
+
+/**
+ * Whether `node` is a class element whose COMPUTED PROPERTY NAME
+ * necessarily invokes a definitely-abrupt local callee, so that evaluating
+ * the enclosing class ends module evaluation rather than completing
+ * (RWF-019).
+ *
+ * ```js
+ * class C { static [bail()] = 1; }     // qualifies
+ * class C { [bail()] = 1; }            // qualifies -- NOT static, and that is the point
+ * class C { [bail()]() {} }            // qualifies
+ * class C { static [bail()]() {} }     // qualifies
+ * class C { get [bail()]() {} }        // qualifies
+ * class C { set [bail()](v) {} }       // qualifies
+ * const C = class { [bail()] = 1; };   // qualifies -- same evaluation
+ * class C { x = bail(); }              // does NOT qualify: instance field VALUE (RWF-018's line)
+ * class C { m() { bail(); } }          // does NOT qualify: method BODY
+ * class C { bail() {} }                // does NOT qualify: not a computed key
+ * ```
+ *
+ * **Why a computed key is class-DEFINITION time, whatever the element is.**
+ * A computed property name is evaluated by ClassDefinitionEvaluation, in
+ * declaration order, as each element is defined — the key has to exist
+ * before the element can be installed on the class or its prototype. That
+ * is true for every element form, because installing ANY of them needs a
+ * property key: a static field, an instance field, a method, a getter, a
+ * setter, an `async` method, a generator method. So a class sitting at
+ * module scope evaluates every computed key it writes during module
+ * evaluation, and a throw out of one propagates out of the class
+ * definition and out of the `require()` that started the load. Nothing
+ * below the class runs — including a later `module.exports = safeOp`,
+ * which a cyclic importer therefore never sees.
+ *
+ * **This is exactly what makes RWF-019 a different rule from RWF-018, not
+ * a widening of it.** RWF-018's static/instance distinction is about WHEN
+ * the VALUE runs, and it is real:
+ * `class C { x = bail(); }` defines `C` and runs nothing, because an
+ * instance field initializer is stored and executed per-INSTANCE during
+ * construction. The KEY of that very same element is a separate
+ * expression in a separate position, and it runs immediately either way:
+ * `class C { [bail()] = 1; }` throws at definition time even though
+ * `class C { x = bail(); }` does not. Requiring `static` here — the shape
+ * test {@link isDefinitelyAbruptStaticFieldInitializer} correctly
+ * applies to INITIALIZERS — would therefore miss the majority of the
+ * family. Both facts are proven in one real `node` process in
+ * fixtures/commonjs-circular-import-computed-class-key-throw-ground-truth/.
+ *
+ * The same reasoning is why a METHOD's or ACCESSOR's deferred body is
+ * untouched by this: `[bail()]() { ... }` executes `bail()` when the class
+ * is defined and the BODY only when someone calls the method, and this
+ * predicate reads the name node alone. {@link mayEndModuleEvaluation}'s
+ * function-like stop still skips the body; this test is simply asked
+ * before that stop, since a `MethodDeclaration` IS function-like.
+ *
+ * **Ordering needs no model**, for the same reason RWF-018 needed none:
+ * {@link firstModuleEvaluationCutoff} records the enclosing top-level
+ * STATEMENT's start, so which computed key throws — first, middle or last
+ * — cannot change the answer. Keys evaluate in declaration order, every
+ * one of them during this same class definition, so
+ * `[safe()] = 1; [bail()] = 2; [later()] = 3;` needs no intra-class
+ * control-flow graph: the class definition does not complete either way.
+ *
+ * Scope is deliberately narrow in three directions:
+ *
+ * - only a genuine `ts.ComputedPropertyName` counts, read off the AST.
+ *   `class C { bail() {} }` and `class C { "bail()" = 1; }` are ordinary
+ *   names and are not computed keys, whatever their text looks like;
+ * - only class elements count. The parent must be a `ClassDeclaration` or
+ *   `ClassExpression`, which is what excludes an OBJECT LITERAL's computed
+ *   key (`{ [bail()]: 1 }`) and its methods — `MethodDeclaration` is the
+ *   same node KIND in both, and an object literal is an ordinary
+ *   expression belonging to the arbitrary-expression-evaluation boundary
+ *   {@link isDefinitelyAbruptCall} draws, not to class evaluation;
+ * - only the key expression written DIRECTLY as that call qualifies, via
+ *   {@link isDefinitelyAbruptCall} — which also gives RWF-019 the
+ *   parentheses normalization that makes `[(bail())]` work, the exact
+ *   non-reassigned local callee ({@link resolveExactLocalCallable}), the
+ *   always-throws body proof ({@link cannotCompleteNormally}) and the
+ *   `async`/generator exclusions, all reused verbatim. `[foo(bail())]`,
+ *   `` [`${bail()}`] `` and `[(bail(), "x")]` are all evaluated at
+ *   runtime and all deliberately unrecognised: that is the same
+ *   arbitrary-expression-evaluation boundary RWF-017 recorded, and
+ *   `[flag && bail()]` / `[flag ? bail() : "x"]` show why it is not safe
+ *   to guess past it — those genuinely may not call `bail` at all.
+ *
+ * A caught class-evaluation throw is handled by the existing
+ * {@link isCaughtWithin} at the call site in {@link mayEndModuleEvaluation},
+ * exactly as for RWF-018: `try { class C { [bail()] = 1; } } catch {}`
+ * keeps a later export's authority, and a rethrowing `catch` withdraws it.
+ * A class DEFINED inside a function/method/arrow body is never offered to
+ * this predicate at all, because that walk stops at function-like nodes
+ * before reaching it — the class definition is deferred until the enclosing
+ * function runs, so it must not poison module evaluation.
+ */
+function isDefinitelyAbruptComputedClassElementKey(node: ts.Node): boolean {
+  return (
+    ts.isClassElement(node) &&
+    node.name !== undefined &&
+    ts.isComputedPropertyName(node.name) &&
+    node.parent !== undefined &&
+    ts.isClassLike(node.parent) &&
+    isDefinitelyAbruptCall(node.name.expression)
   );
 }
 

@@ -515,9 +515,15 @@ describe("RWF-018: expression positions inside the initializer stay OUT of scope
   // draws for RWF-016/017. They are pinned here so a later change to that
   // boundary is a deliberate decision rather than an accident, and they
   // are recorded as follow-ups in tests/validation/FINDINGS.md.
+  // NOTE: the two COMPUTED KEY shapes that used to be pinned here
+  // (`static [bail()] = 1` and `[bail()] = 1`) have moved out. RWF-018
+  // recorded them as the RWF-019 candidate because a computed key is
+  // evaluated at class-definition time for every element form, static and
+  // instance alike, which makes it a key-POSITION rule rather than a
+  // static-field one. RWF-019 implements that rule, so both now correctly
+  // withdraw authority; their coverage lives in
+  // module-model.computed-class-key-throwing-call-export-authority.test.ts.
   const cases: ReadonlyArray<readonly [string, string]> = [
-    ["computed static key", "class C {\n  static [bail()] = 1;\n}"],
-    ["computed instance key", "class C {\n  [bail()] = 1;\n}"],
     ["argument position", "class C {\n  static x = wrap(bail());\n}"],
     ["comma expression", "class C {\n  static x = (bail(), 1);\n}"],
     ["array element", "class C {\n  static x = [bail()];\n}"],
