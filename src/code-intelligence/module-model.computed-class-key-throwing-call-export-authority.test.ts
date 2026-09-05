@@ -741,18 +741,20 @@ describe("RWF-019: key expressions the call is merely NESTED in stay OUT of scop
     });
   }
 
-  it("keeps authority for a heritage clause `class C extends bail() {}` -- a separate open P0, deliberately untouched", () => {
+  it("refuses authority for a heritage clause `class C extends bail() {}` -- the separate P0 RWF-019 recorded here, since fixed by RWF-020", () => {
     // `class C extends bail() {}` DOES throw at class-definition time
-    // under real `node`. It is a different expression position (the
-    // heritage clause, evaluated before any element), it is unchanged
-    // from `main`, and RWF-019 neither fixes nor worsens it. Recorded as
-    // a separate P0 in tests/validation/FINDINGS.md rather than absorbed
-    // silently here.
+    // under real `node`. RWF-019 recorded it as a separate open P0 rather
+    // than absorbing it silently, because it is a different expression
+    // position: the heritage clause, evaluated BEFORE any element exists,
+    // so a computed-key rule handed a `ClassElement` can never see it.
+    // RWF-020 closed it with its own predicate
+    // (`isDefinitelyAbruptClassHeritage`); this case stays here, with its
+    // assertion flipped, as the cross-check that the two rules agree.
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}class C extends bail() {}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("refuses when a heritage clause sits alongside an abrupt computed KEY -- RWF-019 does not break extends handling", () => {
