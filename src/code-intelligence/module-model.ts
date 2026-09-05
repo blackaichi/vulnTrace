@@ -168,6 +168,36 @@ export interface ExportBinding {
    * strictly LESS provenance for the same identifier, never more.
    */
   readonly localIdentifierProvenanceRefused?: boolean;
+  /**
+   * Whether this binding is the placeholder for a whole-module export
+   * whose value {@link selectAuthoritativeWholeModuleExport} REFUSED to
+   * name (RWF-014/015/016/017/018/019), rather than one it attributed
+   * (RWF-021).
+   *
+   * Purely internal analysis state: never serialized, never surfaced in
+   * evidence, and read by exactly one consumer —
+   * {@link entrypointRootCandidates}, which must WIDEN rather than
+   * narrow when it sees it.
+   *
+   * This exists because the ABSENCE of {@link localName} is not sufficient
+   * to tell the two situations apart, and treating it as if it were is
+   * precisely the defect RWF-021 fixes. Both of these produce a binding
+   * with no `localName` and no {@link localFunctionLocation}:
+   *
+   * ```js
+   * module.exports = 42;                 // attributed: exports no callable
+   * if (flag) { bail(); }                // WITHDRAWN: exports `main`, or
+   * module.exports = main;               //   nothing, and we cannot say which
+   * ```
+   *
+   * The first genuinely has no callable export and needs no root. The
+   * second has one this analyzer declined to name, and dropping its root
+   * makes the exported function's body invisible to reachability — which
+   * reproduced a false NOT_AFFECTED carrying a complete Family C proof for
+   * every one of the RWF-016/017/018/019 cutoff families. See
+   * {@link entrypointRootCandidates}.
+   */
+  readonly exportAttributionWithdrawn?: boolean;
   readonly location: SourceLocation;
 }
 
@@ -413,9 +443,23 @@ function classConstructorNode(
 function propertyExportProvenance(
   index: SourceIndex,
   rhs: ts.Expression | undefined,
-): Pick<ExportBinding, "localName" | "localFunctionLocation"> {
-  if (rhs === undefined || !isDefinitelyReachedExportAssignment(rhs)) {
+): Pick<
+  ExportBinding,
+  "localName" | "localFunctionLocation" | "exportAttributionWithdrawn"
+> {
+  if (rhs === undefined) {
     return {};
+  }
+  if (!isDefinitelyReachedExportAssignment(rhs)) {
+    // A right-hand side EXISTS but this file cannot prove the write runs,
+    // so no provenance is published — the same refusal
+    // {@link ambiguousWholeModuleExport} makes for the whole-module form,
+    // and it must be marked for the same reason (RWF-021). Without the
+    // marker, root selection cannot tell this apart from a property export
+    // that genuinely names no callable, and dropping the root reproduces
+    // the false NOT_AFFECTED for `exports.run = main` exactly as it did
+    // for `module.exports = main`.
+    return { exportAttributionWithdrawn: true };
   }
   const value = unwrapValue(rhs);
   return {
@@ -2059,6 +2103,14 @@ function selectAuthoritativeWholeModuleExport(
  * `location` anchors to the LAST write observed, purely so the binding
  * points somewhere real in the file; it is a position, not an attribution,
  * and nothing resolves a target through it.
+ *
+ * {@link ExportBinding.exportAttributionWithdrawn} marks it as this
+ * refusal rather than an attributed export that merely happens to name no
+ * callable (RWF-021). Nothing about TARGET attribution reads that flag —
+ * an export this relation refused stays exactly as unattributable as it
+ * was. It exists so that ROOT selection can tell "we declined to name the
+ * exported callable" apart from "there is no exported callable", and widen
+ * instead of dropping the root. See {@link entrypointRootCandidates}.
  */
 function ambiguousWholeModuleExport(
   observed: ModuleExportsAssignment,
@@ -2066,6 +2118,7 @@ function ambiguousWholeModuleExport(
   return {
     kind: "default",
     syntax: "commonjs",
+    exportAttributionWithdrawn: true,
     location: observed.location,
   };
 }
@@ -2635,6 +2688,160 @@ export function buildModuleModel(index: SourceIndex): ModuleModel {
     imports: index.imports.map(toImportBinding),
     exports: buildExportBindings(index, index.exports),
   };
+}
+
+/**
+ * The reachability roots {@link entrypointRootCandidates} found: names to
+ * match a graph node by, and exact function POSITIONS to match one by when
+ * the callable has no name at all (RWF-003's anonymous export shape).
+ *
+ * Both are matched against the entrypoint file's own graph nodes by
+ * src/analysis/verdict.ts's `entrypointSourceNodes`; neither is an
+ * attribution, and nothing resolves a vulnerable target through either.
+ */
+export interface EntrypointRootCandidates {
+  readonly names: ReadonlySet<string>;
+  readonly locations: readonly SourceLocation[];
+}
+
+/**
+ * The callable surface an entrypoint file can be entered through — the
+ * reachability ROOTS for src/analysis/verdict.ts's
+ * `entrypointSourceNodes` (RWF-021).
+ *
+ * **Root provenance is not export provenance, and conflating them is the
+ * defect this exists to fix.** Those two questions look alike and are not:
+ *
+ * - *export attribution* asks "WHICH function is this module's exported
+ *   value?", and its correct failure mode is to REFUSE. Naming a function
+ *   the module might not export manufactures a target out of nothing, and
+ *   RWF-011/013/014 are all fixes for having answered it too eagerly.
+ * - *root selection* asks "which of this file's own functions might an
+ *   outside caller invoke?", and its correct failure mode is to WIDEN.
+ *   An entrypoint's exports are by definition callable from outside the
+ *   analyzed codebase, so a root this file cannot pin down is a root that
+ *   might be any of its top-level callables — not none of them.
+ *
+ * Before RWF-021 both questions were answered by the same expression
+ * (`exp.localName ?? exp.exportedName`), so a soundness cutoff that
+ * correctly withdrew ATTRIBUTION silently withdrew the ROOT too:
+ *
+ * ```js
+ * const dep = require("vuln-lib");
+ * function main(u) { return dep.dangerousOp(u); }   // the only path to the sink
+ * function bail() { throw new Error("boom"); }
+ * if (flag) { bail(); }        // RWF-016 cutoff -> authority withdrawn
+ * module.exports = main;       // bypassable, so `localName` is refused
+ * ```
+ *
+ * `main` stopped being a root, its body was never traversed, the sink
+ * became unreachable, and the result was a **complete Family C proof and a
+ * false NOT_AFFECTED** — for a module that, on every run where the branch
+ * is not taken, really does export `main` and really does reach the sink.
+ * Reproduced on `8d18130` for all four merged cutoff families (RWF-016's
+ * bare call, RWF-017's variable initializer, RWF-018's static field and
+ * RWF-019's computed key), and the same mechanism would have admitted
+ * RWF-020's heritage clause as a fifth.
+ *
+ * **The rule.** Losing export precision must never shrink this set:
+ *
+ * - every export that still carries a name contributes it, exactly as
+ *   before — the precise case is untouched, so a file whose export
+ *   authority is intact widens nothing and costs nothing;
+ * - an export whose whole-module attribution was WITHDRAWN
+ *   ({@link ExportBinding.exportAttributionWithdrawn}) additionally
+ *   contributes every TOP-LEVEL callable the file declares.
+ *
+ * The result is a superset of the precise answer by construction: names
+ * are only ever added. That is the monotonicity property RWF-021 asserts
+ * directly in its tests.
+ *
+ * **Why `topLevelCallableCandidates` is the right candidate set**, reused
+ * rather than re-derived: it is already this file's canonical answer to
+ * "which module-level bindings name a callable" (top-level function
+ * declarations plus `const`-bound function expressions and arrows), and
+ * it iterates `sourceFile.statements` only. So it cannot reach a function
+ * nested inside another function's body — which is exactly right, because
+ * export ambiguity is no evidence at all that a nested helper is exported:
+ *
+ * ```js
+ * function outer() { function hidden() { dep.dangerousOp(); } }
+ * ```
+ *
+ * `hidden` is not a plausible exported value and is deliberately not
+ * rooted. Widening stops at the module's own top-level callable surface.
+ *
+ * **What this deliberately does NOT do.** It does not attribute anything:
+ * no target resolves through a widened root, no evidence claims a widened
+ * root is the export, and {@link mapExportsToFunctions} is untouched. It
+ * does not resurrect name-only attribution (RWF-011) — a widened name is a
+ * traversal start point, never an identity claim. It does not fall back to
+ * an earlier write, a stale binding, a re-export's origin or another
+ * PackageInstance. And it manufactures nothing: a file with an ambiguous
+ * export and no top-level callables contributes no names, leaving the
+ * module node as the only root, which keeps the honest UNKNOWN rather than
+ * inventing a root to root.
+ */
+export function entrypointRootCandidates(
+  index: SourceIndex,
+  model: ModuleModel,
+): EntrypointRootCandidates {
+  const names = new Set<string>();
+  const locations: SourceLocation[] = [];
+  let withdrawn = false;
+
+  for (const exp of model.exports) {
+    // Unchanged from before RWF-021, including the `exportedName`
+    // fallback. For a ROOT that fallback is sound in the direction that
+    // matters: landing on a same-name local that is not really the export
+    // adds a traversal start point, and an extra root can only make more
+    // code reachable. The same fallback was correctly REMOVED from
+    // attribution by RWF-011, where landing on the wrong function
+    // manufactures a false target — the asymmetry this function's doc
+    // comment exists to explain.
+    const name = exp.localName ?? exp.exportedName;
+    if (name) {
+      names.add(name);
+    }
+    // RWF-003's anonymous-callable evidence, which root selection never
+    // consulted before RWF-021: `module.exports = function (u) { ... }`
+    // has an exact function IDENTITY and no name at all, so a name-only
+    // root lookup lost it even when attribution was fully precise.
+    if (exp.localFunctionLocation) {
+      locations.push(exp.localFunctionLocation);
+    }
+    if (exp.exportAttributionWithdrawn) {
+      withdrawn = true;
+    }
+  }
+
+  if (withdrawn) {
+    for (const candidate of topLevelCallableCandidates(
+      index.sourceFile,
+    ).keys()) {
+      names.add(candidate);
+    }
+    // The anonymous counterpart of the same widening. A withdrawn export
+    // carries no `localFunctionLocation` either, so an anonymous callable
+    // assigned straight to `module.exports` would otherwise have neither a
+    // name nor an identity to be rooted by. Every write this file makes to
+    // `module.exports` is already collected; the ones whose right-hand
+    // side IS a function are exactly the plausible anonymous exports, and
+    // a position identifies one AST node, so this adds no guesswork.
+    for (const assignment of collectModuleExportsAssignments(
+      index.sourceFile,
+    )) {
+      const location = directValueFunctionLocation(
+        index.sourceFile,
+        assignment.rhs,
+      );
+      if (location) {
+        locations.push(location);
+      }
+    }
+  }
+
+  return { names, locations };
 }
 
 /**
