@@ -130,6 +130,45 @@ describe("RWF-021: withdrawing export attribution must not delete the entrypoint
   });
 });
 
+describe("RWF-021: widened roots must be PUBLISHABLE -- no AFFECTED from impossible roots", () => {
+  // The three cases RWF-021's audit reproduced as branch-introduced false
+  // AFFECTED findings when widening reached every top-level callable.
+  // Each file's vulnerable-reaching callable cannot be published by any
+  // export write, so no run of the module can invoke it, and the correct
+  // answer is the negative one -- backed here by a real complete proof
+  // rather than by the root deletion that produced it before RWF-021.
+  const impossible: ReadonlyArray<readonly [string, string]> = [
+    ["a helper no export write mentions", "src/never-exported.cjs"],
+    [
+      "a sibling callable when only the safe one is exported",
+      "src/sibling-only-safe.cjs",
+    ],
+    [
+      "a STALE declaration reassigned before the export write",
+      "src/reassigned.cjs",
+    ],
+  ];
+
+  for (const [label, entrypoint] of impossible) {
+    it(`does not report AFFECTED through ${label}`, async () => {
+      const finding = await scan({ entrypoint, export: "dangerousOp" });
+      expect(finding?.verdict).not.toBe("AFFECTED");
+    });
+  }
+
+  it("still roots BOTH values when two real export writes compete (legitimate multi-candidate)", async () => {
+    // The counterpart to `sibling-only-safe.cjs`: here `dangerous` IS a
+    // real export write's value, so it is genuinely publishable and
+    // rooting it is correct.
+    const finding = await scan({
+      entrypoint: "src/both-writes.cjs",
+      export: "dangerousOp",
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+  });
+});
+
 describe("RWF-021: the controls that make this a fix rather than a blanket refusal", () => {
   it("keeps the PRECISE export's behavior unchanged -- authority intact, nothing widens", async () => {
     const finding = await scan({
@@ -142,7 +181,7 @@ describe("RWF-021: the controls that make this a fix rather than a blanket refus
 
   it("still proves a genuinely unreachable target NOT_AFFECTED even though roots WIDENED", async () => {
     // `unreachable.cjs` has its authority withdrawn, so its roots widen to
-    // every top-level callable it declares -- and none of them reaches
+    // the values its export writes publish -- and none of them reaches
     // `neverCalled`. Widening must not cost a real negative proof.
     const finding = await scan({
       entrypoint: "src/unreachable.cjs",

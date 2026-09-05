@@ -2748,28 +2748,32 @@ export interface EntrypointRootCandidates {
  * - every export that still carries a name contributes it, exactly as
  *   before — the precise case is untouched, so a file whose export
  *   authority is intact widens nothing and costs nothing;
- * - an export whose whole-module attribution was WITHDRAWN
+ * - an export whose attribution was WITHDRAWN
  *   ({@link ExportBinding.exportAttributionWithdrawn}) additionally
- *   contributes every TOP-LEVEL callable the file declares.
+ *   contributes every callable this file's own EXPORT WRITES could
+ *   publish — see {@link collectExportWriteCandidates}.
  *
  * The result is a superset of the precise answer by construction: names
- * are only ever added. That is the monotonicity property RWF-021 asserts
- * directly in its tests.
+ * and positions are only ever added. That is the monotonicity property
+ * RWF-021 asserts directly in its tests.
  *
- * **Why `topLevelCallableCandidates` is the right candidate set**, reused
- * rather than re-derived: it is already this file's canonical answer to
- * "which module-level bindings name a callable" (top-level function
- * declarations plus `const`-bound function expressions and arrows), and
- * it iterates `sourceFile.statements` only. So it cannot reach a function
- * nested inside another function's body — which is exactly right, because
- * export ambiguity is no evidence at all that a nested helper is exported:
+ * **Why export writes and not every top-level callable.** RWF-021's first
+ * cut widened to `topLevelCallableCandidates`, and its audit showed that
+ * to be strictly too broad: it rooted functions that no export write
+ * mentions anywhere, which cannot be published on any run, and that
+ * manufactured false AFFECTED findings. The eligible set is the values the
+ * file's real `module.exports = X` / `exports.Y = X` writes could hand an
+ * importer — bounded above by what the language can actually publish, and
+ * still bounded below by every write, so nothing plausible is lost.
+ *
+ * A function nested inside another function's body is excluded by the same
+ * rule rather than by a separate one — nothing assigns it to an export:
  *
  * ```js
  * function outer() { function hidden() { dep.dangerousOp(); } }
  * ```
  *
- * `hidden` is not a plausible exported value and is deliberately not
- * rooted. Widening stops at the module's own top-level callable surface.
+ * `hidden` is not a plausible exported value and is not rooted.
  *
  * **What this deliberately does NOT do.** It does not attribute anything:
  * no target resolves through a widened root, no evidence claims a widened
@@ -2782,6 +2786,107 @@ export interface EntrypointRootCandidates {
  * module node as the only root, which keeps the honest UNKNOWN rather than
  * inventing a root to root.
  */
+/**
+ * Adds the callable candidates ONE export write's right-hand side could
+ * publish, to the widened root set (RWF-021, narrowed by its own audit).
+ *
+ * This is the constraint that keeps widening honest. The first cut of
+ * RWF-021 widened to every TOP-LEVEL CALLABLE in the file, which is a
+ * strictly larger set than "the values this module's export writes can
+ * publish" — and the difference is not academic. It rooted functions no
+ * export write mentions anywhere, so a helper that merely happens to touch
+ * a vulnerable dependency turned into a reported call path:
+ *
+ * ```js
+ * function main(u) { return "safe:" + u; }               // the ONLY export
+ * function neverExported(u) { return dep.dangerousOp(u); } // assigned to nothing
+ * if (flag) { bail(); }
+ * module.exports = main;
+ * ```
+ *
+ * No run of that module can publish `neverExported`, so rooting it
+ * manufactured a false AFFECTED. The rule below is the fix: a callable is
+ * eligible only if some real export write could actually hand it to an
+ * importer.
+ *
+ * What each right-hand-side shape contributes:
+ *
+ * - **a directly written function/arrow/class** (`module.exports =
+ *   function (u) {...}`) — its exact POSITION, which is RWF-003's identity
+ *   evidence and needs no name;
+ * - **an identifier** (`module.exports = main`) — the name, unless
+ *   {@link resolveLocalValue} REFUSES it. A refusal is RWF-013/013b's
+ *   reassignment proof, and honouring it here is what stops the stale
+ *   original from being rooted after `main = safe`;
+ * - **an object literal** (`module.exports = { run: main }`) — each
+ *   property's value, recursively, matching the precise path's own
+ *   object-literal unpacking so withdrawal loses no root the intact case
+ *   would have had;
+ * - **anything else** — nothing. A `require(...)` re-export publishes
+ *   another package, never a local callable, so no local root is invented
+ *   from it; a non-callable value has no root to contribute.
+ *
+ * Bounded by construction: it reads the writes this file already collected
+ * and resolves each right-hand side once, with no whole-file rescan and no
+ * new symbol resolver.
+ */
+function collectExportWriteCandidates(
+  index: SourceIndex,
+  rhs: ts.Expression,
+  names: Set<string>,
+  locations: SourceLocation[],
+): void {
+  const value = unwrapValue(rhs);
+
+  const direct = directValueFunctionLocation(index.sourceFile, value);
+  if (direct) {
+    locations.push(direct);
+    return;
+  }
+
+  if (ts.isObjectLiteralExpression(value)) {
+    for (const property of value.properties) {
+      if (ts.isPropertyAssignment(property)) {
+        collectExportWriteCandidates(
+          index,
+          property.initializer,
+          names,
+          locations,
+        );
+      } else if (ts.isShorthandPropertyAssignment(property)) {
+        collectExportWriteCandidates(index, property.name, names, locations);
+      }
+    }
+    return;
+  }
+
+  if (!ts.isIdentifier(value)) {
+    return;
+  }
+
+  // RWF-013/013b's reassignment proof, reused verbatim and honoured here
+  // exactly as attribution honours it: a name this file writes to is not a
+  // stable alias for whatever it was declared as, so the DECLARATION is
+  // not a plausible published value. Refusing rather than rooting the
+  // stale node is what makes `main = safe; module.exports = main` stop
+  // reporting the original `main`'s body.
+  const resolved = resolveLocalValue(index, value);
+  if (resolved.kind === "refused") {
+    return;
+  }
+
+  names.add(value.text);
+  if (resolved.kind === "value") {
+    const chased = directValueFunctionLocation(
+      index.sourceFile,
+      resolved.value,
+    );
+    if (chased) {
+      locations.push(chased);
+    }
+  }
+}
+
 export function entrypointRootCandidates(
   index: SourceIndex,
   model: ModuleModel,
@@ -2816,27 +2921,23 @@ export function entrypointRootCandidates(
   }
 
   if (withdrawn) {
-    for (const candidate of topLevelCallableCandidates(
-      index.sourceFile,
-    ).keys()) {
-      names.add(candidate);
-    }
-    // The anonymous counterpart of the same widening. A withdrawn export
-    // carries no `localFunctionLocation` either, so an anonymous callable
-    // assigned straight to `module.exports` would otherwise have neither a
-    // name nor an identity to be rooted by. Every write this file makes to
-    // `module.exports` is already collected; the ones whose right-hand
-    // side IS a function are exactly the plausible anonymous exports, and
-    // a position identifies one AST node, so this adds no guesswork.
+    // Every value this file's own export writes could publish — and
+    // nothing else. See {@link exportWriteRootCandidates}.
     for (const assignment of collectModuleExportsAssignments(
       index.sourceFile,
     )) {
-      const location = directValueFunctionLocation(
-        index.sourceFile,
-        assignment.rhs,
-      );
-      if (location) {
-        locations.push(location);
+      collectExportWriteCandidates(index, assignment.rhs, names, locations);
+    }
+    for (const exp of model.exports) {
+      if (exp.kind !== "named" || exp.syntax !== "commonjs") {
+        continue;
+      }
+      const rhs =
+        exp.exportedName === undefined
+          ? undefined
+          : commonJsPropertyExportRhs(index, exp.exportedName);
+      if (rhs !== undefined) {
+        collectExportWriteCandidates(index, rhs, names, locations);
       }
     }
   }

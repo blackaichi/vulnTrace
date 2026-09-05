@@ -2521,8 +2521,10 @@ consumes it instead of reading provenance inline:
   case is byte-for-byte unchanged**, so a file whose authority is intact
   widens nothing and costs nothing;
 - an export whose attribution was WITHDRAWN additionally contributes every
-  **top-level** callable the file declares
-  (`topLevelCallableCandidates`, reused rather than re-derived);
+  callable this file's own **export writes** could publish
+  (`collectExportWriteCandidates` over the already-collected
+  `module.exports` writes and property right-hand sides — see "The
+  narrowing" below for why this bound, and not every top-level callable);
 - an anonymous exported callable contributes its **position**, matched
   against the graph node's own location.
 
@@ -2534,8 +2536,46 @@ no callable, and must NOT widen. Both `ambiguousWholeModuleExport`
 
 **Monotonicity is the property, and it is asserted directly**
 (`module-model.entrypoint-root-candidates.test.ts`): for each of the four
-cutoff families, the ambiguous root set is a strict superset of the precise
-one, and it is never empty when the precise one was not.
+cutoff families, the ambiguous root set is a superset of the precise one,
+and it is never empty when the precise one was not.
+
+### The narrowing — why monotonicity alone was not enough
+
+RWF-021's first cut widened to every TOP-LEVEL CALLABLE in the file
+(`topLevelCallableCandidates`). That satisfies monotonicity and is still
+too broad: it roots callables that no export write mentions, which no run
+of the module can hand an importer. Its independent audit reproduced three
+**branch-introduced false AFFECTED** findings on that basis, each verified
+against real `node`:
+
+| Shape | What is actually published | First cut | Now |
+| --- | --- | --- | --- |
+| `neverExported` reaches the sink, is the RHS of nothing | `main` (safe) | **AFFECTED** | NOT_AFFECTED |
+| `dangerous` is a sibling; only `module.exports = safe` exists | `safe` | **AFFECTED** | NOT_AFFECTED |
+| `main = safe` before `module.exports = main` | `safe` | **AFFECTED** | NOT_AFFECTED |
+
+So RWF-021 carries **two** invariants, not one:
+
+1. **Monotonicity** — losing export precision may only ADD roots. Violating
+   it deletes the entrypoint's root and yields a false NOT_AFFECTED.
+2. **Publishability** — a widened root must be a value some real export
+   write in this file could hand an importer. Violating it roots dead code
+   and yields a false AFFECTED.
+
+The eligible set is therefore the values of the file's own
+`module.exports = X` / `exports.Y = X` writes, resolved by
+`collectExportWriteCandidates`: a directly written function contributes its
+POSITION, an identifier contributes its NAME unless `resolveLocalValue`
+REFUSES it (RWF-013/013b's reassignment proof, which is what stops the
+stale declaration in row 3 from being rooted), an object literal
+contributes its property values recursively, and a `require(...)` re-export
+contributes nothing at all. A nested helper is excluded by the same rule
+rather than a separate one: nothing assigns it to an export.
+
+The distinction is sharp and is pinned by a matched pair of fixtures —
+`sibling-only-safe.cjs` (a sibling callable, NOT rooted) versus
+`both-writes.cjs` (the same callable as a real export write's value, rooted
+legitimately).
 
 ### What widening deliberately does NOT do
 
@@ -2550,14 +2590,18 @@ one, and it is never empty when the precise one was not.
 - **No fallback to an earlier write, a stale binding, a re-export's origin,
   or another PackageInstance.** The fix is widening, not fabricated export
   identity.
-- **Nested/deferred functions are not rooted.**
-  `topLevelCallableCandidates` walks `sourceFile.statements` only, so
-  `function outer() { function hidden() {…} }` contributes `outer` and never
-  `hidden` — export ambiguity is no evidence at all that a nested helper is
-  exported.
-- **Nothing is manufactured.** An ambiguous export in a file with no
-  top-level callables contributes no names, leaving the module node as the
-  only root and the honest UNKNOWN/NOT_AFFECTED intact.
+- **Nested/deferred functions are not rooted.** Nothing assigns
+  `hidden` in `function outer() { function hidden() {…} }` to an export, so
+  it is not a publishable value — export ambiguity is no evidence at all
+  that a nested helper is exported. It falls out of the publishability
+  bound rather than needing a rule of its own.
+- **Stale bindings are not rooted.** A reassigned identifier is REFUSED by
+  `resolveLocalValue`, so `main = safe; module.exports = main` contributes
+  no candidate for the original `main` — the same refusal attribution
+  already honours (RWF-013/013b).
+- **Nothing is manufactured.** An ambiguous export whose writes publish no
+  callable contributes no names, leaving the module node as the only root
+  and the honest UNKNOWN/NOT_AFFECTED intact.
 
 ### Family C is defended, not disabled
 
@@ -2573,9 +2617,13 @@ completeness was manufactured by declining to look.
   NOT_AFFECTED → AFFECTED. Nothing else moved.
 - Validation: **identical**, 12 PASS / 5 KNOWN_FAIL / 0 UNEXPECTED / 17
   total; `RWB-07` still certified NOT_AFFECTED on a valid proof.
-- `UNKNOWN → NOT_AFFECTED`: **0**. `AFFECTED → UNKNOWN`: **0**. No new
-  false AFFECTED: every movement is onto a call path that exists in the
-  source and executes under real `node`.
+- `UNKNOWN → NOT_AFFECTED`: **0**. `AFFECTED → UNKNOWN`: **0**.
+- No new false AFFECTED. That claim is load-bearing and was **not** true of
+  RWF-021's first cut — see "The narrowing" below, which records the three
+  false AFFECTED findings its audit reproduced and the constraint added to
+  remove them. Every remaining AFFECTED movement is onto a call path that
+  exists in the source AND is publishable by one of the file's own export
+  writes, verified under real `node`.
 
 ### Corpus
 
@@ -2626,12 +2674,16 @@ heritage support.
 **Relevant files:** `src/analysis/verdict.ts` (`entrypointSourceNodes` — now
 consumes the new relation and matches by position as well as name);
 `src/code-intelligence/module-model.ts`
-(`entrypointRootCandidates` + `EntrypointRootCandidates` (new),
+(`entrypointRootCandidates` + `EntrypointRootCandidates` +
+`collectExportWriteCandidates` (new),
 `ExportBinding.exportAttributionWithdrawn` (new),
 `ambiguousWholeModuleExport` and `propertyExportProvenance` (marker only);
-`topLevelCallableCandidates`, `mapExportsToFunctions`,
-`selectAuthoritativeWholeModuleExport`, `isDefinitelyReachedExportAssignment`
-all reused UNCHANGED); regressions in
-`module-model.entrypoint-root-candidates.test.ts` (26 cases),
-`verdict.entrypoint-root-widening.integration.test.ts` (12 cases),
-`fixtures/commonjs-entrypoint-root-widening/`, and `ADV2-080`.
+`collectModuleExportsAssignments`, `commonJsPropertyExportRhs`,
+`resolveLocalValue`, `directValueFunctionLocation`, `unwrapValue`,
+`mapExportsToFunctions`, `selectAuthoritativeWholeModuleExport`,
+`isDefinitelyReachedExportAssignment` all reused UNCHANGED); regressions in
+`module-model.entrypoint-root-candidates.test.ts` (29 cases),
+`verdict.entrypoint-root-widening.integration.test.ts` (16 cases),
+`fixtures/commonjs-entrypoint-root-widening/` (including the three
+false-AFFECTED controls and the `both-writes.cjs` counterpart), and
+`ADV2-080`.
