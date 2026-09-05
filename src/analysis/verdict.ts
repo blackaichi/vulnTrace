@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildModuleModel,
+  entrypointRootCandidates,
   findExportedClassMembers,
   mapExportsToFunctions,
 } from "../code-intelligence/module-model.js";
@@ -627,6 +628,17 @@ interface ReachableEvidence {
  * because nothing *inside the file* happens to invoke it. This is the
  * correct default only when no more precise `symbol` narrows it.
  *
+ * Which names those exports contribute is decided by
+ * {@link entrypointRootCandidates} (RWF-021), NOT by reading export
+ * attribution here. The distinction matters because the two fail in
+ * opposite directions: attribution must refuse when it cannot name the
+ * exported value, while root selection must widen. Answering both with
+ * one expression meant every soundness cutoff that withdrew attribution
+ * silently deleted the entrypoint's root as well, hiding the exported
+ * function's body from reachability and yielding a COMPLETE Family C
+ * proof for a target that is genuinely reachable — a false NOT_AFFECTED,
+ * reproduced for all four merged cutoff families.
+ *
  * Re-indexes the entrypoint file directly (cheap: entrypoints are few)
  * rather than threading this through `buildCallGraph`'s internals.
  */
@@ -650,22 +662,42 @@ function entrypointSourceNodes(
     return sources;
   }
 
+  let index;
   let model;
   try {
-    model = buildModuleModel(indexSourceFileFromDisk(entrypoint.filePath));
+    index = indexSourceFileFromDisk(entrypoint.filePath);
+    model = buildModuleModel(index);
   } catch {
     return sources;
   }
 
-  for (const exp of model.exports) {
-    const name = exp.localName ?? exp.exportedName;
-    if (!name) {
-      continue;
-    }
+  // RWF-021: which NAMES count as roots is its own question, answered by
+  // `entrypointRootCandidateNames`, not by reading export-attribution
+  // provenance inline here. This used to be `exp.localName ??
+  // exp.exportedName` over `model.exports`, which meant a soundness cutoff
+  // that withdrew export ATTRIBUTION (RWF-014/015/016/017/018/019) also
+  // deleted the ROOT — so the exported function's body went untraversed
+  // and the target came back unreachable with a COMPLETE Family C proof.
+  // Uncertainty about which callable is exported must widen the root set,
+  // never empty it; see that function's doc comment for the full argument
+  // and the reproduced false NOT_AFFECTED.
+  const candidates = entrypointRootCandidates(index, model);
+  for (const name of candidates.names) {
     const node = graph.nodes.find(
       (n) => n.module === entrypoint.filePath && n.name === name,
     );
     if (node) {
+      sources.push(node);
+    }
+  }
+  for (const location of candidates.locations) {
+    const node = graph.nodes.find(
+      (n) =>
+        n.module === entrypoint.filePath &&
+        n.location?.line === location.line &&
+        n.location?.column === location.column,
+    );
+    if (node && !sources.includes(node)) {
       sources.push(node);
     }
   }
