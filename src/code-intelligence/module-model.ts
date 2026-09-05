@@ -687,12 +687,13 @@ function firstModuleEvaluationCutoff(
 /**
  * Whether evaluating this one top-level statement can end module
  * evaluation rather than falling through to the next statement (RWF-015;
- * widened by RWF-016, RWF-017, RWF-018 and RWF-019).
+ * widened by RWF-016, RWF-017, RWF-018, RWF-019 and RWF-020).
  *
  * Three constructs qualify — all of them ABRUPT COMPLETIONS, and the third
  * only when {@link isDefinitelyAbruptCallStatement},
- * {@link isDefinitelyAbruptStaticFieldInitializer} or
- * {@link isDefinitelyAbruptComputedClassElementKey} has PROVEN it is one,
+ * {@link isDefinitelyAbruptStaticFieldInitializer},
+ * {@link isDefinitelyAbruptComputedClassElementKey} or
+ * {@link isDefinitelyAbruptClassHeritage} has PROVEN it is one,
  * never merely suspected it might be:
  *
  * - **`return`** — legal at CommonJS module scope because Node evaluates
@@ -716,7 +717,10 @@ function firstModuleEvaluationCutoff(
  *   `class C { [bail()]() {} }`, RWF-019, which the language likewise
  *   evaluates when the class DEFINITION executes, for static and instance
  *   elements alike — see
- *   {@link isDefinitelyAbruptComputedClassElementKey}). Such
+ *   {@link isDefinitelyAbruptComputedClassElementKey}), or as a class's
+ *   `extends` HERITAGE expression (`class C extends bail() {}`, RWF-020,
+ *   which ClassDefinitionEvaluation evaluates FIRST, before any element
+ *   exists — see {@link isDefinitelyAbruptClassHeritage}). Such
  *   a call is exactly as terminal as the literal `throw` inside `bail`'s
  *   body would be if inlined at the call site, and is caught by an
  *   enclosing `try`/`catch` under the identical rule
@@ -750,10 +754,11 @@ function firstModuleEvaluationCutoff(
  * ```
  *
  * Class bodies are NOT skipped, for the symmetric reason: a
- * `static { ... }` block, a `static x = ...` FIELD INITIALIZER and any
- * element's COMPUTED KEY all run at class-definition time, i.e. during
+ * `static { ... }` block, a `static x = ...` FIELD INITIALIZER, any
+ * element's COMPUTED KEY and the class's own `extends` HERITAGE
+ * expression all run at class-definition time, i.e. during
  * module evaluation, so an abrupt completion in any of them really can
- * abort the load (RWF-018, RWF-019). Method and accessor BODIES inside
+ * abort the load (RWF-018, RWF-019, RWF-020). Method and accessor BODIES inside
  * that same class body are skipped by the function-like test, as they
  * should be — but their computed KEYS are not, which is why
  * {@link isDefinitelyAbruptComputedClassElementKey} is asked before that
@@ -805,7 +810,8 @@ function mayEndModuleEvaluation(
       ts.isReturnStatement(node) ||
       (ts.isThrowStatement(node) && !isCaughtWithin(node, statement)) ||
       ((isDefinitelyAbruptCallStatement(node) ||
-        isDefinitelyAbruptStaticFieldInitializer(node)) &&
+        isDefinitelyAbruptStaticFieldInitializer(node) ||
+        isDefinitelyAbruptClassHeritage(node)) &&
         !isCaughtWithin(node, statement))
     ) {
       found = true;
@@ -895,7 +901,14 @@ function mayContainClassStaticEvaluation(sourceFile: ts.SourceFile): boolean {
  * class C { [bail()] = 1; }   // computed KEY -- runs at class-definition time
  * ```
  *
- * All three do share the `class` keyword, though — there is no other way
+ * RWF-020 adds a fourth, the class's own `extends` expression, which has
+ * no `static` in it either:
+ *
+ * ```js
+ * class C extends bail() {}   // heritage -- runs at class-definition time
+ * ```
+ *
+ * All four do share the `class` keyword, though — there is no other way
  * to write a class in the language — so one token still gates all of them,
  * and `class` is the token that actually names the construct doing the
  * executing. It stays a sound over-approximation in the same way the
@@ -1815,6 +1828,118 @@ function isDefinitelyAbruptComputedClassElementKey(node: ts.Node): boolean {
     node.parent !== undefined &&
     ts.isClassLike(node.parent) &&
     isDefinitelyAbruptCall(node.name.expression)
+  );
+}
+
+/**
+ * Whether `node` is a class's `extends` HERITAGE clause whose expression
+ * necessarily invokes a definitely-abrupt local callee, so that evaluating
+ * the enclosing class ends module evaluation rather than completing
+ * (RWF-020).
+ *
+ * ```js
+ * class C extends bail() {}            // qualifies
+ * const C = class extends bail() {};   // qualifies -- same evaluation
+ * class C extends (bail()) {}          // qualifies -- parentheses are transparent
+ * class C extends baseFactory() {}     // does NOT qualify: the call returns
+ * class C extends null {}              // does NOT qualify: no call at all
+ * class C extends Base {}              // does NOT qualify: no call at all
+ * ```
+ *
+ * **Why the heritage expression is class-DEFINITION time, and the FIRST
+ * thing that runs.** ClassDefinitionEvaluation evaluates the heritage
+ * expression before it does anything else with the class: the superclass
+ * value has to exist before the prototype chain can be built, before any
+ * element can be installed on it, and therefore before any computed key
+ * (RWF-019), static field initializer (RWF-018) or static block (RWF-015)
+ * runs. So a `class` sitting at module scope evaluates its `extends`
+ * expression during module evaluation, and a throw out of that expression
+ * propagates out of the class definition and out of the `require()` that
+ * started the load. The class binding is never created and nothing below
+ * the class runs — including a later `module.exports = safeOp`, which a
+ * cyclic importer therefore never sees. Measured, in order, under real
+ * `node` in
+ * fixtures/commonjs-circular-import-class-heritage-throw-ground-truth/:
+ * a throwing heritage leaves the element list entirely unevaluated, while
+ * a harmless one lets every element run.
+ *
+ * **Why this is a third rule rather than a widening of RWF-018/019.** Both
+ * of those read an expression written on a class ELEMENT — a
+ * `PropertyDeclaration`'s initializer, a `ClassElement`'s
+ * `ComputedPropertyName`. A heritage expression is on no element at all;
+ * it hangs off the class's `heritageClauses`, is evaluated strictly before
+ * every element, and is the only class-definition-time expression that
+ * still runs when the class body is completely EMPTY — which is exactly
+ * the shape (`class C extends bail() {}`) that neither predecessor could
+ * see.
+ *
+ * **What is deliberately NOT inferred: the heritage VALUE.** RWF-020 asks
+ * only whether evaluating the heritage CALL itself completes. Whether the
+ * resulting value is a valid superclass is a separate semantic question
+ * this model does not answer, and three real cases turn on it — all three
+ * measured in the same fixture, all three throwing a `TypeError` for a
+ * reason RWF-020 does not and must not claim:
+ *
+ * ```js
+ * async function bail() { throw x; }
+ * class C extends bail() {}   // the CALL returns a Promise; the class
+ *                             // definition then fails on "not a constructor"
+ * function* bail() { throw x; }
+ * class C extends bail() {}   // the CALL returns a generator object without
+ *                             // running the body at all; same TypeError
+ * function n() { return 1; }
+ * class C extends n() {}      // the CALL returns 1; same TypeError
+ * ```
+ *
+ * The `async`/generator exclusions come free and unchanged from
+ * {@link cannotCompleteNormally} via {@link isDefinitelyAbruptCall}, which
+ * already refuses both — an `async` function's `throw` becomes a rejected
+ * promise and a generator's body does not run on call. Reaching the same
+ * refusal by a different route (the returned value being an invalid
+ * superclass) would be new value/type interpretation, so it is left out;
+ * the invalid-heritage-result family is recorded as a separate open
+ * finding in tests/validation/FINDINGS.md rather than folded in here.
+ *
+ * Everything about the CALL is RWF-016/017's, reused verbatim through
+ * {@link isDefinitelyAbruptCall}: the exact non-reassigned local callee
+ * ({@link resolveExactLocalCallable}), the always-throws body proof
+ * ({@link cannotCompleteNormally}), the `async`/generator exclusions, and
+ * the parentheses normalization that makes `extends (bail())` work.
+ * `extends foo(bail())`, `extends (bail(), Base)`,
+ * `extends (bail() || Base)`, `extends (flag ? bail() : Base)` and
+ * `extends new Bail()` are all left unrecognised at that same
+ * arbitrary-expression boundary — the first two really do always evaluate
+ * `bail`, the next two genuinely may not, and telling them apart needs the
+ * evaluation-order model {@link isDefinitelyAbruptCall} deliberately does
+ * not have.
+ *
+ * Scope is narrow in two further directions:
+ *
+ * - only an `extends` clause counts. A TypeScript `implements` clause is
+ *   erased and evaluates nothing, and an INTERFACE's `extends` clause is a
+ *   list of types, not expressions — hence the `ts.isClassLike` check on
+ *   the parent, which admits a `ClassDeclaration` and a `ClassExpression`
+ *   and nothing else;
+ * - a class defined inside a function, method, arrow or accessor body is
+ *   never offered to this predicate at all, because
+ *   {@link mayEndModuleEvaluation}'s walk stops at function-like nodes
+ *   first. `function configure() { class C extends bail() {} }` defers the
+ *   whole class definition, heritage included, so it must not poison
+ *   module evaluation — confirmed in the same fixture.
+ *
+ * A caught class-evaluation throw is handled by the existing
+ * {@link isCaughtWithin} at the call site in {@link mayEndModuleEvaluation},
+ * exactly as for RWF-018 and RWF-019:
+ * `try { class C extends bail() {} } catch {}` keeps a later export's
+ * authority, and a rethrowing `catch` withdraws it.
+ */
+function isDefinitelyAbruptClassHeritage(node: ts.Node): boolean {
+  return (
+    ts.isHeritageClause(node) &&
+    node.token === ts.SyntaxKind.ExtendsKeyword &&
+    node.parent !== undefined &&
+    ts.isClassLike(node.parent) &&
+    node.types.some((type) => isDefinitelyAbruptCall(type.expression))
   );
 }
 
