@@ -391,10 +391,14 @@ describe("RWF-020: callee resolution is RWF-016's, reused unchanged", () => {
 });
 
 describe("RWF-020: nested heritage expressions stay at RWF-017's arbitrary-expression boundary", () => {
-  // The first two DO always evaluate `bail` and are therefore known,
-  // recorded precision limitations (see tests/validation/FINDINGS.md); the
-  // last three genuinely may not call it at all, which is why the boundary
-  // is drawn by shape rather than guessed past.
+  // The first THREE -- argument position, comma sequence and logical LHS --
+  // DO always evaluate `bail`, and are therefore known, recorded soundness
+  // gaps (see tests/validation/FINDINGS.md). `||` belongs with them, not
+  // with the conditional shapes: its short-circuit decides only whether the
+  // RIGHT operand runs, so the left one is always evaluated. The last three
+  // -- logical RHS, conditional and the IIFE -- genuinely may not call it
+  // at all, which is why the boundary is drawn by shape rather than guessed
+  // past.
   const unmodeled: ReadonlyArray<readonly [string, string]> = [
     ["argument position", "  class C extends foo(bail()) {}\n"],
     ["comma sequence", "  class C extends (bail(), Base) {}\n"],
