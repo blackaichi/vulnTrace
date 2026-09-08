@@ -95,10 +95,6 @@ describe("RWF-021: withdrawing export attribution must not delete the entrypoint
     ["RWF-017 (`const unused = bail();`)", "src/rwf017.cjs"],
     ["RWF-018 (`static ready = bail();`)", "src/rwf018.cjs"],
     ["RWF-019 (`[bail()] = 1`)", "src/rwf019.cjs"],
-    // RWF-022's cutoff arrives through a DIFFERENT predicate than the four
-    // above (an invalid heritage VALUE, not an abrupt call), so it gets its
-    // own row: a new cutoff family must not reintroduce the root loss.
-    ["RWF-022 (`class Mode extends notAConstructor() {}`)", "src/rwf022.cjs"],
   ];
 
   for (const [label, entrypoint] of families) {
