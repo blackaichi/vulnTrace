@@ -3270,10 +3270,34 @@ all are recorded so a future fix is a deliberate decision:
 - **Instance-field-nested classes are over-approximated.**
   `class Outer { field = class Inner extends notAConstructor() {}; }` defers to
   construction at runtime, but `mayEndModuleEvaluation` descends into class
-  element initializers and cuts off. Inherited unchanged from
-  RWF-018/019/020, pinned as a known over-approximation, and it moves only
-  toward UNKNOWN — it refuses an export that could have been kept, never the
-  reverse.
+  element initializers and cuts off, so authority is withdrawn even though the
+  later export really is reached.
+
+  The over-approximation is inherited from **RWF-019/020's nested-CLASS
+  walk** — `main` already answers the computed-key and throwing-heritage
+  spellings of this exact shape the same way today (confirmed by direct
+  differential probe on `9a1370d`). It is **not** inherited from RWF-018's
+  instance-field rule, and the distinction matters: a bare
+  `class Outer { f = bail(); }` is deliberately **KEPT** on both `main` and
+  this branch, because an instance-field VALUE is not module-time execution.
+  RWF-022 reaches the pre-existing nested-class walk with one more predicate;
+  it does not widen the walk.
+
+  **What the movement actually costs, stated precisely.** Withdrawing
+  authority here can leave the module's export ambiguous (**UNKNOWN**) or,
+  once RWF-021's root widening roots the values the export writes publish, can
+  surface a real path and report **AFFECTED**. The independent RWF-022 audit
+  measured the AFFECTED outcome on a configured-entrypoint spelling of this
+  shape, and measured the RWF-020 spelling of the same shape reaching
+  AFFECTED on `9a1370d` already. So this is a precision cost in **two**
+  directions, not a uniform move "toward UNKNOWN" — earlier drafts of this
+  entry said that, and it was wrong.
+
+  The invariant that does hold, and the one that matters: this creates **no
+  branch-attributable false `NOT_AFFECTED`**. It never manufactures a negative
+  proof. See the separate P0 candidate below for the neighbouring
+  computed-key reachability gap, which is a different defect and is
+  pre-existing.
 
 ### Verification
 
@@ -3303,3 +3327,91 @@ cases), `verdict.invalid-class-heritage-value-export-authority.integration.test.
 `fixtures/commonjs-circular-import-invalid-class-heritage-ground-truth/`
 (real-node, asserted), `fixtures/commonjs-invalid-class-heritage-value-export-authority/`,
 and `ADV2-082`.
+
+---
+
+## Open P0 candidate — a vulnerable target invoked from a COMPUTED CLASS-ELEMENT KEY is omitted from module-load reachability
+
+**Severity:** P0 / CRITICAL SOUNDNESS (false `NOT_AFFECTED`, with a complete
+Family C proof)
+**Status:** **Open — next P0 candidate.** Pre-existing; NOT introduced by
+RWF-022, and deliberately not fixed by it. No RWF ID is consumed here: this
+entry is a record, and the ID should be assigned when the remediation task is
+actually opened.
+**Discovered:** the independent RWF-022 soundness audit, which reproduced it
+on `9a1370d` (base) and on the RWF-022 branch with identical results.
+
+### The defect
+
+A computed property KEY on a class element is evaluated during
+ClassDefinitionEvaluation — that is, during module evaluation for a class at
+module scope. RWF-019 already relies on exactly this fact in the *abrupt*
+direction (a throwing computed key ends module evaluation). The *reachability*
+direction is not modeled: a call written inside a computed key runs at load
+time, but the analyzer does not treat it as reachable, and can then issue a
+complete negative proof over a target that really is invoked.
+
+```js
+const dep = require("vuln-lib");
+
+function key() {
+  dep.dangerousOp("from-computed-key");   // RUNS at class-definition time
+  return "x";
+}
+
+class C {
+  [key()]() {}
+}
+
+module.exports = safeMain;
+```
+
+### Runtime truth (measured, node v26.7.0)
+
+Instrumenting `dep.dangerousOp` and requiring the module records
+`SINK INVOCATIONS: ["from-computed-key"]`. The key is evaluated, the sink is
+called, and the module then completes normally and publishes `safeMain`.
+
+### Measured verdicts
+
+| shape | base `9a1370d` | RWF-022 branch | truth |
+| --- | --- | --- | --- |
+| top-level `key();` | AFFECTED | AFFECTED | sink runs — correct |
+| `class C { [key()]() {} }`, VALID heritage | **NOT_AFFECTED**, Family C complete | **NOT_AFFECTED**, Family C complete | sink runs — **false negative** |
+| `class C extends notAConstructor() { [key()]() {} }` | **NOT_AFFECTED**, Family C complete | **NOT_AFFECTED**, Family C complete | sink runs — **false negative** |
+
+The first row is the control that isolates the defect: moving the *identical*
+call from a top-level statement into a computed key loses it.
+
+### Why this is not RWF-022's
+
+The second row is the decisive one. It contains **no RWF-022 construct at
+all** — the heritage value is a class, so it is valid, nothing is withdrawn,
+and the module completes — yet it reproduces the false `NOT_AFFECTED`
+identically on base and branch. The defect is therefore orthogonal to
+heritage-value classification, and RWF-022 neither causes nor worsens it.
+
+It is also worth separating from the *third* row, which additionally throws a
+`TypeError` after the key has already run. RWF-022 correctly withdraws the
+later export's authority there, but that says nothing about whether the sink
+reached from the computed key is represented — and it is not.
+
+### Why it is its own boundary
+
+This is a **reachability/root** defect, not an export-authority one. Every
+RWF-015 through RWF-022 finding is about which export write is authoritative;
+this one is about which code the analyzer considers executed at module load.
+Fixing it means teaching module-load reachability that a class-definition-time
+computed key is executed code — adjacent to `ModuleLoadClosure` and to
+RWF-021's root derivation, not to `mayEndModuleEvaluation`'s cutoff rules.
+Folding it into a cutoff task would have crossed the one-semantic-boundary
+line every task in this series has held.
+
+### Scope worth probing when it is opened
+
+Beyond the canonical shape: a computed key on a static element, a getter/setter
+and a method (all four run at class-definition time); a computed key on a class
+nested inside a function (deferred, must NOT be rooted); an object-literal
+computed key (`const o = { [key()]: 1 }`, a separate already-recorded gap in
+the abrupt direction); and whether the same omission affects static field
+initializers and static blocks, which also execute at class-definition time.

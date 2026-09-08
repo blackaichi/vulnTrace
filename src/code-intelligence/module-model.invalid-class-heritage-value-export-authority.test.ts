@@ -734,15 +734,29 @@ describe("RWF-022: interaction with the RWF-018/019/020 rules over one class", (
     ).toBe("second");
   });
 
-  it("withdraws for a class nested in an INSTANCE FIELD -- an inherited over-approximation, toward UNKNOWN", () => {
+  it("withdraws for a class nested in an INSTANCE FIELD -- a known traversal over-approximation", () => {
     // At runtime an instance-field initializer is DEFERRED to construction,
     // so the inner class's heritage does not run at module time. The walk in
     // `mayEndModuleEvaluation` descends into class element initializers and
-    // does not model that deferral -- behavior inherited unchanged from
-    // RWF-018/019/020, where `x = bail()` in the same position behaves the
-    // same way. Pinned here so it stays a known over-approximation: it
-    // refuses an export that could have been kept, which costs precision and
-    // moves only toward UNKNOWN. Never toward NOT_AFFECTED.
+    // does not model that deferral, so authority is withdrawn here even
+    // though the later export really is reached.
+    //
+    // The over-approximation is inherited from RWF-019/020's NESTED-CLASS
+    // walk, which already answers the computed-key and throwing-heritage
+    // spellings of this same shape the same way on `main` today. It is NOT
+    // inherited from RWF-018's instance-field rule: a bare
+    // `class Outer { f = bail(); }` is deliberately KEPT, because an
+    // instance-field VALUE is not module-time execution. RWF-022 reaches the
+    // existing nested-class walk with one more predicate; it does not widen
+    // the walk.
+    //
+    // What this movement costs, stated precisely rather than as "toward
+    // UNKNOWN": withdrawing authority here can leave the module's export
+    // ambiguous (UNKNOWN) or, once RWF-021's root widening roots both
+    // published values, can surface a path and report AFFECTED. Both are
+    // precision costs. What it never does is manufacture a negative proof --
+    // no branch-attributable false NOT_AFFECTED is created, which is the
+    // invariant that actually matters here.
     expect(
       defaultExportName(
         canonical(
