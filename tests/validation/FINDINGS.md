@@ -95,6 +95,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-019 | any CommonJS file where the RWF-016/017/018 shape's throwing call is written as a class element's COMPUTED KEY (`class C { [bail()] = 1; }`, `class C { [bail()]() {} }`) rather than in a value position, above a later export write — the same UMD/feature-detect family, and NOT restricted to `static` elements | RWF-016 proved the CALLEE, RWF-017 proved the call's syntactic POSITION does not change the outcome, and RWF-018 carried it into a class STATIC FIELD initializer. All three read the call out of a VALUE position: `isDefinitelyAbruptCallStatement` dispatched on `ExpressionStatement`/`VariableStatement`, and `isDefinitelyAbruptStaticFieldInitializer` on a `PropertyDeclaration`'s `initializer` gated on the `static` modifier. A computed property name is neither. It is evaluated by ClassDefinitionEvaluation, in declaration order, as each element is defined — the key has to exist before the element can be installed on the class or its prototype — so it runs at class-definition time for an INSTANCE field, a method, a getter and a setter exactly as for a static field, even though those elements' VALUES and BODIES are genuinely deferred. RWF-018 recorded this as the RWF-019 candidate rather than folding a partial version of it in behind a static-field name | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it, that all eight element forms abort the class definition on the same key, and — in the same process — that the same element's instance-field VALUE, a method BODY and a class defined inside an uncalled function genuinely do complete and publish their later export | **Fixed (RWF-019)** |
 | RWF-020 | any CommonJS file where the RWF-016/017/018/019 shape's throwing call is written as a class's `extends` HERITAGE expression (`class C extends bail() {}`) rather than on any class element, above a later export write — the same UMD/feature-detect family, and it fires even when the class body is completely EMPTY | RWF-016 proved the CALLEE, RWF-017 proved the call's syntactic POSITION does not change the outcome, RWF-018 carried it into a class STATIC FIELD's initializer and RWF-019 into any class element's COMPUTED KEY. All four read the call off a STATEMENT or off a class ELEMENT: `isDefinitelyAbruptCallStatement` dispatched on `ExpressionStatement`/`VariableStatement`, `isDefinitelyAbruptStaticFieldInitializer` on a `PropertyDeclaration`'s `initializer`, and `isDefinitelyAbruptComputedClassElementKey` on a `ClassElement`'s `ComputedPropertyName`. A heritage expression is on no element at all — it hangs off the class's `heritageClauses` — and ClassDefinitionEvaluation evaluates it FIRST, before any element exists, because the superclass value is what the new class's prototype chain is built from. So it is the only class-definition-time expression that still runs when the class body is EMPTY, which is exactly the shape (`class C extends bail() {}`) none of the four predecessors could see | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it, measures that a throwing heritage leaves the class's element list entirely unevaluated while a harmless one lets every element run, and — in the same process — that a heritage call which RETURNS, an `extends null`, an `async` callee, a generator callee, a conditional-throw callee, a class defined inside an uncalled function and a class nested in an instance field genuinely do NOT abort module evaluation | **Fixed (RWF-020)** |
 | RWF-021 | any CommonJS file used as a CONFIGURED ENTRYPOINT that exports a top-level callable and carries any RWF-014/015/016/017/018/019 authority-withdrawing construct above the export write — and, independently of any cutoff, any entrypoint exporting an ANONYMOUS callable | Entrypoint reachability ROOTS were read out of export ATTRIBUTION provenance (`exp.localName ?? exp.exportedName` in verdict.ts's `entrypointSourceNodes`). The two questions fail in opposite directions — attribution must REFUSE when it cannot name the exported value, root selection must WIDEN — so every soundness cutoff that correctly withdrew attribution silently deleted the entrypoint's root as well. The exported function's body was then never traversed, and an anonymous export (RWF-003's shape) had no name to be rooted by at all | **Soundness, cross-family** — reproduced end-to-end on `8d18130` as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) for **all four merged cutoff families** (RWF-016/017/018/019) plus the property-export and anonymous-export forms, over an entrypoint whose exported `main` really is published and really does reach the vulnerable sink on every run where the branch is not taken (asserted under real `node`) | **Fixed (RWF-021)** |
+| RWF-022 | any CommonJS file where a class's `extends` HERITAGE call RETURNS NORMALLY but hands back a value that is not a constructor (`function notAConstructor() { return 1; }` + `class C extends notAConstructor() {}`), above a later export write — the same UMD/feature-detect family as RWF-016/017/018/019/020, and the half of the heritage family RWF-020 explicitly deferred | RWF-020 asks only whether evaluating the heritage CALL completes, and here it does: `notAConstructor()` is not abrupt under `cannotCompleteNormally`, so `isDefinitelyAbruptCall` refuses it and RWF-020's rule never fires. What ends module evaluation is the VALUE: ClassDefinitionEvaluation validates the superclass before it does anything else with the class, and `1` is neither `null` nor a constructor, so the definition throws `TypeError: Class extends value 1 is not a constructor or null`. The same applies, through a second and deliberately separate mechanism, to an `async` or generator CALLEE — whose call provably returns a `Promise` or a generator object, neither of which is a constructor — which RWF-016 must refuse for the opposite reason (calling one cannot throw synchronously) | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken, on all three of the classifier's routes (numeric-literal return, concise-arrow object return, `async` callee); a real Node-executed circular-import fixture ASSERTS that a cyclic consumer retains the bypassed dangerous export by identity and calls the vulnerable sink through it, that the factory returns normally with `1`, that the later safe write never runs, and that re-requiring re-throws — and, in the same process across a 31-row measured table, that returning a class, an ordinary function or `null` genuinely does NOT abort module evaluation | **Fixed (RWF-022)** |
 
 ---
 
@@ -2571,12 +2572,18 @@ for a reason RWF-020 does not and must not claim:
 In each, the CALL itself completes normally — an `async` function's `throw`
 becomes a rejected promise, a generator's body does not run on call at all,
 and `notAConstructor()` simply returns `1`. Each genuinely bypasses a later
-export at runtime, so each is a real, still-open false `NOT_AFFECTED`; but
-proving it needs value/type interpretation VulnTrace does not have.
-Recorded as a **separate open finding** (invalid-heritage-result, below)
-rather than smuggled into RWF-020. The `async` and generator rows reach the
-correct refusal for the correct reason anyway, free and unchanged, because
-`cannotCompleteNormally` already excludes both callee shapes.
+export at runtime, so each was a real false `NOT_AFFECTED`; but proving it
+needs reasoning about the returned VALUE, which RWF-020 declined to
+introduce. Recorded as a **separate open finding** rather than smuggled into
+RWF-020.
+
+**Closed by RWF-022** (below), which answers all three — through a separate,
+disjoint predicate (`isDefinitelyInvalidClassHeritageValue`), never by
+widening `isDefinitelyAbruptCall`. RWF-020's own mechanism still refuses all
+three, and a regression block in
+`module-model.class-heritage-throwing-call-export-authority.test.ts` asserts
+that it does, in a non-heritage call position where the two can be told
+apart.
 
 ### Newly confirmed separate P0s (NOT fixed here)
 
@@ -2976,3 +2983,323 @@ consumes the new relation and matches by position as well as name);
 `fixtures/commonjs-entrypoint-root-widening/` (including the three
 false-AFFECTED controls and the `both-writes.cjs` counterpart), and
 `ADV2-080`.
+
+---
+
+## RWF-022 — A class heritage call that RETURNS an invalid superclass invalidates later CommonJS export authority
+
+**Severity:** P0 / CRITICAL SOUNDNESS (false `NOT_AFFECTED`)
+**Status:** Fixed (RWF-022)
+**Base:** `9a1370d` (current main, RWF-020 and RWF-021 merged)
+
+### The defect
+
+RWF-020 taught the model that a class's `extends` HERITAGE expression runs at
+class-definition time, and withdrew a later export write's authority when
+evaluating that expression could only ever THROW. It deliberately stopped
+there, and said so in its own doc comment and in this file: whether the
+resulting VALUE is a usable superclass is a different semantic question, and
+RWF-020 recorded three real cases turning on it as an open finding rather
+than guessing at them.
+
+This is that finding.
+
+```js
+function dangerousOp(input) { return danger.explode(input); }
+function safeOp(input) { return "safe:" + input; }
+
+function notAConstructor() { return 1; }   // returns NORMALLY, every time
+
+if (FLAG) {
+  module.exports = dangerousOp;
+  class C extends notAConstructor() {}
+}
+
+module.exports = safeOp;   // syntactically unconditional; NOT always run
+```
+
+`notAConstructor()` is not abrupt. `cannotCompleteNormally` refuses it —
+correctly, its body is a single `return` — so `isDefinitelyAbruptCall` says
+no and RWF-020's rule never fires. But ClassDefinitionEvaluation validates
+the superclass before it does anything else with the class, and `1` is
+neither `null` nor a constructor, so the definition throws
+`TypeError: Class extends value 1 is not a constructor or null`. `C` is never
+bound and `module.exports = safeOp` never runs.
+
+Before this fix the analyzer kept `safeOp` authoritative, the entrypoint's
+call got a fully RESOLVED edge to it, `dangerousOp` was left with no incoming
+edge at all, and the reachability search came back unreachable with a
+COMPLETE subgraph — a Family C proof, and a false `NOT_AFFECTED`, for a
+package that reaches the sink on every load taking the early branch.
+
+Measured on `9a1370d` against
+`fixtures/commonjs-invalid-class-heritage-value-export-authority/`:
+
+| target | base `9a1370d` | RWF-022 |
+| --- | --- | --- |
+| `fixture-lib/danger#explode` | **NOT_AFFECTED**, Family C complete | UNKNOWN |
+| `fixture-lib/class-expression` (concise arrow → object) | **NOT_AFFECTED**, Family C complete | UNKNOWN |
+| `fixture-lib/async-callee` (`async` callee → Promise) | **NOT_AFFECTED**, Family C complete | UNKNOWN |
+| `ADV2-082` | **NOT_AFFECTED** | UNKNOWN |
+
+### Why this is a second mechanism, not a widening of RWF-020
+
+The two are disjoint by construction and must stay that way. RWF-020 needs a
+callee body that always THROWS; RWF-022 needs one that always RETURNS. No
+function is both, so neither rule can ever compete for the other's cases.
+
+The point is sharpest on `async` and generator callees, where the SAME
+syntactic fact is read for OPPOSITE purposes:
+
+```js
+async function bail() { throw x; }
+class C extends bail() {}   // the CALL returns a Promise -> TypeError
+function* bail() { throw x; }
+class C extends bail() {}   // the CALL returns a generator object -> TypeError
+```
+
+RWF-016's `isAsyncOrGeneratorCallable` exists to make `cannotCompleteNormally`
+REFUSE both: an `async` function's `throw` becomes a rejected promise, and a
+generator's body does not run on call, so neither call is abrupt. RWF-022
+reads the same fact as a positive: the call provably returns a `Promise` or a
+generator object, and neither is a constructor — decidable from syntax alone,
+with no body analysis at all.
+
+So the exclusion had to stop being part of callee IDENTITY.
+`resolveExactLocalCallable` was split: `resolveExactLocalCallableIdentity`
+holds the three identity proofs (no lexical shadow, never reassigned, a
+supported top-level callable shape) and `resolveExactLocalCallable` keeps the
+`async`/generator filter in the wrapper. Every RWF-016/017/018/019/020 answer
+is bit-for-bit unchanged, and a regression block in
+`module-model.class-heritage-throwing-call-export-authority.test.ts` asserts
+it where the two can actually be told apart — a NON-heritage call position,
+which RWF-022's classifier never sees.
+
+### The classification domain
+
+`HeritageValueClass` mirrors the language's own three-way check rather than
+trying to describe the value in general:
+
+```text
+"valid-null"        -- `extends null` is LEGAL. Its own state, on purpose:
+                       folding it in with "not a constructor" is the single
+                       most dangerous mistake available here
+"constructable"     -- has [[Construct]]; the class definition completes
+"non-constructable" -- neither null nor a constructor; TypeError
+"unknown"           -- declines to say. The conservative default
+```
+
+Only `"non-constructable"` is actionable, and only as an input to
+`isDefinitelyAbruptClassHeritage`. Nothing downstream reads a VERDICT off it:
+it answers "does the class definition complete?", never "is the package
+affected?".
+
+`classifyHeritageValueExpression` is a flat table over node KINDS. It
+performs no name resolution, reads no binding, and evaluates no
+subexpression, which is what keeps it from being the general value
+interpreter this task was scoped not to build.
+
+| classified `non-constructable` | classified VALID | left `unknown` |
+| --- | --- | --- |
+| `1` `0` `1n` `"x"` `` `x` `` `` `a${1}b` `` `true` `false` | `null` (→ `valid-null`) | `Base` (an identifier) |
+| `{}` `{ a: 1 }` `[]` | `class B {}` | `obj.Base` |
+| `() => {}` `async () => {}` | `function B() {}` | `f()` `new Base()` |
+| `async function B() {}` `function* B() {}` `async function* B() {}` | | `-1` `void 0` `FLAG ? 1 : Base` |
+
+Every row was executed under real `node` v26.7.0 in
+`fixtures/commonjs-circular-import-invalid-class-heritage-ground-truth/forms.js`,
+whose 31-row table asserts `completed` or `threw:TypeError` per row.
+
+Two decisions in that table are worth stating, because both look like they
+might go the other way:
+
+- **`{ __proto__: Function.prototype }` is still non-constructable.**
+  `__proto__` in an object literal sets the object's PROTOTYPE, and
+  `[[Construct]]` is an internal method, not an inherited property. Measured.
+  `{ constructor: function () {} }` likewise: a `constructor` PROPERTY has
+  nothing to do with constructability.
+- **The identifier `undefined` is deliberately NOT a row.** It is an ordinary
+  global reference and can be shadowed by a parameter, a `catch` binding or a
+  local declaration, and this classifier resolves no bindings. The undefined
+  VALUE is still reachable, but only through shapes that need no name at all
+  — an empty body and a bare `return;`.
+
+An object or array literal can contain arbitrary subexpressions
+(`{ a: foo() }`), which might throw while the literal is built. If they do,
+the enclosing CALL completes abruptly, so the class definition does not
+complete either — the same conclusion. Both readings agree, so the classifier
+does not have to know which holds. This is the argument
+`declarationListCannotCompleteNormally` already makes for its left-to-right
+declarator scan, reused; it is also what admits a `TemplateExpression`.
+
+### The static return summary
+
+`classifyExactCallReturnValue` decides by callee IDENTITY first
+(`async`/generator, no body analysis), and otherwise matches a narrow pattern
+exactly or declines:
+
+```text
+function f() { return 1; }   -- one statement, a `return` with a value
+function f() { return; }     -- one statement, a bare `return` -> undefined
+function f() {}              -- EMPTY body -> undefined
+const f = () => 1;           -- concise arrow body IS the returned value
+
+function f(flag) { if (flag) return 1; return Base; }   -- unknown
+function f(flag) { if (flag) return 1; return 2; }      -- unknown
+function f() { "use strict"; return 1; }                -- unknown
+function f() { doSomething(); }                         -- unknown
+function f() { try { return 1; } finally {} }           -- unknown
+```
+
+The refusals are the mechanism, not a limitation of it. Any body with a
+conditional, a loop, a `try`, or any second statement is `"unknown"`, full
+stop — so no function with more than one reachable ending is ever classified,
+and the multiple-returns family stays off this rule entirely.
+
+Callee identity is RWF-016's, shared verbatim: an own-block shadow resolves
+to the inner binding, and `notAConstructor = () => Base;` anywhere in the
+modeled reach refuses via RWF-013/013b's reassignment proof. A `let`-bound
+factory is not a candidate shape at all (only `const`), and aliases
+(`const alias = f; class C extends alias() {}`) and member callees
+(`obj.make()`) are not resolved — deliberately, and unchanged.
+
+### Direct (non-call) heritage values
+
+The same classifier applies to a heritage expression written directly, since
+it is the same question with the call removed:
+
+```js
+class C extends 1 {}            // withdraws
+class C extends (() => {}) {}   // withdraws
+class C extends null {}         // KEEPS -- legal
+class C extends Base {}         // KEEPS -- unknown
+```
+
+This is not a scope expansion: it is one semantic boundary — *is the heritage
+value definitely not a constructor* — applied wherever the heritage value is
+statically written.
+
+### A measured asymmetry with RWF-020, recorded rather than smoothed over
+
+The two families do NOT behave identically inside the class, and the
+ground-truth fixture asserts the difference:
+
+| heritage failure | computed KEY | static field init | static block | class bound |
+| --- | --- | --- | --- | --- |
+| RWF-020 — the call throws | not evaluated | not evaluated | not evaluated | no |
+| RWF-022 — the value is invalid | **evaluated** | not evaluated | not evaluated | no |
+
+When the call itself throws, the exception escapes from inside the heritage
+expression and nothing else in the class is reached. When the call returns,
+evaluation proceeds far enough for V8 to evaluate the class body's computed
+property KEYS before performing the `IsConstructor` check — so a computed key
+runs, then the `TypeError` is thrown.
+
+RWF-020's own README says a throwing heritage "leaves the element list
+entirely unevaluated". That is correct FOR RWF-020 and does not carry over.
+
+**This does not weaken the cutoff.** It rests on exactly one fact — the class
+definition does not complete, so no later top-level statement runs — and that
+holds identically in both rows. The computed-key difference is about what
+happens INSIDE the class statement, which the cutoff never claimed anything
+about, and it can only ever cause the model to refuse MORE.
+
+### RWF-021 interaction
+
+A new cutoff family is exactly the shape that could reintroduce the
+entrypoint-root loss RWF-021 fixed, so `rwf022.cjs` was added to
+`fixtures/commonjs-entrypoint-root-widening/` alongside RWF-016/017/018/019's:
+a configured entrypoint whose `main` is the only path to the sink, with
+`class Mode extends notAConstructor() {}` above the export write. Authority is
+withdrawn, roots widen instead of emptying, the real path is found, and the
+answer is **AFFECTED** with no Family C proof. Never NOT_AFFECTED.
+
+### Corpus
+
+AST search over vendored real-world JS/CJS/MJS (the repository's own
+`node_modules`, 2,527 `.js`/`.cjs`/`.mjs` files, 596 containing `class`):
+
+| | count |
+| --- | --- |
+| class `extends` heritage clauses | 1,269 |
+| ...whose expression is a direct `CallExpression` | 3 |
+| ...with a plain identifier callee | 3 |
+| ...resolving to an exact module-top-level local callable | 3 |
+| ...classified `non-constructable` (would cut off) | **0** |
+| ...classified VALID | 3 |
+| direct non-call heritage values classified `non-constructable` | 0 |
+| **verdict deltas** | **0** |
+
+All three resolved cases are the same real shape, and it is the one this
+design most needed to find in the wild: `argparse`'s `_AttributeHolder(...)`
+**mixin factory**, whose single unconditional return is a class expression.
+RWF-022 classifies it `constructable` and keeps the export — which is the
+correct answer, and the reason `classifyHeritageValueExpression` treats a
+returned `ClassExpression` as a first-class VALID row rather than falling
+through to `unknown`.
+
+A separate scan of this repository's own fixtures (743 files) finds 12
+`non-constructable` heritage calls, all of them deliberate RWF-022 task
+fixtures. Task fixtures and real vendored files were counted separately on
+purpose.
+
+### Remaining limitations (deliberately not fixed here)
+
+Each of these is a real shape that ends module evaluation and is NOT modeled,
+so each is a residual soundness gap in the same family. None is a regression;
+all are recorded so a future fix is a deliberate decision:
+
+- **Multi-path abruptness.** `function f(flag) { if (flag) throw e; return 1; }`
+  — the class definition cannot complete EITHER way (a throw, or a `TypeError`
+  on `1`), so this is definitely abrupt at class level. Proving it needs
+  reasoning that spans both mechanisms; refused today.
+- **Bound functions and Proxies.** `return Base.bind(null)` throws
+  `TypeError: Class extends value does not have valid prototype property
+  undefined`, and `new Proxy({}, {})` is not constructable either. Both are
+  measured in `forms.js` and explicitly left unmodeled; general
+  constructability of exotic callables is its own boundary.
+- **Aliases and member callees.** `const alias = f; class C extends alias() {}`
+  and `class C extends obj.make() {}` — the standing alias/member boundary
+  RWF-016 drew.
+- **Nested heritage expressions.** `class C extends (f(), Base) {}` and
+  `class C extends (f() || Base) {}` DO always evaluate `f`, and remain at
+  RWF-017's arbitrary-expression boundary along with `foo(bail())`. Inherited
+  from RWF-020, unchanged.
+- **`return undefined;`** — the identifier form, refused because `undefined`
+  is shadowable and this classifier resolves no bindings.
+- **Instance-field-nested classes are over-approximated.**
+  `class Outer { field = class Inner extends notAConstructor() {}; }` defers to
+  construction at runtime, but `mayEndModuleEvaluation` descends into class
+  element initializers and cuts off. Inherited unchanged from
+  RWF-018/019/020, pinned as a known over-approximation, and it moves only
+  toward UNKNOWN — it refuses an export that could have been kept, never the
+  reverse.
+
+### Verification
+
+Full unit + integration (2,606 tests), adversarial v1/v2 (**82/82**, 0
+classification errors), validation (**12/17**, 5 KNOWN_FAIL, **0
+unexpected** — the documented baseline, unchanged), hermeticity, typecheck,
+lint, build, prettier, history-validator. `scan-performance` in isolation:
+1,962 ms against a 4,500 ms threshold (main measured 2,067 / 2,915 /
+2,102 ms — no regression; the failure seen under a full parallel run
+reproduces identically on clean main and is contention, not this branch).
+
+**Relevant files:** `src/code-intelligence/module-model.ts`
+(`HeritageValueClass`, `classifyHeritageValueExpression`,
+`classifyExactCallReturnValue`, `isDefinitelyInvalidClassHeritageValue` (all
+new), `resolveExactLocalCallableIdentity` (split out of
+`resolveExactLocalCallable`, whose behavior is unchanged),
+`isDefinitelyAbruptClassHeritage` (second disjunct);
+`isDefinitelyAbruptCall`, `cannotCompleteNormally`,
+`isAsyncOrGeneratorCallable`, `topLevelCallableCandidates`,
+`reassignedModuleReachableNames`, `scopeDeclares`, `isCaughtWithin`,
+`mayEndModuleEvaluation` all reused UNCHANGED); regressions in
+`module-model.invalid-class-heritage-value-export-authority.test.ts` (103
+cases), `verdict.invalid-class-heritage-value-export-authority.integration.test.ts`
+(8 cases), `module-model.class-heritage-throwing-call-export-authority.test.ts`
+(3 superseded pins updated, 3 mechanism-isolation cases added),
+`verdict.entrypoint-root-widening.integration.test.ts` (`rwf022.cjs`),
+`fixtures/commonjs-circular-import-invalid-class-heritage-ground-truth/`
+(real-node, asserted), `fixtures/commonjs-invalid-class-heritage-value-export-authority/`,
+and `ADV2-082`.
