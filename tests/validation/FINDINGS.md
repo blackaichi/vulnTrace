@@ -2351,14 +2351,15 @@ argued. None is introduced or worsened here:
   does not break existing extends handling: `class C extends base() { [bail()]
   = 1; }` is refused on this branch for the key's sake, exactly as it should
   be;
-- *(soundness, separate P0 follow-up)* an OBJECT LITERAL's computed key,
-  `const o = { [bail()]: 1 };`, likewise throws under real `node` and keeps
-  authority on both. It is deliberately excluded here — the predicate requires
-  the element's parent to be a class, which is what tells a class's
-  `MethodDeclaration` apart from an object literal's identically-kinded one —
-  because an object literal is an ordinary expression and belongs to the
-  arbitrary-expression-evaluation boundary RWF-017 recorded, not to class
-  evaluation;
+- *(soundness, separate P0 follow-up — **since fixed by RWF-024**)* an
+  OBJECT LITERAL's computed key, `const o = { [bail()]: 1 };`, likewise
+  throws under real `node` and kept authority on `main` at the time of this
+  entry. It was deliberately excluded here — the predicate requires the
+  element's parent to be a class, which is what tells a class's
+  `MethodDeclaration` apart from an object literal's identically-kinded one
+  — because an object literal is evaluated by a different ECMAScript
+  abstract operation than ClassDefinitionEvaluation, and closing it needed
+  its own, separately-scoped predicate rather than a widening of this one;
 - *(soundness, unchanged from `main`, and NOT computed-key specific)* a CLASS
   NAME shadow, `class bail { [bail()] = 1; }`, throws a `ReferenceError` under
   real `node` (the class's own binding shadows the outer function and is in
@@ -3608,7 +3609,9 @@ for free. Recorded here rather than left implicit.
 
 Note this is **not** the separately-recorded object-literal gap in the
 *abrupt* direction (`const o = { [bail()]: 1 }` and whether it ends module
-evaluation). That remains open and untouched.
+evaluation) — that is RWF-024, below, fixed by a completely separate
+mechanism (`module-model.ts`'s `firstModuleEvaluationCutoff`, not
+`call-graph.ts`'s reachability walk this task touches).
 
 ### The RWF-022 interaction, retested as required
 
@@ -3822,8 +3825,9 @@ and `verdict.computed-class-key-module-load-reachability.integration.test.ts`
   VALUE and an accessor's BODY are attributed to the module. Recorded as a
   precision candidate; correcting them moves verdicts toward NOT_AFFECTED and
   belongs to a task that can carry that risk explicitly.
-- **The object-literal computed key in the ABRUPT direction** remains open,
-  unchanged and unrelated (`const o = { [bail()]: 1 }`).
+- **The object-literal computed key in the ABRUPT direction** remains open
+  here, unchanged and unrelated to this task (`const o = { [bail()]: 1 }`)
+  — **since fixed by RWF-024**, below.
 - **A computed key reached only through an unresolved construct** stays
   UNKNOWN, as it should — the fix adds an edge, it does not resolve callees
   the binder cannot already resolve. `(() => { class C { [key()]() {} } })()`
@@ -3842,6 +3846,266 @@ and `verdict.computed-class-key-module-load-reachability.integration.test.ts`
   correcting method-key ownership brought that spelling into line with them.
   False `AFFECTED` only — it cannot license a Family C proof — and pinned in
   `verdict.abrupt-completion-precision-limit.integration.test.ts`.
+
+---
+
+## RWF-024 — A throwing local call in an OBJECT LITERAL's COMPUTED KEY invalidates later CommonJS export authority
+
+**Severity:** P0 / CRITICAL SOUNDNESS (false `NOT_AFFECTED`, with a complete
+Family C proof)
+**Status:** **Fixed.** Recorded as a separate, open P0 follow-up by RWF-019's
+own audit (this file's RWF-019 entry, "Newly characterised, all UNCHANGED
+from `main`") and reconfirmed untouched by every intervening task through
+RWF-023, whose own entry explicitly distinguishes it from the REACHABILITY
+gap RWF-023 closed ("Note this is **not** the separately-recorded
+object-literal gap in the *abrupt* direction... That remains open"— now
+this entry). Reproduced again, unchanged, on `e170f06` (current merged
+main, RWF-023 included) before any edit here.
+
+### The defect
+
+Computed property names in object literals execute while the object
+literal is evaluated — the same fact RWF-019 established for a class
+element's computed key, but for a DIFFERENT ECMAScript evaluation
+entirely. For every property in an `ObjectLiteral`'s
+`PropertyDefinitionList`, in source order, the computed key expression is
+evaluated and converted to a property key **before** that property's value
+(or the method/getter/setter it names) is defined on the new object. There
+is no class anywhere in this construct — it needs none.
+
+```js
+function dangerousOp() {
+  vulnerableSink();
+}
+
+function safeOp() {}
+
+function bail() {
+  throw new Error("boom");
+}
+
+if (FLAG) {
+  module.exports = dangerousOp;
+
+  const obj = {
+    [bail()]: 1,
+  };
+}
+
+module.exports = safeOp;
+```
+
+At runtime: the earlier dangerous export is assigned; object-literal
+evaluation starts; `bail()` executes; `bail()` throws; object construction
+does not complete; the later safe export is skipped. Before this fix,
+VulnTrace continued treating `safeOp` as authoritative and emitted a
+complete Family C false `NOT_AFFECTED`.
+
+### Why this is a different rule from RWF-019, not a widening of it
+
+RWF-019's `isDefinitelyAbruptComputedClassElementKey` reads a
+`ClassElement`'s computed name, evaluated by `ClassDefinitionEvaluation` —
+an abstract operation that exists only for a `class`. Its own docs record,
+and its own test suite pinned as a "documented boundary", that an object
+literal's identically-shaped element (`PropertyAssignment`/
+`MethodDeclaration`/`GetAccessorDeclaration`/`SetAccessorDeclaration` are
+the same AST node KINDS whether they sit in a class body or an object
+literal) was deliberately excluded by checking the element's PARENT is
+class-like. That check is correct and stays unchanged; what RWF-019 left
+undone is the SEPARATE rule for the excluded side, which this task adds:
+`isDefinitelyAbruptComputedObjectLiteralKey`, checking the identical shape
+with the opposite parent test (`ts.isObjectLiteralExpression(node.parent)`).
+The two rules are structurally disjoint — one node can only ever satisfy
+one of them — and neither widens the other.
+
+**This is also not a mechanical copy of RWF-018's static/instance line.**
+RWF-018 turns on a real class distinction: an INSTANCE field's VALUE is
+deferred to construction, while a STATIC field's VALUE runs immediately at
+class-definition time. An object literal has **no** comparable per-instance
+deferral for an ordinary property's VALUE at all — every property of an
+object literal, key and value alike, evaluates immediately when the
+literal itself is evaluated. Measured directly under real `node`
+(`fixtures/commonjs-circular-import-object-literal-computed-key-throw-ground-truth/forms.js`):
+`{ x: bail() }` **throws**, unlike a class's `{ x = bail(); }`, which
+completes. What genuinely defers in an object literal is a method/getter/
+setter's **BODY** (runs only when invoked) and a computed key inside an
+object literal that is never built at all (inside an uncalled function,
+or — the one accepted over-approximation, mirroring RWF-019's identical
+class-nested-in-instance-field case exactly — nested inside a class's own
+INSTANCE field initializer).
+
+### Runtime ground truth (real node, asserted, v22.11.0)
+
+`fixtures/commonjs-circular-import-object-literal-computed-key-throw-ground-truth/`
+is a plain Node program run with `node entry.js`. It settles, in a real
+engine:
+
+- a cyclic `require()` (`a.js` ⇄ `b.js`) retains the dangerous export by
+  identity, published before the object literal is evaluated, and calls
+  the vulnerable sink through it;
+- the object literal's computed key runs, throws, and the object literal
+  never finishes constructing — the later safe export is never published,
+  and re-requiring the module re-throws deterministically;
+- **every element form throws at construction time**: `PropertyAssignment`,
+  `MethodDeclaration`, `GetAccessorDeclaration`, `SetAccessorDeclaration`,
+  an `async` method, a generator method, a parenthesized call
+  (`[(bail())]`) and an optional call on an exact non-nullish callee
+  (`[bail?.()]`);
+- **an ordinary property's VALUE also throws** (`{ x: bail() }`) —
+  confirming there is no instance-field-style deferral to mirror, and
+  pinning why this task's rule deliberately does not claim that position
+  (see "Remaining limitations" below);
+- a method BODY, a getter BODY, and a computed key inside a never-called
+  function all genuinely complete — the deferred-position negative controls
+  that make this a sound rule rather than a merely conservative one;
+- a computed key nested inside a class's INSTANCE field initializer also
+  completes at runtime (the class is never defined at module-evaluation
+  time) — VulnTrace's own answer over-approximates this one case, on
+  purpose, matching RWF-019's identical documented limitation;
+- computed keys and property VALUES evaluate strictly in **source order**,
+  and an abrupt key stops everything after it: `[safe()]: 1, [bail()]: 2,
+  [later()]: 3` measured `safe-key, bail` — `later`'s key and the abrupt
+  property's own value never ran.
+
+### The fix
+
+`module-model.ts` gains one new predicate,
+`isDefinitelyAbruptComputedObjectLiteralKey`, structurally parallel to
+RWF-019's `isDefinitelyAbruptComputedClassElementKey`: it matches an
+`ObjectLiteralElementLike` node whose `name` is a `ts.ComputedPropertyName`,
+whose parent is a genuine `ts.ObjectLiteralExpression`, and whose key
+expression `isDefinitelyAbruptCall` already proves is a definitely-abrupt
+call — reusing RWF-016's exact-local-callee proof
+(`resolveExactLocalCallable`), always-throws body proof
+(`cannotCompleteNormally`), `async`/generator exclusions and parentheses
+normalization verbatim. It is wired into `mayEndModuleEvaluation`'s walk
+exactly where RWF-019's predicate is: BEFORE the function-like stop, since
+a `MethodDeclaration`/`GetAccessorDeclaration`/`SetAccessorDeclaration` IS
+function-like and the stop must still apply to its BODY, not its KEY.
+
+The one genuinely new piece is the file-level pre-filter. RWF-019 (and
+RWF-020) widened `firstModuleEvaluationCutoff`'s `scanExpressions` gate
+from a `\bstatic\b` text test to a `\bclass\b` one, because every
+class-definition-time construct needs the literal token `class` to exist
+at all. An object literal's computed key has no comparable keyword —
+`{ [bail()]: 1 }` is written with nothing but a `[`, the same token an
+array literal or an ordinary index expression uses — so the new gate,
+`mayContainObjectLiteralComputedKeyEvaluation`, is necessarily a coarser
+sound over-approximation: it fires on any file containing `[` at all. That
+costs an unrelated file the full expression walk and changes no answer,
+never the reverse — `isDefinitelyAbruptComputedObjectLiteralKey` still
+re-checks the exact AST shape on every node the walk reaches, so
+correctness never depends on the text gate alone.
+
+### Pre-fix reproduction on `e170f06`
+
+Measured with `fixtures/commonjs-object-literal-computed-key-throwing-call-export-authority/`,
+target `fixture-lib/danger#explode`, entrypoint `src/index.cjs`:
+
+| shape | base `e170f06` | branch |
+| --- | --- | --- |
+| `fixture-lib` (PropertyAssignment computed key) | **NOT_AFFECTED**, Family C complete | UNKNOWN |
+| `fixture-lib/method-key` (MethodDeclaration computed key) | **NOT_AFFECTED**, Family C complete | UNKNOWN |
+| `fixture-lib/deferred-key` (deferred controls) | NOT_AFFECTED, Family C complete | NOT_AFFECTED, Family C complete (unchanged) |
+| `fixture-lib/stable` (Family C positive control) | NOT_AFFECTED, Family C complete | NOT_AFFECTED, Family C complete (unchanged) |
+
+### Newly characterised
+
+- *(soundness, an adjacent, deliberately open gap — recorded as the next
+  candidate rather than absorbed)* an object literal PROPERTY's ordinary
+  VALUE, `{ [safeKey()]: bail() }`, also runs unconditionally at
+  object-construction time and is not modeled by any existing predicate:
+  `isDefinitelyAbruptCallStatement` recognises a call only as an
+  `ExpressionStatement` or a `VariableStatement`'s own initializer, neither
+  of which an object literal's property value is. Absorbing it would mean
+  either widening that predicate to a new expression position (the same
+  "arbitrary-expression-evaluation boundary" RWF-017 already drew and
+  RWF-019/020/022 all respected) or building a second, parallel value-
+  position rule — and the task governing this fix explicitly scoped it to
+  the KEY alone ("Do NOT absorb unless it is the same narrow mechanism and
+  architecture makes it trivial"). Confirmed live under real `node`
+  (`forms.js`'s `{ x: bail() }` row) that this position genuinely does
+  throw, so it is a real, tracked gap and not a hypothetical one;
+- *(precision, the one shape this task makes MORE conservative, identical
+  in kind to RWF-019's own accepted over-approximation)* a computed key
+  nested inside a class's INSTANCE field initializer —
+  `class C { x = { [bail()]: 1 }; }` — now reports a cutoff where `main`
+  did not. At runtime the instance field never evaluates at class-
+  definition time, so this is an over-approximation, and it exists for the
+  identical reason RWF-019 accepted the same shape for a nested CLASS:
+  `mayEndModuleEvaluation`'s walk stops at every function-like node but not
+  at a non-static `PropertyDeclaration`, so once the walk is inside a class
+  body it can reach an object literal sitting in an instance field's
+  initializer too. Giving object literals a second, different traversal
+  model to avoid it would mean two models rather than one; the movement is
+  strictly toward UNKNOWN, never toward a negative proof;
+- *(correctly refused, not a gap)* `[flag && bail()]` and
+  `[flag ? bail() : "x"]` genuinely may not call `bail` at all, and
+  `[foo(bail())]`, `` [`${bail()}`] `` stay unrecognised for the same
+  arbitrary-expression-evaluation reason RWF-017/019 already documented;
+- *(correctly refused, not a gap)* scope, shadowing, reassignment, alias and
+  member callees are refused by the same `resolveExactLocalCallable`
+  machinery RWF-013/013b established, reused verbatim and unmodified;
+- *(precision)* `[new bail()]` is a `NewExpression`, not recognised, and a
+  throwing IIFE returning the object literal is not recognised either, for
+  the same documented IIFE boundary RWF-015 established.
+
+### Verification
+
+Unit (`module-model.computed-object-literal-key-throwing-call-export-authority.test.ts`,
+67 cases covering every element form, key-before-value ordering,
+earlier/later property order, multiple computed keys, parenthesized/
+optional calls, conditional/logical/nested keys, scope/shadow/reassignment/
+alias/member boundaries, try/catch/finally, every deferred position, the
+one accepted over-approximation, every export surface, and RWF-015/016/
+017/018/019/020/022 regressions); the two pre-existing "documented
+boundary" tests in `module-model.computed-class-key-throwing-call-export-authority.test.ts`
+and the "still-open P0" regression pin in
+`module-model.class-heritage-throwing-call-export-authority.test.ts` are
+flipped to their now-correct `toBeUndefined()` expectation, with updated
+commentary rather than silently deleted; integration
+(`verdict.object-literal-computed-key-throwing-call-export-authority.integration.test.ts`,
+7 cases: UNKNOWN for both the field and method-key shapes, no Family C
+proof, no PackageInstance substitution, the deferred-key control still
+NOT_AFFECTED with a complete Family C proof, and the Family C positive
+control unaffected); adversarial v2 (`ADV2-084`, expected UNKNOWN,
+84/84 — see below); full RWF-015 through RWF-023 regression suites (all
+pass unchanged); validation (12/17, 5 KNOWN_FAIL, 0 unexpected — the
+documented baseline, unchanged); adversarial v1 (34/34, unchanged);
+hermeticity (6/6); typecheck, lint, build, prettier, history-validator.
+
+**Relevant files:** `src/code-intelligence/module-model.ts`
+(`isDefinitelyAbruptComputedObjectLiteralKey`,
+`mayContainObjectLiteralComputedKeyEvaluation` — both new; a four-line
+addition to `mayEndModuleEvaluation`'s `visit` and a two-line widening of
+`firstModuleEvaluationCutoff`'s `scanExpressions`; every other predicate —
+`isDefinitelyAbruptCall`, `resolveExactLocalCallable`,
+`cannotCompleteNormally`, `isCaughtWithin`,
+`isDefinitelyAbruptComputedClassElementKey`,
+`isDefinitelyAbruptClassHeritage` — reused UNCHANGED); new regressions in
+`module-model.computed-object-literal-key-throwing-call-export-authority.test.ts`
+(67 cases) and
+`verdict.object-literal-computed-key-throwing-call-export-authority.integration.test.ts`
+(7 cases); new fixtures
+`fixtures/commonjs-object-literal-computed-key-throwing-call-export-authority/`
+and
+`fixtures/commonjs-circular-import-object-literal-computed-key-throw-ground-truth/`
+(real-node, asserted); and `ADV2-084`.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **The object-literal PROPERTY-VALUE abrupt call** (`{ [safeKey()]: bail() }`)
+  remains open — see "Newly characterised" above. Recorded as the next
+  candidate in this family.
+- **A computed key reached only through an unresolved construct** stays
+  UNKNOWN, as it should. Nothing here fabricates a cutoff resolution does
+  not support.
+- **The instance-field over-approximation** described above is accepted
+  deliberately, identically to RWF-019's own, and moves only toward
+  UNKNOWN.
+- **`{ [dep.dangerousOp()]: 1 }` where the member call cannot be resolved**
+  is refused, correctly — this predicate never guesses a callee identity
+  RWF-016's model does not already support.
 
 ---
 
