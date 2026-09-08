@@ -3750,7 +3750,11 @@ threshold.
 
 ### Verdict differential
 
-Across every suite, base `86c8669` → branch:
+Base `86c8669` → branch, in two disjoint groups. They are separated because
+they mean different things, and only the first is sound.
+
+**Group 1 — the primary RWF-023 differential**, across the fixture suites,
+adversarial v1/v2 and validation:
 
 | movement | count |
 | --- | --- |
@@ -3758,15 +3762,40 @@ Across every suite, base `86c8669` → branch:
 | NOT_AFFECTED → UNKNOWN | 0 |
 | **UNKNOWN → NOT_AFFECTED** | **0** |
 | **AFFECTED → NOT_AFFECTED** | **0** |
-| any other movement | 0 |
+| any other movement in this group | 0 |
 
-Every movement is in the sound direction, and every one is a shape whose
-runtime execution is independently asserted in real node.
+**Group 2 — abrupt-completion precision movements**, pinned in
+`verdict.abrupt-completion-precision-limit.integration.test.ts` and recorded
+in full under "Precision limit — reachability does not prune paths after
+definitely-abrupt evaluation" below:
+
+| movement | shapes | count |
+| --- | --- | --- |
+| UNKNOWN → AFFECTED | throwing-heritage METHOD key; throwing-heritage STATIC METHOD key; `throw …;` then a class with a METHOD key | 3 |
+| NOT_AFFECTED → AFFECTED | `[false && key()]` METHOD key | 1 |
+| **any movement toward NOT_AFFECTED** | — | **0** |
+
+Every movement in BOTH groups is toward AFFECTED; neither group contains a
+movement toward NOT_AFFECTED. What separates them is what the new AFFECTED
+means:
+
+- **Group 1 is sound.** Every one of those movements is a shape whose runtime
+  execution is independently asserted in real node, so AFFECTED is the
+  correct answer.
+- **Group 2 is FALSE AFFECTED.** Real node asserts those shapes do NOT
+  execute the key — a throwing heritage expression aborts before any element
+  is defined, and `false && key()` cannot evaluate its right operand. These
+  are accepted precision costs under the explicit waiver recorded with the
+  precision-limit finding. They are **not** sound reachability and must never
+  be read as evidence that the key runs.
+
+Neither group licenses a Family C proof, so no false `NOT_AFFECTED` follows
+from any of it.
 
 ### Verification
 
-Full unit + integration (**2,670 tests**, 112 files — base `86c8669` measured
-2,614 in 110 files; this branch adds exactly two test files and 56 cases),
+Full unit + integration (**2,682 tests**, 113 files — base `86c8669` measured
+2,614 in 110 files; this branch adds exactly three test files and 68 cases),
 adversarial v1/v2 (**117/117**; v1 34/34, v2 **83/83**, 0 classification
 errors, with ADV2-083 measured **FAIL on base** — expected AFFECTED, got
 NOT_AFFECTED, 82/83 — and **PASS on the branch**), validation (**12/17**,
