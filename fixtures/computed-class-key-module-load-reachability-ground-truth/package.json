@@ -1,0 +1,9 @@
+{
+  "name": "computed-class-key-module-load-reachability-ground-truth",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Real-node, asserted proof of which class-definition-time expressions execute during module evaluation (RWF-023). Run with `node entry.js`.",
+  "scripts": {
+    "start": "node entry.js"
+  }
+}

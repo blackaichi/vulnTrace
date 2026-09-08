@@ -1742,6 +1742,127 @@ async function emitModuleLoadEdges(
   }
 }
 
+/**
+ * True when `node` carries a `static` modifier.
+ */
+function hasStaticModifier(node: ts.Node): boolean {
+  return (
+    ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node) ?? []).some(
+      (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
+    )
+  );
+}
+
+/**
+ * RWF-023. True when `child`'s position inside `parent` is NOT executed by
+ * the evaluation of `parent` itself -- i.e. crossing this edge on the way
+ * up from a class element means the class definition is DEFERRED relative
+ * to the enclosing execution context.
+ *
+ * Only two positions defer (ClassDefinitionEvaluation runs everything
+ * else it touches):
+ *
+ * - a NON-static field: its computed NAME is evaluated when the element is
+ *   defined, but its INITIALIZER is deferred to construction. This is
+ *   exactly RWF-018/019's line and it is reproduced, not moved.
+ * - an accessor: its computed NAME is evaluated when the element is
+ *   defined; its BODY and its PARAMETER list (default values included) run
+ *   only on get/set.
+ *
+ * A STATIC field initializer and a static block both run during class
+ * definition, so neither defers. Function-like ancestors are not listed:
+ * they are handled by {@link runsWhenEnclosingOwnerRuns}'s own stop
+ * condition, because the walk has already pushed a node for them.
+ */
+function defersEvaluationOf(child: ts.Node, parent: ts.Node): boolean {
+  if (ts.isPropertyDeclaration(parent)) {
+    return !hasStaticModifier(parent) && parent.name !== child;
+  }
+  if (
+    ts.isGetAccessorDeclaration(parent) ||
+    ts.isSetAccessorDeclaration(parent)
+  ) {
+    return parent.name !== child;
+  }
+  return false;
+}
+
+/**
+ * RWF-023. True when the definition of the class/object literal owning
+ * `element` is evaluated by whatever the walk's CURRENT owner is -- the
+ * module node for a class at module scope, or the nearest enclosing
+ * function's node for a class inside one.
+ *
+ * Walks from `element` up to the nearest function-like ancestor (the node
+ * the walk pushed, and therefore the current stack top) or to the source
+ * file (the module node), refusing as soon as it crosses a deferred
+ * position. That refusal is what keeps the critical false-AFFECTED
+ * controls honest: an INSTANCE field holding a class expression
+ * (`class Outer { field = class Inner { [key()]() {} }; }`) and a class
+ * defined inside an accessor body are both deferred, and their computed
+ * keys must not become module-load reachable.
+ */
+function runsWhenEnclosingOwnerRuns(element: ts.Node): boolean {
+  let child: ts.Node = element;
+  let parent: ts.Node | undefined = element.parent;
+
+  while (parent) {
+    // The walk pushed a node for this function, so the current owner IS
+    // this function: the class definition runs exactly when it runs.
+    if (isFunctionLike(parent)) {
+      return true;
+    }
+    if (defersEvaluationOf(child, parent)) {
+      return false;
+    }
+    if (ts.isSourceFile(parent)) {
+      return true;
+    }
+    child = parent;
+    parent = parent.parent;
+  }
+
+  return true;
+}
+
+/**
+ * RWF-023. The computed NAME of a function-like member -- a class method
+ * (static, `async` and generator forms included) or an object-literal
+ * method -- that the walk must attribute to the ENCLOSING execution
+ * context rather than to the member's own node.
+ *
+ * A computed property name is evaluated by ClassDefinitionEvaluation (or,
+ * for an object literal, by the literal's own evaluation) as the element
+ * is defined; the member's BODY is not. `walkFile`'s owner stack pushes a
+ * node for every function-like construct BEFORE descending into its
+ * children, and a member's name is one of those children -- so a call
+ * written in the key of `class C { [key()]() {} }` was attributed to
+ * `C`'s method, a node that only runs if something calls the method. The
+ * key's calls then lived only in a deferred region, `key`'s body never
+ * entered the reachable subgraph, and a target it invokes could be given
+ * a COMPLETE Family C unreachability proof while really executing on
+ * every module load (see tests/validation/FINDINGS.md, RWF-023).
+ *
+ * Non-function-like elements never had the defect: a field and an
+ * accessor are not pushed, so their computed keys were already attributed
+ * to the enclosing owner. This returns the name only for the members that
+ * ARE pushed, which is why the fix adds no attribution rule that the
+ * existing walk did not already apply to the sibling spellings.
+ */
+function classDefinitionTimeComputedName(
+  node: ts.Node,
+): ts.ComputedPropertyName | undefined {
+  if (!isFunctionLike(node) || ts.isFunctionDeclaration(node)) {
+    return undefined;
+  }
+  const name = (node as ts.NamedDeclaration).name;
+  if (!name || !ts.isComputedPropertyName(name)) {
+    return undefined;
+  }
+  return runsWhenEnclosingOwnerRuns(node) ? name : undefined;
+}
+
 async function walkFile(
   prepared: FileGraphData,
   ctx: WalkContext,
@@ -1752,6 +1873,28 @@ async function walkFile(
 
   async function visit(node: ts.Node): Promise<void> {
     let pushed = false;
+
+    // RWF-023: BEFORE the member's own node becomes the owner, visit its
+    // computed key under the enclosing one. The key is evaluated when the
+    // class definition is evaluated, so it belongs to whatever executes
+    // that definition -- the module node for a class at module scope.
+    // Reusing `visit` (rather than a bespoke key walker) is deliberate:
+    // the key is an arbitrary expression, and this way every construct the
+    // graph already understands -- a wrapper call, a member call straight
+    // onto an import, a nested call, a class expression written inside the
+    // key -- is classified by exactly the same machinery, with no second
+    // notion of what a call is.
+    //
+    // The normal child walk below still visits the key a second time under
+    // the member's own node. That duplication is intended: this task only
+    // ADDS the class-definition-time edge, and removing the pre-existing
+    // one could shrink the reachable subgraph -- the one thing a
+    // reachability fix must never do (see FINDINGS.md, RWF-023
+    // "Monotonicity").
+    const computedName = classDefinitionTimeComputedName(node);
+    if (computedName) {
+      await visit(computedName.expression);
+    }
 
     if (isFunctionLike(node)) {
       const nodeId = prepared.functionNodeIdByLocation.get(
