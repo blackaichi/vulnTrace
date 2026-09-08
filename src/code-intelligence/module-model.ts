@@ -715,7 +715,9 @@ function firstModuleEvaluationCutoff(
     return cached.start;
   }
 
-  const scanExpressions = mayContainClassDefinitionTimeEvaluation(sourceFile);
+  const scanExpressions =
+    mayContainClassDefinitionTimeEvaluation(sourceFile) ||
+    mayContainObjectLiteralComputedKeyEvaluation(sourceFile);
   let start: number | undefined;
   for (const statement of sourceFile.statements) {
     if (mayEndModuleEvaluation(statement, scanExpressions)) {
@@ -731,12 +733,13 @@ function firstModuleEvaluationCutoff(
 /**
  * Whether evaluating this one top-level statement can end module
  * evaluation rather than falling through to the next statement (RWF-015;
- * widened by RWF-016, RWF-017, RWF-018, RWF-019 and RWF-020).
+ * widened by RWF-016, RWF-017, RWF-018, RWF-019, RWF-020 and RWF-024).
  *
  * Three constructs qualify — all of them ABRUPT COMPLETIONS, and the third
  * only when {@link isDefinitelyAbruptCallStatement},
  * {@link isDefinitelyAbruptStaticFieldInitializer},
- * {@link isDefinitelyAbruptComputedClassElementKey} or
+ * {@link isDefinitelyAbruptComputedClassElementKey},
+ * {@link isDefinitelyAbruptComputedObjectLiteralKey} or
  * {@link isDefinitelyAbruptClassHeritage} has PROVEN it is one,
  * never merely suspected it might be:
  *
@@ -761,7 +764,11 @@ function firstModuleEvaluationCutoff(
  *   `class C { [bail()]() {} }`, RWF-019, which the language likewise
  *   evaluates when the class DEFINITION executes, for static and instance
  *   elements alike — see
- *   {@link isDefinitelyAbruptComputedClassElementKey}), or as a class's
+ *   {@link isDefinitelyAbruptComputedClassElementKey}), or as an OBJECT
+ *   LITERAL element's COMPUTED KEY (`{ [bail()]: 1 }`, `{ [bail()]() {} }`,
+ *   RWF-024, which the language evaluates when the object literal is
+ *   constructed, for every element form alike — see
+ *   {@link isDefinitelyAbruptComputedObjectLiteralKey}), or as a class's
  *   `extends` HERITAGE expression (`class C extends bail() {}`, RWF-020,
  *   which ClassDefinitionEvaluation evaluates FIRST, before any element
  *   exists — see {@link isDefinitelyAbruptClassHeritage}). Such
@@ -811,6 +818,15 @@ function firstModuleEvaluationCutoff(
  * which {@link isDefinitelyAbruptStaticFieldInitializer} declines to act
  * on even though that same element's computed key is acted on.
  *
+ * OBJECT LITERALS are not a statement-container form at all — they are
+ * ordinary expressions, reached only once {@code scanExpressions} is true
+ * — but once reached, the same asymmetry holds for the same reason: a
+ * `PropertyAssignment`/`MethodDeclaration`/`GetAccessorDeclaration`/
+ * `SetAccessorDeclaration`'s computed KEY runs while the object literal is
+ * being constructed, so {@link isDefinitelyAbruptComputedObjectLiteralKey}
+ * is likewise asked before the function-like stop, while a method/getter/
+ * setter's BODY is skipped by that same stop (RWF-024).
+ *
  * An IIFE is skipped along with every other function expression. That is
  * the conservative direction here rather than the risky one: skipping it
  * can only make this relation report FEWER cutoffs, so the worst case is
@@ -842,6 +858,16 @@ function mayEndModuleEvaluation(
     // what it is for — see {@link isDefinitelyAbruptComputedClassElementKey}.
     if (
       isDefinitelyAbruptComputedClassElementKey(node) &&
+      !isCaughtWithin(node, statement)
+    ) {
+      found = true;
+      return;
+    }
+    // Same reasoning, same ordering requirement, for an OBJECT LITERAL's
+    // computed key (`{ [bail()]: 1 }`, `{ [bail()]() {} }`) — see
+    // {@link isDefinitelyAbruptComputedObjectLiteralKey} (RWF-024).
+    if (
+      isDefinitelyAbruptComputedObjectLiteralKey(node) &&
       !isCaughtWithin(node, statement)
     ) {
       found = true;
@@ -976,6 +1002,32 @@ function mayContainClassDefinitionTimeEvaluation(
   sourceFile: ts.SourceFile,
 ): boolean {
   return /\bclass\b/.test(sourceFile.text);
+}
+
+/**
+ * Whether this file could contain an OBJECT LITERAL's computed property
+ * name — the gate {@link firstModuleEvaluationCutoff} widens with, in
+ * addition to {@link mayContainClassDefinitionTimeEvaluation}, for RWF-024.
+ *
+ * A class needs the literal token `class` to exist at all, which is what
+ * makes that gate a sound, cheap text test. An object literal's computed
+ * key has no comparable keyword: `{ [bail()]: 1 }` is written with nothing
+ * but a `[` — the same token an array literal or an index expression uses.
+ * So this test cannot be as tight as the `class` one; it is a coarser sound
+ * over-approximation, exactly like the file that widened from `static` to
+ * `class` before it (RWF-019's {@link mayContainClassDefinitionTimeEvaluation}
+ * docs). A `[` used only for an array or an ordinary index access costs
+ * that one file the full expression walk in {@link mayEndModuleEvaluation}
+ * and changes no answer, while a file containing no `[` at all provably has
+ * no object-literal computed key to find. Correctness never depends on this
+ * test alone — {@link isDefinitelyAbruptComputedObjectLiteralKey} still
+ * re-checks the exact AST shape on every node this walk actually reaches —
+ * so a wider net here can only cost time, never soundness.
+ */
+function mayContainObjectLiteralComputedKeyEvaluation(
+  sourceFile: ts.SourceFile,
+): boolean {
+  return sourceFile.text.includes("[");
 }
 
 /**
@@ -1879,9 +1931,11 @@ function isDefinitelyAbruptStaticFieldInitializer(node: ts.Node): boolean {
  * - only class elements count. The parent must be a `ClassDeclaration` or
  *   `ClassExpression`, which is what excludes an OBJECT LITERAL's computed
  *   key (`{ [bail()]: 1 }`) and its methods — `MethodDeclaration` is the
- *   same node KIND in both, and an object literal is an ordinary
- *   expression belonging to the arbitrary-expression-evaluation boundary
- *   {@link isDefinitelyAbruptCall} draws, not to class evaluation;
+ *   same node KIND in both. An object literal's computed key is now its
+ *   own rule, {@link isDefinitelyAbruptComputedObjectLiteralKey} (RWF-024),
+ *   evaluated by a different ECMAScript abstract operation (constructing an
+ *   object, not defining a class) and kept structurally separate rather
+ *   than merged into this one;
  * - only the key expression written DIRECTLY as that call qualifies, via
  *   {@link isDefinitelyAbruptCall} — which also gives RWF-019 the
  *   parentheses normalization that makes `[(bail())]` work, the exact
@@ -1910,6 +1964,106 @@ function isDefinitelyAbruptComputedClassElementKey(node: ts.Node): boolean {
     ts.isComputedPropertyName(node.name) &&
     node.parent !== undefined &&
     ts.isClassLike(node.parent) &&
+    isDefinitelyAbruptCall(node.name.expression)
+  );
+}
+
+/**
+ * Whether `node` is an OBJECT LITERAL element whose COMPUTED PROPERTY NAME
+ * necessarily invokes a definitely-abrupt local callee, so that evaluating
+ * the enclosing object literal ends module evaluation rather than
+ * completing (RWF-024).
+ *
+ * ```js
+ * const o = { [bail()]: 1 };        // qualifies
+ * const o = { [bail()]() {} };      // qualifies
+ * const o = { get [bail()]() {} };  // qualifies
+ * const o = { set [bail()](v) {} }; // qualifies
+ * const o = { bail: 1 };            // does NOT qualify: not a computed key
+ * const o = { [KEY]: 1 };           // does NOT qualify: not a call
+ * ```
+ *
+ * **Why this is a different rule from RWF-019, not a widening of it.**
+ * RWF-019's {@link isDefinitelyAbruptComputedClassElementKey} reads a
+ * `ClassElement`'s computed name, evaluated by ClassDefinitionEvaluation as
+ * part of defining a CLASS. This predicate reads the identically-shaped
+ * `ObjectLiteralElementLike`'s computed name — `MethodDeclaration`,
+ * `GetAccessorDeclaration` and `SetAccessorDeclaration` are the same node
+ * KINDS whether they sit in a class body or an object literal, exactly the
+ * fact RWF-019's own docs record — evaluated as part of the completely
+ * different ECMAScript abstract operation that constructs an OBJECT: for
+ * every property in an `ObjectLiteral`'s `PropertyDefinitionList`, in
+ * source order, the computed key expression is evaluated and converted to a
+ * property key BEFORE that property's value (or the method/getter/setter it
+ * names) is defined on the new object. There is no class here at all, no
+ * prototype chain, and no static/instance distinction to draw — an object
+ * literal has exactly one "instance", the object being built right now, so
+ * every computed key it writes runs immediately, unconditionally, every
+ * time the literal is evaluated. A throw out of one propagates out of the
+ * object literal, out of whatever statement is evaluating it, and — if
+ * nothing catches it — out of the `require()` that started the load, exactly as a
+ * class's computed-key throw does.
+ *
+ * Only the KEY is read here, deliberately mirroring RWF-019's own
+ * static/instance-VALUE line: a `PropertyAssignment`'s VALUE
+ * (`{ [safeKey()]: bail() }`) and a method/getter/setter's BODY are
+ * evaluated in different positions and by different rules (a method/getter/
+ * setter's body is deferred until called, exactly as a class method's is;
+ * an ordinary property's value is a value-position gap this rule does not
+ * claim to close — see the RWF-024 FINDINGS entry). `mayEndModuleEvaluation`'s
+ * function-like stop still skips a method/getter/setter's BODY; this test is
+ * asked before that stop for the same reason RWF-019's is, since a
+ * `MethodDeclaration`/`GetAccessorDeclaration`/`SetAccessorDeclaration` IS
+ * function-like.
+ *
+ * **Ordering needs no model**, for the same reason RWF-019 needed none:
+ * {@link firstModuleEvaluationCutoff} records the enclosing top-level
+ * STATEMENT's start, so which computed key throws — first, middle or last —
+ * cannot change the answer. Keys evaluate in source order, every one of
+ * them during this same object-literal construction, so
+ * `{ [safe()]: 1, [bail()]: 2, [later()]: 3 }` needs no intra-literal
+ * control-flow graph: the object literal does not complete either way, and
+ * neither `later`'s key nor any property's VALUE after the abrupt key ever
+ * runs.
+ *
+ * Scope is deliberately narrow, in the same three directions RWF-019 drew:
+ *
+ * - only a genuine `ts.ComputedPropertyName` counts, read off the AST.
+ *   `{ "[bail()]": 1 }` is a string key and is not evaluated as code;
+ * - only the element's parent being a genuine `ObjectLiteralExpression`
+ *   counts — which is what excludes a class element's identically-kinded
+ *   computed key (RWF-019's own shape) from this rule, and vice versa;
+ * - only the key expression written DIRECTLY as that call qualifies, via
+ *   {@link isDefinitelyAbruptCall} — the exact non-reassigned local callee
+ *   ({@link resolveExactLocalCallable}), the always-throws body proof
+ *   ({@link cannotCompleteNormally}), the `async`/generator exclusions and
+ *   the parentheses normalization, all reused verbatim. `[foo(bail())]`,
+ *   `` [`${bail()}`] `` and `[(bail(), "x")]` stay unrecognised, for the
+ *   identical arbitrary-expression-evaluation reason RWF-017 recorded, and
+ *   `[flag && bail()]` / `[flag ? bail() : "x"]` genuinely may not call
+ *   `bail` at all.
+ *
+ * A caught object-literal-evaluation throw is handled by the existing
+ * {@link isCaughtWithin} at the call site in {@link mayEndModuleEvaluation}:
+ * `try { const o = { [bail()]: 1 }; } catch {}` keeps a later export's
+ * authority, and a rethrowing `catch` withdraws it. An object literal built
+ * inside a function/method/arrow body — including a deferred INSTANCE field
+ * initializer's own nested object literal — is offered to this predicate
+ * only if {@link mayEndModuleEvaluation}'s walk reaches it; the walk stops
+ * at every function-like node before descending into a body, but does not
+ * stop at a non-static `PropertyDeclaration`, which is the identical,
+ * already-accepted over-approximation RWF-019 documents for a class nested
+ * inside an instance field initializer (see this file's RWF-019 tests and
+ * the RWF-024 FINDINGS entry) — erring toward UNKNOWN, never toward a false
+ * negative proof.
+ */
+function isDefinitelyAbruptComputedObjectLiteralKey(node: ts.Node): boolean {
+  return (
+    ts.isObjectLiteralElementLike(node) &&
+    node.name !== undefined &&
+    ts.isComputedPropertyName(node.name) &&
+    node.parent !== undefined &&
+    ts.isObjectLiteralExpression(node.parent) &&
     isDefinitelyAbruptCall(node.name.expression)
   );
 }

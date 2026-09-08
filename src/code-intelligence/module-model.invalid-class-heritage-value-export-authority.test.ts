@@ -790,7 +790,16 @@ describe("RWF-022: adjacent constructs deliberately left alone", () => {
     );
   });
 
-  it("does not touch an OBJECT LITERAL's computed key -- a separate, still-open P0", () => {
+  it("keeps authority for an OBJECT LITERAL's computed key whose call RETURNS normally -- there is no invalid-property-key analogue to this rule", () => {
+    // RWF-022 exists because ClassDefinitionEvaluation validates a
+    // heritage VALUE against `IsConstructor`, so a call that returns
+    // normally can still abort the class. ToPropertyKey, which converts an
+    // object literal's computed key, has no comparable failure mode for an
+    // ordinary returned value like `1` -- it always succeeds. RWF-024's own
+    // rule (isDefinitelyAbruptComputedObjectLiteralKey) asks only whether
+    // the KEY CALL is abrupt, exactly as this file's own RWF-016 lineage
+    // does, and `notAConstructor()` completes normally, so neither rule
+    // fires here.
     expect(
       defaultExportName(
         canonical("  const x = {\n    [notAConstructor()]: 1,\n  };\n"),

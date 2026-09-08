@@ -1,0 +1,6 @@
+{
+  "name": "rwf-024-circular-import-object-literal-computed-key-ground-truth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs"
+}
