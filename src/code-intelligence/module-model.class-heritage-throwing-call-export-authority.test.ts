@@ -178,27 +178,36 @@ describe("RWF-020: heritage expressions that do NOT end module evaluation -- the
     ).toBe("second");
   });
 
-  it("keeps authority for an ASYNC callee -- calling it RETURNS a rejected promise rather than throwing", () => {
-    // Measured under real node: the class definition does ultimately throw,
-    // but with `TypeError: Class extends value #<Promise> is not a
-    // constructor or null` -- an INVALID-HERITAGE-VALUE failure, which is a
-    // different mechanism RWF-020 does not model. Classifying the CALL as
-    // definitely abrupt here would be right by accident.
+  it("refuses an ASYNC callee for RWF-022's reason, NOT RWF-020's -- the call returns a Promise, which is not a constructor", () => {
+    // RWF-020's own mechanism still refuses this outright, and that refusal
+    // is asserted directly in the RWF-020-mechanism block below: an `async`
+    // callee's `throw` becomes a REJECTED PROMISE, so the CALL completes
+    // normally and `isDefinitelyAbruptCall` says no.
+    //
+    // Authority is nonetheless withdrawn, because RWF-022 added a second,
+    // disjoint reason the class definition cannot complete: measured under
+    // real node, `TypeError: Class extends value #<Promise> is not a
+    // constructor or null`. The VALUE is invalid, which RWF-022 proves from
+    // the callee's syntactic `async` identity alone -- no body analysis, and
+    // no claim whatsoever that the call threw.
     expect(
       defaultExportName(
         `${TWO}async function bail() {\n  throw new Error("boom");\n}\nif (FLAG) {\n  module.exports = first;\n  class C extends bail() {}\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for a GENERATOR callee -- calling it does not execute the body at all", () => {
-    // Measured under real node: `TypeError: Class extends value [object
-    // Generator] is not a constructor or null`. Again a different mechanism.
+  it("refuses a GENERATOR callee for RWF-022's reason, NOT RWF-020's -- the call returns a generator object", () => {
+    // Same split as the `async` case above. Calling a generator function does
+    // not execute the body at all, so RWF-020 cannot and does not call it
+    // abrupt; the generator OBJECT it returns is not a constructor, which is
+    // RWF-022's. Measured: `TypeError: Class extends value [object Generator]
+    // is not a constructor or null`.
     expect(
       defaultExportName(
         `${TWO}function* bail() {\n  throw new Error("boom");\n}\nif (FLAG) {\n  module.exports = first;\n  class C extends bail() {}\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("keeps authority for a callee REASSIGNED after declaration -- no stale abrupt summary", () => {
@@ -209,14 +218,56 @@ describe("RWF-020: heritage expressions that do NOT end module evaluation -- the
     ).toBe("second");
   });
 
-  it("keeps authority for an INVALID returned heritage value -- `extends notAConstructor()` is not modeled from return values", () => {
+  it("refuses an INVALID returned heritage value -- RWF-020 deferred it, RWF-022 closes it", () => {
     // Runtime throws `TypeError: Class extends value 1 is not a constructor
-    // or null`, so a later export really is bypassed -- but proving that
-    // needs value/type interpretation VulnTrace does not have. Recorded as
-    // a separate open finding rather than guessed at here.
+    // or null`, so a later export really is bypassed. RWF-020 recorded this
+    // as an open finding rather than guessing; RWF-022 proves it from a
+    // single unconditional `return` of a numeric literal. The full matrix of
+    // returned value categories -- and the controls that must keep authority
+    // (`return class {}`, `return function () {}`, `return null`, multiple
+    // returns) -- lives in
+    // module-model.invalid-class-heritage-value-export-authority.test.ts.
     expect(
       defaultExportName(
         `${TWO}function notAConstructor() {\n  return 1;\n}\nif (FLAG) {\n  module.exports = first;\n  class C extends notAConstructor() {}\n}\nmodule.exports = second;\n`,
+      ),
+    ).toBeUndefined();
+  });
+});
+
+/**
+ * The two cases above withdraw authority, and the comments there claim the
+ * reason is RWF-022's invalid-VALUE mechanism rather than RWF-020's
+ * abrupt-CALL one. These assert that claim where the two can actually be
+ * told apart: a NON-heritage call position, which
+ * {@link isDefinitelyInvalidClassHeritageValue} never sees at all. Only
+ * `isDefinitelyAbruptCall` runs here, so if RWF-022 had been implemented by
+ * widening it -- the mistake this pair exists to catch -- these would fail.
+ */
+describe("RWF-020/016: the abrupt-CALL mechanism is untouched by RWF-022", () => {
+  it("still keeps authority for an ASYNC callee in a non-heritage call position", () => {
+    expect(
+      defaultExportName(
+        `${TWO}async function bail() {\n  throw new Error("boom");\n}\nif (FLAG) {\n  module.exports = first;\n  const x = bail();\n}\nmodule.exports = second;\n`,
+      ),
+    ).toBe("second");
+  });
+
+  it("still keeps authority for a GENERATOR callee in a non-heritage call position", () => {
+    expect(
+      defaultExportName(
+        `${TWO}function* bail() {\n  throw new Error("boom");\n}\nif (FLAG) {\n  module.exports = first;\n  bail();\n}\nmodule.exports = second;\n`,
+      ),
+    ).toBe("second");
+  });
+
+  it("still keeps authority for a callee that merely RETURNS an invalid value, in a non-heritage call position", () => {
+    // `const x = notAConstructor();` binds 1 and carries on. Nothing about a
+    // returned value makes a CALL abrupt, and RWF-022 must not have made it
+    // so anywhere outside an `extends` clause.
+    expect(
+      defaultExportName(
+        `${TWO}function notAConstructor() {\n  return 1;\n}\nif (FLAG) {\n  module.exports = first;\n  const x = notAConstructor();\n}\nmodule.exports = second;\n`,
       ),
     ).toBe("second");
   });

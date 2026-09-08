@@ -1402,6 +1402,49 @@ function resolveExactLocalCallable(
   | ts.FunctionExpression
   | ts.ArrowFunction
   | undefined {
+  const candidate = resolveExactLocalCallableIdentity(callee);
+  if (candidate === undefined || isAsyncOrGeneratorCallable(candidate)) {
+    return undefined;
+  }
+  return candidate;
+}
+
+/**
+ * The IDENTITY half of {@link resolveExactLocalCallable}'s proof, without
+ * its `async`/generator exclusion — factored out by RWF-022, which needs
+ * the same "this call site provably invokes exactly THIS function node"
+ * answer for a callee that RWF-016 has to refuse.
+ *
+ * The three identity proofs are unchanged and shared verbatim: no real
+ * lexical shadow between the call site and the file ({@link scopeDeclares}),
+ * never reassigned within the modeled reach
+ * ({@link reassignedModuleReachableNames}), and a supported module-top-level
+ * callable shape actually exists ({@link topLevelCallableCandidates}).
+ *
+ * The `async`/generator exclusion is NOT part of identity — it is a
+ * statement about what CALLING the resolved function does, and the two
+ * callers want opposite answers to it:
+ *
+ * - RWF-016's {@link cannotCompleteNormally} asks "can this call itself
+ *   throw?", and for `async`/generator the answer is provably NO (a
+ *   rejected promise, an unstarted generator), so it must refuse;
+ * - RWF-022's {@link classifyExactCallReturnValue} asks "what does this
+ *   call RETURN?", and for `async`/generator the answer is provably a
+ *   `Promise` / generator object — neither of which is a constructor —
+ *   so it is exactly the case it can decide most cheaply.
+ *
+ * Keeping the exclusion in the wrapper rather than here is what stops the
+ * two questions from being conflated: {@link resolveExactLocalCallable}'s
+ * behavior, and therefore every RWF-016/017/018/019/020 answer, is
+ * bit-for-bit what it was.
+ */
+function resolveExactLocalCallableIdentity(
+  callee: ts.Identifier,
+):
+  | ts.FunctionDeclaration
+  | ts.FunctionExpression
+  | ts.ArrowFunction
+  | undefined {
   const name = callee.text;
 
   for (
@@ -1419,11 +1462,7 @@ function resolveExactLocalCallable(
     return undefined;
   }
 
-  const candidate = topLevelCallableCandidates(sourceFile).get(name);
-  if (candidate === undefined || isAsyncOrGeneratorCallable(candidate)) {
-    return undefined;
-  }
-  return candidate;
+  return topLevelCallableCandidates(sourceFile).get(name);
 }
 
 /**
@@ -1917,12 +1956,12 @@ function isDefinitelyAbruptComputedClassElementKey(node: ts.Node): boolean {
  * the shape (`class C extends bail() {}`) that neither predecessor could
  * see.
  *
- * **What is deliberately NOT inferred: the heritage VALUE.** RWF-020 asks
- * only whether evaluating the heritage CALL itself completes. Whether the
- * resulting value is a valid superclass is a separate semantic question
- * this model does not answer, and three real cases turn on it — all three
- * measured in the same fixture, all three throwing a `TypeError` for a
- * reason RWF-020 does not and must not claim:
+ * **The heritage VALUE is a SECOND, separate reason the class definition
+ * can fail — RWF-022.** RWF-020 asks only whether evaluating the heritage
+ * CALL itself completes. Whether the resulting value is a valid superclass
+ * is a different semantic question, and three real cases turn on it — all
+ * three measured, all three throwing a `TypeError` for a reason RWF-020
+ * does not and must not claim:
  *
  * ```js
  * async function bail() { throw x; }
@@ -1935,14 +1974,17 @@ function isDefinitelyAbruptComputedClassElementKey(node: ts.Node): boolean {
  * class C extends n() {}      // the CALL returns 1; same TypeError
  * ```
  *
- * The `async`/generator exclusions come free and unchanged from
- * {@link cannotCompleteNormally} via {@link isDefinitelyAbruptCall}, which
- * already refuses both — an `async` function's `throw` becomes a rejected
- * promise and a generator's body does not run on call. Reaching the same
- * refusal by a different route (the returned value being an invalid
- * superclass) would be new value/type interpretation, so it is left out;
- * the invalid-heritage-result family is recorded as a separate open
- * finding in tests/validation/FINDINGS.md rather than folded in here.
+ * RWF-020 left all three unanswered and recorded them as an open finding.
+ * RWF-022 answers them, through
+ * {@link isDefinitelyInvalidClassHeritageValue} — a SEPARATE disjunct
+ * below, never a widening of {@link isDefinitelyAbruptCall}. The two
+ * mechanisms are disjoint by construction and must stay that way: RWF-020
+ * needs {@link cannotCompleteNormally} (a body that always throws), RWF-022
+ * needs a body that always RETURNS, and no function is both. The
+ * `async`/generator exclusion in {@link isAsyncOrGeneratorCallable} is
+ * likewise read for opposite purposes by the two — see
+ * {@link resolveExactLocalCallableIdentity} — which is why it stays in
+ * `isDefinitelyAbruptCall`'s path and not in the shared identity proof.
  *
  * Everything about the CALL is RWF-016/017's, reused verbatim through
  * {@link isDefinitelyAbruptCall}: the exact non-reassigned local callee
@@ -1981,13 +2023,278 @@ function isDefinitelyAbruptComputedClassElementKey(node: ts.Node): boolean {
  * `try { class C extends bail() {} } catch {}` keeps a later export's
  * authority, and a rethrowing `catch` withdraws it.
  */
+/**
+ * What a class's `extends` value is, as far as ClassDefinitionEvaluation's
+ * own validity check is concerned (RWF-022).
+ *
+ * The check the language performs is exactly three-way, and this domain
+ * mirrors it rather than trying to describe the value in general:
+ *
+ * - `"valid-null"` — `extends null` is LEGAL and is its own case in the
+ *   spec, not a degenerate constructor. It builds a class whose prototype
+ *   chain terminates. Folding it in with "not a constructor" is the single
+ *   most dangerous mistake available here, so it gets its own state;
+ * - `"constructable"` — the value has a `[[Construct]]` internal method, so
+ *   the class definition completes;
+ * - `"non-constructable"` — the value is neither `null` nor a constructor,
+ *   so ClassDefinitionEvaluation throws a `TypeError` and the class
+ *   definition never completes;
+ * - `"unknown"` — this model declines to say. The conservative default for
+ *   everything not proven by node kind alone.
+ *
+ * Only `"non-constructable"` is actionable, and only as an input to
+ * {@link isDefinitelyAbruptClassHeritage}. Nothing downstream may read a
+ * VERDICT off this domain: it answers "does the class definition
+ * complete?", never "is the package affected?".
+ */
+type HeritageValueClass =
+  "unknown" | "valid-null" | "constructable" | "non-constructable";
+
+/**
+ * {@link HeritageValueClass} for a syntactic VALUE expression — the thing a
+ * heritage position would receive (RWF-022).
+ *
+ * This is a flat table over node KINDS and nothing else. It performs no
+ * name resolution, reads no binding, and evaluates no subexpression, which
+ * is what keeps it from being the general value interpreter this task is
+ * scoped not to build. Every row was executed under real `node` v26 in
+ * fixtures/commonjs-circular-import-invalid-class-heritage-ground-truth/:
+ *
+ * ```text
+ * 1  0  1n  "x"  `x`  true  false     -- non-constructable (TypeError)
+ * {}  []                              -- non-constructable (TypeError)
+ * () => {}                            -- non-constructable: an arrow has no
+ *                                        [[Construct]], by construction
+ * async function B() {}               -- non-constructable
+ * function* B() {}                    -- non-constructable
+ * async function* B() {}              -- non-constructable
+ * null                                -- VALID: `class C extends null {}`
+ * class B {}                          -- constructable
+ * function B() {}                     -- constructable
+ * Base   alias   obj.B   f()   -1     -- unknown: needs a binding, a member
+ *                                        lookup, a call, or an operator
+ * ```
+ *
+ * **Why an object/array literal is safe to call non-constructable even
+ * though it can contain arbitrary subexpressions.** `{ a: foo() }` might
+ * throw while being built. If it does, the enclosing CALL completes
+ * abruptly, so the class definition does not complete either — which is
+ * the same conclusion this classification feeds. Both readings agree, so
+ * the classifier does not have to know which one holds. This is the
+ * argument {@link declarationListCannotCompleteNormally} already makes for
+ * its left-to-right declarator scan, reused. The same argument is what
+ * admits a `TemplateExpression` with substitutions: it either produces a
+ * string or throws.
+ *
+ * **Why `__proto__` in an object literal changes nothing.**
+ * `{ __proto__: Function.prototype }` sets the object's PROTOTYPE, and
+ * `[[Construct]]` is an internal method, not an inherited property — the
+ * result is still not a constructor. Measured, because it is the one
+ * object-literal shape that looks like it might not be.
+ *
+ * **Why the identifier `undefined` is NOT a row.** It is an ordinary
+ * global reference and can be shadowed by a parameter, a `catch` binding
+ * or a local declaration, and this classifier resolves no bindings. The
+ * undefined VALUE is still reachable here, but only through shapes that
+ * need no name at all — an empty body and a bare `return;` — which
+ * {@link classifyExactCallReturnValue} handles directly.
+ */
+function classifyHeritageValueExpression(
+  expression: ts.Expression,
+): HeritageValueClass {
+  const value = unwrapParentheses(expression);
+
+  if (value.kind === ts.SyntaxKind.NullKeyword) {
+    return "valid-null";
+  }
+  if (ts.isClassExpression(value)) {
+    return "constructable";
+  }
+  if (ts.isFunctionExpression(value)) {
+    // An `async` and/or generator function EXPRESSION has no
+    // [[Construct]]; a plain one does.
+    return isAsyncOrGeneratorCallable(value)
+      ? "non-constructable"
+      : "constructable";
+  }
+  if (ts.isArrowFunction(value)) {
+    return "non-constructable";
+  }
+  if (
+    ts.isNumericLiteral(value) ||
+    ts.isBigIntLiteral(value) ||
+    ts.isStringLiteral(value) ||
+    ts.isNoSubstitutionTemplateLiteral(value) ||
+    ts.isTemplateExpression(value) ||
+    value.kind === ts.SyntaxKind.TrueKeyword ||
+    value.kind === ts.SyntaxKind.FalseKeyword ||
+    ts.isObjectLiteralExpression(value) ||
+    ts.isArrayLiteralExpression(value)
+  ) {
+    return "non-constructable";
+  }
+  return "unknown";
+}
+
+/**
+ * {@link HeritageValueClass} for the value CALLING `fn` produces (RWF-022)
+ * — where `fn` is a function node {@link resolveExactLocalCallableIdentity}
+ * has already proven a given call site invokes.
+ *
+ * Two independent routes reach a decision, and they are deliberately
+ * separate mechanisms rather than one widened rule:
+ *
+ * 1. **Callee IDENTITY decides it outright, with no body analysis at all.**
+ *    Calling an `async` function returns a `Promise`; calling a generator
+ *    function returns a generator object without running the body; an
+ *    async generator returns an async generator object. None of the three
+ *    is a constructor, and none of them depends on what the body says — so
+ *    an `async`/generator callee is answered before the body is looked at.
+ *
+ *    This is the same syntactic fact RWF-016's
+ *    {@link isAsyncOrGeneratorCallable} already establishes, used for a
+ *    DIFFERENT question, and the distinction matters: RWF-016 reads it as
+ *    "calling this cannot throw synchronously, so refuse"; RWF-022 reads
+ *    it as "calling this returns a known non-constructor object, so
+ *    decide". RWF-020's doc comment records exactly this split and
+ *    declines to make it; this is where it is made.
+ *
+ * 2. **A single unconditional return of a value the node kind alone
+ *    classifies** ({@link classifyHeritageValueExpression}). The supported
+ *    body shapes are the ones that need no control-flow reasoning
+ *    whatsoever:
+ *
+ * ```text
+ * function f() { return 1; }   -- one statement, a `return` with a value
+ * function f() { return; }     -- one statement, a bare `return` -> undefined
+ * function f() {}              -- EMPTY body -> undefined
+ * const f = () => 1;           -- concise arrow body IS the returned value
+ *
+ * function f(flag) {           -- refused: two statements, and the model
+ *   if (flag) return 1;           has no reason to believe either path
+ *   return Base;                  wins. `maybeBase()` is not definitely
+ * }                                invalid, and must not be treated as such
+ * function f() {               -- refused: one statement, but not a return
+ *   doSomething();
+ * }
+ * function f() { "use strict"; return 1; }  -- refused: two statements
+ * ```
+ *
+ * The refusals are the point. This is not a return-value ANALYSIS with a
+ * narrow implementation; it is a narrow pattern that is either matched
+ * exactly or declined, so there is no path by which a function with more
+ * than one reachable ending is ever classified. In particular a body
+ * containing a conditional, a loop, a `try`, or any second statement is
+ * `"unknown"`, full stop — which is what keeps the "multiple returns"
+ * family (test 12) and the RWF-020 "throwing callee" family off this
+ * mechanism entirely.
+ *
+ * An overload signature or ambient declaration (no body) is `"unknown"`.
+ */
+function classifyExactCallReturnValue(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+): HeritageValueClass {
+  if (isAsyncOrGeneratorCallable(fn)) {
+    return "non-constructable";
+  }
+
+  const body = fn.body;
+  if (body === undefined) {
+    return "unknown";
+  }
+  if (!ts.isBlock(body)) {
+    return classifyHeritageValueExpression(body);
+  }
+  if (body.statements.length === 0) {
+    return "non-constructable";
+  }
+  if (body.statements.length !== 1) {
+    return "unknown";
+  }
+  const only = body.statements[0];
+  if (only === undefined || !ts.isReturnStatement(only)) {
+    return "unknown";
+  }
+  return only.expression === undefined
+    ? "non-constructable"
+    : classifyHeritageValueExpression(only.expression);
+}
+
+/**
+ * Whether evaluating `expression` in a class's `extends` position
+ * necessarily produces a value that is neither `null` nor a constructor,
+ * so that ClassDefinitionEvaluation throws a `TypeError` and the class
+ * definition does not complete (RWF-022).
+ *
+ * Two heritage shapes are recognised, and they share one classifier:
+ *
+ * ```text
+ * class C extends notAConstructor() {}   -- an exact local callable whose
+ *                                           RETURN VALUE is classified
+ * class C extends (notAConstructor()) {} -- parentheses are transparent
+ * class C extends notAConstructor?.() {} -- see the optional-call note
+ * class C extends 1 {}                   -- the heritage value is written
+ * class C extends (() => {}) {}             DIRECTLY; same classifier,
+ *                                           no call involved
+ * class C extends alias() {}             -- refused: not an exact local
+ * class C extends obj.make() {}             callable (no alias/member
+ *                                           resolution is added here)
+ * class C extends Base {}                -- refused: `unknown`, a binding
+ * class C extends null {}                -- refused: VALID
+ * class C extends makeBase() {}          -- refused: returns a class
+ * ```
+ *
+ * **Why this is not RWF-020 with a wider net.** RWF-020 asks whether the
+ * heritage CALL completes; this asks what the heritage VALUE is when the
+ * call completes NORMALLY. The two are disjoint by construction —
+ * `isDefinitelyAbruptCall` requires {@link cannotCompleteNormally}, which
+ * requires the body to always throw, and every body shape accepted here
+ * ends in a `return` or is empty. `function f() { throw e; }` is RWF-020's
+ * and stays RWF-020's; this mechanism classifies it `"unknown"` and never
+ * competes for it.
+ *
+ * **Optional call.** `notAConstructor?.()` needs no special case, for the
+ * same reason RWF-020 records: the optional call short-circuits only on a
+ * nullish CALLEE, and {@link resolveExactLocalCallableIdentity} only ever
+ * returns a hoisted function declaration or a never-reassigned
+ * `const`-bound function/arrow — neither can be nullish at the call site,
+ * so the call always happens and its value is always the classified one.
+ *
+ * **Callee identity is RWF-016's, unchanged.** The lexical-shadow walk,
+ * the reassignment refusal (RWF-013/013b) and the top-level-candidate
+ * shape test are shared verbatim through
+ * {@link resolveExactLocalCallableIdentity}, so
+ * `notAConstructor = () => Base;` anywhere in the modeled reach, or a
+ * shadowing inner `function notAConstructor() { return Base; }`, refuses
+ * here exactly as it refuses for RWF-016.
+ */
+function isDefinitelyInvalidClassHeritageValue(
+  expression: ts.Expression,
+): boolean {
+  const unwrapped = unwrapParentheses(expression);
+
+  if (ts.isCallExpression(unwrapped) && ts.isIdentifier(unwrapped.expression)) {
+    const target = resolveExactLocalCallableIdentity(unwrapped.expression);
+    return (
+      target !== undefined &&
+      classifyExactCallReturnValue(target) === "non-constructable"
+    );
+  }
+
+  return classifyHeritageValueExpression(unwrapped) === "non-constructable";
+}
+
 function isDefinitelyAbruptClassHeritage(node: ts.Node): boolean {
   return (
     ts.isHeritageClause(node) &&
     node.token === ts.SyntaxKind.ExtendsKeyword &&
     node.parent !== undefined &&
     ts.isClassLike(node.parent) &&
-    node.types.some((type) => isDefinitelyAbruptCall(type.expression))
+    node.types.some(
+      (type) =>
+        isDefinitelyAbruptCall(type.expression) ||
+        isDefinitelyInvalidClassHeritageValue(type.expression),
+    )
   );
 }
 
