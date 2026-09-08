@@ -514,16 +514,19 @@ describe("RWF-020: every export surface loses authority alike", () => {
 });
 
 describe("RWF-020: adjacent constructs deliberately left alone", () => {
-  it("does not touch an OBJECT LITERAL's computed key -- a separate, still-open P0", () => {
-    // `const x = { [bail()]: 1 };` really does end module evaluation, and
-    // RWF-019 deliberately excluded object literals from its class-element
-    // rule. RWF-020 changes nothing here either; the regression exists so
-    // that a future fix is a deliberate decision rather than a side effect.
+  it("now also catches an OBJECT LITERAL's computed key, fixed separately by RWF-024", () => {
+    // `const x = { [bail()]: 1 };` really does end module evaluation.
+    // RWF-019 deliberately excluded object literals from its CLASS-element
+    // rule (a genuinely different ECMAScript evaluation), and RWF-020
+    // (heritage) never touched this shape either -- both left it open as a
+    // separate P0. RWF-024 closed it with its own rule,
+    // isDefinitelyAbruptComputedObjectLiteralKey; this pin just confirms
+    // RWF-020's own heritage machinery does not regress it.
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}if (FLAG) {\n  module.exports = first;\n  const x = {\n    [bail()]: 1,\n  };\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("does not treat a TypeScript `implements` clause as executable", () => {

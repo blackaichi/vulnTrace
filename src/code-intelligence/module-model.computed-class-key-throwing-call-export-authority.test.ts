@@ -228,21 +228,25 @@ describe("RWF-019: the KEY is definition-time even where the VALUE or BODY is de
     ).toBe("second");
   });
 
-  it("keeps authority for an OBJECT LITERAL's computed key -- not a class element (documented boundary)", () => {
-    // Evaluated at runtime just as a class's key is, but an object literal
-    // is an ordinary expression: recognising it belongs to the
-    // arbitrary-expression-evaluation boundary RWF-017 recorded, not to
-    // class evaluation. `MethodDeclaration` is the same node KIND in both,
-    // which is exactly why the predicate checks the PARENT is a class.
+  it("refuses for an OBJECT LITERAL's computed key too -- a different rule, not this one (RWF-024)", () => {
+    // `MethodDeclaration` is the same node KIND whether it sits in a class
+    // body or an object literal, which is exactly why this predicate checks
+    // the PARENT is a class -- but an object literal's own computed key is
+    // NOT unmodeled: it runs at object-construction time under a separate
+    // rule, isDefinitelyAbruptComputedObjectLiteralKey (RWF-024). See that
+    // file's own test suite,
+    // module-model.computed-object-literal-key-throwing-call-export-authority.test.ts,
+    // for the full matrix; this pair only pins that this predicate's own
+    // class-vs-object-literal PARENT check does not regress.
     expect(
       defaultExportName(reproducer("  const o = { [bail()]: 1 };\n")),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for an OBJECT LITERAL's computed METHOD key -- same node kind, different parent", () => {
+  it("refuses for an OBJECT LITERAL's computed METHOD key too -- same node kind, different parent, still abrupt (RWF-024)", () => {
     expect(
       defaultExportName(reproducer("  const o = { [bail()]() {} };\n")),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 });
 
