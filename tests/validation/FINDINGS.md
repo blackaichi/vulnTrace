@@ -3329,27 +3329,26 @@ cases), `verdict.invalid-class-heritage-value-export-authority.integration.test.
 and `ADV2-082`.
 
 ---
-
-## Open P0 candidate — a vulnerable target invoked from a COMPUTED CLASS-ELEMENT KEY is omitted from module-load reachability
+## RWF-023 — A vulnerable target invoked from a COMPUTED CLASS-ELEMENT KEY was omitted from module-load reachability
 
 **Severity:** P0 / CRITICAL SOUNDNESS (false `NOT_AFFECTED`, with a complete
 Family C proof)
-**Status:** **Open — next P0 candidate.** Pre-existing; NOT introduced by
-RWF-022, and deliberately not fixed by it. No RWF ID is consumed here: this
-entry is a record, and the ID should be assigned when the remediation task is
-actually opened.
-**Discovered:** the independent RWF-022 soundness audit, which reproduced it
-on `9a1370d` (base) and on the RWF-022 branch with identical results.
+**Status:** **Fixed.** Recorded as an open P0 candidate by the independent
+RWF-022 soundness audit, which reproduced it on `9a1370d` and on the RWF-022
+branch with identical results; the ID was deliberately left unassigned until
+the remediation task opened. Reproduced again, unchanged, on `86c8669` before
+any edit here.
 
 ### The defect
 
 A computed property KEY on a class element is evaluated during
 ClassDefinitionEvaluation — that is, during module evaluation for a class at
 module scope. RWF-019 already relies on exactly this fact in the *abrupt*
-direction (a throwing computed key ends module evaluation). The *reachability*
-direction is not modeled: a call written inside a computed key runs at load
-time, but the analyzer does not treat it as reachable, and can then issue a
-complete negative proof over a target that really is invoked.
+direction: a computed key whose call always throws ends module evaluation.
+The *reachability* direction was not modeled. A call written inside a
+computed key runs at load time, but the analyzer did not treat the callee as
+reachable, and would then issue a **complete** negative proof over a target
+that really is invoked.
 
 ```js
 const dep = require("vuln-lib");
@@ -3363,55 +3362,445 @@ class C {
   [key()]() {}
 }
 
-module.exports = safeMain;
+module.exports = C;
 ```
 
-### Runtime truth (measured, node v26.7.0)
+There is no conditional export here, no branch, and no second candidate for
+the module's value. That matters: every finding from RWF-014 through RWF-022
+asks *which export write is authoritative*, and this one asks a prior
+question — *which code does the analyzer believe runs at load time at all?*
+The two are orthogonal, and the reproducer is written to make that
+impossible to attribute to an export-authority cutoff.
 
-Instrumenting `dep.dangerousOp` and requiring the module records
-`SINK INVOCATIONS: ["from-computed-key"]`. The key is evaluated, the sink is
-called, and the module then completes normally and publishes `safeMain`.
+### Pre-fix reproduction on `86c8669`
 
-### Measured verdicts
+Measured with `fixtures/commonjs-computed-class-key-module-load-reachability/`,
+one entrypoint per module, target `fixture-lib/danger#explode`:
 
-| shape | base `9a1370d` | RWF-022 branch | truth |
+| entrypoint | base `86c8669` | branch | truth |
 | --- | --- | --- | --- |
-| top-level `key();` | AFFECTED | AFFECTED | sink runs — correct |
-| `class C { [key()]() {} }`, VALID heritage | **NOT_AFFECTED**, Family C complete | **NOT_AFFECTED**, Family C complete | sink runs — **false negative** |
-| `class C extends notAConstructor() { [key()]() {} }` | **NOT_AFFECTED**, Family C complete | **NOT_AFFECTED**, Family C complete | sink runs — **false negative** |
+| `src/index.cjs` — the canonical shape | **NOT_AFFECTED**, Family C complete | AFFECTED | sink runs — **false negative** |
+| `src/top-level.cjs` — the same call as `key();` | AFFECTED | AFFECTED | sink runs — correct on both |
+| `src/forms.cjs` — all eight element forms | AFFECTED | AFFECTED | see below |
+| `src/expressions.cjs` — key expression shapes | **NOT_AFFECTED**, Family C complete | AFFECTED | sink runs — **false negative** |
+| `src/conditional.cjs` — class in a top-level `if` | **NOT_AFFECTED**, Family C complete | AFFECTED | sink runs — **false negative** |
+| `src/direct-call.cjs` — imported member call as the key | **NOT_AFFECTED**, Family C complete | AFFECTED | sink runs — **false negative** |
+| `src/heritage.cjs` — valid + invalid heritage | **NOT_AFFECTED**, Family C complete | AFFECTED | sink runs — **false negative** |
+| `src/class-definition-time.cjs` — static field / static block host | **NOT_AFFECTED**, Family C complete | AFFECTED | sink runs — **false negative** |
+| `src/deferred.cjs` — eleven deferred positions | NOT_AFFECTED, Family C complete | NOT_AFFECTED, Family C complete | sink does NOT run — correct on both |
+| `src/duplicate-instance.cjs` — nested PackageInstance | **NOT_AFFECTED**, Family C complete | AFFECTED | sink runs — **false negative** |
 
-The first row is the control that isolates the defect: moving the *identical*
-call from a top-level statement into a computed key loses it.
+The second row is the control that names the defect. `top-level.js` holds
+byte-for-byte the same call, the same wrapper and the same sink as
+`index.js`, moved out of the computed key into a plain ExpressionStatement.
+It was already AFFECTED. **The only semantic difference between the two
+modules is the POSITION of the call.**
 
-### Why this is not RWF-022's
+`src/forms.cjs` is AFFECTED on base for an instructive reason, and it is why
+the element-level claim is pinned in the call-graph unit suite rather than by
+a verdict: that module carries all eight forms, four of which already worked,
+so a module-level verdict masks the four that did not. See the split below.
 
-The second row is the decisive one. It contains **no RWF-022 construct at
-all** — the heritage value is a class, so it is valid, nothing is withdrawn,
-and the module completes — yet it reproduces the false `NOT_AFFECTED`
-identically on base and branch. The defect is therefore orthogonal to
-heritage-value classification, and RWF-022 neither causes nor worsens it.
+### Root cause — exact, and not where the task brief guessed
 
-It is also worth separating from the *third* row, which additionally throws a
-`TypeError` after the key has already run. RWF-022 correctly withdraws the
-later export's authority there, but that says nothing about whether the sink
-reached from the computed key is represented — and it is not.
+`call-graph.ts`'s `walkFile` keeps a stack of owner nodes. It pushes a node
+for every function-like construct **before** descending into its children,
+and attributes each call it meets to the top of that stack. A class element's
+computed name is one of those children.
 
-### Why it is its own boundary
+`isFunctionLike` (source-index.ts) covers `FunctionDeclaration`,
+`MethodDeclaration`, `ConstructorDeclaration`, `FunctionExpression` and
+`ArrowFunction`. So the four class-element kinds split into two groups for a
+reason that has nothing to do with the language:
 
-This is a **reachability/root** defect, not an export-authority one. Every
-RWF-015 through RWF-022 finding is about which export write is authoritative;
-this one is about which code the analyzer considers executed at module load.
-Fixing it means teaching module-load reachability that a class-definition-time
-computed key is executed code — adjacent to `ModuleLoadClosure` and to
-RWF-021's root derivation, not to `mayEndModuleEvaluation`'s cutoff rules.
-Folding it into a cutoff task would have crossed the one-semantic-boundary
-line every task in this series has held.
+| element kind | pushed as owner? | who owned the key's calls | correct? |
+| --- | --- | --- | --- |
+| field (`[key()] = 1`) | no | the module | yes, by accident |
+| static field | no | the module | yes, by accident |
+| getter / setter | no | the module | yes, by accident |
+| **method** (`[key()]() {}`) | **yes** | **the method itself** | **no** |
 
-### Scope worth probing when it is opened
+A `MethodDeclaration` covers the instance, `static`, `async` and generator
+spellings, which is why all four were lost together and why the accessor and
+field spellings never showed the defect. The key's calls landed in a region
+that runs only if something calls the method, `key`'s body never entered the
+reachable subgraph, `danger.explode` was left with no incoming edge at all,
+and the search returned unreachable **with a complete subgraph** — a Family C
+proof over a sink that runs on every single load.
 
-Beyond the canonical shape: a computed key on a static element, a getter/setter
-and a method (all four run at class-definition time); a computed key on a class
-nested inside a function (deferred, must NOT be rooted); an object-literal
-computed key (`const o = { [key()]: 1 }`, a separate already-recorded gap in
-the abrupt direction); and whether the same omission affects static field
-initializers and static blocks, which also execute at class-definition time.
+This is worth stating plainly because the task brief anticipated a missing
+*source node* or *root*: it is not. Every node and every root already
+existed. One edge was attributed to the wrong owner.
+
+### The fix
+
+`walkFile`'s `visit` now visits a function-like member's computed name under
+the **enclosing** owner, before the member's own node is pushed:
+
+```ts
+const computedName = classDefinitionTimeComputedName(node);
+if (computedName) {
+  await visit(computedName.expression);
+}
+```
+
+Three properties of this shape are deliberate.
+
+**It reuses `visit`, not a bespoke key walker.** A computed key is an
+arbitrary expression, so every construct the graph already understands — a
+local wrapper call, a member call straight onto an import, a nested call, a
+template substitution, a short-circuit operand, even a class expression
+written inside the key — is classified by exactly the same machinery. There
+is no second notion of what a call is, and no shape-specific rule for any of
+the forms in the matrix below.
+
+**It adds an edge; it never moves one.** The normal child walk still visits
+the key a second time under the member's own node, so the pre-existing
+method→key edge survives. Moving it would have been tidier and is wrong:
+shrinking a reachable subgraph is how a false `NOT_AFFECTED` is born, and a
+caller that reaches the method by a route the module node does not dominate
+would have lost the edge entirely. See *Monotonicity*.
+
+**It refuses deferred positions by walking ancestors, not by testing scope.**
+`runsWhenEnclosingOwnerRuns` walks from the element up to the nearest
+function-like ancestor (the node the walk pushed, and therefore the current
+stack top) or to the source file, and refuses as soon as it crosses a
+position the language defers. `defersEvaluationOf` names exactly two:
+
+- a **non-static field**: its computed NAME is evaluated when the element is
+  defined, but its INITIALIZER is deferred to construction — RWF-018's line,
+  reproduced rather than moved;
+- an **accessor**: its computed NAME is evaluated at definition; its BODY and
+  its PARAMETER list run only on get/set.
+
+A static field initializer and a static block are not listed, because both
+run during class definition. Nothing else defers.
+
+`hasStaticModifier`, `defersEvaluationOf`, `runsWhenEnclosingOwnerRuns` and
+`classDefinitionTimeComputedName` are the whole of the new code. No existing
+function changed behavior.
+
+### Why the deferral gate is the load-bearing half
+
+`class Outer { field = class Inner { [key()]() {} }; }` is the shape that
+separates a fix from an over-approximation. The **enclosing** class really is
+being defined at module load, so a rule that stopped at "the class is at
+module scope" — or that simply took the walk's current stack top — would root
+`Inner`'s key and manufacture a false AFFECTED for a definition that never
+happens.
+
+The corpus scan below makes this concrete rather than hypothetical: of the 31
+call-carrying computed keys found in real vendored code, **26 are in deferred
+contexts**. A naive implementation would have been wrong about five sixths of
+the real population it touched.
+
+### Why this is distinct from RWF-019, and not a widening of it
+
+RWF-019 asks whether a computed key's call is **definitely abrupt**, so that
+a later CommonJS export is provably NOT reached. It needs a call that ALWAYS
+runs and always throws. RWF-023 asks whether a computed key's call is
+**executed at all**, so that its callee is reachable. It needs only that
+there EXISTS a load on which the call runs.
+
+Those are opposite quantifiers over the same syntax, and the difference is
+not cosmetic:
+
+```js
+class C { [flag ? key() : "x"]() {} }        // RWF-023: reachable
+                                             // RWF-019: NOT definitely abrupt
+if (flag) { class C { [key()]() {} } }       // RWF-023: reachable
+                                             // RWF-019: NOT definitely reached
+```
+
+Reusing RWF-019's definite-execution predicates here would have thrown away
+every conditional shape and re-introduced the false negative for the majority
+of the family. RWF-023 uses none of them: `isDefinitelyAbruptCall`,
+`cannotCompleteNormally`, `mayEndModuleEvaluation` and every other cutoff
+predicate in module-model.ts are untouched, and RWF-019's own regression
+suite passes unchanged.
+
+### Runtime ground truth (real node, asserted, v26.7.0)
+
+`fixtures/computed-class-key-module-load-reachability-ground-truth/` is a
+plain Node program run with `node entry.js`. Every claim is `assert`ed, not
+printed — a wrong answer fails the process. It settles, in a real engine:
+
+- **all eight element forms evaluate their key** — instance field, static
+  field, instance method, static method, getter, setter, `async` method,
+  generator method;
+- every key EXPRESSION shape runs — parenthesized, nested, sequence,
+  template, `||`, `?:`, a class expression, a class expression inside an
+  object literal, an object literal's own method key, a class inside a
+  top-level `if`;
+- **evaluation ORDER**, measured rather than assumed:
+  `heritage -> key1 -> key2 -> staticblock`;
+- a computed key runs **before** the `TypeError` from an invalid heritage
+  value (the RWF-022 interaction, below);
+- a static field initializer and a static block are class-definition time, so
+  a class nested in either really is defined at load;
+- **none** of thirteen deferred controls reaches the sink;
+- the KEY runs and the BODY does not — not at definition, not on
+  construction, only when the method is actually called;
+- and, end to end, that `require()`ing the canonical module — with no call
+  into it, no entrypoint and no export ambiguity — reaches the sink, completes
+  module evaluation, and installs the key's return value as the property name.
+
+### The required matrix
+
+Every row measured on both `86c8669` and the branch. "runtime" is the
+ground-truth fixture's asserted answer.
+
+| # | shape | runtime | base | branch |
+| --- | --- | --- | --- | --- |
+| 1 | computed instance field key | runs | reachable | reachable |
+| 2 | computed static field key | runs | reachable | reachable |
+| 3 | computed instance method key | runs | **missed** | reachable |
+| 4 | computed static method key | runs | **missed** | reachable |
+| 5 | computed getter key | runs | reachable | reachable |
+| 6 | computed setter key | runs | reachable | reachable |
+| 7 | computed `async` method key | runs | **missed** | reachable |
+| 8 | computed generator method key | runs | **missed** | reachable |
+| 9 | class expression method key | runs | **missed** | reachable |
+| 10 | parenthesized key | runs | **missed** | reachable |
+| 11 | direct imported member call as the key | runs | **missed** | reachable |
+| 12 | local wrapper call | runs | **missed** | reachable |
+| 13 | nested call `[String(key())]` | runs | **missed** | reachable |
+| 14 | sequence `[(key(), "x")]` | runs | **missed** | reachable |
+| 15 | template `` [`x${key()}`] `` | runs | **missed** | reachable |
+| 16 | `[key() \|\| "x"]` | runs | **missed** | reachable |
+| 17 | `[flag && key()]`, `[flag ? key() : "x"]` | may run | **missed** | reachable |
+| 18 | class in a top-level `if` | may run | **missed** | reachable |
+| 19 | class expression in an object literal | runs | **missed** | reachable |
+| 20 | object literal's own method key | runs | **missed** | reachable |
+| 21 | valid heritage + key | runs | **missed** | reachable |
+| 22 | invalid heritage + key, before the failure | runs | **missed** | reachable |
+| 23 | nested class in a STATIC field initializer | runs | **missed** | reachable |
+| 24 | nested class in a STATIC block | runs | **missed** | reachable |
+| 25 | class in an uncalled function | no | not rooted | not rooted |
+| 26 | class in an uncalled arrow | no | not rooted | not rooted |
+| 27 | class in an uninvoked callback | no | not rooted | not rooted |
+| 28 | class in a method body | no | not rooted | not rooted |
+| 29 | class in a getter / setter body | no | not rooted | not rooted |
+| 30 | class in a constructor body | no | not rooted | not rooted |
+| 31 | nested class in an INSTANCE field | no | not rooted | not rooted |
+| 32 | object literal in an INSTANCE field | no | not rooted | not rooted |
+| 33 | class in a method / setter PARAMETER default | no | not rooted | not rooted |
+| 34 | class two deferral levels deep | no | not rooted | not rooted |
+| 35 | dangerous call in a method BODY | no | not rooted | not rooted |
+| 36 | key runs, method body does not | key only | — | key only |
+
+Rows 1–24 and 25–34 are pinned individually in
+`call-graph.computed-class-key-module-load-reachability.test.ts` (39 cases,
+asserting the OWNER of the key's edge, which is the actual claim); the
+end-to-end verdicts are in
+`verdict.computed-class-key-module-load-reachability.integration.test.ts`
+(17 cases).
+
+### Object-literal computed method keys, absorbed deliberately
+
+`const o = { [key()]() {} };` is the same defect with the same cause: a
+`MethodDeclaration` is pushed as the owner before its own name is visited,
+and the object literal's evaluation — not the method's — is what runs the
+key. Excluding it would have meant leaving a known false `NOT_AFFECTED` that
+the identical predicate already covers, so it is included and the deferral
+gate covers its deferred spelling (`class O { literal = { [key()]() {} }; }`)
+for free. Recorded here rather than left implicit.
+
+Note this is **not** the separately-recorded object-literal gap in the
+*abrupt* direction (`const o = { [bail()]: 1 }` and whether it ends module
+evaluation). That remains open and untouched.
+
+### The RWF-022 interaction, retested as required
+
+The audit that recorded this P0 established that with an INVALID heritage
+VALUE the computed keys can already have run before the final
+`IsConstructor` failure. Asserted again here in real node:
+
+```js
+function makeInvalid() { return 1; }
+function key() { dep.dangerousOp(); return "x"; }
+class C extends makeInvalid() { [key()]() {} }
+// sink calls: ["..."]   then: TypeError
+```
+
+RWF-022 correctly withdraws the authority of any export written below that
+statement. That is a statement about later EXPORTS and says nothing about the
+sink the key has already reached, and the fixture's `heritage.js` pins both
+halves: the target is reachable, and no Family C proof is issued. **No
+simplistic "heritage validation always precedes keys" rule is encoded**, in
+either direction.
+
+### Scope decisions, made explicitly rather than by omission
+
+The brief asked whether static field initializers, static blocks and heritage
+expressions belong in RWF-023. They were probed independently, on base,
+before any edit:
+
+| probe on `86c8669` | verdict | conclusion |
+| --- | --- | --- |
+| `class C { static x = dep.dangerousOp(); }` | AFFECTED | already reachable — **no gap** |
+| `class C { static { dep.dangerousOp(); } }` | AFFECTED | already reachable — **no gap** |
+| `class C extends makeBase() {}` | AFFECTED | already reachable — **no gap** |
+| `class C { static x = key(); }` | AFFECTED | already reachable — **no gap** |
+| `class C { static { key(); } }` | AFFECTED | already reachable — **no gap** |
+
+All three already work, for the same structural reason the field and accessor
+keys did: none of `PropertyDeclaration`, `ClassStaticBlockDeclaration` or a
+heritage clause is function-like, so none is pushed as an owner and their
+calls were already attributed to the module. **There is no broader
+class-definition reachability family to open, and RWF-023 stays narrow.** No
+follow-up P0 is recorded for them, because there is nothing to record.
+
+What RWF-023 *does* add for those positions is one step further in: a class
+NESTED inside a static field initializer or a static block now has its own
+computed method key reached (rows 23–24). That falls out of the same ancestor
+walk and is not a separate rule.
+
+### Newly confirmed, pre-existing, NOT introduced here
+
+Two false-AFFECTED over-approximations were measured on base and are
+**unchanged** on the branch. Both are precision defects, not soundness ones,
+and both predate this task:
+
+| shape | base | branch | truth |
+| --- | --- | --- | --- |
+| `class O { field = dep.dangerousOp(); }` | AFFECTED | AFFECTED | value is per-instance — over-approximate |
+| `class O { get g() { return dep.dangerousOp(); } }` | AFFECTED | AFFECTED | body is deferred — over-approximate |
+| `class O { field = class I { [key()] = 1; }; }` | AFFECTED | AFFECTED | deferred — over-approximate |
+| `class O { get g() { class C { [key()] = 1; } } }` | AFFECTED | AFFECTED | deferred — over-approximate |
+
+They share one cause: a non-static `PropertyDeclaration`'s initializer and an
+accessor's body are not pushed as owners, so calls inside them are attributed
+to the module. RWF-023 could have corrected them with the predicate it
+already has — `defersEvaluationOf` names exactly these positions — and
+deliberately did **not**, because doing so would move verdicts from AFFECTED
+to NOT_AFFECTED, which this task's monotonicity contract forbids and which no
+reachability task should smuggle in. Recorded as an open precision candidate,
+not a P0: the direction is over-approximation, and no false `NOT_AFFECTED` is
+reachable through it.
+
+### Monotonicity
+
+Measured per fixture entrypoint, base vs. branch:
+
+| entrypoint | nodes base → branch | edges base → branch |
+| --- | --- | --- |
+| `src/index.cjs` | 8 → 8 | 4 → 5 |
+| `src/top-level.cjs` | 8 → 8 | 4 → 4 |
+| `src/forms.cjs` | 18 → 18 | 18 → 22 |
+| `src/expressions.cjs` | 24 → 24 | 12 → 21 |
+| `src/conditional.cjs` | 8 → 8 | 4 → 5 |
+| `src/direct-call.cjs` | 7 → 7 | 3 → 4 |
+| `src/heritage.cjs` | 13 → 13 | 7 → 9 |
+| `src/class-definition-time.cjs` | 12 → 12 | 5 → 7 |
+| `src/deferred.cjs` | 33 → 33 | 14 → 20 |
+| `src/duplicate-instance.cjs` | 8 → 8 | 4 → 5 |
+
+**Node counts are identical in every row.** No root was added, removed or
+renamed; no new entrypoint identity exists; no synthetic node was invented.
+Edge counts strictly increase or stay equal, never fall.
+
+`src/deferred.cjs` is the row worth reading twice. It gains six edges — the
+deferred keys are still attributed, to their own deferred owners, exactly as
+before — and its verdict stays `NOT_AFFECTED` with
+`reachableSubgraphComplete: true`. Edges added, reachable set unchanged,
+negative proof preserved and still correct.
+
+### Corpus
+
+Two corpora, AST-scanned with the same ancestor-walk classifier the fix uses.
+
+**`tests/validation/fixtures/` (the real vendored benchmark corpus):** 422
+files scanned, 422 parsed, 12 class declarations, 0 class expressions, **0
+computed class keys**. No verdict delta is possible, and none occurred.
+
+**The repository's own vendored `node_modules` (typescript, prettier, eslint,
+vitest, ajv, zod, semver, yaml and their transitive installs):**
+
+| measure | count |
+| --- | --- |
+| files scanned / parsed | 4,372 / 4,372 |
+| classes (1,904 declarations + 1,086 expressions) | 2,990 |
+| computed class-element keys | 285 |
+| computed keys containing a call | 31 |
+| — direct identifier calls | 9 |
+| — member calls | 22 |
+| — module-evaluation context | 5 |
+| — **deferred context** | **26** |
+| on a method / field / accessor | 17 / 0 / 0 |
+| **exact defect population** (module-time key on a function-like member) | **5** |
+
+All five of the module-time cases are
+`[Symbol.for('nodejs.util.inspect.custom')]` (minimatch ×4, prettier ×1) — a
+member call rooted in the `Symbol` builtin, which the graph correctly leaves
+edgeless (`KNOWN_GLOBAL_IDENTIFIERS`), so no real verdict moved in either
+corpus. The distribution is the useful result: the shape occurs at real
+frequency, and **26 of 31 sit in deferred positions**, which is the empirical
+case for the deferral gate.
+
+### Performance
+
+No whole-file rescan, no CFG, no interpreter, no second AST pass. The fix is
+one predicate evaluated at nodes `walkFile` already visits, plus an ancestor
+walk bounded by the distance to the nearest enclosing function — for a class
+element that is a handful of parent links. `scan-performance` in isolation: the medium
+(~300 file) synthetic project completes in **510 ms** against a 5,000 ms
+threshold, and the single-large-file guard in **5,224 ms** against a 20,000 ms
+threshold.
+
+### Verdict differential
+
+Across every suite, base `86c8669` → branch:
+
+| movement | count |
+| --- | --- |
+| NOT_AFFECTED → AFFECTED | 8 fixture entrypoints + ADV2-083 |
+| NOT_AFFECTED → UNKNOWN | 0 |
+| **UNKNOWN → NOT_AFFECTED** | **0** |
+| **AFFECTED → NOT_AFFECTED** | **0** |
+| any other movement | 0 |
+
+Every movement is in the sound direction, and every one is a shape whose
+runtime execution is independently asserted in real node.
+
+### Verification
+
+Full unit + integration (**2,670 tests**, 112 files — base `86c8669` measured
+2,614 in 110 files; this branch adds exactly two test files and 56 cases),
+adversarial v1/v2 (**117/117**; v1 34/34, v2 **83/83**, 0 classification
+errors, with ADV2-083 measured **FAIL on base** — expected AFFECTED, got
+NOT_AFFECTED, 82/83 — and **PASS on the branch**), validation (**12/17**,
+5 KNOWN_FAIL, **0 unexpected** — the documented baseline, unchanged, with
+RWB-07 PASS), hermeticity (6/6), typecheck, lint, build, prettier,
+history-validator.
+
+**Relevant files:** `src/code-intelligence/call-graph.ts`
+(`hasStaticModifier`, `defersEvaluationOf`, `runsWhenEnclosingOwnerRuns`,
+`classDefinitionTimeComputedName` — all new; one four-line addition to
+`walkFile`'s `visit`. `classifyCall`, `classifyNew`, `emitModuleLoadEdges`,
+`prepareFile`, `isFunctionLike` and every module-model.ts predicate reused
+UNCHANGED); new regressions in
+`call-graph.computed-class-key-module-load-reachability.test.ts` (39 cases)
+and `verdict.computed-class-key-module-load-reachability.integration.test.ts`
+(17 cases); new fixtures
+`fixtures/commonjs-computed-class-key-module-load-reachability/` and
+`fixtures/computed-class-key-module-load-reachability-ground-truth/`
+(real-node, asserted); and `ADV2-083`.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **The two pre-existing over-approximations above.** An instance field's
+  VALUE and an accessor's BODY are attributed to the module. Recorded as a
+  precision candidate; correcting them moves verdicts toward NOT_AFFECTED and
+  belongs to a task that can carry that risk explicitly.
+- **The object-literal computed key in the ABRUPT direction** remains open,
+  unchanged and unrelated (`const o = { [bail()]: 1 }`).
+- **A computed key reached only through an unresolved construct** stays
+  UNKNOWN, as it should — the fix adds an edge, it does not resolve callees
+  the binder cannot already resolve. `(() => { class C { [key()]() {} } })()`
+  is UNKNOWN on both base and branch, because the IIFE's callee is not
+  resolved; that is RWF-017's arbitrary-expression boundary, inherited
+  unchanged.
+- **`class C { [dep.dangerousOp()]() {} }` where the member call cannot be
+  resolved** produces an honest `unknown` edge rather than a fabricated
+  target. Nothing here fabricates a target that resolution does not support.
