@@ -1,6 +1,0 @@
-analysis:
-  entrypoints:
-    - src/index.js
-rules:
-  files:
-    - rules.yml
