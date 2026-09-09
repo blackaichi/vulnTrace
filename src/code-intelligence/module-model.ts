@@ -1134,16 +1134,123 @@ function declarationListDeclares(
   return false;
 }
 
-/** Marks every identifier `target` assigns to, however nested (`[a] = ...`, `({ b } = ...)`). Property mutation (`x.y = ...`) is excluded: it changes the object, not the binding. */
+/**
+ * Strips the wrappers that may sit between an assignment target and the
+ * target itself without changing WHICH storage location is written —
+ * parentheses (`(x) = 1`, `({ a: (x) } = o)`) and TypeScript's own
+ * type-only wrappers (`x! = 1`, `(x as T) = 1`). Deliberately a
+ * SYNTACTIC unwrap of one node's `.expression`, never a walk of children:
+ * chasing children is exactly the defect {@link markLocallyReassigned}
+ * exists to avoid (RWF-025).
+ */
+function unwrapAssignmentTarget(target: ts.Node): ts.Node {
+  let current = target;
+  for (;;) {
+    if (
+      ts.isParenthesizedExpression(current) ||
+      ts.isNonNullExpression(current) ||
+      ts.isAsExpression(current) ||
+      ts.isSatisfiesExpression(current) ||
+      ts.isTypeAssertionExpression(current)
+    ) {
+      current = current.expression;
+      continue;
+    }
+    return current;
+  }
+}
+
+/**
+ * Marks every LOCAL BINDING `target` — an assignment/update expression's
+ * left-hand side, or a `for..in`/`for..of` non-declaration initializer —
+ * rebinds, however nested (`[a] = ...`, `({ b: { c } } = ...)`,
+ * `({ ...rest } = ...)`).
+ *
+ * RWF-025. The recursion descends through ASSIGNMENT-TARGET STRUCTURE
+ * ONLY, never through arbitrary children, because an assignment target's
+ * AST also contains expressions that are merely EVALUATED while the
+ * target is resolved, and those bind nothing:
+ *
+ * ```js
+ * ({ [bail()]: x } = source);   // `x` is rebound; `bail` is CALLED
+ * ({ x = fallback() } = source); // `x` is rebound; `fallback` is CALLED
+ * [holder[bail()]] = values;     // NOTHING local is rebound
+ * obj[bail()] = value;           // NOTHING local is rebound
+ * obj.bail = value;              // NOTHING local is rebound
+ * ```
+ *
+ * A previous `ts.forEachChild` fallback here recorded EVERY identifier
+ * under the target, so a computed key's callee (`bail`) was recorded as
+ * locally reassigned. Because {@link reassignedModuleReachableNames}
+ * caches its result per SOURCE FILE, one such unrelated destructuring
+ * statement anywhere in a file made
+ * {@link resolveExactLocalCallable} refuse that name FILE-WIDE, silently
+ * withdrawing RWF-016/017/019/020/022/024's abrupt-completion cutoffs and
+ * turning a sound UNKNOWN back into a false NOT_AFFECTED.
+ *
+ * The roles are distinguished, not suppressed wholesale: in
+ * `({ [bail()]: bail } = source)` the computed KEY does not rebind
+ * `bail`, but the property VALUE target does, so `bail` is still marked.
+ *
+ * Property MUTATION (`x.y = ...`, `x[k] = ...`) is excluded for the
+ * reason it always was: it changes the object, not the binding — and
+ * neither the object expression nor the index expression is a local
+ * binding this relation may claim was reassigned.
+ */
 function markLocallyReassigned(target: ts.Node, into: Set<string>): void {
-  if (ts.isIdentifier(target)) {
-    into.add(target.text);
+  const unwrapped = unwrapAssignmentTarget(target);
+
+  if (ts.isIdentifier(unwrapped)) {
+    into.add(unwrapped.text);
     return;
   }
-  if (ts.isPropertyAccessExpression(target)) {
+
+  if (ts.isObjectLiteralExpression(unwrapped)) {
+    for (const property of unwrapped.properties) {
+      if (ts.isPropertyAssignment(property)) {
+        // `property.name` SELECTS which source property is read. A
+        // computed one is an expression evaluated to produce that key —
+        // never an assignment destination. Only the initializer is one.
+        markLocallyReassigned(property.initializer, into);
+      } else if (ts.isShorthandPropertyAssignment(property)) {
+        // `({ x } = o)` and `({ x = fallback() } = o)`: the NAME is the
+        // target; `objectAssignmentInitializer` is a default VALUE.
+        into.add(property.name.text);
+      } else if (ts.isSpreadAssignment(property)) {
+        markLocallyReassigned(property.expression, into);
+      }
+    }
     return;
   }
-  ts.forEachChild(target, (child) => markLocallyReassigned(child, into));
+
+  if (ts.isArrayLiteralExpression(unwrapped)) {
+    for (const element of unwrapped.elements) {
+      if (ts.isOmittedExpression(element)) {
+        continue;
+      }
+      if (ts.isSpreadElement(element)) {
+        markLocallyReassigned(element.expression, into);
+        continue;
+      }
+      markLocallyReassigned(element, into);
+    }
+    return;
+  }
+
+  // A defaulted element of a destructuring target — `[x = d] = ...`,
+  // `({ a: x = d } = ...)`. Only the left side is rebound; `d` is a value
+  // the language may evaluate, exactly like a computed key's expression.
+  if (
+    ts.isBinaryExpression(unwrapped) &&
+    unwrapped.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  ) {
+    markLocallyReassigned(unwrapped.left, into);
+    return;
+  }
+
+  // Everything else — `PropertyAccessExpression`, `ElementAccessExpression`,
+  // and any shape that is not an assignment target at all — rebinds no
+  // local binding, so it contributes no name.
 }
 
 /**
