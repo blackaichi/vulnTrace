@@ -4226,3 +4226,322 @@ deliberately not added — inventing new positive proofs is how a false
   derivation:** unaffected.
 - **RWF-014 … RWF-022 export-authority semantics:** unaffected; those live in
   module-model.ts and are untouched by this limitation and by its pin.
+
+## RWF-025 — A destructuring computed KEY must not poison module-wide reassignment provenance
+
+**Severity:** P0 / CRITICAL SOUNDNESS (false `NOT_AFFECTED`, with a complete
+Family C proof)
+**Status:** **Fixed.** Found by the P0 closure inventory and independently
+reproduced on `9c0ca73` (current merged main, RWF-024 included) before any
+edit here. Prioritised ahead of RWF-026 (P0-A) because the defect could
+silently disable already-merged abruptness fixes for an entire source file.
+
+### The defect
+
+RWF-016 through RWF-024 all rest on one callee-identity question: is the
+name `bail` at a call site still the module-top-level `function bail` this
+file can read a body out of, or was it reassigned somewhere module
+evaluation can reach? `reassignedModuleReachableNames` answers it with a
+set of names, cached per `ts.SourceFile`. `markLocallyReassigned` filled
+that set, and its last line was:
+
+```ts
+ts.forEachChild(target, (child) => markLocallyReassigned(child, into));
+```
+
+An assignment target's syntax tree contains two independent kinds of thing:
+the **destinations** the assignment writes to, and the **expressions the
+language merely evaluates** to work out what those destinations are. The
+blind child walk could not tell them apart, so:
+
+```js
+({ [bail()]: x } = HOLDER);
+```
+
+recorded `bail` as locally reassigned. It is not. `x` is the destination;
+`bail()` is evaluated to produce the property key that says WHICH property
+of `HOLDER` to read.
+
+Because the set is cached per source file, one such statement — anywhere in
+the file, in either order relative to the vulnerable path, and arbitrarily
+far from it — made `bail`'s identity unresolvable **file-wide**. Every
+merged cutoff for that name was withdrawn, and a later `module.exports =
+safeOp` regained an authority it does not have:
+
+```js
+function dangerousOp() { vulnerableSink(); }
+function safeOp() {}
+function bail() { throw new Error("boom"); }
+
+if (FLAG) {
+  module.exports = dangerousOp;
+  const obj = { [bail()]: 1 };   // RWF-024's cutoff -- silently withdrawn
+}
+
+module.exports = safeOp;
+
+({ [bail()]: x } = HOLDER);      // <- the only thing that changed
+```
+
+The same blind walk also recorded every identifier under an
+`ElementAccessExpression` target — `obj` **and** `key` in `obj[key()] = v`
+— even though that statement mutates a property and rebinds no local
+binding at all. `PropertyAccessExpression` was already excluded; its
+element-access sibling was not.
+
+### Why it is worse than an ordinary false negative
+
+The syntax that triggers it is unremarkable, need not be near the vulnerable
+path, and changes no runtime behaviour of the module. A package could
+therefore regress from a sound verdict to a confident clean bill of health
+through an edit that changes nothing about what it does.
+
+### Runtime ground truth (real node v22.11.0, asserted)
+
+`fixtures/destructuring-computed-key-assignment-target-ground-truth/` is a
+plain Node program (`node entry.js`) whose every claim is `assert`ed, not
+printed. Seven measured rows:
+
+| shape | key expression evaluated? | key's own binding rebound? | target rebound? |
+| --- | --- | --- | --- |
+| `({ [key()]: target } = source)` | yes | **no** | yes |
+| `({ [bail()]: target } = source)` where `bail` throws | yes (it throws) | — | no |
+| `({ [bail()]: bail } = source)` | yes, with the OLD value | — | **yes** |
+| `({ target = fallback() } = source)` | yes | **no** | yes |
+| `[holder[key()]] = values` | yes | **no** | nothing local; `holder.slot` written |
+| `holder[key()] = value` | yes | **no** | nothing local; `holder.slot` written |
+| shorthand / aliased / nested / rest / array / array-rest / defaulted | — | — | all seven rebind |
+
+Row 3 rules out the lazy fix: suppressing every identifier under a computed
+property name would be wrong, because in `({ [bail()]: bail } = source)` the
+key occurrence rebinds nothing while the value occurrence genuinely does.
+The roles must be distinguished, not the name.
+
+The same fixture also proves, through a circular `require()`, that a cyclic
+consumer of the poisoned module captures `fastPath` **by identity** before
+the throw and reaches the sink through it (`danger.reachedCount()` goes
+`0 → 1`), and that re-requiring the failed module re-throws.
+
+### The fix
+
+`markLocallyReassigned` now recurses through ASSIGNMENT-TARGET STRUCTURE
+only, never through arbitrary children:
+
+- `Identifier` → recorded.
+- `ObjectLiteralExpression` → `PropertyAssignment`: recurse into the
+  INITIALIZER only, never the name (a `ComputedPropertyName` is evaluated,
+  not assigned); `ShorthandPropertyAssignment`: record the name, ignore
+  `objectAssignmentInitializer` (a default VALUE); `SpreadAssignment`:
+  recurse into its expression.
+- `ArrayLiteralExpression` → each element; `OmittedExpression` skipped,
+  `SpreadElement` unwrapped.
+- `BinaryExpression` with `=` (a destructuring DEFAULT, `[x = d]`) →
+  recurse into the LEFT side only.
+- `PropertyAccessExpression`, `ElementAccessExpression`, and anything that
+  is not an assignment target → contribute nothing.
+
+A small `unwrapAssignmentTarget` strips parentheses and TypeScript's
+type-only wrappers (`(x) = 1`, `x! = 1`, `(x as T) = 1`) by taking one
+node's `.expression` — deliberately never a child walk, since that is the
+defect.
+
+The per-source-file cache is unchanged, and so is the module-evaluation
+reach model (a reassignment inside a function body is still out of scope,
+for RWF-016's own reason). One bounded traversal per assignment target,
+strictly smaller than the old one.
+
+### Deliberately NOT changed
+
+`resolveExactLocalCallable`, `cannotCompleteNormally`, every cutoff's own
+position rule (RWF-016/017/018/019/020/022/024), negative-proof semantics,
+Family C, `PackageInstance` identity, `ModuleLoadClosure`, the call graph,
+entrypoint roots. No alias, member-callee or transitive resolution was
+added. P0-A was not implemented.
+
+### Pre-fix reproduction on `9c0ca73`
+
+Six C1 cases, at module-model level. `second` means the later export kept
+authority (the false negative); `undefined` means it was soundly withdrawn.
+
+| case | shape | poison | base `9c0ca73` | branch |
+| --- | --- | --- | --- | --- |
+| C01 | RWF-016 bare call, poison BEFORE the scenario | `({ [bail()]: x } = HOLDER)` | `second` | `undefined` |
+| C02 | RWF-024 object-literal computed key | poison after final write | `second` | `undefined` |
+| C03 | RWF-016 bare call | poison after final write | `second` | `undefined` |
+| C04 | RWF-017 variable initializer | poison after final write | `second` | `undefined` |
+| C05 | RWF-016 bare call | `[HOLDER[bail()]] = [1]` | `second` | `undefined` |
+| C06 | RWF-016 bare call | none (control) | `undefined` | `undefined` |
+
+C06 and the poison-free RWF-017/RWF-024 controls answer `undefined` on BOTH
+sides. The poisoned rows are the only movement, and they move only in the
+sound direction.
+
+### Newly characterised
+
+Every row measured on both sides. "reassigned" means the cutoff was
+withdrawn.
+
+| target | base | branch | correct? |
+| --- | --- | --- | --- |
+| `({ [bail()]: x } = HOLDER)` | reassigned | **not** | branch |
+| `({ [otherKey()]: bail } = HOLDER)` | reassigned | reassigned | both |
+| `({ [bail()]: bail } = HOLDER)` | reassigned | reassigned | both |
+| `({ x = bail() } = HOLDER)` | reassigned | **not** | branch |
+| `({ bail = fallback() } = HOLDER)` | reassigned | reassigned | both |
+| `({ k: x = bail() } = HOLDER)` | reassigned | **not** | branch |
+| `({ k: bail = fallback() } = HOLDER)` | reassigned | reassigned | both |
+| `[HOLDER[bail()]] = [1]` | reassigned | **not** | branch |
+| `HOLDER[bail()] = 1` | reassigned | **not** | branch |
+| `bail[0] = 1` | reassigned | **not** | branch |
+| `bail.prop = 1` | not | not | both |
+| `[x = bail()] = [1]` | reassigned | **not** | branch |
+| `({ k: { [bail()]: x } } = HOLDER)` | reassigned | **not** | branch |
+| `[{ [bail()]: x }] = [HOLDER]` | reassigned | **not** | branch |
+| `for ({ [bail()]: x } of [])` | reassigned | **not** | branch |
+| `bail = () => "safe"` | reassigned | reassigned | both |
+| `({ bail } = HOLDER)` | reassigned | reassigned | both |
+| `({ k: bail } = HOLDER)` | reassigned | reassigned | both |
+| `({ outer: { bail } } = HOLDER)` | reassigned | reassigned | both |
+| `({ a: { b: [{ c: bail }] } } = HOLDER)` | reassigned | reassigned | both |
+| `({ ...bail } = HOLDER)` | reassigned | reassigned | both |
+| `[bail] = [1]` | reassigned | reassigned | both |
+| `[, bail] = [1, 2]` | reassigned | reassigned | both |
+| `[...bail] = [1]` | reassigned | reassigned | both |
+| `[{ k: bail }] = [HOLDER]` | reassigned | reassigned | both |
+| `bail += 1` / `bail \|\|=` / `bail &&=` / `bail ??=` | reassigned | reassigned | both |
+| `bail++` / `--bail` | reassigned | reassigned | both |
+| `for (bail of [])` / `for (bail in HOLDER)` | reassigned | reassigned | both |
+| `for ({ bail } of [])` / `for ([bail] of [])` | reassigned | reassigned | both |
+| `(bail) = "safe"` | reassigned | reassigned | both |
+| `({ k: (bail) } = HOLDER)` | reassigned | reassigned | both |
+| `({ bail } = HOLDER)` inside a function body | not | not | both (RWF-016's reach model, unchanged) |
+
+**Not one genuine assignment destination stopped being recorded.** The
+branch's marks are a strict subset of the base's, and the corpus scan below
+confirms it empirically: across 152,236 assignment targets in real vendored
+code, the new collector never once recorded a name the old one did not.
+
+### Corpus
+
+Structural scan with the TypeScript parser (never textual) over real
+vendored JS/CJS/MJS.
+
+Real installed dependency tree (2,527 files):
+
+| measure | count |
+| --- | --- |
+| assignment targets | 152,236 |
+| destructuring-assignment targets | 181 |
+| targets containing a computed property NAME | 0 |
+| targets with a CallExpression in a computed name | 0 |
+| **targets with a CallExpression in an ElementAccess INDEX** | **121** |
+| names dropped by the fix | 19,680 (671 files) |
+| **dropped names that are ALSO a module-top-level callable in the same file** | **84** |
+| **real files where the poisoning could actually bite** | **14** |
+| names the new collector adds that the old did not | **0** |
+
+Repository fixtures (791 files): 14,678 targets, 6 destructuring targets, 7
+element-access-index call targets, 1,842 dropped names across 108 files,
+0 of them a local callable, 0 additions.
+
+The primary spelling (`({ [f()]: x } = src)`) is rare in this corpus; the
+element-access spelling of the SAME defect is not. Concrete instances:
+`rollup`'s `importedBindingsPerDependency[resolveFileName(dependency)]`,
+`vite`'s `resolvedCache[getResolveCacheKey(key, options)]` and
+`attributes[getAttrKey(attr)]`, `chai`'s `assert[as]`, and `esquery`'s
+minified bundle. **Low frequency is not low severity:** the poisoning is
+file-wide, so a single occurrence disables a name's identity for an entire
+module, and 14 real installed packages carried one.
+
+### Newly discovered, NOT fixed here — the twin walker in commonjs-reexports.ts
+
+`collectFacts`'s local `markAssigned` (src/code-intelligence/commonjs-reexports.ts)
+has the **identical** defect, ending in the same `ts.forEachChild(target,
+markAssigned)` fallback, feeding `CommonJsFacts.reassignedNames`, cached in
+the same per-source-file way. It was left untouched here under this task's
+"one defect only" scope.
+
+Its failure mode is the **opposite, safe direction** and cannot produce a
+false `NOT_AFFECTED`: over-marking there makes RWF-013b refuse to bind an
+export, so the module's exported value becomes unattributed and the verdict
+degrades to `UNKNOWN`. Measured: a file containing
+`({ [keyFor(neverCalled)]: seen } = REGISTRY)` loses the binding for
+`neverCalled` entirely, even after RWF-025's fix. It cost precision in this
+task's own fixture authoring — `fixtures/.../stable.js` and ADV2-085's
+`index.js` both had to avoid naming an EXPORTED function inside an
+assignment target to keep the two defects from confounding each other.
+
+**Recommendation:** its own follow-up task (RWF-025b), applying the same
+semantic rule locally in `markAssigned`. It is a precision defect, not a
+soundness one, so it does not block P0-Z.
+
+### Verdict differential (base `9c0ca73` vs. branch)
+
+| suite | base | branch | movement |
+| --- | --- | --- | --- |
+| unit + integration | 2,756 pass | 2,823 pass | +67 new tests, 0 regressions |
+| adversarial v1 | 34/34 | 34/34 | none |
+| adversarial v2 | 84/85 (ADV2-085 FAIL) | 85/85 | **ADV2-085 `NOT_AFFECTED` → `UNKNOWN`** |
+| validation + hermeticity | 17 pass / 6 fail | 17 pass / 6 fail | none (identical set) |
+| scan-performance | pass | pass | none |
+
+- `UNKNOWN` → `NOT_AFFECTED`: **0**
+- `AFFECTED` → `NOT_AFFECTED`: **0**
+- `NOT_AFFECTED` → `UNKNOWN`: **1** (ADV2-085 — the defect)
+- Any other movement: **0**
+
+The six validation failures (VAL-002, VAL-003, RWB-03, RWB-05, RWB-09b, and
+one hermeticity assertion) are byte-identical on both sides and are the
+suite's pre-existing, deliberately-kept disagreements.
+
+### ADV2-085
+
+`tests/adversarial/v2/fixtures/adv2-085-destructuring-computed-key-reassignment-cache-poisoning/`
+is ADV2-084's fixture with one statement added, between duplicate
+same-name, same-version `PackageInstance`s.
+
+| run | verdict |
+| --- | --- |
+| base `9c0ca73`, poison present | **`NOT_AFFECTED`** (FAIL — the false negative) |
+| base `9c0ca73`, poison statement DELETED, nothing else changed | `UNKNOWN` (PASS) |
+| branch, poison present | `UNKNOWN` (PASS) |
+
+The middle row is the control that matters: on unmodified base main,
+removing only `({ [keyFor(bail)]: seen } = REGISTRY);` restores the sound
+answer. That identifies the cache poisoning as the cause, rather than the
+abrupt position itself.
+
+The fixture is non-vacuous in the other direction too: it carries
+`({ retired } = REPLACEMENTS)`, a module-scope destructuring statement that
+GENUINELY rebinds a local callable, so an analyzer that passed it by no
+longer recording destructuring targets at all would be caught.
+
+### Verification
+
+`npm test` (117 files, 2,823 tests, all pass) · `npm run test:adversarial`
+(v1 34/34, v2 85/85) · `npm run test:validation` (unchanged from base) ·
+`npm run test:performance` (2/2, 2.35s and 8.54s against 5s/20s thresholds)
+· `npm run typecheck` · `npm run lint` · `npm run build` · `npm run format`
+· `npm run validate:history`. New focused suite:
+`src/code-intelligence/module-model.destructuring-assignment-target-reassignment.test.ts`
+(59 tests) — 22 of them fail on base `9c0ca73` with only the production file
+reverted, and the 37 genuine-reassignment controls pass on both sides. New
+end-to-end regression:
+`src/analysis/verdict.destructuring-computed-key-reassignment-cache-poisoning.integration.test.ts`
+(8 tests), including the Family C positive control and the
+false-`AFFECTED` control where `bail` really is rebound.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **The twin walker in commonjs-reexports.ts** — above. Precision only.
+- **P0-A (RWF-026)** — a throwing call in an ARGUMENT or operand position
+  (`foo(bail())`, `1 + bail()`) is still not proved definitely abrupt.
+  Verified invariant: those shapes answer identically with and without the
+  poison, on the branch.
+- **P0-E (RWF-028)** — alias (`const alias = bail; alias()`) and member
+  (`holder.bail()`) callees are still unresolved. Same invariant verified.
+- **An assignment buried inside a larger expression** (`foo(bail = other)`)
+  is still not chased, unchanged from before: missing a reassignment only
+  makes the relation more conservative.
+- **A reassignment inside a function body** is still outside the
+  module-evaluation reach model, unchanged and by design (RWF-016).
