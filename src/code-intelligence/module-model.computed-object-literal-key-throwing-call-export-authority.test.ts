@@ -183,10 +183,14 @@ describe("RWF-024: key-before-value ordering and source-order cutoff", () => {
 });
 
 describe("RWF-024: the KEY is object-construction time even where the VALUE or BODY is deferred", () => {
-  it("keeps authority for a non-computed property VALUE that calls bail -- the value runs, but is not this rule's concern", () => {
+  // RWF-026 CLOSED this. A property VALUE is evaluated while the literal
+  // is constructed, exactly as its computed key is, so real Node never
+  // reaches the later write. RWF-024's own KEY rule is untouched -- the
+  // value is now covered by the separate expression-position relation.
+  it("refuses authority for a non-computed property VALUE that calls bail (RWF-026)", () => {
     expect(
       defaultExportName(reproducer("  const o = {\n    x: bail(),\n  };\n")),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("keeps authority for a non-computed METHOD BODY that calls bail -- a body runs only when called", () => {
@@ -272,20 +276,18 @@ describe("RWF-024: the KEY is object-construction time even where the VALUE or B
   });
 });
 
-describe("RWF-024: property-VALUE abrupt calls stay OUT of scope -- a documented, adjacent gap", () => {
-  it("keeps authority when only the VALUE of a safely-KEYED property is abrupt -- a separate mechanism this rule does not claim", () => {
-    // `{ [safeKey()]: bail() }` -- the key is harmless, so this predicate
-    // never fires, and no other existing predicate models an object
-    // literal PROPERTY VALUE as an abrupt position either
-    // (`isDefinitelyAbruptCallStatement` only recognises an
-    // ExpressionStatement or a VariableStatement's own initializer). See
-    // the RWF-024 FINDINGS entry for why this is recorded rather than
-    // silently absorbed.
+describe("RWF-024: property-VALUE abrupt calls, the adjacent gap RWF-026 closed", () => {
+  it("refuses authority when only the VALUE of a safely-KEYED property is abrupt (RWF-026)", () => {
+    // `{ [safeKey()]: bail() }` -- RWF-024's KEY predicate still never
+    // fires here, and that is the point: the withdrawal now comes from
+    // RWF-026's expression-position relation, which models a property
+    // VALUE as a required evaluation. The two rules stay separate; the
+    // gap the RWF-024 FINDINGS entry recorded is the one that closed.
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}function safeKey() {\n  return "k";\n}\nif (FLAG) {\n  module.exports = first;\n  const o = {\n    [safeKey()]: bail(),\n  };\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 });
 
@@ -434,20 +436,20 @@ describe("RWF-024: conditional / non-call key expressions stay OUT of scope", ()
     ).toBe("second");
   });
 
-  it("keeps authority for an unmodeled NESTED-call key (`foo(bail())`) -- arbitrary-expression-evaluation boundary", () => {
+  it("refuses for a NESTED-call key (`other(bail())`) -- the argument is required (RWF-026)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}${OTHERS}if (FLAG) {\n  module.exports = first;\n  const o = {\n    [other(bail())]: 1,\n  };\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for an unmodeled TEMPLATE key", () => {
+  it("refuses for a TEMPLATE key -- every substitution is required (RWF-026)", () => {
     expect(
       defaultExportName(
         reproducer("  const o = {\n    [`${bail()}`]: 1,\n  };\n"),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("refuses for a PARENTHESIZED call key -- parentheses are transparent, exactly as RWF-019's own normalization handles", () => {

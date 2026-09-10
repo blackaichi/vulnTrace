@@ -1947,6 +1947,421 @@ function isDefinitelyAbruptCall(expression: ts.Expression): boolean {
 }
 
 /**
+ * Whether this file declares ANY module-top-level callable that
+ * {@link cannotCompleteNormally} proves can only ever throw (RWF-026) —
+ * the cheap per-file gate {@link necessarilyEvaluatesAbruptly} opens with.
+ *
+ * {@link isDefinitelyAbruptCall} can only ever answer `true` for a call
+ * whose callee resolves to one of {@link topLevelCallableCandidates}'
+ * entries, so a file with no always-throwing candidate provably has no
+ * definitely-abrupt call ANYWHERE in it, in any expression position. That
+ * makes this test exactly complete rather than merely close, and it is
+ * what keeps RWF-026's recursion off the hot path: the expression walk
+ * below is only ever entered for a file that has something for it to
+ * find. On the scan-performance suite's worst case (9,001 top-level
+ * statements of object literals and call expressions, none of them
+ * throwing callables) it is one cached pass over `sourceFile.statements`
+ * and an `O(1)` answer per expression thereafter.
+ *
+ * Cached per source file, like every other module-model fact.
+ */
+const hasDefinitelyAbruptCallableBySourceFile = new WeakMap<
+  ts.SourceFile,
+  boolean
+>();
+
+function fileHasDefinitelyAbruptCallable(sourceFile: ts.SourceFile): boolean {
+  const cached = hasDefinitelyAbruptCallableBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  let found = false;
+  for (const candidate of topLevelCallableCandidates(sourceFile).values()) {
+    if (cannotCompleteNormally(candidate)) {
+      found = true;
+      break;
+    }
+  }
+
+  hasDefinitelyAbruptCallableBySourceFile.set(sourceFile, found);
+  return found;
+}
+
+/**
+ * How deep {@link necessarilyEvaluatesAbruptly} will recurse through
+ * nested expression operands before REFUSING (RWF-026). Real source never
+ * comes close — the TypeScript parser itself recurses over the same
+ * nesting — and refusing is the sound direction, so this is a boundedness
+ * guarantee rather than a semantic rule.
+ */
+const MAX_EXPRESSION_EVALUATION_DEPTH = 100;
+
+/**
+ * Whether NORMAL COMPLETION of `expression` — evaluated exactly where it
+ * is written — REQUIRES first performing a call
+ * {@link isDefinitelyAbruptCall} has already proven can only ever throw
+ * (RWF-026).
+ *
+ * This is the one semantic addition RWF-026 makes, and it is deliberately
+ * narrow: it does not widen WHICH calls can be proven abrupt (that stays
+ * {@link isDefinitelyAbruptCall}'s exact-local-callee proof, RWF-016's,
+ * shared verbatim and never re-derived here) — it widens only WHERE such
+ * an already-proven call is necessarily evaluated.
+ *
+ * **The soundness rule, stated once.** An expression completes normally
+ * only if every operand position the language REQUIRES it to evaluate
+ * completes normally first. So if any REQUIRED operand cannot complete
+ * normally, neither can the enclosing expression — and, crucially, that
+ * conclusion needs no evaluation-ORDER model at all:
+ *
+ * ```js
+ * safe() + bail()   // to complete, `safe()` AND `bail()` must both
+ *                   // complete; `bail()` cannot; so the `+` cannot.
+ * ```
+ *
+ * Either the earlier operand completed normally (so the abrupt one is
+ * reached and throws) or it did not (so the expression never completes
+ * either way). Both readings agree, which is why this predicate can be a
+ * simple recursion over REQUIRED positions rather than an interpreter.
+ * The same argument RWF-017's {@link declarationListCannotCompleteNormally}
+ * already makes for a declarator list, generalised to operands.
+ *
+ * **"Required" is the entire content of this relation.** A position is
+ * required only when the enclosing expression cannot complete normally
+ * WITHOUT evaluating it. A `&&`'s right operand is not required (the
+ * expression completes fine on a falsy left); a conditional's arms are not
+ * required; a function or method BODY is not required (nothing here
+ * invokes it). Every kind below is listed with which of its children are
+ * required and which are refused, and an unlisted kind is refused
+ * wholesale by the final `return false` — this relation is `true` only
+ * where it has a proof, never `true` by omission.
+ *
+ * **Supported kinds, with the required positions for each:**
+ *
+ * ```text
+ * (e)                        -- e                     (parentheses are transparent)
+ * e as T | e satisfies T     -- e                     (TS type-only wrappers, erased at runtime)
+ * e! | <T>e                  -- e
+ * { k: e }                   -- every computed KEY, every property VALUE,
+ *                               every SPREAD operand; NOT a method/accessor body
+ * [e, , f]                   -- every element and spread operand; holes evaluate nothing
+ * f(a, b)                    -- the CALLEE expression, then every ARGUMENT
+ * new C(a)                   -- the constructor expression, then every ARGUMENT
+ * `${e}`                     -- every substitution
+ * tag`${e}`                  -- the TAG expression, then every substitution
+ * e.x                        -- e            (the receiver; never the property name)
+ * e[i]                       -- e, then i    (`i` refused inside an optional chain)
+ * ...e                       -- e
+ * a, b                       -- a and b      (a comma needs both to complete)
+ * a + b, a === b, a in b ...  -- a and b     (every non-short-circuiting binary operator)
+ * a && b | a || b | a ?? b   -- a ONLY       (b is not required -- see below)
+ * c ? a : b                  -- c ONLY       (neither arm is required)
+ * !e, -e, typeof e, void e,  -- e
+ *   delete e, e++, ++e, await e
+ * x = e                      -- the LHS REFERENCE's own sub-expressions, then e
+ * x += e (and every other     -- the LHS REFERENCE's own sub-expressions, then e
+ *   arithmetic/bitwise form)
+ * x ||= e | x &&= e | x ??= e -- the LHS REFERENCE only; `e` is NOT required
+ * ```
+ *
+ * **Explicitly refused, each for a stated reason:**
+ *
+ * - **A logical operator's RIGHT operand** (`flag && bail()`). It runs
+ *   only for some values of the left operand, and this relation has no
+ *   value semantics to decide which — so the expression CAN complete
+ *   normally and no cutoff may be claimed.
+ * - **A conditional expression's ARMS** (`flag ? bail() : safe()`, and
+ *   `flag ? bail() : other()` alike). Neither arm is required. Joining two
+ *   independently-abrupt arms into one proof is multi-path completion
+ *   reasoning, deliberately out of scope here.
+ * - **A logical ASSIGNMENT's right-hand side** (`z ||= bail()`). Same
+ *   short-circuit as the logical operators: `||=`/`&&=`/`??=` evaluate the
+ *   RHS only for some current values of the target.
+ * - **Anything inside a FUNCTION** — a function expression, an arrow
+ *   (concise body included), a method/getter/setter body, a default
+ *   parameter. Writing one evaluates nothing; calling it is a decision
+ *   made later, possibly by an importer, possibly never. This is the same
+ *   line {@link mayEndModuleEvaluation} draws by stopping at every
+ *   function-like node, and the reason `const f = () => bail();` and
+ *   `function f(x = bail()) {}` keep a later export's authority.
+ * - **A `class` expression's body.** Class-definition-time evaluation is
+ *   RWF-018/019/020/022's, reached through
+ *   {@link mayEndModuleEvaluation}'s own walk with their own predicates;
+ *   folding it in here would duplicate those proofs with different
+ *   semantics. In particular an INSTANCE field initializer
+ *   (`class C { f = bail(); }`) is per-CONSTRUCTION, not module time, and
+ *   is not reachable from this relation at all.
+ * - **Positions guarded by an OPTIONAL CHAIN.** In `a?.b(bail())` and
+ *   `a?.[bail()]` the argument and index are skipped entirely when `a` is
+ *   nullish, so neither is required. The receiver of every link IS
+ *   required and is still descended into. (`bail?.()` itself is a
+ *   different matter and is already handled by
+ *   {@link isDefinitelyAbruptCall}: the optional call short-circuits only
+ *   on a nullish CALLEE, and {@link resolveExactLocalCallable} only ever
+ *   resolves a hoisted function declaration or a never-reassigned
+ *   `const`-bound function expression, neither of which can be nullish.)
+ * - **A destructuring ASSIGNMENT TARGET** (`({ [k()]: x } = src)`). The
+ *   pattern's own evaluation has semantics this relation does not model,
+ *   and refusing it also keeps RWF-025's reassignment-provenance question
+ *   — a different question about the same syntax — untouched.
+ * - **Every other kind**, by the closing `return false`.
+ *
+ * Note what is NOT here: no constant folding, no value symbolisation, no
+ * alias resolution, no member-callee resolution, no transitive call
+ * summaries, no `new` -expression callee abruptness, no `ts.forEachChild`
+ * "contains a call somewhere" shortcut. A generic child traversal would
+ * happily walk into a `&&`'s right operand or an arrow's body and is
+ * precisely the class of mistake this switch exists to make impossible.
+ */
+function necessarilyEvaluatesAbruptly(expression: ts.Expression): boolean {
+  if (!fileHasDefinitelyAbruptCallable(expression.getSourceFile())) {
+    return false;
+  }
+  return expressionCannotCompleteNormally(expression, 0);
+}
+
+function expressionCannotCompleteNormally(
+  expression: ts.Expression,
+  depth: number,
+): boolean {
+  if (depth > MAX_EXPRESSION_EVALUATION_DEPTH) {
+    return false;
+  }
+  // The one place a proof is ESTABLISHED; everything below only decides
+  // whether a child position is required. Handles its own parentheses.
+  if (isDefinitelyAbruptCall(expression)) {
+    return true;
+  }
+
+  const required = (child: ts.Expression): boolean =>
+    expressionCannotCompleteNormally(child, depth + 1);
+
+  // Evaluation-transparent wrappers: parentheses and TS's type-only forms,
+  // none of which exist at runtime.
+  if (
+    ts.isParenthesizedExpression(expression) ||
+    ts.isAsExpression(expression) ||
+    ts.isSatisfiesExpression(expression) ||
+    ts.isNonNullExpression(expression) ||
+    ts.isTypeAssertionExpression(expression) ||
+    ts.isExpressionWithTypeArguments(expression)
+  ) {
+    return required(expression.expression);
+  }
+
+  if (ts.isObjectLiteralExpression(expression)) {
+    return expression.properties.some((property) => {
+      if (ts.isSpreadAssignment(property)) {
+        return required(property.expression);
+      }
+      // The computed KEY of ANY element form runs while the literal is
+      // built, methods and accessors included — RWF-024's rule, reached
+      // here for a literal nested inside a larger expression.
+      if (
+        property.name !== undefined &&
+        ts.isComputedPropertyName(property.name) &&
+        required(property.name.expression)
+      ) {
+        return true;
+      }
+      // The VALUE, and only for a property assignment: a method's,
+      // getter's or setter's body is a function body and runs nothing
+      // now. A shorthand (`{ x }`) is an identifier read.
+      return (
+        ts.isPropertyAssignment(property) && required(property.initializer)
+      );
+    });
+  }
+
+  if (ts.isArrayLiteralExpression(expression)) {
+    return expression.elements.some(
+      (element) => !ts.isOmittedExpression(element) && required(element),
+    );
+  }
+
+  if (ts.isSpreadElement(expression)) {
+    return required(expression.expression);
+  }
+
+  if (ts.isCallExpression(expression)) {
+    // The callee expression is evaluated before any argument is, whether
+    // or not the call short-circuits.
+    if (required(expression.expression)) {
+      return true;
+    }
+    if (ts.isOptionalChain(expression)) {
+      return false;
+    }
+    return expression.arguments.some(required);
+  }
+
+  if (ts.isNewExpression(expression)) {
+    // ARGUMENTS are evaluated before construction begins, so an abrupt one
+    // means the `new` never completes. Whether calling the CONSTRUCTOR
+    // itself is abrupt is a different question this relation does not ask:
+    // `new bail()` reaches only the identifier `bail` here, never a
+    // `CallExpression`, and is correctly refused.
+    if (required(expression.expression)) {
+      return true;
+    }
+    return expression.arguments?.some(required) ?? false;
+  }
+
+  if (ts.isTemplateExpression(expression)) {
+    return expression.templateSpans.some((span) => required(span.expression));
+  }
+
+  if (ts.isTaggedTemplateExpression(expression)) {
+    // The tag is evaluated first, then every substitution — and all of
+    // them before the tag is ever CALLED, which is why nothing needs to be
+    // known about the tag function itself.
+    if (required(expression.tag)) {
+      return true;
+    }
+    return (
+      ts.isTemplateExpression(expression.template) &&
+      expression.template.templateSpans.some((span) =>
+        required(span.expression),
+      )
+    );
+  }
+
+  if (ts.isPropertyAccessExpression(expression)) {
+    // Only the RECEIVER; the property NAME is not an evaluated expression.
+    // Sound inside an optional chain too: every link's receiver is
+    // evaluated before that link can short-circuit.
+    return required(expression.expression);
+  }
+
+  if (ts.isElementAccessExpression(expression)) {
+    if (required(expression.expression)) {
+      return true;
+    }
+    if (ts.isOptionalChain(expression)) {
+      return false;
+    }
+    return required(expression.argumentExpression);
+  }
+
+  if (
+    ts.isPrefixUnaryExpression(expression) ||
+    ts.isPostfixUnaryExpression(expression)
+  ) {
+    return required(expression.operand);
+  }
+
+  if (
+    ts.isTypeOfExpression(expression) ||
+    ts.isVoidExpression(expression) ||
+    ts.isDeleteExpression(expression) ||
+    ts.isAwaitExpression(expression)
+  ) {
+    return required(expression.expression);
+  }
+
+  if (ts.isConditionalExpression(expression)) {
+    // The CONDITION only. Neither arm is required — see this relation's
+    // doc comment.
+    return required(expression.condition);
+  }
+
+  if (ts.isBinaryExpression(expression)) {
+    return binaryCannotCompleteNormally(expression, depth);
+  }
+
+  return false;
+}
+
+/**
+ * {@link expressionCannotCompleteNormally} for a `BinaryExpression`, split
+ * out because its three operator families have three different answers to
+ * "which operand is required" (RWF-026).
+ */
+function binaryCannotCompleteNormally(
+  expression: ts.BinaryExpression,
+  depth: number,
+): boolean {
+  const required = (child: ts.Expression): boolean =>
+    expressionCannotCompleteNormally(child, depth + 1);
+  const operator = expression.operatorToken.kind;
+
+  // Short-circuiting operators: the LEFT operand always runs, the right
+  // one only for some left values this relation cannot know.
+  if (
+    operator === ts.SyntaxKind.AmpersandAmpersandToken ||
+    operator === ts.SyntaxKind.BarBarToken ||
+    operator === ts.SyntaxKind.QuestionQuestionToken
+  ) {
+    return required(expression.left);
+  }
+
+  if (isAssignmentOperatorToken(operator)) {
+    // The TARGET REFERENCE is resolved before the right-hand side is
+    // evaluated — `obj[bail()] = v` and `bail().x = v` both throw without
+    // ever reaching the RHS — so its own sub-expressions are required for
+    // every assignment form alike.
+    if (assignmentReferenceCannotCompleteNormally(expression.left, depth)) {
+      return true;
+    }
+    // LOGICAL assignment reads the target first and evaluates the RHS only
+    // when that read says to: `z ||= bail()` never calls `bail` for a
+    // truthy `z`. Not required, and not knowable here.
+    if (
+      operator === ts.SyntaxKind.AmpersandAmpersandEqualsToken ||
+      operator === ts.SyntaxKind.BarBarEqualsToken ||
+      operator === ts.SyntaxKind.QuestionQuestionEqualsToken
+    ) {
+      return false;
+    }
+    return required(expression.right);
+  }
+
+  // Everything else — arithmetic, comparison, bitwise, `instanceof`, `in`,
+  // and the comma operator — evaluates BOTH operands unconditionally, so
+  // either one being abrupt is enough (see the ordering note in
+  // {@link necessarilyEvaluatesAbruptly}).
+  return required(expression.left) || required(expression.right);
+}
+
+/**
+ * The sub-expressions an ASSIGNMENT TARGET must itself evaluate in order
+ * to produce a reference, and whether any of them is definitely abrupt
+ * (RWF-026).
+ *
+ * ```text
+ * z = v            -- an identifier target evaluates nothing
+ * obj[bail()] = v  -- the index expression is required
+ * bail().x = v     -- the receiver is required
+ * ({ x } = src)    -- a destructuring PATTERN: refused wholesale
+ * ```
+ *
+ * Refusing patterns is deliberate on both counts: their evaluation has
+ * semantics this relation does not model, and RWF-025 asks a DIFFERENT
+ * question about that same syntax (which names a destructuring assignment
+ * genuinely reassigns) whose answer must not be perturbed from here.
+ */
+function assignmentReferenceCannotCompleteNormally(
+  target: ts.Expression,
+  depth: number,
+): boolean {
+  const unwrapped = unwrapParentheses(target);
+  const required = (child: ts.Expression): boolean =>
+    expressionCannotCompleteNormally(child, depth + 1);
+
+  if (ts.isPropertyAccessExpression(unwrapped)) {
+    return required(unwrapped.expression);
+  }
+  if (ts.isElementAccessExpression(unwrapped)) {
+    return (
+      required(unwrapped.expression) ||
+      (!ts.isOptionalChain(unwrapped) && required(unwrapped.argumentExpression))
+    );
+  }
+  return false;
+}
+
+/**
  * Whether executing `list` — the declaration list of a `const`/`let`/`var`
  * statement — necessarily invokes a definitely-abrupt local callee before
  * the declaration can complete (RWF-017).
@@ -1994,7 +2409,7 @@ function declarationListCannotCompleteNormally(
   for (const declaration of list.declarations) {
     if (
       declaration.initializer !== undefined &&
-      isDefinitelyAbruptCall(declaration.initializer)
+      necessarilyEvaluatesAbruptly(declaration.initializer)
     ) {
       return true;
     }
@@ -2071,7 +2486,7 @@ function isDefinitelyAbruptStaticFieldInitializer(node: ts.Node): boolean {
       .getModifiers(node)
       ?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ===
       true &&
-    isDefinitelyAbruptCall(node.initializer)
+    necessarilyEvaluatesAbruptly(node.initializer)
   );
 }
 
@@ -2177,7 +2592,7 @@ function isDefinitelyAbruptComputedClassElementKey(node: ts.Node): boolean {
     ts.isComputedPropertyName(node.name) &&
     node.parent !== undefined &&
     ts.isClassLike(node.parent) &&
-    isDefinitelyAbruptCall(node.name.expression)
+    necessarilyEvaluatesAbruptly(node.name.expression)
   );
 }
 
@@ -2277,7 +2692,7 @@ function isDefinitelyAbruptComputedObjectLiteralKey(node: ts.Node): boolean {
     ts.isComputedPropertyName(node.name) &&
     node.parent !== undefined &&
     ts.isObjectLiteralExpression(node.parent) &&
-    isDefinitelyAbruptCall(node.name.expression)
+    necessarilyEvaluatesAbruptly(node.name.expression)
   );
 }
 
@@ -2659,7 +3074,7 @@ function isDefinitelyAbruptClassHeritage(node: ts.Node): boolean {
     ts.isClassLike(node.parent) &&
     node.types.some(
       (type) =>
-        isDefinitelyAbruptCall(type.expression) ||
+        necessarilyEvaluatesAbruptly(type.expression) ||
         isDefinitelyInvalidClassHeritageValue(type.expression),
     )
   );
@@ -2695,10 +3110,51 @@ function isDefinitelyAbruptClassHeritage(node: ts.Node): boolean {
  */
 function isDefinitelyAbruptCallStatement(node: ts.Node): boolean {
   if (ts.isExpressionStatement(node)) {
-    return isDefinitelyAbruptCall(node.expression);
+    return necessarilyEvaluatesAbruptly(node.expression);
   }
   if (ts.isVariableStatement(node)) {
     return declarationListCannotCompleteNormally(node.declarationList);
+  }
+  // RWF-026's statement-HEADER positions. Each of these expressions is
+  // evaluated by the act of reaching the statement, before any body or
+  // clause of it can run, so an abrupt one ends module evaluation exactly
+  // as a bare `bail();` would — and none of them needs any reasoning about
+  // the statement's BODY, which is why no control-flow graph appears here.
+  if (ts.isIfStatement(node) || ts.isSwitchStatement(node)) {
+    return necessarilyEvaluatesAbruptly(node.expression);
+  }
+  if (ts.isWhileStatement(node)) {
+    // The condition is evaluated BEFORE the first iteration, so reaching
+    // the `while` is enough. A `do`/`while`'s condition is NOT: it runs
+    // only after the body has completed, which would need body-completion
+    // reasoning this relation does not have — so `ts.isDoStatement` is
+    // deliberately absent here.
+    return necessarilyEvaluatesAbruptly(node.expression);
+  }
+  if (ts.isForStatement(node)) {
+    const initializer = node.initializer;
+    if (initializer !== undefined) {
+      const abruptInitializer = ts.isVariableDeclarationList(initializer)
+        ? declarationListCannotCompleteNormally(initializer)
+        : necessarilyEvaluatesAbruptly(initializer);
+      if (abruptInitializer) {
+        return true;
+      }
+    }
+    // The test runs once before the first iteration; the INCREMENTOR does
+    // not run until an iteration has completed, and a body that `break`s,
+    // `throw`s or `return`s means it may never run at all. It is
+    // deliberately not consulted.
+    return (
+      node.condition !== undefined &&
+      necessarilyEvaluatesAbruptly(node.condition)
+    );
+  }
+  if (ts.isForOfStatement(node) || ts.isForInStatement(node)) {
+    // The right-hand side is evaluated before iteration begins — before
+    // any iterator is obtained, and whether or not the loop ever runs a
+    // body. Nothing about iterator protocol is modeled beyond that.
+    return necessarilyEvaluatesAbruptly(node.expression);
   }
   return false;
 }

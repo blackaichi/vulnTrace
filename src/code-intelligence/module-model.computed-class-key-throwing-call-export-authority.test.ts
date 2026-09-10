@@ -705,22 +705,34 @@ describe("RWF-019: RWF-015/016/017/018 regressions -- no parallel model, no lost
   });
 });
 
-describe("RWF-019: key expressions the call is merely NESTED in stay OUT of scope", () => {
-  // Under real `node` the first five of these DO throw during class
-  // definition and the last two do NOT (the call may never happen at
-  // all) -- which is exactly why guessing past the shape test is not
-  // available. Recognising the first five means an evaluation-order model
-  // over arbitrary expression trees, the boundary
-  // `isDefinitelyAbruptCall` already draws for RWF-016/017/018. All are
-  // pinned so a later change to that boundary is deliberate, and all are
-  // recorded as follow-ups in tests/validation/FINDINGS.md.
-  const cases: ReadonlyArray<readonly [string, string]> = [
+describe("RWF-019: key expressions the call is merely NESTED in, after RWF-026", () => {
+  // Under real `node` the first six of these DO throw during class
+  // definition and the last three do NOT -- the call may never happen at
+  // all. That split used to be unavailable, so all nine were pinned as
+  // unmodeled. RWF-026 supplies exactly the missing half: an explicit,
+  // narrow evaluation model over the operand positions the language
+  // REQUIRES, so the six now withdraw authority and the three still must
+  // not.
+  const required: ReadonlyArray<readonly [string, string]> = [
     ["argument position", "class C {\n  [wrap(bail())] = 1;\n}"],
     ["comma expression", 'class C {\n  [(bail(), "x")] = 1;\n}'],
     ["array element", "class C {\n  [[bail()]] = 1;\n}"],
     ["object property", "class C {\n  [{ v: bail() }] = 1;\n}"],
     ["template hole", "class C {\n  [`v${bail()}`] = 1;\n}"],
     ["logical LHS", 'class C {\n  [bail() || "x"] = 1;\n}'],
+  ];
+
+  for (const [label, body] of required) {
+    it(`refuses authority for a REQUIRED ${label} inside the key (RWF-026)`, () => {
+      expect(
+        defaultExportName(
+          `${TWO}${BAIL_THROWS}function wrap(a) {\n  return a;\n}\n${body}\nmodule.exports = second;\n`,
+        ),
+      ).toBeUndefined();
+    });
+  }
+
+  const conditional: ReadonlyArray<readonly [string, string]> = [
     [
       "logical RHS (conditional at runtime)",
       "class C {\n  [FLAG && bail()] = 1;\n}",
@@ -735,8 +747,8 @@ describe("RWF-019: key expressions the call is merely NESTED in stay OUT of scop
     ],
   ];
 
-  for (const [label, body] of cases) {
-    it(`keeps authority for an unmodeled ${label} (documented limitation)`, () => {
+  for (const [label, body] of conditional) {
+    it(`keeps authority for a CONDITIONAL / deferred ${label} inside the key`, () => {
       expect(
         defaultExportName(
           `${TWO}${BAIL_THROWS}function wrap(a) {\n  return a;\n}\n${body}\nmodule.exports = second;\n`,
