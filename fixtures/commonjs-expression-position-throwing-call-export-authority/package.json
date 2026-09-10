@@ -1,0 +1,9 @@
+{
+  "name": "commonjs-expression-position-throwing-call-export-authority-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "elsewhere": "1.0.0",
+    "fixture-lib": "1.0.0"
+  }
+}
