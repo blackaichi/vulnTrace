@@ -4969,7 +4969,11 @@ control and the same-name same-version twin-instance identity control.
   another (`function maybe(f) { if (f) throw e; return 1; }`) is still not
   definitely abrupt, so no expression containing it is a cutoff however
   necessarily evaluated that expression is. Verified unchanged, in required
-  positions, on both sides.
+  positions, on both sides. — **This statement still holds exactly as
+  written.** RWF-027, below, does NOT make such a callee definitely abrupt;
+  it proves the different and narrower claim that a CLASS DEFINITION whose
+  heritage calls it cannot complete. `foo(maybe())` and `maybe();` remain
+  unproven on both sides, and RWF-027 pins them as controls.
 - **P0-E (RWF-028)** — alias (`const alias = bail; alias()`), member
   (`obj.bail()`), transitive and `new bail()` callees remain unresolved.
   `foo(alias())` is therefore still not a cutoff, and must not become one
@@ -5018,3 +5022,273 @@ control and the same-name same-version twin-instance identity control.
   identically to base — but it is a real, tracked gap, not a settled one,
   and it is the natural candidate for whichever task takes the
   conditional-operand axis next.
+
+## RWF-027 — A class `extends` HERITAGE whose EVERY analyzable ending prevents the class definition from completing invalidates later CommonJS export authority
+
+**Severity:** P0 / CRITICAL SOUNDNESS (false `NOT_AFFECTED`, with a complete
+Family C proof)
+**Status:** **Fixed.** Found by the P0 closure inventory (P0-B), recorded as
+an explicit open follow-up by RWF-022 and again by RWF-026, and
+independently reproduced on `6b5ad53` (current merged main, RWF-026
+included) before any edit here.
+
+### The defect
+
+RWF-020 recognises a class heritage expression that can only ever THROW.
+RWF-022 recognises a class heritage expression that definitely produces a
+value which is neither `null` nor a constructor. Each asks about **one**
+ending. A callable can have several:
+
+```js
+function maybe(flag) {
+  if (flag) { throw new Error("boom"); }   // ending 1
+  return 1;                                // ending 2
+}
+
+if (FLAG) {
+  module.exports = dangerousOp;
+  class C extends maybe(FLAG) {}
+}
+
+module.exports = safeOp;     // syntactically unconditional; never reached
+```
+
+- `cannotCompleteNormally(maybe)` is **false** — one path returns. RWF-020
+  declines, correctly.
+- `classifyExactCallReturnValue(maybe)` is **`"unknown"`** — the body is not
+  a single unconditional return. RWF-022 declines, correctly.
+
+Yet **every** path prevents the class definition from completing, for two
+*different* reasons. Measured under real `node` v22.11.0 in
+`fixtures/commonjs-circular-import-multipath-class-heritage-ground-truth/`,
+each ending in its own circular-require module graph:
+
+| `FLAG` | the call | the class definition | `module.exports = safeOp` |
+| --- | --- | --- | --- |
+| truthy | `throw Error: boom` | never entered | **never runs** |
+| falsy | returns `1`, **normally** | `TypeError: Class extends value 1 is not a constructor or null` | **never runs** |
+
+So neither rule fires, the analyzer keeps the later write authoritative,
+attributes `safeOp` as the whole module value, finds `dangerousOp`
+unreachable, and issues a **complete Family C negative proof** for a package
+that reaches the sink on every load taking the early branch. `B02` —
+`function twoBad(f) { if (f) return 1; return 2; }` — is the same defect
+with no throwing path at all.
+
+The class-definition failure is a property of the path **set**, and of
+nothing smaller. No rule that inspects one ending can reach it.
+
+### The semantic distinction the whole task rests on
+
+RWF-027 does **not** prove "this call cannot complete normally". With a
+falsy `FLAG` the call completes perfectly normally and returns `1`; the
+ground-truth fixture asserts `maybe(false) === 1` outside any heritage
+position specifically to pin this. What is proven is narrower and different:
+
+> evaluating **this class heritage** cannot lead to a normally completed
+> class definition.
+
+Consequently `maybe(FLAG);` as a plain statement, `const v = maybe(FLAG);`
+as an initializer, and `foo(maybe(FLAG))` as an operand are all **untouched**
+and stay exactly as unproven as RWF-016 and RWF-026 leave them. That is not
+a limitation awaiting a later task — it is the correct answer, and both the
+unit matrix and ADV2-087 pin it.
+
+### The fix — one bounded path-outcome summary
+
+`summarizeExactCallHeritageOutcomes(fn)` in
+`src/code-intelligence/module-model.ts` computes, for an exact local
+callable, the finite set of endings a call to it can have. Outcomes are
+RWF-022's `HeritageValueClass` widened with one member, `"abrupt-throw"`.
+
+`isDefinitelyNonCompletingClassHeritageCall(expression)` then proves
+non-completion **only** when the summary is known, non-empty, and EVERY
+outcome is in `{"abrupt-throw", "non-constructable"}` — the only two
+outcomes that stop a class definition, and precisely RWF-020's and RWF-022's
+two fatality reasons, composed across the set.
+
+The refusals are the mechanism, not edge cases:
+
+- one `"unknown"` refuses the whole summary;
+- one `"valid-null"` refuses — `class C extends null {}` is **legal**;
+- one `"constructable"` refuses.
+
+The asymmetry is the point. A single surviving good ending means the class
+definition CAN complete, the later export CAN run, and withdrawing its
+authority would be an overreach reporting a demonstrably-completable class
+definition as fatal.
+
+It is a third, SEPARATE disjunct of `isDefinitelyAbruptClassHeritage`.
+RWF-020 and RWF-022 are unchanged, still consulted first, and still own what
+they owned; RWF-027 duplicates neither and weakens neither.
+
+### Path enumeration, and why it refuses rather than approximates
+
+`collectHeritageExitOutcomes` walks a statement list with an **allow-list**:
+`return`, `throw`, `if`/`else`, nested blocks, and statements that cannot
+leave the callable (expression statements, declarations, nested function and
+class declarations, `;`, `debugger`). Everything else — every loop, `switch`,
+`try`/`catch`/`finally`, labeled statement, `break`, `continue`, `with` —
+returns UNKNOWN and poisons the entire summary.
+
+A dropped path is the primary risk in both directions, and it is
+unrecoverable: a lost `return Base;` withdraws a CORRECT export, a lost
+fatal path claims a proof that does not hold. Sound refusal is always
+available, so the collector never skips a construct it does not model.
+
+Three properties are load-bearing:
+
+- **The implicit ending is a PATH, never an absent one.** A body that can run
+  off its end ends by returning `undefined`, and that is APPENDED
+  EXPLICITLY. This is the only reason
+  `function f(flag) { if (flag) return 1; }` can be answered at all — its two
+  endings are `1` and `undefined`, both non-constructable. A model recording
+  only the written `return` would see one path where there are two.
+- **The function-scope boundary is structural, not a filter.** The collector
+  walks statements only and enters no expression, so a `return` inside a
+  nested function, method, accessor, class static block or IIFE is unable to
+  be counted as an exit of the outer callable.
+- **Statements that cannot exit are passed over, not analyzed.** They may
+  only fall through or THROW, and a throw is already a class-definition-fatal
+  outcome — so ignoring them can only ever omit a fatal ending from a set the
+  caller requires to be entirely fatal. The same argument covers the `if`
+  condition and the `return`/`throw` operands, none of which are examined.
+  This is `declarationListCannotCompleteNormally`'s argument, reused.
+
+Bounded by construction: a fixed nesting depth of 4 and a fixed exit ceiling
+of 32, both refusing past the limit. No CFG, no interprocedural fixpoint, no
+whole-program summaries. `scan-performance` is unchanged.
+
+### Callee identity is unchanged
+
+`resolveExactLocalCallableIdentity` is shared verbatim with RWF-022, so the
+lexical-shadow walk and RWF-013/013b/025's reassignment refusal apply here
+exactly as they do there. A genuinely reassigned heritage callee
+(`f = () => Base;`) refuses, and alias, member, transitive and `new` callees
+stay RWF-028's — pinned as controls in the unit matrix, the fixture and
+ADV2-087.
+
+### Verification
+
+Reproduced on base `6b5ad53` first: B01 and B02 both keep the later export
+authoritative, both yield `NOT_AFFECTED` with
+`confirmedUnreachableTarget` and `reachableSubgraphComplete: true`.
+
+Family C differential on
+`fixtures/commonjs-multipath-class-definition-completion/`:
+
+| target | base `6b5ad53` | this branch |
+| --- | --- | --- |
+| `fixture-lib/danger#explode` | `NOT_AFFECTED` + complete Family C | `UNKNOWN`, no negative proof |
+| `fixture-lib#default` | `AFFECTED` | `UNKNOWN` |
+| `fixture-lib/two-bad#default` | `NOT_AFFECTED` + complete Family C | `UNKNOWN`, no negative proof |
+| `fixture-lib/fallthrough#default` | `NOT_AFFECTED` + complete Family C | `UNKNOWN`, no negative proof |
+| `fixture-lib/valid-multipath#default` | `NOT_AFFECTED` + complete | **unchanged** |
+| `fixture-lib/stable#default` | `NOT_AFFECTED` + complete | **unchanged** |
+
+`UNKNOWN → NOT_AFFECTED`: **0**. `AFFECTED → NOT_AFFECTED`: **0**. No
+movement toward `NOT_AFFECTED` anywhere. Both Family C controls untouched —
+this narrows negative proofs rather than disabling them.
+
+New permanent matrix:
+`src/code-intelligence/module-model.multipath-class-definition-completion.test.ts`
+(43 tests) covering throw+invalid, invalid+invalid, throw+throw,
+invalid+null, invalid+constructor, throw+null, throw+constructor,
+unknown+invalid, unknown+throw, nested-if all-bad and nested-if with a valid
+leaf, early return, implicit fallthrough, bare `return`, the empty body, the
+nested-function and nested-method boundaries, the loop/switch/try refusals,
+the plain-call and initializer non-overreach, class expressions, deferred
+class definitions, reassignment and alias/member controls, and the RWF-020 /
+RWF-022 regressions.
+
+New end-to-end regression:
+`src/analysis/verdict.multipath-class-definition-completion.integration.test.ts`
+(8 tests), including the Family C positive control, the seven-factory
+multi-path negative control and the same-name same-version twin-instance
+identity control.
+
+`ADV2-087` is `NOT_AFFECTED` (**FAIL**) on base `6b5ad53` and `UNKNOWN`
+(**PASS**) on this branch. Its seven valid-path negative controls sit
+BETWEEN the branch and the final export deliberately, so an overreach on any
+of them flips the case's own verdict to `AFFECTED` rather than being merely
+wrong in principle.
+
+Validation baseline unchanged at 12 PASS / 5 KNOWN_FAIL / 0 UNEXPECTED / 17
+total. Adversarial v1 34/34, v2 87/87.
+
+### Corpus
+
+Scanned with a standalone syntactic scanner implementing RWF-027's own
+allow-list, over every `.js`/`.cjs`/`.mjs`/`.ts` file (excluding `.d.ts`):
+
+| | vendored third-party (`node_modules`) | repo `fixtures/` + `tests/` |
+| --- | --- | --- |
+| 1. files scanned | 3,071 | 948 |
+| 2. class heritage clauses (any form) | 1,391 | 124 |
+| 3. of those, a CallExpression heritage | 3 | 109 |
+| 4. of those, an exact local callee | 3 | 75 |
+| 5. of those, MULTI-exit callees | **0** | 31 |
+| 6. of those, every ending fatal | **0** | 9 |
+
+**Actual verdict movement in vendored real third-party code: zero.** All
+1,391 heritage clauses there are `extends SomeBinding`; only three call
+anything, and none of those three callees has more than one exit. The family
+is real and runtime-confirmed, but — as with RWF-020 and RWF-022 before it —
+it does not appear in the third-party code vendored here, so the syntactic
+counts above must not be read as semantic impact.
+
+All nine repo hits are RWF-027's own new fixtures. Two of them are
+deliberate REFUSALS that this crude scanner cannot see, and they are listed
+here rather than quietly filtered: `valid-multipath.js`'s `extends allBad()`
+is inside a never-called `configure()`, so the real analyzer creates no
+module-time cutoff, and `adv2-087`'s `extends reassigned()` follows
+`reassigned = () => Base`, which `resolveExactLocalCallableIdentity` refuses
+outright (RWF-025). The scanner models neither deferral nor reassignment;
+the analyzer models both, and the integration tests assert it.
+
+### Performance
+
+`npm run test:performance` — both budgets met, no measurable change:
+the ~300-file synthetic project completes in 2.36s against a 5,000ms
+threshold, and the single-large-file case in 8.00s against a 20,000ms
+threshold.
+
+The summary is bounded by construction: a fixed nesting depth of 4 and a
+fixed exit ceiling of 32, walking statements only and entering no expression
+and no nested body. It is reached only from the class-heritage disjunct, so
+a file with no `extends <call>` never runs it at all — which is why 1,391
+heritage clauses across 3,071 vendored files cost nothing measurable. No
+CFG, no interprocedural fixpoint, no whole-program call summaries, and no
+new caching was required.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **The plain-call axis is NOT closed, and must not be.** `maybe(FLAG);`,
+  `const v = maybe(FLAG);` and `foo(maybe(FLAG))` stay unproven, because the
+  call really does complete normally on one path. RWF-026's recorded P0-B
+  limitation is closed **only** where the CLASS DEFINITION is the thing
+  failing; everywhere else it stands exactly as written, and the branch
+  answers all three identically to base.
+- **Concise-bodied arrows and conditional expressions.** `flag => flag ? 1 :
+  2` is refused: RWF-027 adds no conditional-EXPRESSION path model. A
+  BLOCK-bodied arrow is fully supported. The `FLAG ? bail() : bail()` join
+  RWF-026 recorded is likewise still open — this task's join is over a
+  CALLEE's endings, not over an expression's arms.
+- **`switch`, loops and `try`/`catch`/`finally` in a heritage callee** are
+  refused wholesale. A `switch` whose cases all `return` an invalid value is
+  fatal at runtime and recorded here as unproven; supporting it means
+  modeling fallthrough and `break`, and exception flow is explicitly out of
+  scope for this task.
+- **Nested `if` deeper than 4 levels** refuses. The bound is fixed and
+  checkable rather than heuristic; no real heritage factory observed needs
+  more.
+- **A call in a `return` operand** (`return helper();`) is `"unknown"`, so
+  one such ending refuses the summary. Resolving it is interprocedural and
+  belongs to RWF-028's provenance work, not here.
+- **Value classification was not widened.** `return Symbol()`,
+  `return someBinding` and any operator expression stay `"unknown"`, exactly
+  as RWF-022 left them. RWF-027 composes that classifier across paths; it
+  does not extend it.
+- **P0-E (RWF-028)** — alias (`const alias = f; class C extends alias() {}`),
+  member (`obj.f()`), transitive and `new` callees remain unresolved and must
+  not become resolvable from this task's side. Verified unchanged.
