@@ -545,3 +545,180 @@ describe("RWF-026: deeply nested required positions still resolve", () => {
     ).toBe("second");
   });
 });
+
+/**
+ * The self-review attack matrix, kept permanently. Each row is a way the
+ * recursion could have gone wrong in the PERMISSIVE direction -- a
+ * conditional branch treated as mandatory, a function body crossed, an
+ * instance field or default parameter crossed, an optional-chain guard
+ * ignored, a stale binding trusted after reassignment, or one of the two
+ * deliberately-open callee axes absorbed. Every one of them must keep the
+ * later export's authority; the "still withdraws" rows beside them prove
+ * the refusal is targeted rather than blanket.
+ */
+describe("RWF-026: self-review attacks -- nothing conditional or deferred may withdraw authority", () => {
+  const MAYBE =
+    "function maybe(f) {\n    if (f) throw new Error();\n    return 1;\n  }\n  ";
+  const ASYNC_GEN =
+    'async function ab() {\n  throw new Error("x");\n}\nfunction* gb() {\n  throw new Error("x");\n}\n';
+
+  const attacks: ReadonlyArray<readonly [string, string]> = [
+    // A conditional branch must never be treated as mandatory, however
+    // required-looking the expression nested inside it is.
+    [
+      "conditional arm holding an object literal",
+      "const x = FLAG ? { a: bail() } : 0;",
+    ],
+    ["conditional arm holding an array", "const x = FLAG ? [bail()] : 0;"],
+    [
+      "conditional arm holding a call argument",
+      "const x = FLAG ? foo(bail()) : 0;",
+    ],
+    ["conditional arm holding a template", "const x = FLAG ? `${bail()}` : 0;"],
+    // A short-circuit operand, likewise, at any nesting depth.
+    [
+      "logical && RHS holding an object literal",
+      "const x = FLAG && { a: bail() };",
+    ],
+    ["logical || RHS holding a call", "const x = FLAG || foo(bail());"],
+    ["logical ?? RHS holding an array", "const x = FLAG ?? [bail()];"],
+    // A function boundary is never crossed, even from a required position.
+    ["arrow passed as a required ARGUMENT", "foo(() => bail());"],
+    [
+      "function expression passed as a required ARGUMENT",
+      "foo(function () {\n    bail();\n  });",
+    ],
+    [
+      "arrow returning an object, in a required ARGUMENT",
+      "foo(() => ({ a: bail() }));",
+    ],
+    [
+      "method body inside a required property VALUE",
+      "const x = {\n    m() {\n      bail();\n    },\n  };",
+    ],
+    [
+      "getter body inside a required property VALUE",
+      "const x = {\n    get g() {\n      bail();\n    },\n  };",
+    ],
+    [
+      "arrow nested several required operands deep",
+      "const x = [{ a: () => foo(bail()) }];",
+    ],
+    // Instance fields and default parameters stay deferred.
+    [
+      "class INSTANCE field in a required position",
+      "const x = class {\n    f = bail();\n  };",
+    ],
+    [
+      "class INSTANCE field holding an object literal",
+      "const x = class {\n    f = { a: bail() };\n  };",
+    ],
+    [
+      "default parameter of a function-expression argument",
+      "foo(function (a = bail()) {});",
+    ],
+    ["default parameter of an arrow argument", "foo((a = bail()) => a);"],
+    // Loop positions that need body-completion reasoning, nested.
+    [
+      "loop UPDATE holding a call argument",
+      "for (; ; foo(bail())) {\n    break;\n  }",
+    ],
+    [
+      "do/while CONDITION holding a call argument",
+      "do {\n    break;\n  } while (foo(bail()));",
+    ],
+    // A reassigned binding is never trusted, in any new position.
+    ["reassigned callee in a call ARGUMENT", "bail = safe;\n  foo(bail());"],
+    [
+      "reassigned callee in a property VALUE",
+      "bail = safe;\n  const x = { a: bail() };",
+    ],
+    [
+      "reassigned callee in an if CONDITION",
+      "bail = safe;\n  if (bail()) {\n  }",
+    ],
+    [
+      "reassigned callee in a for-of RHS",
+      "bail = safe;\n  for (const q of bail()) {\n  }",
+    ],
+    // Optional-chain guards.
+    ["optional-chain guarded ARGUMENT, one link", "const x = obj?.m(bail());"],
+    ["optional-chain guarded INDEX, one link", "const x = obj?.[bail()];"],
+    [
+      "optional-chain guarded ARGUMENT, several links",
+      "const x = obj?.a.b(bail());",
+    ],
+    ["optional CALL on an unproven callee", "const x = obj.m?.(bail());"],
+    // The two open callee axes stay open.
+    [
+      "P0-B conditional-throw callee in a required ARGUMENT",
+      `${MAYBE}foo(maybe());`,
+    ],
+    [
+      "P0-B conditional-throw callee in a property VALUE",
+      `${MAYBE}const x = { a: maybe() };`,
+    ],
+    [
+      "P0-B conditional-throw callee in an if CONDITION",
+      `${MAYBE}if (maybe()) {\n  }`,
+    ],
+    [
+      "P0-E alias callee in a required ARGUMENT",
+      "const alias = bail;\n  foo(alias());",
+    ],
+    ["P0-E member callee in a required ARGUMENT", "foo(obj.bail());"],
+    ["P0-E new-expression callee in a required ARGUMENT", "foo(new bail());"],
+    [
+      "P0-E transitive callee in a required ARGUMENT",
+      "function via() {\n    bail();\n  }\n  foo(via());",
+    ],
+    // async / generator exclusions carry into every new position.
+    ["ASYNC callee in a required ARGUMENT", "foo(ab());"],
+    ["GENERATOR callee in a required ARGUMENT", "foo(gb());"],
+    // Caught exceptions, in the new positions.
+    [
+      "caught call nested several required operands deep",
+      "try {\n    foo([{ a: bail() }]);\n  } catch {}",
+    ],
+    [
+      "caught for-of RHS",
+      "try {\n    for (const q of bail()) {\n    }\n  } catch {}",
+    ],
+  ];
+
+  for (const [label, body] of attacks) {
+    it(`keeps authority for a ${label}`, () => {
+      expect(
+        defaultExportName(
+          `${TWO}${BAIL_THROWS}${HELPERS}${ASYNC_GEN}if (FLAG) {\n  module.exports = first;\n  ${body}\n}\nmodule.exports = second;\n`,
+        ),
+      ).toBe("second");
+    });
+  }
+
+  const stillRequired: ReadonlyArray<readonly [string, string]> = [
+    ["a conditional's own CONDITION", "const x = foo(bail()) ? 1 : 0;"],
+    [
+      "a class STATIC field beside the instance one",
+      "const x = class {\n    static f = bail();\n  };",
+    ],
+    [
+      "a for TEST beside the update",
+      "for (; foo(bail()); ) {\n    break;\n  }",
+    ],
+    [
+      "an exactly-resolved optional call in an argument",
+      "const x = foo(bail?.());",
+    ],
+    [
+      "a call buried under an assignment target index",
+      "obj[foo([bail()])] = safe();",
+    ],
+  ];
+
+  for (const [label, body] of stillRequired) {
+    it(`still withdraws authority for ${label}`, () => {
+      expect(defaultExportName(reproducer(body))).toBeUndefined();
+    });
+  }
+});
