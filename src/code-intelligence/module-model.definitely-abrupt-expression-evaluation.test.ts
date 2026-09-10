@@ -437,14 +437,22 @@ describe("RWF-026: the callee-identity axis is NOT widened (RWF-027 / RWF-028 st
   it("does not absorb P0-B: a CONDITIONALLY throwing callee is still not definitely abrupt", () => {
     // `maybe` returns on one path, so `cannotCompleteNormally` refuses it
     // — and RWF-026 only ever consumes that answer, never second-guesses
-    // it. This reproducer must stay exactly as it is until RWF-027.
+    // it. These reproducers stay exactly as they are.
+    //
+    // `class C extends maybe() {}` USED to be a fourth row here, and RWF-027
+    // moved it — but NOT by changing this axis. RWF-027 proves something
+    // about the CLASS DEFINITION, not about the call: `maybe()` still
+    // completes normally with `1`, and the row directly below pins that the
+    // very same call in an ordinary statement position is still unproven.
+    // See module-model.multipath-class-definition-completion.test.ts.
     const maybe =
       "function maybe(flag) {\n  if (flag) throw new Error();\n  return 1;\n}\n";
     for (const body of [
       "foo(maybe());",
       "const x = { value: maybe() };",
-      "class C extends maybe() {}",
       "if (maybe()) {\n  }",
+      "maybe();",
+      "const y = maybe();",
     ]) {
       expect(
         defaultExportName(

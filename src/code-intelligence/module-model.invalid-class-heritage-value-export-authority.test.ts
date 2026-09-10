@@ -233,9 +233,16 @@ describe("RWF-022: body shapes -- only an unconditional single return is classif
     ).toBe("second");
   });
 
-  it("KEEPS authority for two returns that are BOTH invalid -- still not a single-return body", () => {
-    // Deliberately conservative: recognising this needs path reasoning the
-    // classifier does not have, and its absence costs only precision.
+  // The three rows below were `"second"` under RWF-022 alone, each recorded
+  // as deliberate conservatism whose "absence costs only precision". RWF-027
+  // supplies the path reasoning they were waiting for, and every one is
+  // runtime-proven fatal on EVERY path. RWF-022's own classifier is
+  // unchanged and still refuses all three -- the answers move because a
+  // SEPARATE disjunct now also runs. See
+  // module-model.multipath-class-definition-completion.test.ts.
+
+  it("WITHDRAWS for two returns that are BOTH invalid (RWF-027)", () => {
+    // node: TypeError on both flag values ("value 1" / "value 2").
     expect(
       defaultExportName(
         reproducer(
@@ -243,10 +250,12 @@ describe("RWF-022: body shapes -- only an unconditional single return is classif
           "  class C extends make(FLAG) {}\n",
         ),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("KEEPS authority for a body with a statement BEFORE the return", () => {
+  it("WITHDRAWS for a body with a statement BEFORE the return (RWF-027)", () => {
+    // The directive prologue can only fall through or throw, and a throw is
+    // itself fatal -- so it hides no ending. node: TypeError on `1`.
     expect(
       defaultExportName(
         reproducer(
@@ -254,10 +263,12 @@ describe("RWF-022: body shapes -- only an unconditional single return is classif
           "  class C extends make() {}\n",
         ),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("KEEPS authority for a single non-return statement", () => {
+  it("WITHDRAWS for a single non-return statement (RWF-027)", () => {
+    // The body runs off its end, so the call returns `undefined`. node:
+    // TypeError: Class extends value undefined is not a constructor or null.
     expect(
       defaultExportName(
         reproducer(
@@ -265,7 +276,7 @@ describe("RWF-022: body shapes -- only an unconditional single return is classif
           "  class C extends make() {}\n",
         ),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("KEEPS authority for a return inside a TRY -- not a bare single return", () => {
@@ -306,11 +317,16 @@ describe("RWF-022: body shapes -- only an unconditional single return is classif
     ).toBe("second");
   });
 
-  it("KEEPS authority for a conditionally throwing body that otherwise returns an INVALID value", () => {
-    // Recorded as a follow-up rather than implemented: at runtime the class
-    // definition cannot complete either way (throw, or TypeError on `1`), so
-    // this IS definitely abrupt at class level. Proving it needs multi-path
-    // reasoning across the two mechanisms, which is a separate boundary.
+  it("WITHDRAWS authority for a conditionally throwing body that otherwise returns an INVALID value (RWF-027)", () => {
+    // RWF-022 recorded this as a follow-up rather than implementing it: at
+    // runtime the class definition cannot complete either way (throw, or
+    // TypeError on `1`), so it IS definitely abrupt at CLASS level, but
+    // proving it needs multi-path reasoning ACROSS the two mechanisms.
+    //
+    // RWF-027 is that follow-up, and it is a separate disjunct rather than a
+    // widening of anything here: neither mechanism in this file changed, and
+    // the `may return a class` case directly above still keeps authority.
+    // See module-model.multipath-class-definition-completion.test.ts.
     expect(
       defaultExportName(
         reproducer(
@@ -318,7 +334,7 @@ describe("RWF-022: body shapes -- only an unconditional single return is classif
           "  class C extends make(FLAG) {}\n",
         ),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 });
 
