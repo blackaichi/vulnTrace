@@ -386,3 +386,194 @@ describe("RWF-025: still-open gaps answer identically with and without the poiso
     });
   }
 });
+
+/**
+ * The remediation half of RWF-025, found by independent audit of the first
+ * implementation.
+ *
+ * Narrowing the target walk to assignment-target STRUCTURE was correct, but
+ * it also stopped looking at the evaluated-only sub-expressions entirely —
+ * and an assignment written INSIDE one of those really does run:
+ *
+ * ```js
+ * ({ x = (bail = safe) } = HOLDER);   // `x` AND `bail` are rebound
+ * ({ [(bail = safe)]: x } = HOLDER);  // `x` AND `bail` are rebound
+ * HOLDER[(bail = safe)] = 1;          // `bail` is rebound
+ * ```
+ *
+ * Missing those let a stale throwing declaration be trusted after a genuine
+ * reassignment. `markAssignmentsInsideEvaluatedExpression` is the second,
+ * separate traversal that fixes it, and the two halves are pinned together
+ * here because each one's correctness is the other's failure mode: record
+ * only assignment OPERATIONS from an evaluated expression, never the bare
+ * identifiers it merely reads.
+ */
+
+/**
+ * The same instrument as {@link bailWasReassigned}, parameterised over
+ * WHICH name carries the throwing declaration — so a name that appears only
+ * on an assignment's right-hand side can be asked about too.
+ */
+function nameWasReassigned(
+  name: string,
+  extraDeclarations: string,
+  trailing: string,
+): boolean {
+  const declarations =
+    `function first() {}\nfunction second() {}\n` +
+    `function ${name}() {\n  throw new Error("boom");\n}\n` +
+    `const HOLDER = { k: 1 };\nlet x;\n${extraDeclarations}`;
+  return (
+    defaultExportName(
+      `${declarations}if (FLAG) {\n  module.exports = first;\n  ${name}();\n}\n` +
+        `module.exports = second;\n${trailing}`,
+    ) === "second"
+  );
+}
+
+const OTHERS_FOR_NESTED =
+  'function safe() {\n  return "s";\n}\nlet other;\nlet slot;\n';
+
+describe("RWF-025: a real assignment INSIDE an evaluated-only target sub-expression is still recorded", () => {
+  const blockers: ReadonlyArray<readonly [string, string]> = [
+    ["a DEFAULT initializer", "({ x = (bail = safe) } = HOLDER);\n"],
+    ["a COMPUTED KEY", "({ [(bail = safe)]: x } = HOLDER);\n"],
+    ["an ELEMENT-ACCESS index", "HOLDER[(bail = safe)] = 1;\n"],
+    [
+      "an element-access index inside an array pattern",
+      "[HOLDER[(bail = safe)]] = [1];\n",
+    ],
+    [
+      "an aliased default initializer",
+      "({ k: x = (bail = safe) } = HOLDER);\n",
+    ],
+    ["an array default initializer", "[x = (bail = safe)] = [1];\n"],
+    ["a nested computed key", "({ k: { [(bail = safe)]: x } } = HOLDER);\n"],
+    ["a property-access OBJECT expression", "((bail = safe)).prop = 1;\n"],
+  ];
+
+  for (const [label, trailing] of blockers) {
+    it(`records the assignment written inside ${label}`, () => {
+      expect(nameWasReassigned("bail", OTHERS_FOR_NESTED, trailing)).toBe(true);
+    });
+  }
+
+  const updates: ReadonlyArray<readonly [string, string]> = [
+    ["a postfix update in a computed key", "({ [bail++]: x } = HOLDER);\n"],
+    ["a postfix update in an element-access index", "HOLDER[bail++] = 1;\n"],
+    ["a prefix update in a computed key", "({ [++bail]: x } = HOLDER);\n"],
+    [
+      "a postfix update in a default initializer",
+      "({ x = bail++ } = HOLDER);\n",
+    ],
+  ];
+
+  for (const [label, trailing] of updates) {
+    it(`records ${label}`, () => {
+      expect(nameWasReassigned("bail", OTHERS_FOR_NESTED, trailing)).toBe(true);
+    });
+  }
+
+  const compound: ReadonlyArray<readonly [string, string]> = [
+    ["||=", "({ [(bail ||= safe)]: x } = HOLDER);\n"],
+    ["+=", "({ [(bail += 1)]: x } = HOLDER);\n"],
+    ["&&=", "HOLDER[(bail &&= safe)] = 1;\n"],
+    ["??=", "({ x = (bail ??= safe) } = HOLDER);\n"],
+  ];
+
+  for (const [op, trailing] of compound) {
+    it(`records a compound \`${op}\` assignment written inside an evaluated position`, () => {
+      expect(nameWasReassigned("bail", OTHERS_FOR_NESTED, trailing)).toBe(true);
+    });
+  }
+
+  it("records EVERY name of a nested assignment CHAIN", () => {
+    const chain = "({ [(bail = (other = safe))]: x } = HOLDER);\n";
+    expect(nameWasReassigned("bail", OTHERS_FOR_NESTED, chain)).toBe(true);
+    expect(
+      nameWasReassigned(
+        "other",
+        'function safe() {\n  return "s";\n}\nlet bail2;\n',
+        "({ [(bail2 = (other = safe))]: x } = HOLDER);\n",
+      ),
+    ).toBe(true);
+  });
+
+  it("records both names of a COMMA sequence written inside an element-access index", () => {
+    expect(
+      nameWasReassigned(
+        "other",
+        "let slot;\n",
+        "HOLDER[(other = 1, slot = 2)] = 1;\n",
+      ),
+    ).toBe(true);
+  });
+
+  it("records the assignment but NOT the name on its RIGHT-HAND SIDE", () => {
+    // The original defect's precise failure, restated for the new
+    // traversal: `bail = safe` records `bail` and must not record `safe`.
+    expect(
+      nameWasReassigned(
+        "safe",
+        "let bail2;\n",
+        "({ [(bail2 = safe)]: x } = HOLDER);\n",
+      ),
+    ).toBe(false);
+  });
+
+  it("still records nothing for an evaluated CALL sitting beside a real assignment in the same target", () => {
+    expect(
+      nameWasReassigned(
+        "otherKey",
+        'function safe() {\n  return "s";\n}\nlet bail2;\n',
+        "({ [otherKey()]: x = (bail2 = safe) } = HOLDER);\n",
+      ),
+    ).toBe(false);
+  });
+
+  it("records a genuine key assignment whose name is also the target's", () => {
+    expect(
+      nameWasReassigned(
+        "bail",
+        OTHERS_FOR_NESTED,
+        "({ [(bail = safe)]: bail } = HOLDER);\n",
+      ),
+    ).toBe(true);
+  });
+
+  it("does NOT record an assignment DEFERRED inside a function written in a computed key", () => {
+    // The reach model is unchanged: an assignment that runs only when some
+    // function is CALLED stays outside it, exactly as a top-level
+    // `function later() { bail = safe; }` does.
+    expect(
+      nameWasReassigned(
+        "bail",
+        OTHERS_FOR_NESTED,
+        "({ [(() => (bail = safe))()]: x } = HOLDER);\n",
+      ),
+    ).toBe(false);
+  });
+
+  it("leaves every ORIGINAL poison control unmarked", () => {
+    // The remediation must not smuggle identifier collection back in.
+    const clean: readonly string[] = [
+      "({ [bail()]: x } = HOLDER);\n",
+      "[HOLDER[bail()]] = [1];\n",
+      "HOLDER[bail()] = 1;\n",
+      "({ x = bail() } = HOLDER);\n",
+      "bail.prop = 1;\n",
+      "bail[0] = 1;\n",
+      "({ k: { [bail()]: x } } = HOLDER);\n",
+      "[{ [bail()]: x }] = [HOLDER];\n",
+      "for ({ [bail()]: x } of []) {\n}\n",
+      "[x = bail()] = [1];\n",
+      "({ k: x = bail() } = HOLDER);\n",
+    ];
+    for (const trailing of clean) {
+      expect(
+        nameWasReassigned("bail", OTHERS_FOR_NESTED, trailing),
+        trailing,
+      ).toBe(false);
+    }
+  });
+});

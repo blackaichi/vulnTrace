@@ -1196,6 +1196,13 @@ function unwrapAssignmentTarget(target: ts.Node): ts.Node {
  * reason it always was: it changes the object, not the binding — and
  * neither the object expression nor the index expression is a local
  * binding this relation may claim was reassigned.
+ *
+ * Those evaluated-only positions are not ignored, though — they are handed
+ * to {@link markAssignmentsInsideEvaluatedExpression}, which records the
+ * assignments they PERFORM without recording the names they merely READ.
+ * The two traversals answer two different questions and are deliberately
+ * separate; collapsing them in either direction is a defect (see that
+ * function's own doc comment).
  */
 function markLocallyReassigned(target: ts.Node, into: Set<string>): void {
   const unwrapped = unwrapAssignmentTarget(target);
@@ -1211,11 +1218,23 @@ function markLocallyReassigned(target: ts.Node, into: Set<string>): void {
         // `property.name` SELECTS which source property is read. A
         // computed one is an expression evaluated to produce that key —
         // never an assignment destination. Only the initializer is one.
+        if (ts.isComputedPropertyName(property.name)) {
+          markAssignmentsInsideEvaluatedExpression(
+            property.name.expression,
+            into,
+          );
+        }
         markLocallyReassigned(property.initializer, into);
       } else if (ts.isShorthandPropertyAssignment(property)) {
         // `({ x } = o)` and `({ x = fallback() } = o)`: the NAME is the
         // target; `objectAssignmentInitializer` is a default VALUE.
         into.add(property.name.text);
+        if (property.objectAssignmentInitializer) {
+          markAssignmentsInsideEvaluatedExpression(
+            property.objectAssignmentInitializer,
+            into,
+          );
+        }
       } else if (ts.isSpreadAssignment(property)) {
         markLocallyReassigned(property.expression, into);
       }
@@ -1245,12 +1264,99 @@ function markLocallyReassigned(target: ts.Node, into: Set<string>): void {
     unwrapped.operatorToken.kind === ts.SyntaxKind.EqualsToken
   ) {
     markLocallyReassigned(unwrapped.left, into);
+    markAssignmentsInsideEvaluatedExpression(unwrapped.right, into);
     return;
   }
 
-  // Everything else — `PropertyAccessExpression`, `ElementAccessExpression`,
-  // and any shape that is not an assignment target at all — rebinds no
-  // local binding, so it contributes no name.
+  // Property MUTATION. Neither the object expression nor the index is a
+  // local binding this assignment rebinds — but both are EVALUATED, so an
+  // assignment written inside either one really does run.
+  if (ts.isElementAccessExpression(unwrapped)) {
+    markAssignmentsInsideEvaluatedExpression(unwrapped.expression, into);
+    markAssignmentsInsideEvaluatedExpression(
+      unwrapped.argumentExpression,
+      into,
+    );
+    return;
+  }
+  if (ts.isPropertyAccessExpression(unwrapped)) {
+    markAssignmentsInsideEvaluatedExpression(unwrapped.expression, into);
+    return;
+  }
+
+  // Everything else — any shape that is not an assignment target at all —
+  // rebinds no local binding, so it contributes no name.
+}
+
+/**
+ * Records the assignments an EVALUATED-ONLY expression PERFORMS, and
+ * nothing else.
+ *
+ * {@link markLocallyReassigned} answers "which local bindings does this
+ * assignment TARGET rebind?" and must therefore never look at a computed
+ * key, a default initializer or an element-access index. But those
+ * expressions still RUN, and one of them may itself contain an
+ * assignment:
+ *
+ * ```js
+ * ({ [(bail = safe)]: x } = source);   // `x` AND `bail` are rebound
+ * ({ x = (bail = safe) } = source);    // `x` AND `bail` are rebound
+ * holder[(bail = safe)] = value;       // `bail` is rebound
+ * ```
+ *
+ * so this second traversal exists to catch exactly those. The two are
+ * separate on purpose, and collapsing them in EITHER direction is a
+ * defect:
+ *
+ * - walking every child and recording every identifier is RWF-025's
+ *   original defect — it made `({ [bail()]: x } = source)` record `bail`;
+ * - not walking the evaluated expression at all misses a genuine
+ *   reassignment and lets a stale throwing declaration be trusted.
+ *
+ * The rule that separates them: this walk descends through children only
+ * to FIND assignment and update OPERATIONS, and collects names only from
+ * their targets, via {@link markLocallyReassigned}. A bare identifier is
+ * never collected — `bail = safe` records `bail` and not `safe`, and
+ * `bail()` records nothing at all. A right-hand side is re-entered only to
+ * find further nested assignments (`a = (b = safe)` records `a` and `b`).
+ *
+ * Function bodies are not descended into, exactly as
+ * {@link reassignedModuleReachableNames}'s own walk does not: an
+ * assignment that only runs when some function is CALLED is outside
+ * RWF-016's module-evaluation reach model, and this relation does not
+ * widen that model.
+ */
+function markAssignmentsInsideEvaluatedExpression(
+  node: ts.Node,
+  into: Set<string>,
+): void {
+  if (ts.isFunctionLike(node)) {
+    return;
+  }
+
+  if (
+    ts.isBinaryExpression(node) &&
+    isAssignmentOperatorToken(node.operatorToken.kind)
+  ) {
+    // `=`, `+=`, `||=`, `??=`, ... — the same operator relation the
+    // statement-level check uses, by SyntaxKind and never by text.
+    markLocallyReassigned(node.left, into);
+    markAssignmentsInsideEvaluatedExpression(node.right, into);
+    return;
+  }
+
+  if (
+    (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+    (node.operator === ts.SyntaxKind.PlusPlusToken ||
+      node.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    markLocallyReassigned(node.operand, into);
+    return;
+  }
+
+  ts.forEachChild(node, (child) =>
+    markAssignmentsInsideEvaluatedExpression(child, into),
+  );
 }
 
 /**

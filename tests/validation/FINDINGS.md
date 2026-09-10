@@ -4435,14 +4435,37 @@ Real installed dependency tree (2,527 files):
 | targets containing a computed property NAME | 0 |
 | targets with a CallExpression in a computed name | 0 |
 | **targets with a CallExpression in an ElementAccess INDEX** | **121** |
-| names dropped by the fix | 19,680 (671 files) |
-| **dropped names that are ALSO a module-top-level callable in the same file** | **84** |
-| **real files where the poisoning could actually bite** | **14** |
 | names the new collector adds that the old did not | **0** |
 
+**Measured effect on the production cache.** Two quantities are easy to
+confuse here, and an earlier revision of this entry reported the wrong one.
+A *per-target syntactic occurrence count* — how many times, anywhere in a
+file, the old walk would have recorded a name the new one does not — comes
+to 19,680 across 671 files. That number overstates the real effect, because
+it counts assignment targets inside FUNCTION BODIES, which
+{@link reassignedModuleReachableNames}'s own reach model never visits.
+
+The quantity that actually determines behaviour is the difference between
+the two per-file CACHED name sets. Measured by running the shipped relation
+itself over the same 2,527 files:
+
+| measure | count |
+| --- | --- |
+| names dropped from the cached set | **80** (28 files) |
+| of those, module-top-level callables | **2** (`chai`'s `assert`, twice) |
+| of those, names genuinely written elsewhere in the file | **12** (all loop counters: `i`, `c`, `i$1`) |
+| **dropped AND a callable AND genuinely written** | **0** |
+| names added to the cached set | **0** |
+
+The last two rows are the ones that matter. There is no file in this corpus
+where the fix drops a name that is both a resolvable local callable and
+genuinely reassigned — so there is no file where it could cause a stale
+callable to be trusted. Both `chai` drops are correct: `assert[as] = ...`
+mutates a property and never rebinds `assert`, so refusing `assert`
+file-wide was the defect, not the protection.
+
 Repository fixtures (791 files): 14,678 targets, 6 destructuring targets, 7
-element-access-index call targets, 1,842 dropped names across 108 files,
-0 of them a local callable, 0 additions.
+element-access-index call targets, 0 dropped callables, 0 additions.
 
 The primary spelling (`({ [f()]: x } = src)`) is rare in this corpus; the
 element-access spelling of the SAME defect is not. Concrete instances:
@@ -4451,7 +4474,7 @@ element-access spelling of the SAME defect is not. Concrete instances:
 `attributes[getAttrKey(attr)]`, `chai`'s `assert[as]`, and `esquery`'s
 minified bundle. **Low frequency is not low severity:** the poisoning is
 file-wide, so a single occurrence disables a name's identity for an entire
-module, and 14 real installed packages carried one.
+module — `chai`'s `assert` is a real installed package where it did.
 
 ### Newly discovered, NOT fixed here — the twin walker in commonjs-reexports.ts
 
@@ -4474,6 +4497,101 @@ assignment target to keep the two defects from confounding each other.
 **Recommendation:** its own follow-up task (RWF-025b), applying the same
 semantic rule locally in `markAssigned`. It is a precision defect, not a
 soundness one, so it does not block P0-Z.
+
+### Remediation — real assignments inside evaluated target sub-expressions
+
+**Found by:** independent audit of this task's own first implementation,
+which returned `RWF025_BLOCKED`. Fixed on the same branch, in one further
+commit, before any review.
+
+**What the first implementation got right.** Stopping the arbitrary
+`ts.forEachChild` walk was correct and is unchanged: a computed key, a
+default initializer and an element-access index are EVALUATED while the
+target is resolved, and the names they merely READ are not rebound.
+
+**What it then got wrong.** It stopped looking at those sub-expressions
+altogether — and an assignment written INSIDE one of them really does run:
+
+```js
+({ x = (bail = safe) } = HOLDER);    // `x` AND `bail` are rebound
+({ [(bail = safe)]: x } = HOLDER);   // `x` AND `bail` are rebound
+HOLDER[(bail = safe)] = 1;           // `bail` is rebound
+```
+
+The base implementation recorded `bail` in all three (accidentally, via the
+child walk — and it also wrongly recorded `safe`). The first RWF-025
+implementation recorded neither. That is a **missed genuine reassignment**,
+and it let `resolveExactLocalCallable` trust a stale throwing declaration.
+
+Measured end-to-end on a fixture where real `node` proves the module always
+reaches its final export, so `NOT_AFFECTED` is the CORRECT answer:
+
+| | base `9c0ca73` | first implementation | after remediation |
+| --- | --- | --- | --- |
+| sink target | `NOT_AFFECTED`, Family C complete | `UNKNOWN`, no Family C | `NOT_AFFECTED`, Family C complete |
+| whole-module target | `AFFECTED` | `UNKNOWN` | `AFFECTED` |
+
+**Direction.** The regression was strictly over-conservative: it *lost* a
+correct `NOT_AFFECTED` and could never manufacture one, because a withdrawn
+export attribution yields an UNRESOLVED edge, which forbids a Family C
+proof. It was therefore a precision defect rather than a soundness one —
+but it was a regression the branch introduced, it trusted a stale callable
+after a genuine reassignment, and it is fixed rather than documented.
+
+**The fix: two traversals, deliberately separate.**
+`markAssignmentsInsideEvaluatedExpression` is handed every evaluated-only
+position — a `ComputedPropertyName`'s expression, a shorthand's
+`objectAssignmentInitializer`, a destructuring default's right-hand side,
+and both halves of a property/element-access target. It descends through
+children only to FIND assignment and update OPERATIONS, and collects names
+only from their targets, through `markLocallyReassigned`:
+
+- `BinaryExpression` with any assignment operator (by `SyntaxKind`, via the
+  existing `isAssignmentOperatorToken`, never by text) — its LEFT side is a
+  real assignment target; its RIGHT side is re-entered only to find further
+  nested assignments;
+- `PrefixUnaryExpression`/`PostfixUnaryExpression` `++`/`--` — its operand;
+- everything else — descend, collecting nothing.
+
+A bare identifier is never collected. `bail = safe` records `bail` and not
+`safe`; `bail()` records nothing at all. Function bodies are not entered,
+so the RWF-016 reach model is unwidened. No P0-A expression semantics were
+imported: this relation still answers only "which local bindings does this
+statement rebind".
+
+**Characterised, all measured on the shipped relation.** `safe` — the
+right-hand-side name the old child walk wrongly recorded — appears in none
+of these sets.
+
+| shape | reassigned set |
+| --- | --- |
+| `({ x = (bail = safe) } = HOLDER)` | `bail, x` |
+| `({ [(bail = safe)]: x } = HOLDER)` | `bail, x` |
+| `holder[(bail = safe)] = 1` | `bail` |
+| `({ [(a = (b = safe))]: x } = HOLDER)` | `a, b, x` |
+| `obj[(a = 1, b = 2)] = 1` | `a, b` |
+| `({ [bail++]: x } = HOLDER)` / `holder[bail++] = 1` / `({ [++bail]: x } = ...)` | `bail` (+ `x`) |
+| `({ [(bail \|\|= safe)]: x } = HOLDER)`, `+=`, `&&=`, `??=` | `bail, x` |
+| `({ [key()]: x = (bail = safe) } = HOLDER)` | `bail, x` — not `key`, not `safe` |
+| `({ [(key = "k")]: x } = HOLDER)` | `key, x` |
+| `((obj = holder)).x = 1` | `obj` |
+| `safe().x = 1` | *(none)* |
+| `({ [(() => (bail = safe))()]: x } = HOLDER)` | `x` — deferred, reach model unchanged |
+
+**Every original poison control is unchanged** — `({ [bail()]: x } = src)`,
+`[holder[bail()]] = values`, `holder[bail()] = 1`, `({ x = bail() } = src)`,
+`bail.prop = 1`, `bail[0] = 1`, and their nested/array/`for..of` spellings
+all still contribute only the real target. Every genuine assignment-target
+control is unchanged. The reassigned sets differ from the first
+implementation only by ADDING names that are genuinely assigned.
+
+**Differential after remediation.** Across the 37-case behavioural matrix:
+all twelve poison recoveries preserved, all eleven genuine-reassignment
+controls unchanged, the three regression cases restored to base's answer,
+P0-A and P0-E unchanged with and without poison, and **zero** movements
+toward kept export authority. `UNKNOWN → NOT_AFFECTED = 0` and
+`AFFECTED → NOT_AFFECTED = 0` across all 119 adversarial scenarios and the
+whole validation suite.
 
 ### Verdict differential (base `9c0ca73` vs. branch)
 
@@ -4540,8 +4658,15 @@ false-`AFFECTED` control where `bail` really is rebound.
   poison, on the branch.
 - **P0-E (RWF-028)** — alias (`const alias = bail; alias()`) and member
   (`holder.bail()`) callees are still unresolved. Same invariant verified.
-- **An assignment buried inside a larger expression** (`foo(bail = other)`)
-  is still not chased, unchanged from before: missing a reassignment only
-  makes the relation more conservative.
+- **An assignment buried inside a larger expression that is not part of an
+  assignment target** (`foo(bail = other)`, `x = bail = 1`) is still not
+  chased, unchanged from before and unchanged by the remediation below:
+  `checkAssignmentLike` inspects an expression statement's own top-level
+  shape only. Missing one of these only makes the relation more
+  conservative. **This bullet previously claimed the same was true of an
+  assignment written inside an assignment TARGET; it was not — see the
+  remediation entry below.**
 - **A reassignment inside a function body** is still outside the
-  module-evaluation reach model, unchanged and by design (RWF-016).
+  module-evaluation reach model, unchanged and by design (RWF-016) — and
+  that includes one written inside an immediately-invoked function in a
+  computed key, `({ [(() => (bail = safe))()]: x } = source)`.
