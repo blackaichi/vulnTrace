@@ -300,10 +300,23 @@ describe("RWF-016: excluded callable shapes", () => {
     ).toBe("second");
   });
 
-  it("keeps authority when the call is embedded in a larger expression, not a bare statement", () => {
+  // RWF-026 CLOSED this limitation. `bail()` is a logical operator's LEFT
+  // operand, which the language always evaluates, so real Node never
+  // reaches the write below — the authority this test used to pin was a
+  // false NOT_AFFECTED. RWF-016's own proof is unchanged; only the
+  // question of WHERE a proven-abrupt call is necessarily evaluated moved.
+  it("refuses authority when the call is a logical operator's always-evaluated LEFT operand (RWF-026)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const ok = bail() || first;\nmodule.exports = second;\n`,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("still keeps authority when the call is the logical operator's conditional RIGHT operand", () => {
+    expect(
+      defaultExportName(
+        `${TWO}${BAIL_THROWS}const ok = first || bail();\nmodule.exports = second;\n`,
       ),
     ).toBe("second");
   });

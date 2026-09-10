@@ -441,19 +441,27 @@ describe("RWF-020: callee resolution is RWF-016's, reused unchanged", () => {
   });
 });
 
-describe("RWF-020: nested heritage expressions stay at RWF-017's arbitrary-expression boundary", () => {
-  // The first THREE -- argument position, comma sequence and logical LHS --
-  // DO always evaluate `bail`, and are therefore known, recorded soundness
-  // gaps (see tests/validation/FINDINGS.md). `||` belongs with them, not
-  // with the conditional shapes: its short-circuit decides only whether the
-  // RIGHT operand runs, so the left one is always evaluated. The last three
-  // -- logical RHS, conditional and the IIFE -- genuinely may not call it
-  // at all, which is why the boundary is drawn by shape rather than guessed
-  // past.
-  const unmodeled: ReadonlyArray<readonly [string, string]> = [
+describe("RWF-020: nested heritage expressions, after RWF-026", () => {
+  // The first three -- argument position, comma sequence and logical LHS --
+  // DO always evaluate `bail`, and were recorded as known soundness gaps
+  // (see tests/validation/FINDINGS.md). RWF-026 closed all three: each is a
+  // position the language REQUIRES to be evaluated before the heritage
+  // expression can produce a value, so the class definition never
+  // completes. The last three genuinely may not call `bail` at all, and
+  // still keep the later write's authority.
+  const required: ReadonlyArray<readonly [string, string]> = [
     ["argument position", "  class C extends foo(bail()) {}\n"],
     ["comma sequence", "  class C extends (bail(), Base) {}\n"],
     ["logical LHS", "  class C extends (bail() || Base) {}\n"],
+  ];
+
+  for (const [label, body] of required) {
+    it(`refuses authority for a REQUIRED ${label} heritage expression (RWF-026)`, () => {
+      expect(defaultExportName(reproducer(body))).toBeUndefined();
+    });
+  }
+
+  const conditional: ReadonlyArray<readonly [string, string]> = [
     ["logical RHS", "  class C extends (FLAG && bail()) {}\n"],
     ["conditional", "  class C extends (FLAG ? bail() : Base) {}\n"],
     [
@@ -462,8 +470,8 @@ describe("RWF-020: nested heritage expressions stay at RWF-017's arbitrary-expre
     ],
   ];
 
-  for (const [label, body] of unmodeled) {
-    it(`keeps authority for a ${label} heritage expression (deliberately unmodeled)`, () => {
+  for (const [label, body] of conditional) {
+    it(`keeps authority for a CONDITIONAL / deferred ${label} heritage expression`, () => {
       expect(defaultExportName(reproducer(body))).toBe("second");
     });
   }

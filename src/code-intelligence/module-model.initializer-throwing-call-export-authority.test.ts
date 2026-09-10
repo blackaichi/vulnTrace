@@ -356,28 +356,35 @@ describe("RWF-017: initializer expression forms that do NOT guarantee the call",
     ).toBe("second");
   });
 
-  it("keeps authority for a call embedded in a larger binary expression", () => {
+  // The three cases below were RWF-017's documented arbitrary-expression
+  // boundary. RWF-026 CLOSED all three: a logical LEFT operand, a call
+  // ARGUMENT and a comma's operands are all evaluated before the enclosing
+  // expression can complete, so real Node never reaches the write below.
+  // The two cases ABOVE stay refused, and that is the point of keeping
+  // them adjacent: RWF-026 moved the required/conditional line, it did not
+  // erase it.
+  it("refuses for a call in a binary expression's always-evaluated LEFT operand (RWF-026)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const ok = bail() || first;\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for an argument-position call (documented limitation, conservative)", () => {
+  it("refuses for an argument-position call -- arguments are evaluated before the callee is entered (RWF-026)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const x = wrap(bail());\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for a comma-sequence initializer (documented limitation, conservative)", () => {
+  it("refuses for a comma-sequence initializer -- both operands are required (RWF-026)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const x = (bail(), first);\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("keeps authority for an optional call on a RECEIVER (obj?.bail())", () => {

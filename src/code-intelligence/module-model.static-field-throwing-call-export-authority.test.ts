@@ -508,28 +508,40 @@ describe("RWF-018: RWF-015/016/017 regressions -- no parallel model, no lost cov
   });
 });
 
-describe("RWF-018: expression positions inside the initializer stay OUT of scope", () => {
-  // These are all evaluated (or conditionally evaluated) at runtime, but
-  // recognising them means an evaluation-order model over arbitrary
-  // expression trees -- the boundary `isDefinitelyAbruptCall` already
-  // draws for RWF-016/017. They are pinned here so a later change to that
-  // boundary is a deliberate decision rather than an accident, and they
-  // are recorded as follow-ups in tests/validation/FINDINGS.md.
+describe("RWF-018: expression positions inside the initializer, after RWF-026", () => {
+  // This block used to pin NINE shapes as unmodeled, because recognising
+  // them needed an evaluation-order model over arbitrary expression trees.
+  // RWF-026 built exactly that model -- narrow, explicit, and only over
+  // positions the language REQUIRES to be evaluated -- so the split below
+  // is the whole point of the file now: the REQUIRED positions withdraw
+  // authority, the CONDITIONAL ones still must not.
+  //
   // NOTE: the two COMPUTED KEY shapes that used to be pinned here
-  // (`static [bail()] = 1` and `[bail()] = 1`) have moved out. RWF-018
-  // recorded them as the RWF-019 candidate because a computed key is
-  // evaluated at class-definition time for every element form, static and
-  // instance alike, which makes it a key-POSITION rule rather than a
-  // static-field one. RWF-019 implements that rule, so both now correctly
-  // withdraw authority; their coverage lives in
-  // module-model.computed-class-key-throwing-call-export-authority.test.ts.
-  const cases: ReadonlyArray<readonly [string, string]> = [
+  // (`static [bail()] = 1` and `[bail()] = 1`) moved out to RWF-019, which
+  // implements the key-POSITION rule they belong to; their coverage lives
+  // in module-model.computed-class-key-throwing-call-export-authority.test.ts.
+  const required: ReadonlyArray<readonly [string, string]> = [
     ["argument position", "class C {\n  static x = wrap(bail());\n}"],
     ["comma expression", "class C {\n  static x = (bail(), 1);\n}"],
     ["array element", "class C {\n  static x = [bail()];\n}"],
     ["object property", "class C {\n  static x = { v: bail() };\n}"],
     ["template hole", "class C {\n  static x = `v${bail()}`;\n}"],
     ["logical LHS", "class C {\n  static x = bail() || 1;\n}"],
+  ];
+
+  for (const [label, body] of required) {
+    it(`refuses authority for a REQUIRED ${label} (RWF-026)`, () => {
+      expect(
+        defaultExportName(
+          `${TWO}${BAIL_THROWS}function wrap(a) {\n  return a;\n}\n${body}\nmodule.exports = second;\n`,
+        ),
+      ).toBeUndefined();
+    });
+  }
+
+  // Still refused, and these are the precision boundary RWF-026 keeps:
+  // none of them is evaluated on every path through the initializer.
+  const conditional: ReadonlyArray<readonly [string, string]> = [
     ["logical RHS", "class C {\n  static x = FLAG && bail();\n}"],
     ["ternary branch", "class C {\n  static x = FLAG ? bail() : 1;\n}"],
     [
@@ -538,8 +550,8 @@ describe("RWF-018: expression positions inside the initializer stay OUT of scope
     ],
   ];
 
-  for (const [label, body] of cases) {
-    it(`keeps authority for an unmodeled ${label} (documented limitation)`, () => {
+  for (const [label, body] of conditional) {
+    it(`keeps authority for a CONDITIONAL / deferred ${label}`, () => {
       expect(
         defaultExportName(
           `${TWO}${BAIL_THROWS}function wrap(a) {\n  return a;\n}\n${body}\nmodule.exports = second;\n`,
