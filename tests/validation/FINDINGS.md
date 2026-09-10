@@ -2035,7 +2035,9 @@ the next task can pick them up rather than rediscover them:
   `flag ? bail() : v` (correctly refused — the call genuinely may not
   happen). They belong to the one arbitrary-expression-evaluation gap
   RWF-017 named, and closing it properly means an evaluation-order model
-  over expression trees rather than a shape test;
+  over expression trees rather than a shape test - **since fixed by
+  RWF-026**, which built exactly that model over REQUIRED operand
+  positions only;
 - *(precision)* `static x = foo(bail());`, `static x = [bail()];`,
   `static x = { v: bail() };` and ``static x = `v${bail()}` `` are all
   evaluated at runtime and all keep authority — the same boundary, listed
@@ -4025,7 +4027,10 @@ target `fixture-lib/danger#explode`, entrypoint `src/index.cjs`:
   the KEY alone ("Do NOT absorb unless it is the same narrow mechanism and
   architecture makes it trivial"). Confirmed live under real `node`
   (`forms.js`'s `{ x: bail() }` row) that this position genuinely does
-  throw, so it is a real, tracked gap and not a hypothetical one;
+  throw, so it is a real, tracked gap and not a hypothetical one -
+  **since fixed by RWF-026**, which models a property VALUE as a required
+  evaluation through a separate relation, leaving RWF-024's KEY rule
+  untouched;
 - *(precision, the one shape this task makes MORE conservative, identical
   in kind to RWF-019's own accepted over-approximation)* a computed key
   nested inside a class's INSTANCE field initializer —
@@ -4042,7 +4047,9 @@ target `fixture-lib/danger#explode`, entrypoint `src/index.cjs`:
 - *(correctly refused, not a gap)* `[flag && bail()]` and
   `[flag ? bail() : "x"]` genuinely may not call `bail` at all, and
   `[foo(bail())]`, `` [`${bail()}`] `` stay unrecognised for the same
-  arbitrary-expression-evaluation reason RWF-017/019 already documented;
+  arbitrary-expression-evaluation reason RWF-017/019 already documented -
+  the two nested-call forms **since fixed by RWF-026**, while the logical
+  and ternary forms stay correctly refused there too;
 - *(correctly refused, not a gap)* scope, shadowing, reassignment, alias and
   member callees are refused by the same `resolveExactLocalCallable`
   machinery RWF-013/013b established, reused verbatim and unmodified;
@@ -4655,7 +4662,9 @@ false-`AFFECTED` control where `bail` really is rebound.
 - **P0-A (RWF-026)** — a throwing call in an ARGUMENT or operand position
   (`foo(bail())`, `1 + bail()`) is still not proved definitely abrupt.
   Verified invariant: those shapes answer identically with and without the
-  poison, on the branch.
+  poison, on the branch. — **since fixed by RWF-026**, below, which also
+  re-verified the invariant: a genuine reassignment of `bail` still refuses
+  in every newly supported position.
 - **P0-E (RWF-028)** — alias (`const alias = bail; alias()`) and member
   (`holder.bail()`) callees are still unresolved. Same invariant verified.
 - **An assignment buried inside a larger expression that is not part of an
@@ -4670,3 +4679,305 @@ false-`AFFECTED` control where `bail` really is rebound.
   module-evaluation reach model, unchanged and by design (RWF-016) — and
   that includes one written inside an immediately-invoked function in a
   computed key, `({ [(() => (bail = safe))()]: x } = source)`.
+
+
+## RWF-026 — A definitely-abrupt call in a NECESSARILY EVALUATED EXPRESSION POSITION invalidates later CommonJS export authority
+
+**Severity:** P0 / CRITICAL SOUNDNESS (false `NOT_AFFECTED`, with a complete
+Family C proof)
+**Status:** **Fixed.** Found by the P0 closure inventory (P0-A) and
+independently reproduced on `13c82e4` (current merged main, RWF-025
+included) before any edit here. This is the umbrella family: one semantic
+rule, not one task per syntax spelling.
+
+### The defect
+
+RWF-016 through RWF-024 each recognise a definitely-abrupt call in one
+NAMED syntactic slot — a bare expression statement, a declarator's whole
+initializer, a class static field's initializer, any class element's
+computed key, a class's `extends` heritage, an invalid heritage value, an
+object literal's computed key. Every one of them is a SHAPE TEST on the
+node that directly holds the call, and each previous task closed its gap by
+adding one more shape.
+
+The inventory found 25 spellings where no shape is available, because the
+call occupies no privileged slot at all — it is an ordinary OPERAND:
+
+```js
+function dangerousOp() { vulnerableSink(); }
+function safeOp() {}
+function bail() { throw new Error("boom"); }
+
+if (FLAG) {
+  module.exports = dangerousOp;
+  foo(bail());               // no slot -- and Node never gets past it
+}
+
+module.exports = safeOp;     // syntactically unconditional; never reached
+```
+
+`bail` is already proven definitely abrupt by RWF-016's unchanged
+exact-local-callee proof. JavaScript evaluation necessarily reaches the
+call: `EvaluateCall` builds the argument list, left to right, BEFORE the
+callee is entered. Real Node therefore cannot reach the later export write
+— but the analyzer kept it authoritative, attributed `safeOp` as the whole
+module value, found `dangerousOp` unreachable, and issued a **complete
+Family C negative proof** for a package that reaches the sink on every load
+taking the early branch.
+
+The problem was never that VulnTrace lacks a JavaScript interpreter. It is
+that an already-proven abruptness FACT was not propagated through the
+expression positions whose evaluation necessarily reaches the call.
+
+### The fix — one bounded relation
+
+`necessarilyEvaluatesAbruptly(expression)` in
+`src/code-intelligence/module-model.ts` answers exactly one question: does
+NORMAL COMPLETION of this expression REQUIRE evaluating a call
+`isDefinitelyAbruptCall` has already proven can only ever throw?
+
+It widens **where** a proven-abrupt call is necessarily evaluated. It does
+**not** widen **which** calls can be proven abrupt — that stays RWF-016's
+proof, consumed verbatim and never re-derived. The two axes are deliberately
+kept apart: RWF-027 (P0-B) owns multi-path callee completion, RWF-028 (P0-E)
+owns invocation/provenance, and both reproducers are verified unchanged.
+
+**The soundness rule, and why it needs no evaluation-ORDER model.** An
+expression completes normally only if every operand position the language
+REQUIRES it to evaluate completes normally first. So if any required
+operand cannot complete normally, neither can the enclosing expression:
+
+```js
+safe() + bail()
+```
+
+Either `safe()` completed (so `bail()` is reached and throws) or it did not
+(so the `+` never completes either way). Both readings agree — the same
+argument RWF-017's `declarationListCannotCompleteNormally` already makes for
+a declarator list, generalised to operands. Source order is still MEASURED
+under real Node, because pinning it keeps each form's documented reading
+honest, but no proof rests on it.
+
+**It is an explicit switch over SyntaxKinds, never `ts.forEachChild`.** A
+generic child traversal would descend into a `&&`'s right operand or an
+arrow body — precisely the class of unsoundness this family exists to fix,
+and precisely the mistake RWF-025 had just finished repairing in the
+neighbouring reassignment collector. Every supported kind is listed with
+which of its children are required; an unlisted kind is refused by a closing
+`return false`.
+
+**Supported required positions.** Parenthesized and TS type-only wrappers
+(`as`, `satisfies`, `!`, `<T>e`); object literal computed keys, property
+VALUES and spread operands; array elements and spread operands (holes
+evaluate nothing); a call's CALLEE then every ARGUMENT; a `new`'s
+constructor expression then every ARGUMENT; template substitutions; a
+tagged template's TAG then its substitutions; a property access RECEIVER; an
+element access receiver then index; unary/`typeof`/`void`/`delete`/`await`
+operands; a conditional's CONDITION; both operands of every
+non-short-circuiting binary operator, comma included; a short-circuiting
+operator's LEFT operand only; an assignment's target-reference
+sub-expressions then its RHS. Statement HEADERS are anchored at the same
+time: `if`, `switch`, `while`, a `for` initializer and test, and a
+`for-of`/`for-in` right-hand side.
+
+**Explicitly refused, each for a stated reason.** A logical operator's RIGHT
+operand and a logical assignment's RHS (short-circuit); both arms of a
+conditional expression (neither is required, and joining two abrupt arms is
+multi-path reasoning left out of scope); a `for` INCREMENTOR and a
+`do`/`while` condition (neither is reached until an iteration has
+completed); anything inside a function — function/arrow bodies, method and
+accessor bodies, DEFAULT PARAMETERS; a class INSTANCE field initializer
+(per-construction, not module time); positions guarded by an OPTIONAL CHAIN
+(`a?.m(bail())`, `a?.[bail()]`); a destructuring assignment TARGET, which
+also keeps RWF-025's different question about the same syntax untouched; and
+an IIFE, whose invocation semantics remain unmodelled.
+
+`bail?.()` stays on the required side, unchanged and for RWF-017's recorded
+reason: an optional call short-circuits only on a nullish CALLEE, and
+`resolveExactLocalCallable` only ever resolves a hoisted function
+declaration or a never-reassigned `const`-bound function expression.
+
+### Performance
+
+A per-file gate, `fileHasDefinitelyAbruptCallable`, opens the relation. Since
+`isDefinitelyAbruptCall` can only ever succeed for a callee resolving to a
+`topLevelCallableCandidates` entry, a file declaring no always-throwing
+top-level callable provably has no definitely-abrupt call anywhere in it —
+so the gate is exactly complete, not merely close, and the recursion is
+never entered for such a file. `scan-performance` is unchanged: 2,311 ms and
+7,938 ms on the branch against 2,398 ms and 8,266 ms on base `13c82e4`
+(thresholds 5 s / 20 s).
+
+### Runtime ground truth (real node v22.11.0)
+
+`fixtures/commonjs-circular-import-expression-position-throw-ground-truth/`
+is a plain Node program, not an assertion. It measures, in one process:
+
+- **45 REQUIRED positions — every one throws**, across A1 (object value,
+  computed key, safe-key + abrupt value, nested object, array element,
+  middle element, element after a hole, object spread), A2 (call argument,
+  multi-argument, `new` argument, template, tagged template, property-access
+  receiver, element-access index and receiver, array spread, call spread,
+  optional-chain receiver, optional call), A3 (sequence left and middle,
+  logical `||`/`&&`/`??` LEFT, binary left and right, comparison right,
+  assignment RHS, compound-assignment RHS, assignment-target index and
+  receiver, unary operand, `typeof` operand, parenthesized), A4 (`if`
+  condition, `switch` discriminant, `for` initializer as declaration and as
+  expression, `for` test, `for-of` RHS, `for-in` RHS, `while` condition) and
+  class-definition time (static field, static block).
+- **20 CONDITIONAL/DEFERRED positions — every one completes**: logical
+  `&&`/`||`/`??` RIGHT, both conditional arms, `||=`/`&&=`/`??=`, `for`
+  update, `do`/`while` condition, function body, arrow body, callback,
+  method body, class instance field, default parameter, returned object in
+  an uncalled function, optional-chain-guarded argument and index, and a
+  call caught by `try`/`catch`.
+- **13 measured evaluation ORDERS**: call arguments left to right; object
+  literal key-then-value in source order; array elements; template
+  substitutions; tagged template tag-then-substitutions; member receiver
+  before access; element access receiver-then-index; sequence; logical LEFT;
+  assignment target-reference-then-RHS; `if` condition before either arm;
+  `for` initializer-then-test-never-body; `for-of` RHS before iteration.
+
+`a.js` additionally proves the whole point end to end: a cyclic `require()`
+retains the dangerous export by identity, calls the vulnerable sink through
+it, `before()` runs while `after()` and the callee never do, and re-requiring
+re-throws deterministically. `c.js` is the conditional/deferred control that
+completes and publishes its safe export.
+
+### Base reproduction (independently recreated on `13c82e4`)
+
+Of a 75-case matrix run against unmodified main:
+
+- **47 required spellings** — **42 reproduced the false negative** (later
+  export kept authoritative). Five already withdrew for a pre-existing
+  reason and are kept as unregression pins: RWF-024's computed key, a bare
+  `bail?.()` statement, a parenthesized initializer, a class static field
+  and a static block.
+- **28 negative controls** — all 28 already correct on base, and all 28
+  unchanged on the branch.
+
+End to end, three fixture modules carrying the defect in three unrelated
+required positions each returned, on base:
+
+```
+NOT_AFFECTED
+confirmedUnreachableTarget: { target: fixture-lib/danger#explode,
+                              reachableSubgraphComplete: true }
+```
+
+On the branch all three are `UNKNOWN` with `confirmedUnreachableTarget`
+absent.
+
+### Verdict differential (base `13c82e4` → branch)
+
+| suite | base | branch | movement |
+| --- | --- | --- | --- |
+| unit + integration | 117 files / 2,846 tests | 119 files / 3,019 tests | +173 tests, 0 regressions |
+| adversarial v1 | 34/34 | 34/34 | none |
+| adversarial v2 | 85/85 | 86/86 | **ADV2-086 added; `NOT_AFFECTED` → `UNKNOWN` on base code** |
+| validation | 18 pass / 5 known fail | 18 pass / 5 known fail | none (identical set and verdicts) |
+| hermeticity | 6/6 | 6/6 | none |
+| scan-performance | 2/2 | 2/2 | none |
+
+- `UNKNOWN` → `NOT_AFFECTED`: **0**
+- `AFFECTED` → `NOT_AFFECTED`: **0**
+- `NOT_AFFECTED` → `UNKNOWN`: **45** (42 unit spellings + 3 fixture modules)
+- Any movement toward `NOT_AFFECTED`: **0**
+
+Twenty-three tests across RWF-016/017/018/019/020/024 pinned these positions
+as documented limitations. Each was updated to the sound expectation with its
+CONDITIONAL counterpart kept adjacent in the same block, so the
+required/refused line stays visible in the suite rather than erased from it.
+
+The five validation failures (VAL-002, VAL-003, RWB-03, RWB-05, RWB-09b) are
+byte-identical on both sides and are the suite's pre-existing, deliberately
+kept disagreements. Separately, VT-208, VT-301A and VT-307d time out under
+parallel load on base and branch alike and pass on both with a raised
+timeout; they are environmental, not semantic.
+
+### ADV2-086
+
+`tests/adversarial/v2/fixtures/adv2-086-definitely-abrupt-expression-evaluation/`
+places the defect in a call ARGUMENT, between duplicate same-name,
+same-version `PackageInstance`s, and surrounds it with eleven conditional or
+deferred decoys that all name `bail` at module scope and none of which ends
+module evaluation — plus `install(before(), maybe(FLAG), after())`, a
+genuinely REQUIRED position at module scope whose callee returns on one path,
+which is the sharpest control in the fixture: an analyzer that widened the
+CALLEE proof to reach it would be answering RWF-027's question instead of
+this one.
+
+| run | verdict |
+| --- | --- |
+| base `13c82e4` | **`NOT_AFFECTED`** (the false negative) |
+| branch | `UNKNOWN` (PASS) |
+
+Runtime coherence is checked directly: with `VT2_MODE` unset or `slow` the
+module publishes `slowPath` and returns normally; with `VT2_MODE=fast` it
+throws before publishing anything, so a cyclic consumer keeps `fastPath`.
+
+### Corpus scan (vendored real JS/CJS/MJS/TS)
+
+Counted separately, and deliberately not conflated:
+
+| | |
+| --- | --- |
+| 1. files scanned | 976 |
+| 2. candidate expression-position occurrences | 2,421 |
+| 3. files declaring an exact local definitely-abrupt callable | 47 |
+| 4. exact local definitely-abrupt callee matches in NEW positions | 12 |
+| 5. of those, module-reachable | 12 |
+| 6. of those, followed by a later export write | 12 |
+| 7. actual verdict movement in vendored third-party code | **0** |
+
+All 12 semantic matches are in VulnTrace's own fixtures and adversarial
+corpus; **none is in vendored third-party code**. The 2,421 figure is a
+SYNTACTIC candidate count and must not be read as impact. Absence from this
+corpus does not reduce the severity: the defect is a false `NOT_AFFECTED`
+with a complete negative proof, and the shapes are ordinary JavaScript.
+
+### Verification
+
+`npx vitest run` (119 files, 3,019 tests, all pass) · `npm run
+test:adversarial` (v1 34/34, v2 86/86) · `npm run test:validation`
+(unchanged from base) · hermeticity 6/6 · `npm run test:performance` (2/2)
+· `npm run typecheck` · `npm run lint` · `npm run build` · `npm run format`
+· `npm run validate:history`. New focused suite:
+`src/code-intelligence/module-model.definitely-abrupt-expression-evaluation.test.ts`
+(163 tests) — a table-driven required/refused matrix, adjacent boundary
+pairs, source-order cases, and the RWF-024/025/027/028 interaction blocks.
+New end-to-end regression:
+`src/analysis/verdict.expression-position-throwing-call-export-authority.integration.test.ts`
+(9 tests), including the Family C positive control, the conditional/deferred
+control and the same-name same-version twin-instance identity control.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **P0-B (RWF-027)** — a callee that throws on one path and RETURNS on
+  another (`function maybe(f) { if (f) throw e; return 1; }`) is still not
+  definitely abrupt, so no expression containing it is a cutoff however
+  necessarily evaluated that expression is. Verified unchanged, in required
+  positions, on both sides.
+- **P0-E (RWF-028)** — alias (`const alias = bail; alias()`), member
+  (`obj.bail()`), transitive and `new bail()` callees remain unresolved.
+  `foo(alias())` is therefore still not a cutoff, and must not become one
+  from this task's side. Verified unchanged.
+- **Both arms of a conditional expression abrupt** (`FLAG ? bail() :
+  bail()`) is refused. Real Node throws either way; proving it needs the
+  multi-path join RWF-027 owns. Conservative, recorded, not closed.
+- **`do`/`while` conditions and `for` INCREMENTORS** are refused for want of
+  body-completion reasoning. A `while` condition and a `for` test, which
+  need none, are supported.
+- **IIFE** (`(() => bail())()`) is unchanged: its invocation is not modelled
+  as an exact local definitely-abrupt call, and RWF-026 consumes only that
+  fact. Pinned as a control in both the unit matrix and ADV2-086.
+- **A class INSTANCE field** is untouched, including RWF-024's known
+  structural over-approximation for an object literal nested inside one. The
+  boundary is pinned, not widened.
+- **Optional-chain-guarded positions** are refused wholesale rather than
+  resolved. `a?.m(bail())` really does skip the argument for nullish `a`;
+  proving the base non-nullish would need flow analysis this task does not
+  invent.
+- **`try`/`finally` without a `catch`** still ends module evaluation, and
+  `try`/`catch` still stops it, both through the pre-existing
+  `isCaughtWithin`; RWF-026 adds no exception-flow semantics of its own.
