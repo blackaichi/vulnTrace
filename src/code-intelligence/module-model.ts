@@ -3003,6 +3003,351 @@ function classifyExactCallReturnValue(
 }
 
 /**
+ * One possible ending of an exact local callable used as a class's
+ * `extends` heritage, in the RWF-027 sense: {@link HeritageValueClass}
+ * widened with the one ending that produces no value at all.
+ *
+ * `"abrupt-throw"` means that path leaves the callable by `throw`, so the
+ * heritage expression completes abruptly and the class definition never
+ * begins. Every other member is the classification of the value that path
+ * hands back to the `extends` position.
+ */
+type HeritageCompletionOutcome = HeritageValueClass | "abrupt-throw";
+
+/**
+ * The outcomes that stop a class definition from completing NORMALLY.
+ *
+ * These are the only two, and they fail the class definition for two
+ * genuinely different reasons — which is precisely why RWF-020 and RWF-022
+ * could not see the family RWF-027 addresses:
+ *
+ * - `"abrupt-throw"` — the heritage EXPRESSION completes abruptly, so
+ *   ClassDefinitionEvaluation is never entered (RWF-020's reason);
+ * - `"non-constructable"` — the heritage expression completes normally with
+ *   a value that is neither `null` nor a constructor, so
+ *   ClassDefinitionEvaluation itself throws a `TypeError` (RWF-022's).
+ */
+const CLASS_DEFINITION_FATAL_OUTCOMES: ReadonlySet<HeritageCompletionOutcome> =
+  new Set<HeritageCompletionOutcome>(["abrupt-throw", "non-constructable"]);
+
+/**
+ * What executing a statement LIST to its end can do, in the bounded model
+ * {@link collectHeritageExitOutcomes} implements (RWF-027).
+ *
+ * - `exits` — every ending that leaves the enclosing CALLABLE from inside
+ *   this list: one entry per `return` reached and one `"abrupt-throw"` per
+ *   `throw` reached. Duplicates are irrelevant; only membership is read.
+ * - `fallsThrough` — whether control can reach the end of the list without
+ *   having left the callable, so that whatever FOLLOWS the list runs. At
+ *   the top level of a function body this is exactly the implicit
+ *   `return undefined`, and it is represented explicitly rather than as an
+ *   absent path — see {@link summarizeExactCallHeritageOutcomes}.
+ */
+type HeritageExitSet = {
+  readonly exits: readonly HeritageCompletionOutcome[];
+  readonly fallsThrough: boolean;
+};
+
+/**
+ * How deep {@link collectHeritageExitOutcomes} will follow nested
+ * `if`/block structure before refusing, and how many exits it will record
+ * before refusing.
+ *
+ * Both are hard bounds, not heuristics: this task is scoped explicitly NOT
+ * to build a general CFG or an interprocedural fixpoint, and a fixed
+ * ceiling is what makes "bounded" checkable rather than asserted. Exceeding
+ * either yields `undefined` — UNKNOWN — which can only ever cost precision.
+ * Four levels covers `if` / `else if` / nested `if` shapes that occur in
+ * real heritage factories; anything deeper is refused rather than
+ * approximated.
+ */
+const HERITAGE_PATH_DEPTH_LIMIT = 4;
+const HERITAGE_PATH_EXIT_LIMIT = 32;
+
+/**
+ * Every way executing `statements` can end, or `undefined` — UNKNOWN — the
+ * instant any construct this bounded model does not fully understand is
+ * reached (RWF-027).
+ *
+ * **The refusal is the mechanism, not an edge case.** A path this collector
+ * silently dropped would be a path the caller then proves nothing about
+ * while believing it has proved something about all of them, and dropping a
+ * `return Base;` is exactly how an analyzer withdraws a CORRECT export.
+ * So the statement kinds below are an allow-list, and everything absent
+ * from it — every loop, `switch`, `try`/`catch`/`finally`, labeled
+ * statement, `break`, `continue`, `with` — poisons the whole summary rather
+ * than being skipped. Sound refusal is always available; a lost path is
+ * not recoverable.
+ *
+ * ```text
+ * return <expr>;   -- one exit, classified by node kind alone
+ * return;          -- one exit: undefined, non-constructable
+ * throw <expr>;    -- one exit: "abrupt-throw"
+ * if (c) A else B  -- the union of both arms; a missing `else` is an arm
+ *                     that falls through
+ * { ... }          -- recursed into, at one more level of depth
+ * foo();  x = 1;   -- neither exits nor is descended into (see below)
+ * let x = ...;
+ * function g() {}  -- SKIPPED, deliberately: see the boundary note
+ * class K {}
+ * ;                -- empty statement
+ * debugger;
+ * for/while/switch -- UNKNOWN, whole summary poisoned
+ * try/label/break
+ * ```
+ *
+ * **Why a plain expression or declaration statement is passed over rather
+ * than analyzed.** It cannot leave the callable by `return`, and the only
+ * other way it can end is by THROWING — which is already a
+ * class-definition-fatal outcome. Ignoring it can therefore only ever omit
+ * a fatal ending from a set the caller requires to be entirely fatal, which
+ * cannot turn a completable heritage into a non-completing one. The same
+ * argument covers the `if` CONDITION, the `return` operand and the `throw`
+ * operand, none of which are examined either.
+ *
+ * **The function-scope boundary.** Nested `FunctionDeclaration`s and
+ * `ClassDeclaration`s are skipped, and no expression is ever descended
+ * into, so a `return` inside a nested function, method, accessor, class
+ * static block or IIFE is structurally unable to be counted as an exit of
+ * the OUTER callable. This is not a filter applied after the fact — the
+ * collector walks statements only, and a nested body is only ever reachable
+ * through an expression or a declaration it does not enter.
+ */
+function collectHeritageExitOutcomes(
+  statements: readonly ts.Statement[],
+  depth: number,
+): HeritageExitSet | undefined {
+  if (depth > HERITAGE_PATH_DEPTH_LIMIT) {
+    return undefined;
+  }
+
+  const exits: HeritageCompletionOutcome[] = [];
+
+  for (const statement of statements) {
+    if (exits.length > HERITAGE_PATH_EXIT_LIMIT) {
+      return undefined;
+    }
+
+    if (ts.isReturnStatement(statement)) {
+      exits.push(
+        statement.expression === undefined
+          ? // `return;` hands back `undefined`, which is neither `null` nor
+            // a constructor.
+            "non-constructable"
+          : classifyHeritageValueExpression(statement.expression),
+      );
+      return { exits, fallsThrough: false };
+    }
+
+    if (ts.isThrowStatement(statement)) {
+      exits.push("abrupt-throw");
+      return { exits, fallsThrough: false };
+    }
+
+    if (ts.isIfStatement(statement)) {
+      const thenArm = collectHeritageExitOutcomes(
+        ts.isBlock(statement.thenStatement)
+          ? statement.thenStatement.statements
+          : [statement.thenStatement],
+        depth + 1,
+      );
+      if (thenArm === undefined) {
+        return undefined;
+      }
+
+      let elseArm: HeritageExitSet = { exits: [], fallsThrough: true };
+      if (statement.elseStatement !== undefined) {
+        const collected = collectHeritageExitOutcomes(
+          ts.isBlock(statement.elseStatement)
+            ? statement.elseStatement.statements
+            : [statement.elseStatement],
+          depth + 1,
+        );
+        if (collected === undefined) {
+          return undefined;
+        }
+        elseArm = collected;
+      }
+
+      exits.push(...thenArm.exits, ...elseArm.exits);
+      if (!thenArm.fallsThrough && !elseArm.fallsThrough) {
+        // Neither arm can reach the statement after the `if`, so the list
+        // ends here and nothing following it is reachable.
+        return { exits, fallsThrough: false };
+      }
+      continue;
+    }
+
+    if (ts.isBlock(statement)) {
+      const nested = collectHeritageExitOutcomes(
+        statement.statements,
+        depth + 1,
+      );
+      if (nested === undefined) {
+        return undefined;
+      }
+      exits.push(...nested.exits);
+      if (!nested.fallsThrough) {
+        return { exits, fallsThrough: false };
+      }
+      continue;
+    }
+
+    if (
+      ts.isExpressionStatement(statement) ||
+      ts.isVariableStatement(statement) ||
+      ts.isFunctionDeclaration(statement) ||
+      ts.isClassDeclaration(statement) ||
+      ts.isEmptyStatement(statement) ||
+      statement.kind === ts.SyntaxKind.DebuggerStatement
+    ) {
+      // Cannot leave the callable by `return`; may only throw, which is
+      // already fatal for the class definition. Not descended into, which
+      // is what keeps nested function/class bodies out of this summary.
+      continue;
+    }
+
+    return undefined;
+  }
+
+  return { exits, fallsThrough: true };
+}
+
+/**
+ * Every outcome calling `fn` can produce for a class's `extends` position,
+ * or `undefined` — UNKNOWN (RWF-027).
+ *
+ * The returned array is never empty: a callable always ends somehow, and a
+ * body that can run off its end ends by returning `undefined`. That
+ * implicit ending is APPENDED EXPLICITLY here rather than being left as an
+ * absent path, which is the whole reason `function f(flag) { if (flag)
+ * return 1; }` can be answered at all — its two endings are `1` and
+ * `undefined`, both non-constructable, and a model that recorded only the
+ * written `return` would have seen one path where there are two.
+ *
+ * Two callee shapes are handed back to RWF-022 untouched rather than
+ * summarized here, because RWF-022 already answers them exactly and this
+ * mechanism must not compete for what an existing rule owns:
+ *
+ * - an `async` and/or generator callable, whose RESULT is decided by the
+ *   callee's identity and never by its body — see
+ *   {@link classifyExactCallReturnValue}'s route 1;
+ * - a concise-bodied arrow (`const f = () => 1;`), which has no statement
+ *   list to walk. RWF-027 adds no conditional-expression path model, so
+ *   `flag => flag ? 1 : 2` stays exactly as unknown as it was.
+ */
+function summarizeExactCallHeritageOutcomes(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+): readonly HeritageCompletionOutcome[] | undefined {
+  if (isAsyncOrGeneratorCallable(fn)) {
+    return undefined;
+  }
+
+  const body = fn.body;
+  if (body === undefined || !ts.isBlock(body)) {
+    return undefined;
+  }
+
+  const collected = collectHeritageExitOutcomes(body.statements, 0);
+  if (collected === undefined) {
+    return undefined;
+  }
+
+  return collected.fallsThrough
+    ? // Running off the end of a function body IS `return undefined`.
+      [...collected.exits, "non-constructable"]
+    : collected.exits;
+}
+
+/**
+ * Whether evaluating `expression` in a class's `extends` position cannot
+ * lead to a class definition that completes NORMALLY, because EVERY
+ * analyzable ending of the exact local callable it invokes is
+ * class-definition-fatal — some by throwing, some by handing back a value
+ * that is not a valid base (RWF-027).
+ *
+ * **This is deliberately not "the call cannot complete normally".** Read
+ * the canonical case:
+ *
+ * ```js
+ * function maybe(flag) {
+ *   if (flag) { throw new Error("boom"); }
+ *   return 1;
+ * }
+ * class C extends maybe(FLAG) {}
+ * ```
+ *
+ * With a falsy `FLAG` the CALL completes perfectly normally and returns
+ * `1`. Nothing about `maybe` is abrupt, and asserting that it were would be
+ * wrong — which is why `maybe(FLAG);` as a plain statement is untouched by
+ * this rule and stays exactly as unknown as RWF-016 leaves it. What is
+ * proven here is narrower and about the CLASS: evaluating this HERITAGE
+ * cannot lead to a normally completed class definition, because the truthy
+ * path throws before ClassDefinitionEvaluation begins and the falsy path
+ * reaches it with `1`, which is neither `null` nor a constructor. Measured
+ * under real `node`: both flag values abort the class definition, one with
+ * `Error: boom` and one with
+ * `TypeError: Class extends value 1 is not a constructor or null`.
+ *
+ * **Why RWF-020 and RWF-022 cannot see this between them.** RWF-020 needs
+ * {@link cannotCompleteNormally} — a body that ALWAYS throws — and `maybe`
+ * does not. RWF-022 needs {@link classifyExactCallReturnValue} — a body
+ * with ONE unconditional ending — and `maybe` has two. Each rule inspects a
+ * property no single path of `maybe` has, while the class-definition
+ * failure is a property of the path set as a WHOLE. RWF-027 composes their
+ * two fatality reasons across that set; it does not widen, weaken or
+ * duplicate either rule, both of which remain exactly as they were and are
+ * still consulted first as separate disjuncts of
+ * {@link isDefinitelyAbruptClassHeritage}.
+ *
+ * **The decision.** Non-completion is proven only when the summary is
+ * known, non-empty, and EVERY outcome in it is in
+ * {@link CLASS_DEFINITION_FATAL_OUTCOMES}. One `"unknown"` refuses. One
+ * `"valid-null"` refuses — `class C extends null {}` is legal and completes.
+ * One `"constructable"` refuses. The asymmetry is the point: a single
+ * surviving good path means the class definition CAN complete, the later
+ * export CAN run, and withdrawing its authority would be an overreach that
+ * this rule must never commit.
+ *
+ * ```text
+ * throw + 1          -- proven: both endings fatal
+ * 1 + 2              -- proven
+ * 1 + implicit undefined -- proven
+ * throw + throw      -- proven (RWF-020 already had it; unchanged answer)
+ * 1 + null           -- REFUSED: `null` is a valid base
+ * 1 + Base           -- REFUSED: `Base` is unknown, and may be a class
+ * throw + Base       -- REFUSED: a completable path exists
+ * 1 + helper()       -- REFUSED: a call operand is unknown
+ * alias(FLAG)        -- REFUSED: not an exact local callable (RWF-028's)
+ * ```
+ */
+function isDefinitelyNonCompletingClassHeritageCall(
+  expression: ts.Expression,
+): boolean {
+  const unwrapped = unwrapParentheses(expression);
+  if (
+    !ts.isCallExpression(unwrapped) ||
+    !ts.isIdentifier(unwrapped.expression)
+  ) {
+    return false;
+  }
+
+  const target = resolveExactLocalCallableIdentity(unwrapped.expression);
+  if (target === undefined) {
+    return false;
+  }
+
+  const outcomes = summarizeExactCallHeritageOutcomes(target);
+  if (outcomes === undefined || outcomes.length === 0) {
+    return false;
+  }
+
+  return outcomes.every((outcome) =>
+    CLASS_DEFINITION_FATAL_OUTCOMES.has(outcome),
+  );
+}
+
+/**
  * Whether evaluating `expression` in a class's `extends` position
  * necessarily produces a value that is neither `null` nor a constructor,
  * so that ClassDefinitionEvaluation throws a `TypeError` and the class
@@ -3075,7 +3420,8 @@ function isDefinitelyAbruptClassHeritage(node: ts.Node): boolean {
     node.types.some(
       (type) =>
         necessarilyEvaluatesAbruptly(type.expression) ||
-        isDefinitelyInvalidClassHeritageValue(type.expression),
+        isDefinitelyInvalidClassHeritageValue(type.expression) ||
+        isDefinitelyNonCompletingClassHeritageCall(type.expression),
     )
   );
 }
