@@ -4977,6 +4977,16 @@ control and the same-name same-version twin-instance identity control.
 - **Both arms of a conditional expression abrupt** (`FLAG ? bail() :
   bail()`) is refused. Real Node throws either way; proving it needs the
   multi-path join RWF-027 owns. Conservative, recorded, not closed.
+- **One composite interaction reaches a conditional arm anyway, and it is
+  not this relation doing it.** `expressionCannotCompleteNormally` refuses
+  both arms, as above. But an object literal's COMPUTED KEY is reached by
+  the pre-existing `mayEndModuleEvaluation` walk (RWF-024's rule), which is
+  a MAY relation and already withdrew for `FLAG ? { [bail()]: 1 } : 0` on
+  base. Because RWF-026 widened the predicate that path consults,
+  the nested form `FLAG ? { [foo(bail())]: 1 } : 0` now withdraws too. The
+  movement is toward UNKNOWN — never a false `NOT_AFFECTED`, and never an
+  `AFFECTED` — and it makes the nested form agree with the direct one. No
+  generic conditional-arm reasoning was added.
 - **`do`/`while` conditions and `for` INCREMENTORS** are refused for want of
   body-completion reasoning. A `while` condition and a `for` test, which
   need none, are supported.
