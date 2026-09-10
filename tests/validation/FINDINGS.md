@@ -4875,8 +4875,8 @@ absent.
 | unit + integration | 117 files / 2,846 tests | 119 files / 3,062 tests | +216 tests, 0 regressions |
 | adversarial v1 | 34/34 | 34/34 | none |
 | adversarial v2 | 85/85 | 86/86 | **ADV2-086 added; `NOT_AFFECTED` → `UNKNOWN` on base code** |
-| validation | 18 pass / 5 known fail | 18 pass / 5 known fail | none (identical set and verdicts) |
-| hermeticity | 6/6 | 6/6 | none |
+| validation (canonical: `tests/validation/validation.test.ts`) | 12/17 pass, 5 known fail, 0 unexpected | 12/17 pass, 5 known fail, 0 unexpected | none (identical set and verdicts) |
+| hermeticity (`tests/validation/hermeticity.test.ts`) | 6/6 | 6/6 | none |
 | scan-performance | 2/2 | 2/2 | none |
 
 - `UNKNOWN` → `NOT_AFFECTED`: **0**
@@ -4889,9 +4889,17 @@ as documented limitations. Each was updated to the sound expectation with its
 CONDITIONAL counterpart kept adjacent in the same block, so the
 required/refused line stays visible in the suite rather than erased from it.
 
-The five validation failures (VAL-002, VAL-003, RWB-03, RWB-05, RWB-09b) are
+The canonical validation baseline is unchanged in both scope and content:
+`12/17 passed (70.6%)` with `Unexpected failures (not in FINDINGS.md): 0`.
+The five failures (VAL-002, VAL-003, RWB-03, RWB-05, RWB-09b) are
 byte-identical on both sides and are the suite's pre-existing, deliberately
-kept disagreements. Separately, VT-208, VT-301A and VT-307d time out under
+kept disagreements. Note that `npm run test:validation` runs
+`vitest.validation.config.ts`, whose `include` glob covers ALL of
+`tests/validation/`, so its aggregate line reads `18 passed / 5 failed (23)`
+— the canonical 17 CVE cases PLUS the 6 hermeticity tests. Those are two
+counting scopes for the same unchanged result, not a moved baseline; the
+canonical 12/17 figure is the one to compare against. RWF-026 touched no
+validation runner, oracle case, fixture or config — only this document. Separately, VT-208, VT-301A and VT-307d time out under
 parallel load on base and branch alike and pass on both with a raised
 timeout; they are environmental, not semantic.
 
