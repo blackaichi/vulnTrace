@@ -459,4 +459,114 @@ describe("RWF-027: multi-path class-definition completion", () => {
       expectLaterExportKeepsAuthority("", "null");
     });
   });
+
+  describe("self-review attack matrix", () => {
+    // Each row below is an attack on a specific way this mechanism could be
+    // wrong, run against real `node` before being pinned here. The three
+    // that WITHDRAW are runtime-proven fatal on every combination; the rest
+    // keep a combination that completes.
+
+    it("A: does not lose a constructable leaf three levels down", () => {
+      // node, (a,b,c)=(true,true,true): COMPLETED.
+      expectLaterExportKeepsAuthority(
+        "function f(a, b, c) {\n  if (a) {\n    if (b) {\n      if (c) return Base;\n      return 1;\n    }\n    return 2;\n  }\n  return 3;\n}\n",
+        "f(A, B, C)",
+      );
+    });
+
+    it("A: still summarises three levels down when every leaf is fatal", () => {
+      // node: TypeError on all four measured combinations.
+      expectLaterExportWithdrawn(
+        "function f(a, b, c) {\n  if (a) {\n    if (b) {\n      if (c) return 1;\n      return 2;\n    }\n    return 3;\n  }\n  return 4;\n}\n",
+        "f(A, B, C)",
+      );
+    });
+
+    it("A: refuses past the depth bound rather than approximating", () => {
+      // Every ending IS fatal here. The bound is fixed and checkable, and
+      // refusing past it can only ever cost precision.
+      expectLaterExportKeepsAuthority(
+        "function f(a, b, c, d, e, g) {\n  if (a) {\n    if (b) {\n      if (c) {\n        if (d) {\n          if (e) {\n            if (g) return 1;\n            return 2;\n          }\n          return 3;\n        }\n        return 4;\n      }\n      return 5;\n    }\n    return 6;\n  }\n  return 7;\n}\n",
+        "f()",
+      );
+    });
+
+    it("B: does not treat a `null` buried in a deep leaf as invalid", () => {
+      expectLaterExportKeepsAuthority(
+        "function f(a, b) {\n  if (a) {\n    if (b) return null;\n    return 1;\n  }\n  return 2;\n}\n",
+        "f(A, B)",
+      );
+    });
+
+    it("C: a labeled statement and `break` poison the summary", () => {
+      expectLaterExportKeepsAuthority(
+        "function f(a) {\n  lbl: {\n    if (a) break lbl;\n    return 1;\n  }\n  return 2;\n}\n",
+        "f(FLAG)",
+      );
+    });
+
+    it("E: a `return` inside an IIFE is not an exit of the outer callable", () => {
+      // The IIFE's `return Base` must not keep the summary alive...
+      expectLaterExportWithdrawn(
+        "function f(a) {\n  (function () {\n    return Base;\n  })();\n  if (a) return 1;\n  return 2;\n}\n",
+        "f(FLAG)",
+      );
+      // ...and its `return 1` must not make the outer callable fatal.
+      expectLaterExportKeepsAuthority(
+        "function f(a) {\n  (function () {\n    return 1;\n  })();\n  if (a) return Base;\n  return 2;\n}\n",
+        "f(FLAG)",
+      );
+    });
+
+    it("E: a `return` in an object-literal method is not an exit either", () => {
+      expectLaterExportWithdrawn(
+        "function f(a) {\n  const o = {\n    m() {\n      return Base;\n    },\n  };\n  if (a) return 1;\n  return 2;\n}\n",
+        "f(FLAG)",
+      );
+    });
+
+    it("E: a class STATIC BLOCK is not descended into", () => {
+      expectLaterExportWithdrawn(
+        "function f(a) {\n  class K {\n    static {\n      void 0;\n    }\n  }\n  if (a) return 1;\n  return 2;\n}\n",
+        "f(FLAG)",
+      );
+    });
+
+    it("F: one throwing branch of an else-if chain is not promoted to all paths", () => {
+      expectLaterExportKeepsAuthority(
+        "function f(a, b) {\n  if (a) throw new Error();\n  else if (b) return 1;\n  else return Base;\n}\n",
+        "f(A, B)",
+      );
+      expectLaterExportWithdrawn(
+        "function f(a, b) {\n  if (a) throw new Error();\n  else if (b) return 1;\n  else return 2;\n}\n",
+        "f(A, B)",
+      );
+    });
+
+    it("M: a statement after two exiting arms is genuinely unreachable", () => {
+      // `return Base;` here can never run -- node returns 1 or 2 and aborts
+      // on both. Counting it as a path would be the false-refusal mirror of
+      // losing one, so the collector stops when neither arm falls through.
+      expectLaterExportWithdrawn(
+        "function f(a) {\n  if (a) {\n    return 1;\n  } else {\n    return 2;\n  }\n  return Base;\n}\n",
+        "f(FLAG)",
+      );
+    });
+
+    it("keeps the optional-call form answering exactly as the plain one", () => {
+      expectLaterExportWithdrawn(
+        "function f(a) {\n  if (a) return 1;\n  return 2;\n}\n",
+        "f?.(FLAG)",
+      );
+    });
+
+    it("RWF-022: a GENERATOR callee is decided by identity, not by its body", () => {
+      // Calling a generator returns a generator object without running the
+      // body at all. node: TypeError on both flag values.
+      expectLaterExportWithdrawn(
+        "function* f(a) {\n  if (a) return 1;\n  return Base;\n}\n",
+        "f(FLAG)",
+      );
+    });
+  });
 });
