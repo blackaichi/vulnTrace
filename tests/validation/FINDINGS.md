@@ -5216,6 +5216,43 @@ wrong in principle.
 Validation baseline unchanged at 12 PASS / 5 KNOWN_FAIL / 0 UNEXPECTED / 17
 total. Adversarial v1 34/34, v2 87/87.
 
+### Self-review — the attack matrix, and what each attack found
+
+Every row below was executed against real `node` before being pinned, and
+all of them now live in the `self-review attack matrix` block of
+`module-model.multipath-class-definition-completion.test.ts`.
+
+| # | attack | result |
+| --- | --- | --- |
+| A | a constructable path silently dropped | **clean** — a valid leaf three `if`s deep still refuses; the same shape with every leaf fatal still withdraws |
+| B | `null` treated as invalid | **clean** — `valid-null` is its own outcome and refuses, including buried in a deep leaf |
+| C | an unknown path ignored | **clean** — one `"unknown"` refuses the whole summary; labeled statements and `break` poison it outright |
+| D | implicit fallthrough ignored | **clean** — appended explicitly as `return undefined`, never absent |
+| E | a nested function's `return` counted as an outer exit | **clean** — structurally impossible; pinned for nested declarations, methods, object-literal methods, class static blocks and IIFEs, in BOTH directions |
+| F | a one-branch throw promoted to all paths | **clean** — an `else if` chain with a constructable tail refuses; the same chain all-fatal withdraws |
+| G | a plain call gaining class-specific semantics | **clean** — `maybe(FLAG);` and `const v = maybe(FLAG);` answer identically to base |
+| H | a reassigned callee using a stale summary | **clean** — `resolveExactLocalCallableIdentity` refuses (RWF-025), pinned in the unit matrix and ADV2-087 |
+| I | P0-E alias/member absorbed | **clean** — both refuse; verified unchanged |
+| J | RWF-020 regression | **clean** — single always-throwing callee and throw+throw both withdraw, same answers |
+| K | RWF-022 regression | **clean** — single invalid return, direct invalid value, `extends null`, `async` and generator callees all unchanged |
+| L | Family C globally suppressed | **clean** — both Family C controls still `NOT_AFFECTED` with `reachableSubgraphComplete: true` |
+| M | false AFFECTED from partial enumeration | **clean** — the one shape that looked risky, a `return Base;` after two exiting arms, is genuinely UNREACHABLE at runtime; node returns 1 or 2 and aborts on both |
+| N | a false `NOT_AFFECTED` remaining in a supported all-fatal set | **clean** — every supported combination withdraws; the unsupported ones refuse and are listed under Remaining limitations |
+
+Two rows are worth stating rather than merely ticking.
+
+**M was the only attack that could have gone either way.** Counting the
+unreachable trailing `return Base;` as a path would be the exact mirror of
+losing a real one: it would refuse a heritage that is genuinely fatal on
+every path. The collector stops when neither arm of an `if` falls through,
+which is what makes the answer right rather than lucky, and node confirms
+`f` returns 1 or 2 and never `Base`.
+
+**The depth bound refuses in the safe direction.** A six-deep nested `if`
+whose every leaf is fatal is left UNKNOWN. That is a precision loss, is
+recorded as one, and is the correct trade: a fixed, checkable ceiling is
+what keeps "bounded" a property rather than a claim.
+
 ### Corpus
 
 Scanned with a standalone syntactic scanner implementing RWF-027's own
