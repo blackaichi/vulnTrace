@@ -4872,7 +4872,7 @@ absent.
 
 | suite | base | branch | movement |
 | --- | --- | --- | --- |
-| unit + integration | 117 files / 2,846 tests | 119 files / 3,019 tests | +173 tests, 0 regressions |
+| unit + integration | 117 files / 2,846 tests | 119 files / 3,062 tests | +216 tests, 0 regressions |
 | adversarial v1 | 34/34 | 34/34 | none |
 | adversarial v2 | 85/85 | 86/86 | **ADV2-086 added; `NOT_AFFECTED` → `UNKNOWN` on base code** |
 | validation | 18 pass / 5 known fail | 18 pass / 5 known fail | none (identical set and verdicts) |
@@ -4938,14 +4938,18 @@ with a complete negative proof, and the shapes are ordinary JavaScript.
 
 ### Verification
 
-`npx vitest run` (119 files, 3,019 tests, all pass) · `npm run
+`npx vitest run` (119 files, 3,062 tests, all pass) · `npm run
 test:adversarial` (v1 34/34, v2 86/86) · `npm run test:validation`
 (unchanged from base) · hermeticity 6/6 · `npm run test:performance` (2/2)
 · `npm run typecheck` · `npm run lint` · `npm run build` · `npm run format`
 · `npm run validate:history`. New focused suite:
 `src/code-intelligence/module-model.definitely-abrupt-expression-evaluation.test.ts`
-(163 tests) — a table-driven required/refused matrix, adjacent boundary
-pairs, source-order cases, and the RWF-024/025/027/028 interaction blocks.
+(206 tests) — a table-driven required/refused matrix, adjacent boundary
+pairs, source-order cases, the RWF-024/025/027/028 interaction blocks, and
+the 43-row SELF-REVIEW attack matrix (conditional branch treated as
+mandatory, function body crossed, instance field or default parameter
+crossed, optional-chain guard ignored, stale binding trusted after
+reassignment, P0-B or P0-E absorbed), which reports 0 mismatches.
 New end-to-end regression:
 `src/analysis/verdict.expression-position-throwing-call-export-authority.integration.test.ts`
 (9 tests), including the Family C positive control, the conditional/deferred
@@ -4981,3 +4985,18 @@ control and the same-name same-version twin-instance identity control.
 - **`try`/`finally` without a `catch`** still ends module evaluation, and
   `try`/`catch` still stops it, both through the pre-existing
   `isCaughtWithin`; RWF-026 adds no exception-flow semantics of its own.
+- **MAY-execute abrupt operands are a separate, INHERITED family, stated
+  here explicitly rather than left implicit.** `mayEndModuleEvaluation` is
+  a MAY relation elsewhere — a cutoff inside an `if` body or a loop body
+  withdraws authority, because it *may* run — but a conditional OPERAND
+  (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) does not, on base
+  `13c82e4` and on this branch alike. On a truthy `flag` the later export
+  really is unreached, so this is the same defect family one step further
+  out, and it is the reason the governing task listed those shapes as
+  BLOCK-if-withdrawn controls: closing them means deciding whether the
+  operand model should become MAY like the statement model, which is a
+  design question this task was explicitly scoped away from. RWF-026
+  neither introduces nor widens it — the branch answers every one of these
+  identically to base — but it is a real, tracked gap, not a settled one,
+  and it is the natural candidate for whichever task takes the
+  conditional-operand axis next.
