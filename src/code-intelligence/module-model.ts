@@ -2279,28 +2279,93 @@ function isAccountedObjectBindingUse(
   }
   // `h.x` — accounted for only as a READ. A write, delete or update
   // through it changes the very property this relation wants to read.
-  const access = parent.parent as ts.Node | undefined;
-  if (access === undefined) {
+  return !isWriteTargetPosition(parent);
+}
+
+/**
+ * Whether `node` sits in a position that WRITES to whatever it denotes
+ * (RWF-028).
+ *
+ * The direct forms are the obvious ones — `h.x = v`, `h.x ??= v`,
+ * `h.x++`, `delete h.x`. The ones worth building a walk for are the
+ * destructuring forms, because a write target can be nested arbitrarily
+ * deep inside a pattern that is syntactically an object or array
+ * LITERAL:
+ *
+ * ```js
+ * ({ a: h.x } = source);       // writes h.x
+ * [h.x] = values;              // writes h.x
+ * ({ a: { b: h.x } } = source) // writes h.x
+ * for (h.x of list) {}         // writes h.x, once per iteration
+ * ```
+ *
+ * An earlier version of this test looked only at `node`'s immediate
+ * parent and missed every one of those — `const h = { bail }; ({ a:
+ * h.bail } = { a: safeFn }); h.bail();` was proven non-completing when it
+ * completes perfectly well, which is a false AFFECTED invented by this
+ * rule. Found by RWF-028's own self-review attack pass.
+ *
+ * So the walk climbs the pattern's own structure — parentheses and TS
+ * type-only wrappers, array and object literals, property assignments and
+ * spreads — and answers `true` only if it lands on something that is
+ * actually an assignment. Climbing a literal proves nothing on its own:
+ * `foo({ a: h.x })` and `const y = [h.x]` climb exactly the same nodes and
+ * correctly answer `false`, because the walk ends at a call and a
+ * declaration rather than at an assignment's left-hand side.
+ */
+function isWriteTargetPosition(node: ts.Node): boolean {
+  let current: ts.Node = node;
+  for (;;) {
+    const parent = current.parent as ts.Node | undefined;
+    if (parent === undefined) {
+      return false;
+    }
+
+    if (
+      ts.isBinaryExpression(parent) &&
+      isAssignmentOperatorToken(parent.operatorToken.kind) &&
+      parent.left === current
+    ) {
+      return true;
+    }
+    if (
+      (ts.isForOfStatement(parent) || ts.isForInStatement(parent)) &&
+      parent.initializer === current
+    ) {
+      return true;
+    }
+    if (
+      (ts.isPrefixUnaryExpression(parent) ||
+        ts.isPostfixUnaryExpression(parent)) &&
+      parent.operand === current
+    ) {
+      return true;
+    }
+    if (ts.isDeleteExpression(parent) && parent.expression === current) {
+      return true;
+    }
+
+    // Structure a write target can legitimately be nested inside. Nothing
+    // here is a decision — only the tests above decide — so climbing one
+    // of these in a non-assignment context is harmless.
+    if (
+      ts.isParenthesizedExpression(parent) ||
+      ts.isNonNullExpression(parent) ||
+      ts.isAsExpression(parent) ||
+      ts.isSatisfiesExpression(parent) ||
+      ts.isTypeAssertionExpression(parent) ||
+      ts.isArrayLiteralExpression(parent) ||
+      ts.isObjectLiteralExpression(parent) ||
+      ts.isSpreadElement(parent) ||
+      ts.isSpreadAssignment(parent) ||
+      (ts.isPropertyAssignment(parent) && parent.initializer === current)
+    ) {
+      current = parent;
+      continue;
+    }
+
     return false;
   }
-  if (
-    ts.isBinaryExpression(access) &&
-    access.left === parent &&
-    isAssignmentOperatorToken(access.operatorToken.kind)
-  ) {
-    return false;
-  }
-  if (ts.isDeleteExpression(access) && access.expression === parent) {
-    return false;
-  }
-  if (
-    (ts.isPrefixUnaryExpression(access) ||
-      ts.isPostfixUnaryExpression(access)) &&
-    access.operand === parent
-  ) {
-    return false;
-  }
-  return true;
 }
 
 /**

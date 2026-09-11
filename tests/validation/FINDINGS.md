@@ -5601,6 +5601,45 @@ whether `h.run()` was provable would have depended on some UNRELATED
 throwing callable existing elsewhere in the file — precisely the file-level
 inference this task exists to avoid.
 
+### Self-review — one real defect found and fixed
+
+The attack pass ran 36 shapes against the branch, and **four landed** —
+all the same defect, and a false AFFECTED introduced by this task:
+
+```js
+const h = { bail };
+({ x: h.bail } = { x: safeFn });   // writes h.bail
+[h.bail] = [safeFn];               // writes h.bail
+for (h.bail of list) {}            // writes h.bail
+h.bail();                          // ...and this COMPLETES
+```
+
+`confinedObjectBindings` disqualified a binding written through `h.x = v`,
+`h.x++` and `delete h.x`, because it inspected the property access's
+IMMEDIATE parent. A destructuring write target can be nested arbitrarily
+deep inside a pattern that is syntactically an object or array LITERAL, and
+a `for..of`/`for..in` write target hangs off the loop rather than off an
+assignment — so none of those four was seen, and all four were proven
+non-completing for programs that complete perfectly well.
+
+`isWriteTargetPosition` replaces the immediate-parent test with a climb
+through the pattern's own structure (parentheses and TS type-only wrappers,
+array and object literals, property assignments, spreads), answering `true`
+only when the climb lands on something that really is an assignment. Climbing
+a literal proves nothing on its own, which is what keeps `foo({ a: h.x })`
+and `const y = [h.x]` correctly READ positions — pinned in both directions in
+the matrix.
+
+The other 32 attacks held as written, including: a stale alias after
+reassignment, an alias resolved in the wrong scope, an overwritten and a
+safe-last duplicate property, a reassigned object binding, a wrapper whose
+conditional/returning/catching/deferring path survives, recursion, an
+`async` and a generator throw in every provenance form, `new` on an
+arrow, an optional-chain receiver, RWF-025 reassignment facts in each new
+shape, RWF-026 propagation through conditional and deferred positions,
+Family C global suppression, and PackageInstance substitution by
+name-and-version.
+
 ### Remaining limitations (deliberately not fixed here)
 
 - **Source rebinding after alias capture.** `const alias = bail; bail =

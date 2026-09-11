@@ -625,3 +625,133 @@ describe("RWF-028: a throwing callable elsewhere in the file poisons nothing", (
     );
   });
 });
+
+// ---------------------------------------------------------------------
+// The self-review attack pass.
+// ---------------------------------------------------------------------
+
+describe("RWF-028: self-review attacks — nothing runtime-completable may lose authority", () => {
+  it("disqualifies an object binding written through a DESTRUCTURING target", () => {
+    // Found by this task's own self-review, and a real defect while it
+    // lasted: the first version of `confinedObjectBindings` looked only at
+    // a property access's immediate parent, so a write target nested
+    // inside an object or array PATTERN was invisible to it and every one
+    // of these was proven non-completing. All four complete.
+    for (const body of [
+      "const h = { bail };\n({ x: h.bail } = { x: safeFn });\nh.bail();",
+      "const h = { bail };\n({ x: { y: h.bail } } = src);\nh.bail();",
+      "const h = { bail };\n[h.bail] = [safeFn];\nh.bail();",
+      "const h = { bail };\n[[h.bail]] = src;\nh.bail();",
+      "const h = { bail };\n({ ...h.bail } = src);\nh.bail();",
+      "const h = { bail };\n({ x: h.bail = safeFn } = src);\nh.bail();",
+    ]) {
+      expectKept(mod(body));
+    }
+  });
+
+  it("disqualifies an object binding written through a for-of / for-in TARGET", () => {
+    for (const body of [
+      "const h = { bail };\nfor (h.bail of list) {\n}\nh.bail();",
+      "const h = { bail };\nfor (h.bail in obj) {\n}\nh.bail();",
+    ]) {
+      expectKept(mod(body));
+    }
+  });
+
+  it("disqualifies an object binding written through a COMPOUND or logical assignment", () => {
+    for (const body of [
+      "const h = { bail };\nh.bail ??= safeFn;\nh.bail();",
+      "const h = { bail };\nh.bail ||= safeFn;\nh.bail();",
+      "const h = { bail };\nh.bail &&= safeFn;\nh.bail();",
+    ]) {
+      expectKept(mod(body));
+    }
+  });
+
+  it("does NOT disqualify a binding merely nested inside a READ-position literal", () => {
+    // The same climb the destructuring test exercises, in a context that
+    // is not an assignment at all. Over-disqualifying here would cost
+    // precision silently, so it is pinned in both directions.
+    expectRefused(
+      mod("const h = { bail };\nconst y = { x: h.bail };\nh.bail();"),
+    );
+    expectRefused(mod("const h = { bail };\nconst y = [h.safe];\nh.bail();"));
+  });
+
+  it("disqualifies an object binding that ESCAPES by any route", () => {
+    for (const body of [
+      "const h = { bail };\nObject.assign(h, { bail: safeFn });\nh.bail();",
+      "const h = { bail };\nObject.defineProperty(h, 'bail', {});\nh.bail();",
+      "const h = { bail };\nwith (h) {\n}\nh.bail();",
+      "const h = { bail };\nfunction f(x = h) {\n  x.bail = safeFn;\n}\nf();\nh.bail();",
+      "const h = { bail };\ntouch(...[h]);\nh.bail();",
+      "const h = { bail };\nregister([h]);\nh.bail();",
+      "const h = { bail };\ntag`${h}`;\nh.bail();",
+      "const h = { bail };\nmodule.exports.h = h;\nh.bail();",
+    ]) {
+      expectKept(mod(body));
+    }
+  });
+
+  it("resolves an object RECEIVER by lexical scope, in both directions", () => {
+    // Safe inner receiver over a throwing outer one: must keep.
+    expectKept(
+      mod(
+        "const h = { bail };\n{\n  const h = { bail: safeFn };\n  h.bail();\n}",
+      ),
+    );
+    // Throwing inner receiver over a safe outer one: must withdraw.
+    expectRefused(
+      mod("const h = { safeFn };\n{\n  const h = { bail };\n  h.bail();\n}"),
+    );
+  });
+
+  it("keeps a WRAPPER body's own lexical scope authoritative", () => {
+    // A safe shadow inside the wrapper must not be crossed to reach the
+    // module-scope throwing `bail`.
+    expectKept(
+      mod('function w() {\n  const bail = () => "safe";\n  bail();\n}\nw();'),
+    );
+    // A nested block inside the wrapper body still reaches the throw.
+    expectRefused(mod("function w() {\n  {\n    bail();\n  }\n}\nw();"));
+    // Constructs the statement classifier does not model stay refused.
+    for (const body of [
+      "function w() {\n  switch (x) {\n    default:\n      bail();\n  }\n}\nw();",
+      "function w() {\n  try {\n    bail();\n  } finally {\n  }\n}\nw();",
+      "function w() {\n  while (x) {\n    bail();\n  }\n}\nw();",
+    ]) {
+      expectKept(mod(body));
+    }
+  });
+
+  it("spends the provenance budget ONCE, however the hops are spelled", () => {
+    for (const body of [
+      "const alias = bail;\nconst h = { run: alias };\nh.run();",
+      "const h = { bail };\nconst a = h.bail;\na();",
+    ]) {
+      expectKept(mod(body));
+    }
+  });
+
+  it("keeps RWF-026's conditional and deferred positions closed to the new provenance", () => {
+    for (const body of [
+      "const alias = bail;\ndo {\n  break;\n} while (alias());",
+      "const alias = bail;\nfor (let i = 0; i < 1; alias()) {\n  break;\n}",
+      "const alias = bail;\nconst x = FLAG && alias();",
+      "const alias = bail;\nconst x = obj?.m(alias());",
+      "const h = { bail };\nclass C {\n  m() {\n    h.bail();\n  }\n}",
+      "const h = { bail };\nfunction f(x = h.bail()) {}",
+      "const alias = bail;\nclass C {\n  f = alias();\n}",
+    ]) {
+      expectKept(mod(body));
+    }
+    // ...while the REQUIRED positions stay open to it.
+    for (const body of [
+      "const alias = bail;\nclass C {\n  static f = alias();\n}",
+      "const alias = bail;\nfor (const q of alias()) {\n}",
+      "const h = { bail };\nwhile (h.bail()) {\n}",
+    ]) {
+      expectRefused(mod(body));
+    }
+  });
+});
