@@ -755,3 +755,127 @@ describe("RWF-028: self-review attacks — nothing runtime-completable may lose 
     }
   });
 });
+
+// ---------------------------------------------------------------------
+// Function-like scope declarations (RWF-028 remediation).
+// ---------------------------------------------------------------------
+
+describe("RWF-028 remediation: a function-like scope declares its parameters and its self-name", () => {
+  // Every row here COMPLETES under real node (verified with a
+  // laterExport flag), so proving any of them non-completing withdraws
+  // authority from an export that genuinely runs — the false AFFECTED
+  // this remediation exists to remove. The independent audit found seven
+  // of them; the rest are the neighbouring binding forms.
+
+  it("(1-2) a PLAIN parameter shadows an outer throwing callable", () => {
+    expectKept(mod("function w(bail) {\n  bail();\n}\nw(safeFn);"));
+    expectKept(mod("function w(x, bail) {\n  bail();\n}\nw(1, safeFn);"));
+  });
+
+  it("(3) a DEFAULT parameter shadows, and its initializer is not the body's callee", () => {
+    // Inside the body `bail` is the PARAMETER, whatever the default
+    // initializer names. Resolving the body call to the initializer's
+    // target would be parameter-value propagation, which this task does
+    // not do.
+    expectKept(mod("function w(bail = safeFn) {\n  bail();\n}\nw();"));
+    expectKept(mod("function w(bail = bail2) {\n  bail();\n}\nw();"));
+  });
+
+  it("(4-5) an OBJECT-destructured parameter shadows, renamed or not", () => {
+    expectKept(
+      mod("function w({ bail }) {\n  bail();\n}\nw({ bail: safeFn });"),
+    );
+    expectKept(
+      mod("function w({ x: bail }) {\n  bail();\n}\nw({ x: safeFn });"),
+    );
+    expectKept(
+      mod(
+        "function w({ a: { bail } }) {\n  bail();\n}\nw({ a: { bail: safeFn } });",
+      ),
+    );
+    expectKept(mod("function w({ bail = safeFn }) {\n  bail();\n}\nw({});"));
+  });
+
+  it("(6-7) an ARRAY-destructured and a REST parameter shadow", () => {
+    expectKept(mod("function w([bail]) {\n  bail();\n}\nw([safeFn]);"));
+    expectKept(mod("function w([, bail]) {\n  bail();\n}\nw([1, safeFn]);"));
+    expectKept(mod("function w(...bail) {\n  bail[0]();\n}\nw(safeFn);"));
+  });
+
+  it("(8-9) an ARROW and a FUNCTION-EXPRESSION parameter shadow", () => {
+    expectKept(mod("const w = (bail) => {\n  bail();\n};\nw(safeFn);"));
+    expectKept(mod("const w = function (bail) {\n  bail();\n};\nw(safeFn);"));
+    expectKept(
+      mod("const w = function outerName(bail) {\n  bail();\n};\nw(safeFn);"),
+    );
+  });
+
+  it("(10) a DEPTH-2 wrapper does not cross the inner parameter scope", () => {
+    expectKept(
+      mod(
+        "function inner(bail) {\n  bail();\n}\nfunction outer() {\n  inner(safeFn);\n}\nouter();",
+      ),
+    );
+  });
+
+  it("(11) a named FUNCTION EXPRESSION's self-name shadows an outer binding", () => {
+    // `bail` inside the expression IS the expression, not the outer
+    // throwing declaration.
+    expectKept(mod("const w = function bail() {\n  return 1;\n};\nw();"));
+  });
+
+  it("(12) a named FUNCTION EXPRESSION's self-RECURSION stays refused", () => {
+    // `inner()` resolves to the expression itself, which this relation
+    // reads no body out of — and nontermination is not abruptness.
+    expectKept(mod("const w = function inner() {\n  inner();\n};\nw();"));
+  });
+
+  it("(13) an ANONYMOUS function expression still resolves a legitimate outer callee", () => {
+    // No self-name exists, nothing shadows, and the wrapper really does
+    // always throw: the cutoff must survive this change.
+    expectRefused(mod("const w = function () {\n  bail();\n};\nw();"));
+    expectRefused(mod("const w = () => {\n  bail();\n};\nw();"));
+  });
+
+  it("(14) a function expression's name does NOT leak into the surrounding scope", () => {
+    // `f` is unresolvable at module scope, exactly as before this change
+    // (real node raises ReferenceError, which this relation does not
+    // model — the point here is only that the new rule creates no
+    // binding outside the expression).
+    expectKept(mod("const x = function f() {\n  throw new Error();\n};\nf();"));
+  });
+
+  it("(15-16) catch and for bindings still shadow, unchanged", () => {
+    expectKept(mod("try {\n  safeFn();\n} catch (bail) {\n  bail();\n}"));
+    expectKept(
+      mod("const xs = [safeFn];\nfor (const bail of xs) {\n  bail();\n}"),
+    );
+    expectKept(
+      mod(
+        "const xs = [{ bail: safeFn }];\nfor (const { bail } of xs) {\n  bail();\n}",
+      ),
+    );
+  });
+
+  it("(17) a wrapper with NO shadow still resolves the module-level callee", () => {
+    expectRefused(mod("function w() {\n  bail();\n}\nw();"));
+    expectRefused(mod("function w(other) {\n  bail();\n}\nw(1);"));
+  });
+
+  it("(18) the existing safe-inner-shadow control is unaffected", () => {
+    expectKept(
+      `${TWO}${BAIL}{\n  const bail = () => "safe";\n  bail();\n}\nmodule.exports = second;\n`,
+    );
+  });
+
+  it("treats a parameter as a SHADOWING BARRIER, never as positive provenance", () => {
+    // The throwing function really is what gets passed here, so this
+    // module aborts under real node — and this relation still refuses,
+    // because proving it would need call-site arguments mapped onto
+    // parameters. Refusing is base's answer too; it costs precision, not
+    // soundness, and pinning it stops the barrier from quietly turning
+    // into an inference.
+    expectKept(mod("function w(bail) {\n  bail();\n}\nw(bail);"));
+    expectKept(mod("function w(cb) {\n  cb();\n}\nw(bail);"));
+  });
+});

@@ -1581,12 +1581,63 @@ function ownStatementsOf(node: ts.Node): readonly ts.Statement[] | undefined {
  * Whether `ancestor` — one node on the walk from a call site up toward the
  * module's own top level — itself directly declares a binding named
  * `name` (RWF-016), shadowing anything declared further out. Checked
- * against a `catch` clause's own parameter, a `for`/`for..of`/`for..in`
- * loop's own declaration, and — for every other scope-bearing ancestor —
- * that scope's OWN statement list (never a further-nested block's, which
- * the walk will visit on its own next iteration).
+ * against a `catch` clause's own parameter, a FUNCTION-LIKE scope's own
+ * parameters and self-name, a `for`/`for..of`/`for..in` loop's own
+ * declaration, and — for every other scope-bearing ancestor — that
+ * scope's OWN statement list (never a further-nested block's, which the
+ * walk will visit on its own next iteration).
+ *
+ * The function-like case was added by RWF-028's remediation, and the
+ * reason it was not needed before is worth recording: until RWF-028 this
+ * walk only ever started at a MODULE-SCOPE call site, so a function-like
+ * node could never be one of the ancestors it visited. RWF-028's wrapper
+ * analysis is the first consumer that resolves an identifier from INSIDE
+ * a function body, and without this case the walk stepped straight over
+ * the function boundary out to module scope:
+ *
+ * ```js
+ * function bail() { throw new Error("boom"); }
+ * function w(bail) { bail(); }   // the PARAMETER, not the outer callable
+ * w(safeFn);                     // ...so this completes
+ * ```
+ *
+ * Resolving that body's `bail()` to the outer, throwing `bail` withdrew a
+ * later export's authority from a module that runs to completion — a
+ * false AFFECTED. The fix belongs here, at the shared lexical-declaration
+ * boundary, rather than in the wrapper resolver: every consumer of this
+ * walk asks the same question, and a wrapper-specific name check would
+ * leave the abstraction wrong for the next one.
+ *
+ * Note what this case does and does NOT do. It makes a parameter a
+ * SHADOWING BARRIER — ancestor lookup stops, and the answer is
+ * `undefined` — and nothing more. A parameter is never itself an exact
+ * callable: this relation does not map call-site arguments onto
+ * parameters, so `function w(bail) { bail(); } w(realThrower);` is
+ * refused rather than proven, which is the same answer base gives and the
+ * only sound one without interprocedural value flow.
  */
 function scopeDeclares(ancestor: ts.Node, name: string): boolean {
+  if (ts.isFunctionLike(ancestor)) {
+    for (const parameter of ancestor.parameters) {
+      if (bindingNameIncludes(parameter.name, name)) {
+        return true;
+      }
+    }
+    // A named function EXPRESSION binds its own name inside its own body
+    // and nowhere else: in `const w = function bail() { bail(); }` the
+    // inner `bail` is the function expression itself. This is reached
+    // only for an ancestor of the call site, so the name cannot leak to
+    // surrounding code — `const w = function f() {}; f();` never visits
+    // the expression at all and still resolves nothing.
+    //
+    // A function DECLARATION is deliberately absent: its name belongs to
+    // the ENCLOSING scope's statement list, which the generic path below
+    // already reads, and claiming it here too would change nothing except
+    // to blur where the binding actually lives.
+    if (ts.isFunctionExpression(ancestor) && ancestor.name?.text === name) {
+      return true;
+    }
+  }
   if (ts.isCatchClause(ancestor)) {
     return (
       ancestor.variableDeclaration !== undefined &&
