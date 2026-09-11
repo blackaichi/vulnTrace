@@ -5253,9 +5253,85 @@ export function buildModuleModel(index: SourceIndex): ModuleModel {
  * src/analysis/verdict.ts's `entrypointSourceNodes`; neither is an
  * attribution, and nothing resolves a vulnerable target through either.
  */
+/**
+ * Why {@link entrypointRootCandidates} could not turn a configured
+ * entrypoint's exported behavior into concrete reachability roots (P0-Z).
+ *
+ * - `unresolved_entrypoint_reexport` — the entrypoint publishes an export
+ *   whose value comes from ANOTHER module (`module.exports =
+ *   require("./x")`, `module.exports.run = require("./x").run`,
+ *   `export { run } from "./x"`, `export * from "./x"`). The callable an
+ *   importer actually receives does not live in this file, and
+ *   `entrypointSourceNodes` matches roots only among this file's own
+ *   graph nodes, so no local node can stand for it.
+ * - `unresolved_export_forwarding` — a call MUTATES the export object
+ *   with values this model does not enumerate (`Object.assign(
+ *   module.exports, require("./x"))`). The module model produces no
+ *   export binding at all for this shape, so without an explicit signal
+ *   it is indistinguishable from a file that exports nothing.
+ * - `unresolved_computed_export_name` — the file publishes a value under a
+ *   name that is not statically known (`module.exports[k] = run`). The
+ *   callable is LOCAL and rootable in principle, but no export binding is
+ *   produced for it, so it contributes no root and the file looks like one
+ *   that exports nothing. An importer that knows the runtime name calls it
+ *   perfectly well.
+ * An entrypoint that cannot be PARSED is deliberately not a reason here:
+ * that file is also a `ModuleLoadClosure` root, so the closure already
+ * records `parse_failure` and `invalidatesCallGraphNegativeProof` already
+ * blocks families B and C on it. Closure completeness and root-derivation
+ * completeness are independent assumptions, and duplicating one inside the
+ * other would blur which condition actually mattered.
+ */
+export type EntrypointRootIncompletenessReason =
+  | "unresolved_entrypoint_reexport"
+  | "unresolved_export_forwarding"
+  | "unresolved_computed_export_name";
+
+/** One concrete reason a configured entrypoint's root set is incomplete. */
+export interface EntrypointRootIncompleteness {
+  readonly reason: EntrypointRootIncompletenessReason;
+  /** The module the exported value was forwarded from, when known. */
+  readonly specifier?: string;
+  /** The exported name affected, when the form names one. */
+  readonly exportedName?: string;
+  readonly location?: SourceLocation;
+}
+
 export interface EntrypointRootCandidates {
   readonly names: ReadonlySet<string>;
   readonly locations: readonly SourceLocation[];
+  /**
+   * Whether every relevant exported root was either concretely derived or
+   * positively proven irrelevant (P0-Z).
+   *
+   * THE DISTINCTION THIS EXISTS TO MAKE. Before P0-Z this result was just
+   * `{names, locations}`, so an empty root set meant two different things
+   * that must never be conflated:
+   *
+   * ```js
+   * const x = 1;                              // no exported callable:
+   *                                           //   nothing to root, COMPLETE
+   * module.exports = require("./sibling.js"); // exports a callable this
+   *                                           //   analyzer cannot root: INCOMPLETE
+   * ```
+   *
+   * Both produced zero names. The second then let `analyzeReachability`
+   * start effectively at the `<module>` node alone, meet no unresolved
+   * edge, and report `unreachable` — which family C serialized as
+   * `reachableSubgraphComplete: true`. The subgraph really was exhausted;
+   * it was simply never ROOTED correctly, and the analyzer had no way to
+   * say so. P0-Z reproduced six false NOT_AFFECTED verdicts on exactly
+   * that mechanism, against runtime-reachable targets.
+   *
+   * Deliberately NOT expressed by emptying or widening `names`: this is
+   * uncertainty about WHICH ROOT, not about which callable is the export,
+   * and faking a root (or faking an unresolved call edge later) would put
+   * the uncertainty at the wrong layer and lie in diagnostics. It is also
+   * deliberately independent of `ModuleLoadClosure.complete`, which
+   * answers a different question about a different traversal.
+   */
+  readonly complete: boolean;
+  readonly incompleteness: readonly EntrypointRootIncompleteness[];
 }
 
 /**
@@ -5441,12 +5517,135 @@ function collectExportWriteCandidates(
   }
 }
 
+/**
+ * Whether one export binding publishes a value that comes from ANOTHER
+ * module, so no node in the entrypoint's own file can serve as its root
+ * (P0-Z).
+ *
+ * Both syntaxes are covered because both lose the root the same way, and
+ * each carries the fact on its own field: ESM's `export { x } from "./y"`
+ * / `export * from "./y"` arrives as `kind: "re-export"`, while CommonJS
+ * `module.exports = require("./y")` arrives as {@link
+ * ExportBinding.commonJsReExport} (see that field's own doc comment for
+ * why the two are deliberately separate).
+ *
+ * A name on the binding does NOT make it rootable: `export { run } from
+ * "./x"` and `module.exports.run = require("./x").run` both carry the name
+ * `run`, and both publish a callable defined in `./x`, so a same-file
+ * lookup for `run` finds either nothing or — worse — an unrelated local
+ * that merely shares the text.
+ */
+function isForeignOriginExport(exp: ExportBinding): boolean {
+  return exp.kind === "re-export" || exp.commonJsReExport !== undefined;
+}
+
+/**
+ * Whether a call MUTATES the CommonJS export object directly, e.g.
+ * `Object.assign(module.exports, require("./x"))` (P0-Z).
+ *
+ * Deliberately keyed on the export object being the call's FIRST argument
+ * — the mutation TARGET position for `Object.assign`,
+ * `Object.defineProperty` and `Object.defineProperties` alike. A mention
+ * anywhere else (`console.log("exports are", module.exports)`,
+ * `{ ...module.exports }`) publishes nothing and must not make an
+ * otherwise-complete entrypoint incomplete, which is why this is not a
+ * blanket "mentions `module.exports` anywhere" test.
+ *
+ * KNOWN, DELIBERATE IMPRECISION: a pure READ that happens to sit in
+ * first-argument position (`JSON.stringify(module.exports)`) is reported
+ * too. Distinguishing it would require knowing whether the callee mutates
+ * its argument, which is exactly the whole-program question this fix is
+ * scoped not to open — and the costs are asymmetric. Over-reporting turns
+ * a NOT_AFFECTED into an UNKNOWN; under-reporting turns a reachable target
+ * into a false NOT_AFFECTED, which is the defect this exists to prevent.
+ * The imprecise direction is the safe one, so it is taken knowingly rather
+ * than narrowed to a fragile allowlist of known-mutating callees.
+ *
+ * The module model produces no {@link ExportBinding} whatsoever for this
+ * shape, so unlike a re-export there is nothing else to detect it by.
+ */
+function isCommonJsExportObject(node: ts.Expression): boolean {
+  if (ts.isIdentifier(node)) {
+    return node.text === "exports";
+  }
+  return (
+    ts.isPropertyAccessExpression(node) &&
+    ts.isIdentifier(node.expression) &&
+    node.expression.text === "module" &&
+    node.name.text === "exports"
+  );
+}
+
+function exportForwardingCalls(
+  sourceFile: ts.SourceFile,
+): readonly ts.CallExpression[] {
+  const found: ts.CallExpression[] = [];
+
+  function visit(node: ts.Node): void {
+    if (
+      ts.isCallExpression(node) &&
+      node.arguments.length > 0 &&
+      isCommonJsExportObject(node.arguments[0]!)
+    ) {
+      found.push(node);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return found;
+}
+
+/**
+ * Every `module.exports[<computed>] = ...` write whose published NAME is
+ * not statically known (P0-Z).
+ *
+ * The callable on the right-hand side is typically local and perfectly
+ * rootable; what is missing is the name it becomes visible under. The
+ * module model produces no {@link ExportBinding} for such a write, so the
+ * file looks exactly like one that exports nothing — the same conflation
+ * as a re-export, reached through a third route:
+ *
+ * ```js
+ * function run(u) { return dep.dangerousOp(u); }
+ * module.exports[process.env.K] = run;   // publishes `run`; name unknown
+ * ```
+ *
+ * A LITERAL computed key (`module.exports["run"] = run`) is deliberately
+ * excluded: its name is statically known and the ordinary named-export
+ * path already models it, so reporting it would cost precision for no
+ * soundness gain.
+ */
+function computedExportNameWrites(
+  sourceFile: ts.SourceFile,
+): readonly ts.ElementAccessExpression[] {
+  const found: ts.ElementAccessExpression[] = [];
+
+  function visit(node: ts.Node): void {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      ts.isElementAccessExpression(node.left) &&
+      isCommonJsExportObject(node.left.expression) &&
+      !ts.isStringLiteralLike(node.left.argumentExpression) &&
+      !ts.isNumericLiteral(node.left.argumentExpression)
+    ) {
+      found.push(node.left);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(sourceFile);
+  return found;
+}
+
 export function entrypointRootCandidates(
   index: SourceIndex,
   model: ModuleModel,
 ): EntrypointRootCandidates {
   const names = new Set<string>();
   const locations: SourceLocation[] = [];
+  const incompleteness: EntrypointRootIncompleteness[] = [];
   let withdrawn = false;
 
   for (const exp of model.exports) {
@@ -5472,6 +5671,34 @@ export function entrypointRootCandidates(
     if (exp.exportAttributionWithdrawn) {
       withdrawn = true;
     }
+    // P0-Z: an export forwarded from another module has no root in THIS
+    // file. Recorded rather than silently contributing nothing, which is
+    // how the root vanished and family C still claimed completeness.
+    if (isForeignOriginExport(exp)) {
+      incompleteness.push({
+        reason: "unresolved_entrypoint_reexport",
+        specifier: exp.specifier ?? exp.commonJsReExport?.specifier,
+        exportedName: exp.exportedName,
+        location: exp.location,
+      });
+    }
+  }
+
+  // P0-Z: export-object mutation the model produces no binding for.
+  for (const call of exportForwardingCalls(index.sourceFile)) {
+    incompleteness.push({
+      reason: "unresolved_export_forwarding",
+      location: toSourceLocation(index.sourceFile, call),
+    });
+  }
+
+  // P0-Z: a real local callable published under a name only the runtime
+  // knows. Rootable in principle, invisible to the model in practice.
+  for (const write of computedExportNameWrites(index.sourceFile)) {
+    incompleteness.push({
+      reason: "unresolved_computed_export_name",
+      location: toSourceLocation(index.sourceFile, write),
+    });
   }
 
   if (withdrawn) {
@@ -5496,7 +5723,12 @@ export function entrypointRootCandidates(
     }
   }
 
-  return { names, locations };
+  return {
+    names,
+    locations,
+    complete: incompleteness.length === 0,
+    incompleteness,
+  };
 }
 
 /**
