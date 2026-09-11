@@ -5,6 +5,7 @@ import {
   entrypointRootCandidates,
   findExportedClassMembers,
   mapExportsToFunctions,
+  type EntrypointRootIncompleteness,
 } from "../code-intelligence/module-model.js";
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
@@ -598,6 +599,12 @@ async function resolveTargetNodes(
   };
 }
 
+/** One entrypoint's reachability roots plus this scan's ability to derive them (P0-Z). */
+interface EntrypointRoots {
+  readonly sources: GraphNode[];
+  readonly incompleteness: readonly EntrypointRootIncompleteness[];
+}
+
 interface ReachableEvidence {
   readonly target: VulnerableSymbolTarget;
   readonly path: readonly GraphNodeId[];
@@ -641,11 +648,17 @@ interface ReachableEvidence {
  *
  * Re-indexes the entrypoint file directly (cheap: entrypoints are few)
  * rather than threading this through `buildCallGraph`'s internals.
+ *
+ * P0-Z: returns the roots alongside whether DERIVING them was complete.
+ * Family C's claim is about a subgraph reachable FROM THESE ROOTS, so an
+ * exhaustively searched subgraph that was never correctly rooted proves
+ * nothing — and before P0-Z there was no channel to say so. See
+ * {@link EntrypointRootCandidates.complete}.
  */
 function entrypointSourceNodes(
   graph: CallGraph,
   entrypoint: Entrypoint,
-): GraphNode[] {
+): EntrypointRoots {
   const sources: GraphNode[] = [];
   const module = moduleNode(graph, entrypoint.filePath);
   if (module) {
@@ -659,7 +672,10 @@ function entrypointSourceNodes(
     if (node) {
       sources.push(node);
     }
-    return sources;
+    // A configured `symbol` narrows the root set by explicit instruction
+    // (SDD-v0.2.md § 6/VT-205), so there is no export surface left to
+    // derive and nothing to be incomplete about.
+    return { sources, incompleteness: [] };
   }
 
   let index;
@@ -668,7 +684,16 @@ function entrypointSourceNodes(
     index = indexSourceFileFromDisk(entrypoint.filePath);
     model = buildModuleModel(index);
   } catch {
-    return sources;
+    // An entrypoint that cannot be indexed has an unknown export surface,
+    // which IS root uncertainty -- but it is not this function's to
+    // report. The same file is a ROOT of the ModuleLoadClosure, so failing
+    // to parse it already records `parse_failure` there, and
+    // `invalidatesCallGraphNegativeProof` already blocks families B and C
+    // on that reason before either can be issued. Reporting it a second
+    // time here would duplicate an existing channel rather than close a
+    // gap, and would conflate closure completeness with root-derivation
+    // completeness -- two independent assumptions this fix keeps separate.
+    return { sources, incompleteness: [] };
   }
 
   // RWF-021: which callables count as roots is its own question, answered
@@ -704,7 +729,38 @@ function entrypointSourceNodes(
     }
   }
 
-  return sources;
+  return { sources, incompleteness: candidates.incompleteness };
+}
+
+/**
+ * Every root-derivation incompleteness across ALL configured entrypoints
+ * (P0-Z).
+ *
+ * Scoped to the whole entrypoint set, not to one entrypoint, because
+ * family C's claim is "no call path from ANY configured entrypoint" and
+ * its evidence lists them all. One entrypoint whose roots could not be
+ * derived is therefore enough to withdraw the proof, even when every other
+ * entrypoint was searched perfectly.
+ */
+function entrypointRootIncompleteness(
+  graph: CallGraph,
+  entrypoints: readonly Entrypoint[],
+): readonly EntrypointRootIncompleteness[] {
+  return entrypoints.flatMap(
+    (entrypoint) => entrypointSourceNodes(graph, entrypoint).incompleteness,
+  );
+}
+
+/** A short, truthful diagnostic for one root-derivation gap. */
+function describeRootIncompleteness(
+  item: EntrypointRootIncompleteness,
+): string {
+  const where = item.location
+    ? ` at ${item.location.file}:${item.location.line}`
+    : "";
+  const from = item.specifier ? ` from "${item.specifier}"` : "";
+  const name = item.exportedName ? ` ("${item.exportedName}")` : "";
+  return `${item.reason}${name}${from}${where}`;
 }
 
 /**
@@ -738,7 +794,7 @@ function hasReachableClosureWideningBlocker(
   entrypoints: readonly Entrypoint[],
 ): boolean {
   for (const entrypoint of entrypoints) {
-    for (const source of entrypointSourceNodes(graph, entrypoint)) {
+    for (const source of entrypointSourceNodes(graph, entrypoint).sources) {
       const unresolvedEdges = collectReachableUnknownEdges(graph, source);
       if (
         unresolvedEdges.some((edge) => isClosureWideningReason(edge.reason))
@@ -809,6 +865,12 @@ async function checkReachability(
    * AGENTS.md: never infer NOT_AFFECTED merely because resolution failed).
    */
   checkedAny: boolean;
+  /**
+   * P0-Z: why the configured entrypoints' reachability roots could not be
+   * fully derived, or empty when they could. Non-empty withholds
+   * `unreachableTarget` (family C's witness) and nothing else.
+   */
+  rootIncompleteness: readonly EntrypointRootIncompleteness[];
 }> {
   const referenceFile = path.join(projectRoot, "package.json");
   let sawUnknown = false;
@@ -819,6 +881,10 @@ async function checkReachability(
     ConfirmedAbsentFromModuleLoadClosure | undefined;
   let absentInstance: string | undefined;
   let unreachableTarget: VulnerableSymbolTarget | undefined;
+  // P0-Z: computed once for the whole entrypoint set, before any target is
+  // searched. Family C's claim spans every configured entrypoint, so one
+  // undrivable root surface withdraws the proof for all of them.
+  const rootIncompleteness = entrypointRootIncompleteness(graph, entrypoints);
 
   for (const target of rule.targets) {
     const {
@@ -948,7 +1014,7 @@ async function checkReachability(
 
     for (const targetNode of targetNodes) {
       for (const entrypoint of entrypoints) {
-        for (const source of entrypointSourceNodes(graph, entrypoint)) {
+        for (const source of entrypointSourceNodes(graph, entrypoint).sources) {
           checkedAny = true;
           const result = analyzeReachability(graph, source, targetNode);
 
@@ -959,6 +1025,7 @@ async function checkReachability(
               reasons,
               representativeTarget: target,
               checkedAny,
+              rootIncompleteness,
             };
           }
           if (result.state === "unknown") {
@@ -969,7 +1036,17 @@ async function checkReachability(
             // exhaustion and found no unresolved edge anywhere in the
             // reachable subgraph (see analyzeReachability, which returns
             // `unknown` rather than `unreachable` if even one exists).
-            unreachableTarget ??= target;
+            //
+            // P0-Z: ...but only if the subgraph was correctly ROOTED. An
+            // exhaustive search from an incomplete root set is exhaustive
+            // over the wrong region, and family C would serialize that as
+            // `reachableSubgraphComplete: true`. Withheld here, at the
+            // single place the family-C witness is established, so
+            // families A and B -- whose proofs do not rest on entrypoint
+            // roots at all -- keep exactly their existing semantics.
+            if (rootIncompleteness.length === 0) {
+              unreachableTarget ??= target;
+            }
           }
         }
       }
@@ -984,6 +1061,7 @@ async function checkReachability(
     absentFromModuleLoadClosure,
     absentInstance,
     unreachableTarget,
+    rootIncompleteness,
   };
 }
 
@@ -1081,6 +1159,7 @@ export async function buildFinding(
     absentFromModuleLoadClosure,
     absentInstance,
     unreachableTarget,
+    rootIncompleteness,
   } = await checkReachability(
     rule,
     graph,
@@ -1321,7 +1400,19 @@ export async function buildFinding(
       evidence: {
         path: [],
         reasons: [
-          "no vulnerable target was searched to exhaustion, so unreachability could not be positively established",
+          // P0-Z: name the ACTUAL uncertainty. When the search finished
+          // but its root set could not be derived, "nothing was searched
+          // to exhaustion" is false and useless -- the search did run, it
+          // simply started from an incomplete set of roots. Reporting the
+          // root gap keeps the diagnostic truthful about which layer the
+          // uncertainty lives at (it is not an unresolved call edge).
+          rootIncompleteness.length > 0
+            ? `entrypoint reachability roots could not be fully derived (${rootIncompleteness
+                .map(describeRootIncompleteness)
+                .join(
+                  ", ",
+                )}), so the exhaustively searched subgraph is not known to be correctly rooted and unreachability could not be positively established`
+            : "no vulnerable target was searched to exhaustion, so unreachability could not be positively established",
         ],
       },
     };
