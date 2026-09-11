@@ -486,12 +486,12 @@ describe("RWF-024: scope, shadowing and aliasing must not be guessed at", () => 
     ).toBe("second");
   });
 
-  it("keeps authority for an ALIASED callee -- one hop only, exactly as RWF-016 has it", () => {
+  it("RESOLVES a one-hop ALIASED callee (RWF-028 closed this)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const alias = bail;\nif (FLAG) {\n  module.exports = first;\n  const o = {\n    [alias()]: 1,\n  };\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("keeps authority for a MEMBER callee -- not a plain identifier", () => {

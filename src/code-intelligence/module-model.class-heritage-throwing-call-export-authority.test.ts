@@ -412,12 +412,12 @@ describe("RWF-020: callee resolution is RWF-016's, reused unchanged", () => {
     ).toBe("second");
   });
 
-  it("keeps authority for an ALIASED callee -- `const alias = bail; class C extends alias() {}`", () => {
+  it("RESOLVES an ALIASED heritage callee, via RWF-028's shared invocation resolver", () => {
     expect(
       defaultExportName(
         reproducer("  const alias = bail;\n  class C extends alias() {}\n"),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("keeps authority for a MEMBER-call heritage -- `class C extends obj.bail() {}`", () => {

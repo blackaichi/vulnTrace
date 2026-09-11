@@ -322,20 +322,20 @@ describe("RWF-017: scope, shadowing and aliasing must not be guessed at", () => 
     ).toBe("second");
   });
 
-  it("keeps authority for an ALIASED initializer call -- no new alias resolution", () => {
+  it("RESOLVES an aliased initializer call (RWF-028 closed this)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const alias = bail;\nconst x = alias();\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for a METHOD initializer call", () => {
+  it("RESOLVES an exact object-member initializer call (RWF-028 closed this)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const obj = { bail };\nconst x = obj.bail();\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 });
 

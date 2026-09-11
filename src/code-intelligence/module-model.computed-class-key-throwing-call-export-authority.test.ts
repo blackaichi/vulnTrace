@@ -381,12 +381,12 @@ describe("RWF-019: the callee body still decides, exactly as under RWF-016", () 
     ).toBeUndefined();
   });
 
-  it("keeps authority: `new bail()` in the key is a NewExpression, not a call this relation models", () => {
+  it("withdraws authority: `new bail()` in the key constructs an exact throwing callable (RWF-028)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}class C {\n  [new bail()] = 1;\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 });
 
@@ -556,20 +556,20 @@ describe("RWF-019: scope, shadowing and aliasing must not be guessed at", () => 
     ).toBe("second");
   });
 
-  it("keeps authority for an ALIASED callee -- one hop only, exactly as RWF-016 has it", () => {
+  it("RESOLVES a one-hop ALIASED callee (RWF-028 closed this)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const alias = bail;\nclass C {\n  [alias()] = 1;\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for a MEMBER callee -- not a plain identifier", () => {
+  it("RESOLVES an exact object-literal MEMBER callee (RWF-028 closed this)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const obj = { bail };\nclass C {\n  [obj.bail()] = 1;\n}\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 });
 
