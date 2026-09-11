@@ -5937,3 +5937,185 @@ fixture suite and the validation baseline, and was one row.
   behavior depends on it. It is kept so that the target walk is complete ON
   ITS OWN, rather than relying on a second, independently-evolving walk to
   compensate for the names it deliberately declines to collect.
+
+## P0-Z remediation — A configured entrypoint's reachability ROOT vanishes when its exported callable is not local, and Family C still certifies completeness
+
+**This is a SOUNDNESS fix, not a precision one.** It removes eight
+reproduced false `NOT_AFFECTED` verdicts, each carrying a complete
+`confirmedUnreachableTarget` proof for a target real Node executes.
+
+### The defect
+
+The P0-Z transversal audit reproduced six false `NOT_AFFECTED` verdicts
+sharing one root cause; this remediation's own mutation matrix found a
+seventh shape and an eighth (the two-hop chain), all the same mechanism.
+
+```js
+// src/index.js -- the CONFIGURED ENTRYPOINT
+module.exports = require("./sibling.js");
+
+// src/sibling.js
+module.exports = { run: () => require("vlib").vulnerable() };
+```
+
+Real Node: `RUN_EXPORTED`, `VULN_EXECUTED`. VulnTrace on `047b68d`:
+`NOT_AFFECTED` + `confirmedUnreachableTarget.reachableSubgraphComplete: true`.
+
+`entrypointSourceNodes` roots reachability at the entrypoint's `<module>`
+node plus the callables `entrypointRootCandidates` names, and it matches
+those names only against nodes **in the entrypoint's own file**. A
+re-exported callable is defined elsewhere, so it contributes no local root.
+`entrypointRootCandidates` returned `{names, locations}` with no
+completeness channel, so that outcome was **indistinguishable** from a file
+that genuinely exports nothing:
+
+```js
+const x = 1;                              // no exported callable: COMPLETE
+module.exports = require("./sibling.js"); // a callable I cannot root: INCOMPLETE
+```
+
+Both produced zero names. `analyzeReachability` then searched from the
+`<module>` node alone, drained its queue, met no unresolved edge, and
+returned `unreachable` — which family C serialized as
+`reachableSubgraphComplete: true`. The subgraph really was exhausted. It
+was simply never **rooted**, and nothing in the pipeline could say so.
+
+This is the same class of defect RWF-021 fixed for export-attribution
+withdrawal, reached through a different route: RWF-021 stopped a *withdrawn
+attribution* from deleting the root, but a *foreign-origin* export never had
+a local root to withdraw.
+
+### Direction — pre-existing, not a regression
+
+Reproduced identically at `9c0ca73` (pre-RWF-025) and at the audited
+`047b68d`. None of RWF-025/025b/026/027/028 introduced or widened it. It is
+recorded here as a soundness defect rather than deferred, because P0 closure
+criterion 1 is branch-current: a reproduced false `NOT_AFFECTED` in
+supported semantics blocks regardless of age.
+
+### The fix — root derivation reports its own completeness
+
+`EntrypointRootCandidates` gains `complete: boolean` and a structured
+`incompleteness: readonly EntrypointRootIncompleteness[]`, with three
+reasons:
+
+| reason | shape |
+| ------ | ----- |
+| `unresolved_entrypoint_reexport` | `module.exports = require("./x")`, `module.exports.run = require("./x").run`, `export { run } from "./x"`, `export * from "./x"`, `module.exports = require("pkg")` |
+| `unresolved_export_forwarding` | `Object.assign(module.exports, ...)`, `Object.defineProperty(module.exports, ...)` — the export object in a call's mutation-target (first-argument) position |
+| `unresolved_computed_export_name` | `module.exports[k] = run` — a LOCAL callable published under a name only the runtime knows |
+
+Both module syntaxes are covered, each read off the field that already
+carries the fact: ESM arrives as `kind: "re-export"`, CommonJS as
+`commonJsReExport`. A NAME on the binding does not make it rootable —
+`export { run } from "./x"` and `module.exports.run = require("./x").run`
+both carry `run` and both publish a callable defined elsewhere.
+
+`checkReachability` computes this once for the whole entrypoint set and
+withholds `unreachableTarget` — family C's witness — when it is non-empty.
+`buildFinding`'s existing `if (!unreachableTarget)` guard then returns
+`UNKNOWN`, reporting the root gap rather than the misleading "nothing was
+searched to exhaustion".
+
+### Why the gate is at the family C witness and nowhere else
+
+Setting `sawUnknown` instead would have been simpler and wrong: that flag is
+checked **before** family B, so an unrootable entrypoint would also have
+withdrawn family B's proof. Family B reasons from call-graph traversal
+corroborated by the module-load closure, neither of which depends on
+entrypoint roots. Families A and B are therefore untouched, by construction
+rather than by assertion — A returns before `sawUnknown` is even consulted,
+and B's branch is never reached differently than before.
+
+Root incompleteness is also kept **separate from
+`ModuleLoadClosure.complete`**. They are independent assumptions about
+different traversals. An entrypoint that cannot be PARSED is deliberately
+not a reason in this enumeration: that file is also a closure root, so
+`parse_failure` is already recorded there and
+`invalidatesCallGraphNegativeProof` already blocks families B and C on it.
+Duplicating it would blur which condition actually mattered.
+
+The uncertainty is represented at its own layer. No phantom unresolved call
+EDGE is fabricated to force the verdict: the real uncertainty is "we do not
+know the root", and the diagnostic says exactly that.
+
+### Ground truth
+
+`fixtures/entrypoint-reexport-root-completeness/verify.cjs` runs under plain
+`node` and asserts, for every blocker form, that the entrypoint really does
+publish a callable and that calling it really does reach the vulnerable
+sink. The analyzer's obligation is measured against that, not against a
+committed expectation.
+
+### Differential (base `047b68d` → branch)
+
+| | base | branch |
+| --- | --- | --- |
+| the 8 blocker forms (2 assertions each) | **16 failed** | **28 passed** |
+| direct-export control | AFFECTED | AFFECTED |
+| valid Family C control | NOT_AFFECTED + complete proof | NOT_AFFECTED + complete proof |
+| no-callable-export control | NOT_AFFECTED + complete proof | NOT_AFFECTED + complete proof |
+| export-object READ control | NOT_AFFECTED + complete proof | NOT_AFFECTED + complete proof |
+
+All four controls pass on **both** sides. That is what makes this a targeted
+fix rather than a blanket disabling of family C.
+
+Global verdict movement: `UNKNOWN → NOT_AFFECTED` = **0**,
+`AFFECTED → NOT_AFFECTED` = **0**. Full suite 3328/3328; canonical
+validation unchanged at 12 PASS / 5 KNOWN_FAIL / 17; adversarial 122/122.
+Every `NOT_AFFECTED` in the real-world corpus (RWB-06, RWB-06A, RWB-07,
+RWB-11b) is preserved.
+
+### Corpus
+
+`scripts/p0z-entrypoint-root-corpus.mjs` over `fixtures/` + `tests/`:
+
+| | count |
+| --- | --- |
+| files scanned | 1045 |
+| files that failed to index | 0 |
+| files with any export | 970 |
+| COMPLETE root derivation | 984 |
+| INCOMPLETE root derivation | 61 |
+
+Of the 61, ten are this task's own fixture and the remainder are
+`node_modules` library internals and circular-import ground-truth helpers —
+none of them a configured entrypoint. Only a file that is BOTH a configured
+entrypoint AND derives roots incompletely can lose a family C proof, which
+is why the corpus moved no verdict.
+
+### Performance
+
+Local to entrypoint root derivation: two extra linear AST walks over the
+entrypoint file only (entrypoints are few, and the file was already being
+indexed). No whole-program fixpoint, no new global CFG, no recursive export
+graph. `scan-performance` unchanged: 2.3s / 8.3s against the 5s / 20s
+thresholds.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **A re-export is reported, never resolved.** The fix makes the
+  uncertainty visible; it does not chase a re-export to its origin module
+  and root the callable there. Doing so would need cross-module roots in
+  `entrypointSourceNodes`, which matches only same-file nodes today. The
+  cost is precision: a re-exporting entrypoint yields `UNKNOWN` where a
+  cross-module root could have yielded `AFFECTED` or a genuine family C.
+  This is the "either is acceptable, false NOT_AFFECTED is not" trade the
+  task allows, taken in the sound direction.
+- **`unresolved_export_forwarding` over-reports a first-argument READ.**
+  `JSON.stringify(module.exports)` is reported, because distinguishing a
+  reading callee from a mutating one is the whole-program question this fix
+  is scoped not to open. The costs are asymmetric — over-reporting turns a
+  `NOT_AFFECTED` into an `UNKNOWN`; under-reporting turns a reachable
+  target into a false `NOT_AFFECTED` — so the imprecise direction is taken
+  knowingly rather than narrowed to a fragile allowlist of known-mutating
+  callees. A mention outside first-argument position is NOT reported, and
+  that control is pinned by execution.
+- **A configured `{file, symbol}` entrypoint derives no export surface and
+  is never incomplete.** That narrowing is explicit user instruction
+  (SDD-v0.2.md § 6 / VT-205), so there is no derived root to be uncertain
+  about. A symbol that does not resolve to a node still leaves only the
+  `<module>` root, exactly as before; unchanged by this task.
+- **Root incompleteness is internal analysis state.** It is not serialized
+  into the finding schema — it reaches the output only as the `UNKNOWN`
+  reason string. No user-facing schema expansion was made.
