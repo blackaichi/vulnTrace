@@ -221,6 +221,22 @@ describe("RWF-027 fixture: a heritage call whose EVERY ending prevents the class
     // the ground-truth fixture's `c.js`. Treating any of them as
     // definitely non-completing would withdraw authority from an export that
     // is genuinely reached: an overreach, not conservatism.
+    //
+    // **What this case does and does not detect.** It is scanned from
+    // `valid-only.cjs`, which `require`s the module and never CALLS its
+    // export, so the target is unreachable either way and this assertion is a
+    // statement about VERDICT and NEGATIVE-PROOF behavior -- that a module
+    // full of multi-path heritage factories still supports a complete Family
+    // C proof. It is NOT sensitive to whether one individual factory's
+    // authority was withdrawn: withdrawing it would leave this verdict
+    // `NOT_AFFECTED` all the same.
+    //
+    // The per-factory overreach controls live one layer down, in
+    // module-model.multipath-class-definition-completion.test.ts, where each
+    // shape is asserted to refuse a cutoff on its own with no earlier cutoff
+    // in the file to mask it. End-to-end fixtures prove verdict and proof
+    // behavior; the focused module-model matrix proves the path-summary
+    // overreach controls.
     const { finding } = await scan({
       module: "fixture-lib/valid-multipath",
       export: "default",
