@@ -1,0 +1,6 @@
+{
+  "name": "rwf-028-circular-import-invocation-provenance-ground-truth",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs"
+}
