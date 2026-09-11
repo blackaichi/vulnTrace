@@ -320,17 +320,230 @@ function collectFacts(sourceFile: ts.SourceFile): CommonJsFacts {
     }
   }
 
-  /** Marks every identifier in an assignment target as written to, however nested (`[a] = ...`, `({ b } = ...)`). */
+  /**
+   * Strips the wrappers that may sit between an assignment target and the
+   * target itself without changing WHICH storage location is written —
+   * parentheses (`(x) = 1`, `({ a: (x) } = o)`) and TypeScript's own
+   * type-only wrappers (`x! = 1`, `(x as T) = 1`). Deliberately a
+   * SYNTACTIC unwrap of one node's `.expression`, never a walk of
+   * children: chasing children is exactly the defect {@link markAssigned}
+   * exists to avoid (RWF-025b).
+   */
+  function unwrapAssignmentTarget(target: ts.Node): ts.Node {
+    let current = target;
+    for (;;) {
+      if (
+        ts.isParenthesizedExpression(current) ||
+        ts.isNonNullExpression(current) ||
+        ts.isAsExpression(current) ||
+        ts.isSatisfiesExpression(current) ||
+        ts.isTypeAssertionExpression(current)
+      ) {
+        current = current.expression;
+        continue;
+      }
+      return current;
+    }
+  }
+
+  /**
+   * Marks every name an assignment target REBINDS, however nested
+   * (`[a] = ...`, `({ b: { c } } = ...)`, `({ ...rest } = ...)`).
+   *
+   * RWF-025b. The recursion descends through ASSIGNMENT-TARGET STRUCTURE
+   * ONLY, never through arbitrary children, because an assignment
+   * target's AST also contains expressions that are merely EVALUATED
+   * while the target is resolved, and those rebind nothing:
+   *
+   * ```js
+   * ({ [keyFor(alias)]: seen } = REGISTRY);  // `seen` is rebound; `alias` is READ
+   * ({ seen = keyFor(alias) } = REGISTRY);   // `seen` is rebound; `alias` is READ
+   * REGISTRY[keyFor(alias)] = value;         // NOTHING is rebound
+   * REGISTRY.alias = value;                  // NOTHING is rebound
+   * ```
+   *
+   * A previous `ts.forEachChild(target, markAssigned)` fallback here
+   * recorded EVERY identifier under the target, so a computed key's
+   * argument (`alias`) landed in {@link CommonJsFacts.reassignedNames}.
+   * That set is this file's authoritative NEGATIVE provenance
+   * (RWF-013b) and is cached per SOURCE FILE, so ONE such unrelated
+   * statement — anywhere in the file, semantically unconnected to the
+   * export — made {@link classifyLocalBinding} refuse that name
+   * FILE-WIDE, withdrawing a CommonJS re-export origin
+   * ({@link commonJsPropertyReExportOrigin}) that the file really does
+   * establish. The direction of that loss is precision-only: an export
+   * nothing can attribute is an unresolved target, which the call graph
+   * records as an `unknown(unresolved_target)` edge and the verdict
+   * layer reports as UNKNOWN — never as a Family C proof.
+   *
+   * This is the exact twin of RWF-025's `markLocallyReassigned` in
+   * module-model.ts, which answers the same question for a different
+   * relation (reassignment within module-evaluation reach) over a
+   * different reach model. The two are deliberately kept semantically
+   * identical about WHAT a target rebinds; they are not shared because
+   * they collect into different models and neither owns the other's
+   * scope rules.
+   *
+   * The roles are distinguished, not suppressed wholesale: in
+   * `({ [keyFor(alias)]: alias } = REGISTRY)` the computed KEY does not
+   * rebind `alias`, but the property VALUE target does, so `alias` is
+   * still marked.
+   *
+   * Property MUTATION (`x.y = ...`, `x[k] = ...`) is excluded for the
+   * reason it always was: it changes the object, not the binding — and
+   * neither the object expression nor the index expression is a binding
+   * this relation may claim was written to.
+   *
+   * Those evaluated-only positions are not ignored, though — they are
+   * handed to {@link markAssignmentsInsideEvaluatedExpression}, which
+   * records the assignments they PERFORM without recording the names
+   * they merely READ.
+   */
   function markAssigned(target: ts.Node): void {
-    if (ts.isIdentifier(target)) {
-      reassignedNames.add(target.text);
+    const unwrapped = unwrapAssignmentTarget(target);
+
+    if (ts.isIdentifier(unwrapped)) {
+      reassignedNames.add(unwrapped.text);
       return;
     }
-    if (ts.isPropertyAccessExpression(target)) {
-      // `x.y = ...` mutates the object, it does not rebind `x`.
+
+    if (ts.isObjectLiteralExpression(unwrapped)) {
+      for (const property of unwrapped.properties) {
+        if (ts.isPropertyAssignment(property)) {
+          // `property.name` SELECTS which source property is read. A
+          // computed one is an expression evaluated to produce that key —
+          // never an assignment destination. Only the initializer is one.
+          if (ts.isComputedPropertyName(property.name)) {
+            markAssignmentsInsideEvaluatedExpression(property.name.expression);
+          }
+          markAssigned(property.initializer);
+        } else if (ts.isShorthandPropertyAssignment(property)) {
+          // `({ x } = o)` and `({ x = keyFor(alias) } = o)`: the NAME is
+          // the target; `objectAssignmentInitializer` is a default VALUE.
+          reassignedNames.add(property.name.text);
+          if (property.objectAssignmentInitializer) {
+            markAssignmentsInsideEvaluatedExpression(
+              property.objectAssignmentInitializer,
+            );
+          }
+        } else if (ts.isSpreadAssignment(property)) {
+          markAssigned(property.expression);
+        }
+      }
       return;
     }
-    ts.forEachChild(target, markAssigned);
+
+    if (ts.isArrayLiteralExpression(unwrapped)) {
+      for (const element of unwrapped.elements) {
+        if (ts.isOmittedExpression(element)) {
+          continue;
+        }
+        if (ts.isSpreadElement(element)) {
+          markAssigned(element.expression);
+          continue;
+        }
+        markAssigned(element);
+      }
+      return;
+    }
+
+    // A defaulted element of a destructuring target — `[x = d] = ...`,
+    // `({ a: x = d } = ...)`. Only the left side is rebound; `d` is a
+    // value the language may evaluate, exactly like a computed key's
+    // expression.
+    if (
+      ts.isBinaryExpression(unwrapped) &&
+      unwrapped.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      markAssigned(unwrapped.left);
+      markAssignmentsInsideEvaluatedExpression(unwrapped.right);
+      return;
+    }
+
+    // Property MUTATION. Neither the object expression nor the index is a
+    // binding this assignment rebinds — but both are EVALUATED, so an
+    // assignment written inside either one really does run.
+    if (ts.isElementAccessExpression(unwrapped)) {
+      markAssignmentsInsideEvaluatedExpression(unwrapped.expression);
+      markAssignmentsInsideEvaluatedExpression(unwrapped.argumentExpression);
+      return;
+    }
+    if (ts.isPropertyAccessExpression(unwrapped)) {
+      markAssignmentsInsideEvaluatedExpression(unwrapped.expression);
+      return;
+    }
+
+    // Everything else — any shape that is not an assignment target at all
+    // — rebinds nothing, so it contributes no name.
+  }
+
+  /**
+   * Records the assignments an EVALUATED-ONLY expression PERFORMS, and
+   * nothing else.
+   *
+   * {@link markAssigned} answers "which bindings does this assignment
+   * TARGET rebind?" and must therefore never record a name out of a
+   * computed key, a default initializer or an element-access index. But
+   * those expressions still RUN, and one of them may itself contain an
+   * assignment:
+   *
+   * ```js
+   * ({ [(alias = other)]: x } = source);  // `x` AND `alias` are written
+   * ({ x = (alias = other) } = source);   // `x` AND `alias` are written
+   * REGISTRY[(alias = other)] = value;    // `alias` is written
+   * REGISTRY[alias++] = value;            // `alias` is written
+   * ```
+   *
+   * so this second traversal exists to catch exactly those. The two are
+   * separate on purpose, and collapsing them in EITHER direction is a
+   * defect:
+   *
+   * - walking every child and recording every identifier is RWF-025b's
+   *   original defect — it made `({ [keyFor(alias)]: x } = source)`
+   *   record `alias`;
+   * - not walking the evaluated expression at all would miss a genuine
+   *   write and let a stale binding be trusted as a re-export origin.
+   *
+   * The rule that separates them: this walk descends through children
+   * only to FIND assignment and update OPERATIONS, and collects names
+   * only from their targets, via {@link markAssigned}. A bare identifier
+   * is never collected — `alias = other` records `alias` and not
+   * `other`, and `keyFor(alias)` records nothing at all. A right-hand
+   * side is re-entered only to find further nested assignments
+   * (`a = (b = other)` records `a` and `b`).
+   *
+   * Unlike RWF-025's twin in module-model.ts this walk does NOT stop at
+   * a function boundary, because {@link CommonJsFacts} is a WHOLE-FILE
+   * model with no reach restriction: a write inside a callback is a
+   * write this model already counts, wherever {@link visit} finds it.
+   * That makes this traversal redundant with {@link visit}'s own
+   * recursion — every node it reaches, `visit` reaches too — and it is
+   * kept anyway so the target walk is complete ON ITS OWN rather than by
+   * relying on a second, independently-evolving walk to compensate for
+   * the names it deliberately declines to collect.
+   */
+  function markAssignmentsInsideEvaluatedExpression(node: ts.Node): void {
+    if (
+      ts.isBinaryExpression(node) &&
+      isAssignmentOperator(node.operatorToken.kind)
+    ) {
+      // `=`, `+=`, `||=`, `??=`, ... — the same operator relation the
+      // statement-level check uses, by SyntaxKind and never by text.
+      markAssigned(node.left);
+      markAssignmentsInsideEvaluatedExpression(node.right);
+      return;
+    }
+
+    if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      markAssigned(node.operand);
+      return;
+    }
+
+    ts.forEachChild(node, markAssignmentsInsideEvaluatedExpression);
   }
 
   function visit(node: ts.Node): void {
