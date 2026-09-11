@@ -5208,10 +5208,44 @@ multi-path negative control and the same-name same-version twin-instance
 identity control.
 
 `ADV2-087` is `NOT_AFFECTED` (**FAIL**) on base `6b5ad53` and `UNKNOWN`
-(**PASS**) on this branch. Its seven valid-path negative controls sit
-BETWEEN the branch and the final export deliberately, so an overreach on any
-of them flips the case's own verdict to `AFFECTED` rather than being merely
-wrong in principle.
+(**PASS**) on this branch. That movement is what ADV2-087 proves, and it
+proves it non-vacuously: the runtime aborts the class definition on both
+flag values, the later safe export runs on neither, and base issues a
+complete Family C negative proof for a package that reaches the sink.
+
+**Where the valid-path controls are actually enforced — a correction.** An
+earlier revision of this entry, of ADV2-087's oracle description and of the
+fixture's own comment claimed that ADV2-087's seven valid-path negative
+controls "sit BETWEEN the branch and the final export deliberately, so an
+overreach on any of them flips the case's own verdict to `AFFECTED`". **That
+claim is false**, and the independent audit disproved it by mutation:
+changing one control (`throwOrBase`) to be all-fatal leaves ADV2-087
+`UNKNOWN` and **passing**. The reason is structural — the canonical heritage
+cutoff, `class Mode extends heritage(FLAG)` inside the `fast` branch, has
+already made the module's exported value ambiguous by the time those
+factories are reached, and a second cutoff cannot move an already-ambiguous
+export. ADV2-087's end-to-end verdict is a detector for the POSITIVE defect,
+not an individual detector for overreach in each control.
+
+The controls themselves are real and were never the problem. They are
+enforced at the SEMANTIC (module-model) layer, by
+`module-model.multipath-class-definition-completion.test.ts`, where every
+shape — throw+constructable, invalid+constructable, throw+`null`,
+invalid+`null`, unknown+invalid, unknown+throw, and the nested valid leaf —
+is asserted to refuse a cutoff on its own, in isolation, with no earlier
+cutoff in the file to mask it. The same audit re-derived all of them
+independently and found zero overreach. **No coverage was lost or added by
+this correction; only the description of where that coverage is enforced was
+wrong.**
+
+The same distinction applies to the end-to-end fixture's
+`valid-multipath` control. It is scanned from `src/valid-only.cjs`, which
+`require`s the module and never CALLS its export, so its `NOT_AFFECTED` +
+complete Family C result is a genuine statement about verdict and
+negative-proof behavior, but it is not sensitive to whether any single
+factory's authority was withdrawn. Read the division of labour this way:
+**end-to-end fixtures prove overall verdict and proof behavior; the focused
+module-model matrix proves the path-summary overreach controls.**
 
 Validation baseline unchanged at 12 PASS / 5 KNOWN_FAIL / 0 UNEXPECTED / 17
 total. Adversarial v1 34/34, v2 87/87.
