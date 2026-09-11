@@ -57,6 +57,8 @@ const ENTRYPOINT = "src/index.cjs";
 const STABLE_ENTRYPOINT = "src/stable-only.cjs";
 /** Reaches only the negative-control module, for the same subgraph-completeness reason. */
 const VALID_ENTRYPOINT = "src/valid-only.cjs";
+/** Reaches only the parameter-shadow control, and CALLS its exported value. */
+const PARAM_SHADOW_ENTRYPOINT = "src/param-shadow-only.cjs";
 
 async function scan(options: {
   readonly module: string;
@@ -239,6 +241,39 @@ describe("RWF-028 fixture: an invocation whose PROVENANCE, not whose callee, was
       reachableSubgraphComplete: true,
       target: { module: "fixture-lib/valid", export: "default" },
     });
+  });
+
+  it("keeps a module's export attributable when a wrapper PARAMETER shadows the throwing callable (the audit blocker)", async () => {
+    // `fixture-lib/param-shadow` holds ten wrappers whose parameter is
+    // spelled `bail`, shadowing that module's own throwing `bail`. Under
+    // real `node` every one of them invokes `safeFn` and returns, and
+    // `module.exports = safeOp` is written on every load.
+    //
+    // RWF-028's first implementation resolved those bodies' `bail()` to
+    // the OUTER declaration — the lexical walk stepped over the function
+    // boundary — and withdrew this module's authority, making its whole
+    // exported value ambiguous. That is a false AFFECTED for a module
+    // that runs to completion, and it is what `scopeDeclares`' new
+    // function-like case fixes.
+    //
+    // The entrypoint CALLS the exported value, so this asserts EXPORT
+    // ATTRIBUTION rather than Family C: with authority intact the export
+    // resolves to `safeOp` and the call reaches it (AFFECTED). With the
+    // shadow crossed the export is ambiguous and nothing resolves
+    // (UNKNOWN) — which is exactly what this assertion catches.
+    //
+    // There is deliberately no `confirmedUnreachableTarget` claim here:
+    // calling a PARAMETER is genuinely unresolvable, so the reachable
+    // subgraph is legitimately incomplete. That is why these controls
+    // live in their own module rather than in `valid.js`, whose job is
+    // the complete-subgraph negative proof.
+    const { finding } = await scan({
+      module: "fixture-lib/param-shadow",
+      export: "default",
+      entrypoint: PARAM_SHADOW_ENTRYPOINT,
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
   });
 
   it("still proves a genuinely unreachable, DEFINITELY REACHED whole-module export -> NOT_AFFECTED (Family C control)", async () => {

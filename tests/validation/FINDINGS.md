@@ -5640,6 +5640,65 @@ shape, RWF-026 propagation through conditional and deferred positions,
 Family C global suppression, and PackageInstance substitution by
 name-and-version.
 
+### Independent audit — one blocker found and fixed
+
+An independent soundness audit of the four-commit branch returned
+`RWF028_BLOCKED` on a defect the implementation's own self-review missed.
+
+`scopeDeclares` modelled a `catch` clause's parameter, `for`-loop bindings
+and a scope's own statement list — but **not a function's parameters, nor a
+named function expression's own name**. Until RWF-028 that omission was
+unreachable: this walk only ever started at a MODULE-SCOPE call site, so a
+function-like node was never one of the ancestors it visited. RWF-028's
+wrapper analysis is the first consumer that resolves an identifier from
+INSIDE a function body, and the walk stepped straight over the function
+boundary out to module scope:
+
+```js
+function bail() { throw new Error("boom"); }
+function w(bail) { bail(); }   // the PARAMETER, not the outer callable
+w(safeFn);                     // ...so this COMPLETES
+module.exports = second;       // and this RUNS
+```
+
+The branch resolved that body's `bail()` to the outer, throwing `bail` and
+withdrew the later export's authority — a **false AFFECTED** for a module
+that runs to completion. Base kept authority; the branch withdrew it, so it
+was branch-attributable. Seven shapes reproduced it (plain parameter, second
+parameter, default parameter, destructured parameter, arrow wrapper,
+function-expression wrapper, depth-2 nested wrapper), each confirmed to
+complete under real `node` with a later-export flag.
+
+The fix is at the shared lexical-declaration boundary rather than in the
+wrapper resolver: `scopeDeclares` now treats a function-like scope as
+declaring every binding introduced by its parameters (through the existing
+`bindingNameIncludes`, so every pattern form — default, object, renamed
+object, nested, array, rest — is covered by machinery that already handled
+them) and a named `FunctionExpression` as declaring its own name inside its
+own body.
+
+Two properties of that fix are pinned rather than assumed:
+
+- a parameter is a **shadowing barrier, never positive provenance**.
+  `function w(bail) { bail(); } w(realThrower);` aborts at runtime and is
+  still REFUSED, because proving it needs call-site arguments mapped onto
+  parameters. That is base's answer too — precision, not soundness.
+- a function expression's self-name **does not leak**.
+  `const x = function f() {}; f();` resolves nothing, exactly as before:
+  the walk only ever visits ancestors of the call site, so the expression
+  is never consulted from outside its own body.
+
+The audit separately classified two shapes as **pre-existing and not
+branch-attributable**, verified by measuring both sides: a nested `var`
+redeclaring a callable name, and an Annex B block function declaration
+overwriting an outer binding. Both withdraw on base and on branch alike.
+They are unchanged here and recorded below.
+
+Corpus after remediation: across 3,875 files, exactly **one** attribution
+changed — the new `param-shadow.js` control, withdrawn before and
+attributed after. **Zero** files newly withdrawn, and no third-party
+movement in either direction.
+
 ### Remaining limitations (deliberately not fixed here)
 
 - **Source rebinding after alias capture.** `const alias = bail; bail =
@@ -5676,6 +5735,11 @@ safeFn; }`) is not collected as a reassignment —
   (the branch answers such files identically to base); it is recorded here
   because the corpus scan is the first thing to have looked for it. It costs
   precision, never soundness.
+- **Parameter VALUES are not propagated.** A wrapper parameter shadows the
+  outer binding, and the invocation through it stays unresolved — including
+  when the argument really is the throwing callable. Mapping call-site
+  arguments onto parameters is interprocedural value flow this task does not
+  build; refusing matches base and costs precision only.
 - **The class-heritage axis was not widened from this side.** RWF-027's
   `summarizeExactCallHeritageOutcomes` and its own resolver are bit-for-bit
   unchanged. `class C extends alias() {}` does now lose authority, but
