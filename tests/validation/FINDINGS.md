@@ -5880,16 +5880,36 @@ broad traversal, once with the new split — and diffing:
 | poison files that also contain CommonJS export logic | 9 | 488 |
 | names NEWLY recorded by the new traversal | **0** | **0** |
 
-The last row is measured, not guaranteed by construction, and the
-distinction matters. The new traversal is narrower than the old one
-everywhere except ONE shape: the old code returned early on a
-`PropertyAccessExpression` target without inspecting its receiver, so
-`getHolder((alias = other)).x = 1` did not record `alias`; the new code
-inspects the receiver for real writes and does record it. That is the
-correct answer — the write genuinely executes — and its direction is a
-refusal, hence UNKNOWN, hence safe; it is pinned in the matrix's row 15.
-Neither corpus contains the shape, so the measured widening is zero in
-both, but a file that contained it would newly (and rightly) refuse.
+The last row holds for every shape, not just the ones these corpora happen
+to contain. An earlier draft of this entry claimed one exception — that
+`getHolder((alias = other)).x = 1` was newly recorded, since `markAssigned`
+used to return early on a `PropertyAccessExpression` target without
+inspecting its receiver. That claim was wrong, and the independent audit
+measured it on both sides: `alias` is recorded as a write on BASE and on
+BRANCH alike.
+
+The two arrive at it by different routes, which is why reading
+`markAssigned` alone was misleading. On base the write is reached by
+`collectFacts`'s own whole-file `visit` driver, which recurses through
+every node — the left-hand side of the assignment included — and handles
+the nested `alias = other` as an assignment in its own right, whichever
+enclosing traversal declined to look at it. On the branch it is reached
+BOTH that way and explicitly, through
+`markAssignmentsInsideEvaluatedExpression` on the receiver. The new
+traversal therefore introduces no widening for this shape, and none for
+any other: every name it records, base records too.
+
+What changes is only the other direction. Bare references in evaluated
+positions — a computed key, an element-access index, a property-access
+receiver, a destructuring default — stop being counted as writes, while
+every real nested assignment and update in those same positions keeps
+being counted. Observed reassignment tracking on the branch is thus a
+strict subset of base's, and the names it drops are exactly the false ones.
+
+One asymmetry is resolved in passing: base recorded `alias[k] = 1` as a
+write to `alias` while already treating `alias.x = 1` as a read. The
+branch makes property MUTATION consistently not a rebinding of the object
+binding, whichever way the property is spelled.
 
 The remaining counts are SYNTACTIC poison candidates — names the old traversal
 would have recorded and the new one does not. They are not a claim that 643
