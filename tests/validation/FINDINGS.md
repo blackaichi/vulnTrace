@@ -5363,3 +5363,283 @@ new caching was required.
 - **P0-E (RWF-028)** — alias (`const alias = f; class C extends alias() {}`),
   member (`obj.f()`), transitive and `new` callees remain unresolved and must
   not become resolvable from this task's side. Verified unchanged.
+  **Closed by RWF-028**, and deliberately not from this side: RWF-027's own
+  heritage machinery (`summarizeExactCallHeritageOutcomes`,
+  `isDefinitelyNonCompletingClassHeritageCall`,
+  `resolveExactLocalCallableIdentity`) is bit-for-bit unchanged. The aliased
+  heritage case now fires through RWF-026's shared EXPRESSION rule, because
+  `class C extends alias() {}`'s heritage expression is itself a
+  definitely-abrupt CALL once the callee resolves — a statement about the
+  call, not about the class definition. See RWF-028's entry below.
+
+## RWF-028 — An invocation whose CALLEE is already proven fatal but whose PROVENANCE was unresolved invalidates later CommonJS export authority
+
+**Severity:** P0 / CRITICAL SOUNDNESS (false `NOT_AFFECTED`, with a complete
+Family C proof)
+**Status:** **Fixed.** Found by the P0 closure inventory (P0-E), recorded as
+an explicit open follow-up by RWF-016, RWF-017, RWF-018, RWF-019, RWF-020,
+RWF-024, RWF-026 and RWF-027, and independently reproduced on `e956acc`
+(current merged main, RWF-027 included) before any edit here.
+
+### The defect
+
+Every earlier task in this family asked a question about a **callee**: can
+this call complete normally (RWF-016), what value does it return (RWF-022),
+does every ending of it prevent a class definition from completing
+(RWF-027). This one asks nothing about the callee at all.
+
+```js
+function bail() { throw new Error("boom"); }   // already proven fatal
+const alias = bail;
+
+if (FLAG) {
+  module.exports = dangerousOp;
+  alias();                       // <- the analyzer could not name this
+}
+
+module.exports = safeOp;         // syntactically unconditional; never reached
+```
+
+`bail` is a local, never-reassigned function declaration whose body throws
+on every path — the exact shape RWF-016 has proven fatal since the
+beginning. The proof was already in hand and was **discarded**, because the
+call site was not a bare identifier. Five confirmed cases, each
+independently reproduced at base:
+
+| | invocation | base verdict |
+| --- | --- | --- |
+| C07 | `const alias = bail; alias();` | NOT_AFFECTED + complete Family C |
+| C08 | `function viaHelper() { bail(); } viaHelper();` | NOT_AFFECTED + complete Family C |
+| C09 | `const h = { bail }; h.bail();` | NOT_AFFECTED + complete Family C |
+| C10 | `{ const bail = () => { throw ... }; bail(); }` | NOT_AFFECTED + complete Family C |
+| E01 | `new bail();` | NOT_AFFECTED + complete Family C |
+
+All five were measured under real `node` v22.11.0: module evaluation ends at
+the invocation, and `module.exports = safeOp` never runs. VulnTrace
+nevertheless attributed `safeOp` as the whole module value, found
+`dangerousOp` unreachable, and issued a **complete Family C negative proof**
+for a package that reaches the sink on every load taking the early branch.
+
+### The architectural inversion, and why it was NOT fixed at the gate
+
+The closure inventory observed that `resolveExactLocalCallable` refusing a
+callee is locally conservative but **globally unsound**: the refusal leaves
+a later export's authority standing, and that authority is what produces the
+false `NOT_AFFECTED`. It suggested fixing this at the authority gate rather
+than by widening the resolver.
+
+That suggestion was tested against the implementation and **rejected**. A
+gate rule of the shape "an unresolved call plus a throwing callable
+somewhere in this file withdraws authority" would withdraw authority from
+calls it knows nothing about — `safeFn()`, `unknownFn()`, `obj.unknown()`,
+`registry[name]()` — in any file that happens to declare one throwing
+helper. That is not a soundness fix with a precision cost; it is a different
+unsoundness, reporting demonstrably-completing modules as non-completing.
+The `CRITICAL FALSE-AFFECTED CONTROL` block in
+`module-model.invocation-provenance-soundness.test.ts` pins that this
+analyzer does not do it.
+
+What RWF-028 does instead is make the resolver able to **name the exact
+function node** an invocation enters, for four bounded shapes — each with an
+invalidation story it can actually discharge. Where provenance cannot be
+named, the answer stays exactly what it was.
+
+### The fix — bounded provenance resolution
+
+`resolveInvocationTargetIdentity(callee)` in
+`src/code-intelligence/module-model.ts` is the single new entry point, and
+`isDefinitelyAbruptInvocation` is the single place a proof is established.
+Both are reached from the one function RWF-017/018/019/020/024/026/027
+already share (`isDefinitelyAbruptCall`), so every consumer inherits the
+widened identity without any of them changing.
+
+| shape | resolved by | invalidated by |
+| --- | --- | --- |
+| direct | `topLevelCallableCandidates`, unchanged | reassignment of the name |
+| alias | `callableFromStatements`, one hop | reassignment of the ALIAS or the SOURCE name |
+| wrapper | `callableAlwaysThrows`, depth-bounded | any surviving normal path; reassignment; recursion |
+| member | `resolveObjectMemberCallable` | rebinding, ANY non-read use of the binding, a spread, a computed key, a duplicate key, a non-data property |
+| shadow | `resolveIdentifierCallable`, nearest scope wins | ordinary lexical scoping |
+| `new` | the same resolver + `isConstructableCallable` | reassignment of the constructor binding |
+
+Three of these deserve their reasoning stated, because they are where a
+"bounded" rule usually goes wrong.
+
+**Lexical resolution replaced lexical refusal.** RWF-016 refused any
+shadowed name outright. RWF-028 resolves the shadow properly, nearest
+binding first, and an unsupported nearest binding refuses rather than
+looking further out. That last clause is what makes the mirrored case safe:
+`function bail() { throw } { const bail = () => "safe"; bail(); }` must
+resolve to the INNER, safe binding. Resolving it to the outer one would be a
+verdict invented out of a name collision, and it is pinned as a control in
+the matrix, in `fixture-lib/valid.js` and in the ADV2-088 fixture.
+
+**Object members required an escape test, not just a literal read.**
+Reading the literal is not enough: `const h = { bail }; mutate(h);
+h.bail();` genuinely completes, because `mutate` is free to install a safe
+function. `confinedObjectBindings` therefore disqualifies a binding the
+moment it is used in any way other than its own declaration and a plain
+`h.x` read — passed as an argument, returned, exported, assigned from,
+indexed, or written through. The walk covers the whole file, function
+bodies included, because a closure that mutates the object is exactly what a
+module-reachable-only walk would miss.
+
+**The wrapper bound counts BODIES, not calls.**
+`MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH = 3` admits a direct call, one wrapper
+hop and two wrapper hops, and refuses the third. There is no worklist, no
+iteration to convergence and no cross-file propagation — just a counter that
+runs out, plus a `callablesInProgress` set so a self- or mutually-recursive
+body is refused on its own merits rather than accidentally proven by running
+out of depth somewhere down the chain. `function helper() { helper(); }`
+never completes, but it never throws either, and nontermination reasoning
+stays out of scope exactly as RWF-016 documents.
+
+### The semantic distinction this task rests on
+
+RWF-028 proves nothing new about any callee. Every fatality answer is
+RWF-016's `cannotCompleteNormally`, unchanged in meaning. What moved is the
+answer to _"which function does this syntax enter?"_ — so a callee that was
+never fatal does not become fatal through an alias, an object property or a
+`new`, and the `async`/generator exclusions carry through every new shape
+unchanged (`const alias = asyncBail; alias()` stays unproven, because
+calling an `async` function returns a rejected promise rather than throwing
+synchronously).
+
+### `new` is a construct, not a call — and the line is drawn at the body
+
+`new bail()` on an ordinary function declaration enters the body, which
+throws: proven. `new` on an **arrow**, an `async` function or a generator
+also ends module evaluation — with `TypeError: X is not a constructor` —
+but it throws on constructability _before the body runs_. That is a
+different proof, this rule does not perform it, and claiming it would
+quietly assert that the arrow's body executed when the ground-truth fixture
+measures (with a body-entry flag) that it did not. All three are refused and
+recorded below as precision gaps.
+
+### Ground truth
+
+`fixtures/commonjs-circular-import-invocation-provenance-ground-truth/`,
+run with real `node` v22.11.0, asserts (never merely prints) that the
+aliased call enters `bail`'s **own** body, that `const alias = f` binds the
+same function object as `f`, that a cyclic consumer retains the dangerous
+export **by identity** before the throw, that the later safe assignment
+never runs, that the retained export genuinely reaches the vulnerable sink,
+and that a failed load re-throws coherently.
+
+Its `forms.js` writes **47 real modules**, loads each, and measures whether
+evaluation reached the later export write:
+
+- **15 proven cutoffs**, every one of which genuinely aborts;
+- **23 refused rows**, every one of which genuinely completes;
+- **9 rows that abort but are not proven** — the precision gaps below,
+  asserted as such so the gap list cannot silently drift.
+
+### Differential (base `e956acc` → branch)
+
+| | base | branch |
+| --- | --- | --- |
+| C07 / C08 / C09 / C10 / E01 (`fixture-lib/danger#explode`) | **NOT_AFFECTED**, `confirmedUnreachableTarget` with `reachableSubgraphComplete: true` | **UNKNOWN**, no negative proof |
+| ADV2-088 | **NOT_AFFECTED** (false) | **UNKNOWN** |
+| `fixture-lib/valid` (negative controls) | NOT_AFFECTED + complete Family C | **unchanged** |
+| `fixture-lib/stable` (Family C positive control) | NOT_AFFECTED + complete Family C | **unchanged** |
+
+`UNKNOWN → NOT_AFFECTED`: **0**. `AFFECTED → NOT_AFFECTED`: **0**. No
+verdict anywhere moved toward `NOT_AFFECTED`.
+
+Nineteen existing tests changed expectation, and all nineteen are the
+boundary pins that recorded P0-E as OPEN — RWF-016's "keeps authority for an
+ALIASED call", RWF-018/019's "keeps authority for a MEMBER callee",
+RWF-026's "does not absorb P0-E", and so on. Each was rewritten to assert
+the new, sound answer with its reproducer text verbatim, and each file kept
+a refusal row for the shapes RWF-028 still declines.
+
+### Corpus
+
+Measured with the REAL module model (not a re-implementation): every file
+was run through `indexSourceFile` → `buildModuleModel` →
+`mapExportsToFunctions` on base and on branch, and the whole-module
+attribution answers were diffed.
+
+| | vendored third-party (`node_modules`) | repo `fixtures/` | repo `tests/` |
+| --- | --- | --- | --- |
+| 1. files scanned | 1,766 | 247 | 724 |
+| 2a. `const <id> = <id>` declarations | 2,350 | 6 | 2 |
+| 2b. `const <id> = { ... }` declarations | 3,123 | 13 | 5 |
+| 2c. `<id>.<prop>(...)` calls | 52,044 | 561 | 356 |
+| 2d. calls to a top-level local name | 25,315 | 301 | 63 |
+| 2e. block bindings shadowing a top-level name | 9 | 0 | 0 |
+| 2f. `new <top-level local>()` | 1,384 | 4 | 1 |
+| 7. **actual verdict movement** | **0** | 6 | 1 |
+
+**Actual verdict movement in vendored real third-party code: zero**, across
+1,766 files carrying 2,350 alias declarations, 3,123 object literals, 52,044
+member calls and 1,384 local `new` expressions. The syntactic counts are a
+deliberate over-count of _candidate shapes_ and must not be read as semantic
+impact: a shape only moves a verdict when its callee is definitely abrupt,
+the invocation is module-reachable and uncaught, and a later export write
+follows it. All seven repo movements are RWF-028's own new fixtures.
+
+### Performance
+
+`npm run test:performance` — both budgets met, no measurable change: the
+~300-file synthetic project completes in 2.30s against a 5,000ms threshold,
+and the single-large-file case in 8.20s against a 20,000ms threshold.
+
+Nothing global was added. There is no points-to set, no heap model, no
+recursive fixpoint and no whole-program summary. Resolution is bounded by a
+one-hop provenance budget and a three-body depth counter; the scope walk is
+bounded by the call site's own nesting depth; and the two new per-file facts
+(`moduleReachableCallableCandidates`, `confinedObjectBindings`) are cached
+per `ts.SourceFile` like every other module-model fact, with the latter
+computed only when an object-member invocation is actually being decided —
+which `fileHasDefinitelyAbruptCallable` has already gated.
+
+That gate had to be widened, and the reason is worth recording: it is what
+keeps the analysis COHERENT rather than merely fast. It now sees
+block-scoped and object-literal-held callables too, because otherwise
+whether `h.run()` was provable would have depended on some UNRELATED
+throwing callable existing elsewhere in the file — precisely the file-level
+inference this task exists to avoid.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **Source rebinding after alias capture.** `const alias = bail; bail =
+safeFn; alias();` really does throw — `alias` captured the original
+  function value. VulnTrace refuses, because distinguishing "the value this
+  alias captured" from "whatever this name holds now" needs an ordering
+  model over rebinding that this task does not build. Between an unsound
+  proof and a refusal the refusal is the only available answer; measured in
+  `forms.js` so the gap is documented by execution.
+- **`new` on a non-constructable callable** (arrow, `async`, generator) is
+  refused, for the reason set out above: the module does end, but on
+  constructability rather than on the body this rule read.
+- **Object METHOD shorthand** (`{ bail() { throw } }`) is refused. A
+  `MethodDeclaration` is a node shape the rest of this file's callable
+  machinery does not take, and widening that union across the file is not
+  the "trivial" extension the shape suggests. An accessor of the target name
+  refuses too, and must: reading the property RUNS code.
+- **Class constructor bodies.** `class C { constructor() { throw } } new C();`
+  is outside the callable-summary model entirely. Probed, refused, recorded.
+- **Beyond the documented bounds**: a second alias hop, a third wrapper hop,
+  and `h["bail"]()` — a computed member whose key is a literal this relation
+  could resolve but deliberately does not, because doing so is the first
+  step of the dynamic-property analysis this task is scoped not to build.
+- **Optional RECEIVERS** (`h?.bail()`) are refused, since deciding them
+  means proving the receiver non-nullish. An optional CALL on an
+  already-proven callee (`h.bail?.()`, `alias?.()`) IS decided, for exactly
+  the reason RWF-016 documents for `bail?.()`: the callee is an
+  exactly-resolved function declaration and cannot be nullish, so the
+  optional token changes nothing about whether the call happens.
+- **A nested `var` redeclaring a top-level callable name** (`{ var bail =
+safeFn; }`) is not collected as a reassignment —
+  `reassignedModuleReachableNames` inspects assignment EXPRESSIONS, not
+  hoisted `var` declarations. This predates RWF-028 and is unchanged by it
+  (the branch answers such files identically to base); it is recorded here
+  because the corpus scan is the first thing to have looked for it. It costs
+  precision, never soundness.
+- **The class-heritage axis was not widened from this side.** RWF-027's
+  `summarizeExactCallHeritageOutcomes` and its own resolver are bit-for-bit
+  unchanged. `class C extends alias() {}` does now lose authority, but
+  through RWF-026's shared EXPRESSION rule — the heritage expression is
+  itself a definitely-abrupt call once the callee resolves — which is a
+  statement about the call, not about the class definition.
