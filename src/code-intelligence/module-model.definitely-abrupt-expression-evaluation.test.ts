@@ -125,6 +125,15 @@ const REQUIRED: ReadonlyArray<readonly [string, string]> = [
   ["array element before a later one", "const x = [bail(), after()];"],
   ["array SPREAD operand", "const x = [...bail()];"],
 
+  // A4 -- RWF-028's invocation shapes, consumed here unchanged. These
+  // three rows were REFUSED rows until RWF-028 resolved their callees;
+  // the position reasoning around them is entirely RWF-026's and did not
+  // move. This is the RWF-026 x RWF-028 interaction the closure sequence
+  // orders these two tasks for.
+  ["ALIAS invocation", "const alias = bail;\n  alias();"],
+  ["ALIAS in an argument", "const alias = bail;\n  foo(alias());"],
+  ["new-expression on an exact throwing callable", "const x = new bail();"],
+
   // A2 -- call / template / spread / access positions
   ["call ARGUMENT", "foo(bail());"],
   ["MULTIPLE call arguments", "foo(before(), bail(), after());"],
@@ -268,15 +277,13 @@ const REFUSED: ReadonlyArray<readonly [string, string]> = [
     "try {\n    const q = { value: bail() };\n  } catch {}",
   ],
 
-  // Callee identity refusals -- RWF-028's axis, untouched here
+  // Callee identity refusals. RWF-028 CLOSED the alias and `new` rows that
+  // used to sit here -- they moved to REQUIRED, unchanged in text -- and
+  // these are what its bounds still refuse: a callee whose body may return,
+  // and a member on a receiver that is not a resolvable local object
+  // literal (`obj` is declared nowhere in this fixture).
   ["safe local callable", "foo(safe());"],
-  ["ALIAS invocation", "const alias = bail;\n  alias();"],
-  ["ALIAS in an argument", "const alias = bail;\n  foo(alias());"],
-  ["MEMBER invocation", "obj.bail();"],
-  [
-    "new bail() -- constructor abruptness is not claimed",
-    "const x = new bail();",
-  ],
+  ["MEMBER invocation on an UNRESOLVABLE receiver", "obj.bail();"],
   ["destructuring assignment target", "({ [safeKey()]: z } = obj);"],
 ];
 
@@ -462,15 +469,33 @@ describe("RWF-026: the callee-identity axis is NOT widened (RWF-027 / RWF-028 st
     }
   });
 
-  it("does not absorb P0-E: alias, member, transitive and `new` invocations stay unproven", () => {
+  it("consumes P0-E's now-resolvable callees (RWF-028) without changing this axis", () => {
+    // These rows asserted `.toBe("second")` until RWF-028 closed P0-E.
+    // Nothing about RWF-026's position reasoning changed to move them:
+    // each is a REQUIRED position it already modeled, and the only new
+    // fact is that the callee now resolves. The bodies are verbatim what
+    // they were.
     for (const body of [
       "const alias = bail;\n  foo(alias());",
       "const alias = bail;\n  const x = { value: alias() };",
-      "obj.bail();",
-      "const x = { value: obj.bail() };",
       "function viaHelper() {\n    bail();\n  }\n  foo(viaHelper());",
       "const x = new bail();",
       "const x = { value: new bail() };",
+    ]) {
+      expect(defaultExportName(reproducer(body))).toBeUndefined();
+    }
+  });
+
+  it("still refuses the invocation shapes RWF-028 deliberately left out", () => {
+    for (const body of [
+      // No local binding for `obj` at all.
+      "obj.bail();",
+      "const x = { value: obj.bail() };",
+      // A second provenance hop.
+      "const alias = bail;\n  const a2 = alias;\n  foo(a2());",
+      // A computed member, and a conditional initializer.
+      "const h = { bail };\n  h[key]();",
+      "const alias = FLAG ? bail : safe;\n  foo(alias());",
     ]) {
       expect(defaultExportName(reproducer(body))).toBe("second");
     }
@@ -670,15 +695,29 @@ describe("RWF-026: self-review attacks -- nothing conditional or deferred may wi
       "P0-B conditional-throw callee in an if CONDITION",
       `${MAYBE}if (maybe()) {\n  }`,
     ],
+    // P0-E's alias / transitive / `new` rows were closed by RWF-028 and
+    // are asserted positively above; what remains here are the shapes it
+    // still refuses, attacked in the same required ARGUMENT position.
+    ["P0-E member callee on an UNRESOLVABLE receiver", "foo(obj.bail());"],
     [
-      "P0-E alias callee in a required ARGUMENT",
-      "const alias = bail;\n  foo(alias());",
+      "P0-E two-hop alias callee in a required ARGUMENT",
+      "const alias = bail;\n  const a2 = alias;\n  foo(a2());",
     ],
-    ["P0-E member callee in a required ARGUMENT", "foo(obj.bail());"],
-    ["P0-E new-expression callee in a required ARGUMENT", "foo(new bail());"],
     [
-      "P0-E transitive callee in a required ARGUMENT",
-      "function via() {\n    bail();\n  }\n  foo(via());",
+      "P0-E conditional-initializer alias in a required ARGUMENT",
+      "const alias = FLAG ? bail : safe;\n  foo(alias());",
+    ],
+    [
+      "P0-E transitive callee with a RETURN path, in a required ARGUMENT",
+      "function via(f) {\n    if (f) {\n      bail();\n    }\n    return 1;\n  }\n  foo(via(FLAG));",
+    ],
+    [
+      "P0-E transitive callee that CATCHES, in a required ARGUMENT",
+      "function via() {\n    try {\n      bail();\n    } catch {}\n  }\n  foo(via());",
+    ],
+    [
+      "P0-E `new` on a non-constructable ARROW, in a required ARGUMENT",
+      "const ab2 = () => {\n    throw new Error();\n  };\n  foo(new ab2());",
     ],
     // async / generator exclusions carry into every new position.
     ["ASYNC callee in a required ARGUMENT", "foo(ab());"],

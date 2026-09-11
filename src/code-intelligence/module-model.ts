@@ -1654,20 +1654,21 @@ function scopeDeclares(ancestor: ts.Node, name: string): boolean {
  *    ({@link topLevelCallableCandidates}), and is neither `async` nor a
  *    generator ({@link isAsyncOrGeneratorCallable}).
  *
- * Deliberately ONE hop: `name` must itself be bound directly to a
- * function/arrow, never to another identifier
- * (`const x = bail; x();` resolves nothing here — see the module-level
- * doc comment's ALIASES note). Chaining hops is exactly the alias
- * resolution RWF-016 is scoped not to introduce.
+ * RWF-016 accepted only a plain identifier callee bound DIRECTLY to a
+ * function/arrow. RWF-028 widens the IDENTITY half — and only that half —
+ * to the bounded alias, object-member and lexical-shadow provenance forms
+ * {@link resolveInvocationTargetIdentity} documents. The `async`/generator
+ * exclusion below, and every caller's proof obligation above it, are
+ * unchanged.
  */
 function resolveExactLocalCallable(
-  callee: ts.Identifier,
+  callee: ts.Expression,
 ):
   | ts.FunctionDeclaration
   | ts.FunctionExpression
   | ts.ArrowFunction
   | undefined {
-  const candidate = resolveExactLocalCallableIdentity(callee);
+  const candidate = resolveInvocationTargetIdentity(callee);
   if (candidate === undefined || isAsyncOrGeneratorCallable(candidate)) {
     return undefined;
   }
@@ -1730,6 +1731,578 @@ function resolveExactLocalCallableIdentity(
   return topLevelCallableCandidates(sourceFile).get(name);
 }
 
+/* ------------------------------------------------------------------ *
+ * RWF-028: bounded invocation / provenance resolution                  *
+ * ------------------------------------------------------------------ */
+
+/** The three callable node shapes this whole file is willing to read a body out of. */
+type LocalCallable =
+  ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction;
+
+/**
+ * How many PROVENANCE hops RWF-028 will follow from a call site to the
+ * callable it invokes.
+ *
+ * One. `const alias = bail; alias()` is one hop; `const h = { bail };
+ * h.bail()` is one hop through the literal's property. A second hop
+ * (`const a2 = alias; a2()`, `const h = { bail: alias }`) is refused.
+ *
+ * The bound is not arithmetic caution — it is what keeps every supported
+ * form a SHAPE this relation can name and invalidate (see
+ * {@link resolveInvocationTargetIdentity}'s invalidation table). Chains
+ * are where alias analysis turns into points-to analysis, and this task
+ * is explicitly scoped not to build one.
+ */
+const MAX_PROVENANCE_HOPS = 1;
+
+/**
+ * The exact local function node an invocation `callee(...)` or
+ * `new callee(...)` provably enters (RWF-028) — `undefined` for
+ * everything this relation will not commit to.
+ *
+ * RWF-016 answered this for exactly one shape: a plain identifier bound
+ * at module top level directly to a function. The P0 closure inventory
+ * found five confirmed false `NOT_AFFECTED`s where the analyzer ALREADY
+ * had the callee-side proof (a callable whose every path throws) and
+ * dropped it purely because the invocation SHAPE was not that one. The
+ * shapes added here are exactly those, and no more:
+ *
+ * ```text
+ * bail()        direct           RWF-016, unchanged
+ * alias()       C07  one-hop immutable local alias
+ * viaHelper()   C08  a wrapper — resolved here as a plain call; the
+ *                    wrapper reasoning lives in callableAlwaysThrows
+ * h.bail()      C09  exact local object-literal member
+ * { bail() }    C10  nearest-lexical-binding resolution, incl. shadows
+ * new bail()    E01  construct — see isDefinitelyAbruptInvocation
+ * ```
+ *
+ * Every form carries its own invalidation story, and a form whose story
+ * cannot be discharged is refused rather than guessed:
+ *
+ * | form   | invalidated by                                              |
+ * |--------|-------------------------------------------------------------|
+ * | direct | reassignment of the name ({@link reassignedModuleReachableNames}) |
+ * | alias  | reassignment of the ALIAS name, or of the SOURCE name        |
+ * | member | reassignment of the object binding, ANY non-call use of it (which could mutate the property), a spread, a computed key, a duplicate key, or a non-data property |
+ * | shadow | ordinary lexical scoping — the nearest binding wins, and an unsupported nearest binding refuses outright |
+ *
+ * What is deliberately NOT resolved, because none of it has a bounded
+ * invalidation story this relation can state: multi-hop chains,
+ * `obj.a.b()`, computed members (`h[key]()`), `bail.bind(...)`,
+ * conditional initializers (`cond ? bail : safe`), destructured bindings,
+ * imports, class constructors, prototypes, and anything reached through a
+ * parameter or a closure.
+ */
+function resolveInvocationTargetIdentity(
+  callee: ts.Expression,
+): LocalCallable | undefined {
+  const unwrapped = unwrapParentheses(callee);
+
+  if (ts.isIdentifier(unwrapped)) {
+    return resolveIdentifierCallable(
+      unwrapped,
+      unwrapped.text,
+      MAX_PROVENANCE_HOPS,
+    );
+  }
+
+  if (
+    ts.isPropertyAccessExpression(unwrapped) &&
+    !ts.isOptionalChain(unwrapped) &&
+    ts.isIdentifier(unwrapped.expression) &&
+    ts.isIdentifier(unwrapped.name)
+  ) {
+    return resolveObjectMemberCallable(
+      unwrapped.expression,
+      unwrapped.name.text,
+      MAX_PROVENANCE_HOPS,
+    );
+  }
+
+  return undefined;
+}
+
+/**
+ * The callable an identifier `name`, READ FROM `from`'s position,
+ * provably denotes (RWF-028).
+ *
+ * Resolution is ordinary JavaScript lexical scoping, walking outward from
+ * `from`: the NEAREST scope that declares `name` decides, and if what it
+ * declares is not a shape this relation supports, the answer is
+ * `undefined` — never "keep looking further out". That last clause is the
+ * whole point of C10's safe-shadow control:
+ *
+ * ```js
+ * function bail() { throw new Error("boom"); }   // outer, throwing
+ * { const bail = () => "safe"; bail(); }         // inner, SAFE -- wins
+ * ```
+ *
+ * Resolving that call to the outer, throwing `bail` would be a false
+ * AFFECTED invented out of a name collision. RWF-016 avoided it by
+ * refusing any shadowed name outright ({@link scopeDeclares}); this
+ * resolves the shadow properly instead, which is what lets the mirrored
+ * case — an inner THROWING shadow, C10 itself — be proven at all.
+ */
+function resolveIdentifierCallable(
+  from: ts.Node,
+  name: string,
+  hops: number,
+): LocalCallable | undefined {
+  const sourceFile = from.getSourceFile();
+
+  // RWF-025's reassignment facts, consulted first and for every hop: a
+  // name assigned anywhere module-reachable has no single value this
+  // relation may speak about, whatever its declaration says.
+  if (reassignedModuleReachableNames(sourceFile).has(name)) {
+    return undefined;
+  }
+
+  for (
+    let ancestor: ts.Node | undefined = from.parent as ts.Node | undefined;
+    ancestor !== undefined && !ts.isSourceFile(ancestor);
+    ancestor = ancestor.parent as ts.Node | undefined
+  ) {
+    if (scopeDeclares(ancestor, name)) {
+      const statements = ownStatementsOf(ancestor);
+      if (statements === undefined) {
+        // A `catch` parameter or a `for` loop binding: declared here, and
+        // bound to something this relation cannot read a body out of.
+        return undefined;
+      }
+      return callableFromStatements(statements, name, hops);
+    }
+  }
+
+  // Module top level. The RWF-016 candidate map answers first and is
+  // untouched, so every pre-RWF-028 answer is bit-for-bit what it was;
+  // alias provenance is consulted only where that map had nothing.
+  const direct = topLevelCallableCandidates(sourceFile).get(name);
+  if (direct !== undefined) {
+    return direct;
+  }
+  return callableFromStatements(sourceFile.statements, name, hops, true);
+}
+
+/**
+ * The callable `name` is bound to by ONE statement list — a block, a
+ * `case` clause, or the module's own top level (RWF-028).
+ *
+ * `aliasOnly` is set for the module top level, where
+ * {@link topLevelCallableCandidates} has already answered the direct-
+ * callable question and only alias provenance is still open.
+ *
+ * Any ambiguity refuses: two statements binding the same name, a
+ * `let`/`var`/destructured binding, a class, an import, or an initializer
+ * that is neither a function nor a bare identifier. A `const` bound to a
+ * bare identifier is the alias hop, and it is spent here.
+ */
+function callableFromStatements(
+  statements: readonly ts.Statement[],
+  name: string,
+  hops: number,
+  aliasOnly = false,
+): LocalCallable | undefined {
+  let found: LocalCallable | ts.Identifier | undefined;
+
+  for (const statement of statements) {
+    if (
+      ts.isFunctionDeclaration(statement) &&
+      statement.name?.text === name &&
+      statement.body !== undefined
+    ) {
+      if (found !== undefined || aliasOnly) {
+        return undefined;
+      }
+      found = statement;
+      continue;
+    }
+    if (ts.isClassDeclaration(statement) && statement.name?.text === name) {
+      return undefined;
+    }
+    if (!ts.isVariableStatement(statement)) {
+      continue;
+    }
+    if (!declarationListDeclares(statement.declarationList, name)) {
+      continue;
+    }
+    // A `let`/`var` binding can be rebound by a later `=` this relation
+    // may not have modeled at all (only module-reachable assignments are
+    // collected), so only `const` is ever readable here.
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) {
+      return undefined;
+    }
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        !ts.isIdentifier(declaration.name) ||
+        declaration.name.text !== name
+      ) {
+        // A destructured binding that mentions `name`: bound to something
+        // no shape test here can read.
+        return undefined;
+      }
+      if (declaration.initializer === undefined || found !== undefined) {
+        return undefined;
+      }
+      const initializer = unwrapParentheses(declaration.initializer);
+      if (
+        ts.isFunctionExpression(initializer) ||
+        ts.isArrowFunction(initializer)
+      ) {
+        if (aliasOnly) {
+          return undefined;
+        }
+        found = initializer;
+      } else if (ts.isIdentifier(initializer)) {
+        found = initializer;
+      } else {
+        return undefined;
+      }
+    }
+  }
+
+  if (found === undefined) {
+    return undefined;
+  }
+  if (!ts.isIdentifier(found)) {
+    return found;
+  }
+  // The alias hop. `const alias = bail;` — resolved from the INITIALIZER's
+  // own position, so the source name is looked up in the scope the alias
+  // declaration actually sees, not in the caller's.
+  if (hops <= 0) {
+    return undefined;
+  }
+  return resolveIdentifierCallable(found, found.text, hops - 1);
+}
+
+/**
+ * The callable `receiver.property(...)` provably invokes, when `receiver`
+ * is an exact local `const` bound to an OBJECT LITERAL this file's own
+ * text can read the property out of (RWF-028's C09) — `undefined`
+ * otherwise.
+ *
+ * This is emphatically NOT member resolution in general: there is no
+ * heap, no points-to set, no prototype chain and no property-type
+ * reasoning. It is one literal, read literally, under four conditions
+ * that between them make the property's value a fact rather than a guess:
+ *
+ * 1. the receiver is a plain identifier that resolves — by ordinary
+ *    lexical scoping — to a `const` whose initializer IS an object
+ *    literal, and that name is not reassigned module-reachably;
+ * 2. the literal has no spread and no computed key, either of which could
+ *    contribute or overwrite the property without naming it
+ *    ({@link objectLiteralIsReadable});
+ * 3. the receiver binding is CONFINED ({@link confinedObjectBindings}) —
+ *    every occurrence of the name in the whole file is either its own
+ *    declaration or a plain `h.x` read, so nothing in the file can mutate
+ *    the property or hand the object to something that would;
+ * 4. the property resolves to exactly one data value in SOURCE ORDER,
+ *    last write winning, exactly as the language builds the object.
+ *
+ * Condition 3 is the one worth dwelling on, because it is what a
+ * "bounded" member rule usually gets wrong. `const h = { bail };
+ * mutate(h); h.bail();` really can complete normally — `mutate` is free
+ * to install a safe function — and no amount of reading the literal will
+ * show it. Rather than model mutation, this refuses the instant the
+ * binding is used in any way that could lead to mutation, including
+ * merely being passed somewhere.
+ */
+function resolveObjectMemberCallable(
+  receiver: ts.Identifier,
+  property: string,
+  hops: number,
+): LocalCallable | undefined {
+  const sourceFile = receiver.getSourceFile();
+  if (reassignedModuleReachableNames(sourceFile).has(receiver.text)) {
+    return undefined;
+  }
+  if (!confinedObjectBindings(sourceFile).has(receiver.text)) {
+    return undefined;
+  }
+
+  const literal = resolveObjectLiteralBinding(receiver, receiver.text);
+  if (literal === undefined || !objectLiteralIsReadable(literal)) {
+    return undefined;
+  }
+
+  return objectLiteralPropertyCallable(literal, property, hops);
+}
+
+/**
+ * The object literal an identifier is `const`-bound to, by the same
+ * nearest-scope-wins walk {@link resolveIdentifierCallable} uses
+ * (RWF-028). Deliberately a separate, smaller walk rather than a
+ * generalised binding resolver: this asks only about one initializer
+ * shape, and an unsupported nearest binding refuses instead of looking
+ * further out.
+ */
+function resolveObjectLiteralBinding(
+  from: ts.Node,
+  name: string,
+): ts.ObjectLiteralExpression | undefined {
+  const statementsFor = (scope: ts.Node): readonly ts.Statement[] | undefined =>
+    ownStatementsOf(scope);
+
+  let statements: readonly ts.Statement[] | undefined;
+  for (
+    let ancestor: ts.Node | undefined = from.parent as ts.Node | undefined;
+    ancestor !== undefined && !ts.isSourceFile(ancestor);
+    ancestor = ancestor.parent as ts.Node | undefined
+  ) {
+    if (scopeDeclares(ancestor, name)) {
+      statements = statementsFor(ancestor);
+      if (statements === undefined) {
+        return undefined;
+      }
+      break;
+    }
+  }
+  statements ??= from.getSourceFile().statements;
+
+  let found: ts.ObjectLiteralExpression | undefined;
+  for (const statement of statements) {
+    if (
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement)) &&
+      statement.name?.text === name
+    ) {
+      return undefined;
+    }
+    if (
+      !ts.isVariableStatement(statement) ||
+      !declarationListDeclares(statement.declarationList, name)
+    ) {
+      continue;
+    }
+    if ((statement.declarationList.flags & ts.NodeFlags.Const) === 0) {
+      return undefined;
+    }
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        !ts.isIdentifier(declaration.name) ||
+        declaration.name.text !== name
+      ) {
+        return undefined;
+      }
+      if (declaration.initializer === undefined || found !== undefined) {
+        return undefined;
+      }
+      const initializer = unwrapParentheses(declaration.initializer);
+      if (!ts.isObjectLiteralExpression(initializer)) {
+        return undefined;
+      }
+      found = initializer;
+    }
+  }
+  return found;
+}
+
+/**
+ * Whether an object literal's own text determines its property set
+ * (RWF-028).
+ *
+ * A spread (`{ ...other, bail }`) can contribute or be overwritten by
+ * properties named nowhere in this literal, and a computed key
+ * (`{ [k]: safe }`) can name one at runtime. Either makes "which value
+ * does `.bail` hold" a question about something other than this literal,
+ * so the whole literal is refused rather than a safe subset of it being
+ * carved out by source-order reasoning that would have to be exactly
+ * right to be worth anything.
+ */
+function objectLiteralIsReadable(literal: ts.ObjectLiteralExpression): boolean {
+  return !literal.properties.some(
+    (property) =>
+      ts.isSpreadAssignment(property) ||
+      (property.name !== undefined && ts.isComputedPropertyName(property.name)),
+  );
+}
+
+/**
+ * The callable an object literal's `property` holds, reading the literal
+ * in SOURCE ORDER with the last write winning (RWF-028) — which is
+ * exactly how the language builds the object, and is therefore the
+ * behaviour of both duplicate-key controls:
+ *
+ * ```js
+ * const h = { bail, bail: safe };   // .bail is SAFE      -- must refuse
+ * const h = { bail: safe, bail };   // .bail is THROWING  -- may prove
+ * ```
+ *
+ * Only a data property — shorthand, or `name: <function|identifier>` —
+ * is readable. A getter, setter or method named the target REFUSES the
+ * whole answer rather than being skipped over: an accessor runs code on
+ * property READ, and a method is a node shape the rest of this file's
+ * callable machinery does not take.
+ */
+function objectLiteralPropertyCallable(
+  literal: ts.ObjectLiteralExpression,
+  property: string,
+  hops: number,
+): LocalCallable | undefined {
+  let resolved: LocalCallable | ts.Identifier | "unsupported" | undefined;
+
+  for (const member of literal.properties) {
+    const name = member.name;
+    if (name === undefined) {
+      continue;
+    }
+    const memberName =
+      ts.isIdentifier(name) || ts.isStringLiteral(name)
+        ? name.text
+        : ts.isNumericLiteral(name)
+          ? name.text
+          : undefined;
+    if (memberName !== property) {
+      continue;
+    }
+
+    if (ts.isShorthandPropertyAssignment(member)) {
+      resolved = member.name;
+      continue;
+    }
+    if (ts.isPropertyAssignment(member)) {
+      const value = unwrapParentheses(member.initializer);
+      if (ts.isFunctionExpression(value) || ts.isArrowFunction(value)) {
+        resolved = value;
+      } else if (ts.isIdentifier(value)) {
+        resolved = value;
+      } else {
+        resolved = "unsupported";
+      }
+      continue;
+    }
+    // A method, getter or setter carrying this name.
+    resolved = "unsupported";
+  }
+
+  if (resolved === undefined || resolved === "unsupported") {
+    return undefined;
+  }
+  if (!ts.isIdentifier(resolved)) {
+    return resolved;
+  }
+  if (hops <= 0) {
+    return undefined;
+  }
+  return resolveIdentifierCallable(resolved, resolved.text, hops - 1);
+}
+
+/**
+ * The local object-binding names whose every occurrence in the file is a
+ * use this relation can account for (RWF-028's condition 3 — see
+ * {@link resolveObjectMemberCallable}).
+ *
+ * An occurrence is accounted for when it is:
+ *
+ * - the `name` of its own `const` declaration, or
+ * - the RECEIVER of a plain `h.x` property access that is not itself
+ *   being assigned to, deleted, or incremented.
+ *
+ * Everything else — being passed as an argument, returned, exported,
+ * spread, closed over, assigned from, indexed with `h[k]`, or written
+ * through with `h.x = ...` — disqualifies the name. The walk covers the
+ * WHOLE file, function bodies included, because a closure that mutates
+ * the object is exactly the case a module-reachable-only walk would miss:
+ *
+ * ```js
+ * const h = { bail };
+ * function patch() { h.bail = safe; }
+ * patch();
+ * h.bail();            // completes normally -- `h` must be disqualified
+ * ```
+ *
+ * Names are compared as TEXT, so an unrelated binding spelled the same in
+ * another scope disqualifies the object too. That is the conservative
+ * direction and it costs only precision, which is why this does not need
+ * the symbol table a real scope-accurate answer would.
+ *
+ * Cached per source file, and computed only when an object-member
+ * invocation is actually being decided — which
+ * {@link fileHasDefinitelyAbruptCallable} has already gated.
+ */
+const confinedObjectBindingsBySourceFile = new WeakMap<
+  ts.SourceFile,
+  ReadonlySet<string>
+>();
+
+function confinedObjectBindings(
+  sourceFile: ts.SourceFile,
+): ReadonlySet<string> {
+  const cached = confinedObjectBindingsBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const declared = new Set<string>();
+  const disqualified = new Set<string>();
+
+  function visit(node: ts.Node): void {
+    if (ts.isIdentifier(node)) {
+      const parent = node.parent as ts.Node | undefined;
+      if (parent !== undefined && !isAccountedObjectBindingUse(node, parent)) {
+        disqualified.add(node.text);
+      }
+      if (
+        parent !== undefined &&
+        ts.isVariableDeclaration(parent) &&
+        parent.name === node
+      ) {
+        declared.add(node.text);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+
+  const confined = new Set<string>();
+  for (const name of declared) {
+    if (!disqualified.has(name)) {
+      confined.add(name);
+    }
+  }
+
+  confinedObjectBindingsBySourceFile.set(sourceFile, confined);
+  return confined;
+}
+
+/** One occurrence's role, for {@link confinedObjectBindings}. */
+function isAccountedObjectBindingUse(
+  node: ts.Identifier,
+  parent: ts.Node,
+): boolean {
+  if (ts.isVariableDeclaration(parent) && parent.name === node) {
+    return true;
+  }
+  if (!ts.isPropertyAccessExpression(parent) || parent.expression !== node) {
+    return false;
+  }
+  // `h.x` — accounted for only as a READ. A write, delete or update
+  // through it changes the very property this relation wants to read.
+  const access = parent.parent as ts.Node | undefined;
+  if (access === undefined) {
+    return false;
+  }
+  if (
+    ts.isBinaryExpression(access) &&
+    access.left === parent &&
+    isAssignmentOperatorToken(access.operatorToken.kind)
+  ) {
+    return false;
+  }
+  if (ts.isDeleteExpression(access) && access.expression === parent) {
+    return false;
+  }
+  if (
+    (ts.isPrefixUnaryExpression(access) ||
+      ts.isPostfixUnaryExpression(access)) &&
+    access.operand === parent
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /**
  * The three-way answer to "how does executing this ONE statement, in
  * isolation, end" (RWF-016) — the primitive
@@ -1786,20 +2359,34 @@ function mergeAbruptOutcomes(
  * (a sequence only ever needs to know whether a statement forces
  * `"throws"`/`"returns"`, never whether it forces `"normal"`).
  */
-function classifyAbruptOutcome(statement: ts.Statement): AbruptOutcome {
+function classifyAbruptOutcome(
+  statement: ts.Statement,
+  depth: number,
+): AbruptOutcome {
   if (ts.isThrowStatement(statement)) {
     return "throws";
   }
   if (ts.isReturnStatement(statement)) {
     return "returns";
   }
+  // RWF-028's ONE addition to this relation: a bare call statement whose
+  // callee this file's own text proves can only ever throw is an
+  // uncaught abrupt completion of the enclosing body, exactly as a
+  // literal `throw` written in its place would be. `depth` is what keeps
+  // it bounded — see {@link callableAlwaysThrows}.
+  if (
+    ts.isExpressionStatement(statement) &&
+    isDefinitelyAbruptInvocation(statement.expression, depth)
+  ) {
+    return "throws";
+  }
   if (ts.isBlock(statement)) {
-    return classifyAbruptSequence(statement.statements);
+    return classifyAbruptSequence(statement.statements, depth);
   }
   if (ts.isIfStatement(statement)) {
-    const thenOutcome = classifyAbruptOutcome(statement.thenStatement);
+    const thenOutcome = classifyAbruptOutcome(statement.thenStatement, depth);
     const elseOutcome = statement.elseStatement
-      ? classifyAbruptOutcome(statement.elseStatement)
+      ? classifyAbruptOutcome(statement.elseStatement, depth)
       : "normal";
     return mergeAbruptOutcomes(thenOutcome, elseOutcome);
   }
@@ -1811,7 +2398,10 @@ function classifyAbruptOutcome(statement: ts.Statement): AbruptOutcome {
     if (statement.finallyBlock !== undefined) {
       return "normal";
     }
-    const tryOutcome = classifyAbruptSequence(statement.tryBlock.statements);
+    const tryOutcome = classifyAbruptSequence(
+      statement.tryBlock.statements,
+      depth,
+    );
     if (statement.catchClause === undefined) {
       return tryOutcome;
     }
@@ -1822,10 +2412,13 @@ function classifyAbruptOutcome(statement: ts.Statement): AbruptOutcome {
     if (tryOutcome !== "throws") {
       return tryOutcome;
     }
-    return classifyAbruptSequence(statement.catchClause.block.statements);
+    return classifyAbruptSequence(
+      statement.catchClause.block.statements,
+      depth,
+    );
   }
   if (ts.isLabeledStatement(statement)) {
-    return classifyAbruptOutcome(statement.statement);
+    return classifyAbruptOutcome(statement.statement, depth);
   }
   return "normal";
 }
@@ -1843,9 +2436,10 @@ function classifyAbruptOutcome(statement: ts.Statement): AbruptOutcome {
  */
 function classifyAbruptSequence(
   statements: readonly ts.Statement[],
+  depth: number,
 ): AbruptOutcome {
   for (const statement of statements) {
-    const outcome = classifyAbruptOutcome(statement);
+    const outcome = classifyAbruptOutcome(statement, depth);
     if (outcome !== "normal") {
       return outcome;
     }
@@ -1888,6 +2482,65 @@ function classifyAbruptSequence(
 function cannotCompleteNormally(
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
 ): boolean {
+  return callableAlwaysThrows(fn, 0);
+}
+
+/**
+ * How many CALLABLE BODIES deep {@link callableAlwaysThrows} will chase a
+ * definitely-abrupt call before refusing (RWF-028).
+ *
+ * The number counts bodies entered, not calls written, and the budget is
+ * spent as follows:
+ *
+ * ```text
+ * bail();                    -- 1 body  (bail)                RWF-016, unchanged
+ * viaHelper(); { bail(); }   -- 2 bodies (viaHelper -> bail)   one wrapper hop
+ * h2(); { helper(); }        -- 3 bodies (h2 -> helper -> bail) two wrapper hops
+ * h3(); { h2(); }            -- 4 bodies                        REFUSED
+ * ```
+ *
+ * Two wrapper hops is a deliberate, documented bound rather than a
+ * judgement about real code: each hop's proof is literally the same proof
+ * (an exactly-resolved local callable whose every modeled path throws),
+ * so admitting the second costs nothing in reasoning and the third buys
+ * nothing that a bound has to be drawn somewhere anyway. What this is NOT
+ * is an interprocedural summary fixpoint: there is no worklist, no
+ * iteration to convergence, and no cross-file propagation — just a
+ * counter that runs out, plus {@link callablesInProgress} to stop a
+ * self- or mutually-recursive body from being chased at all.
+ */
+const MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH = 3;
+
+/**
+ * The callable bodies {@link callableAlwaysThrows} is CURRENTLY inside.
+ *
+ * `function helper() { helper(); }` never completes, but it never throws
+ * either — it exhausts the stack, and "recursion that does not terminate"
+ * is exactly the nontermination reasoning {@link cannotCompleteNormally}
+ * documents that it refuses to do. Re-entering a body already on this set
+ * answers `false` outright, so a recursive or mutually-recursive callable
+ * is refused on its own merits rather than accidentally proven by running
+ * out of {@link MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH} somewhere down the
+ * chain.
+ */
+const callablesInProgress = new Set<ts.Node>();
+
+/**
+ * {@link cannotCompleteNormally}'s bounded recursive core (RWF-028).
+ *
+ * `depth` is the number of callable bodies already entered on the way
+ * here; `0` is a call written at module scope. Everything else about the
+ * proof is {@link classifyAbruptSequence}'s, unchanged: `async`/generator
+ * callables and concise-bodied arrows are refused before a single
+ * statement is read.
+ */
+function callableAlwaysThrows(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+  depth: number,
+): boolean {
+  if (depth >= MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH) {
+    return false;
+  }
   if (isAsyncOrGeneratorCallable(fn)) {
     return false;
   }
@@ -1895,7 +2548,15 @@ function cannotCompleteNormally(
   if (body === undefined || !ts.isBlock(body)) {
     return false;
   }
-  return classifyAbruptSequence(body.statements) === "throws";
+  if (callablesInProgress.has(fn)) {
+    return false;
+  }
+  callablesInProgress.add(fn);
+  try {
+    return classifyAbruptSequence(body.statements, depth + 1) === "throws";
+  } finally {
+    callablesInProgress.delete(fn);
+  }
 }
 
 /**
@@ -1935,15 +2596,84 @@ function cannotCompleteNormally(
  * therefore always happens, exactly as the plain form does.
  */
 function isDefinitelyAbruptCall(expression: ts.Expression): boolean {
+  return isDefinitelyAbruptInvocation(expression, 0);
+}
+
+/**
+ * {@link isDefinitelyAbruptCall}'s depth-carrying form, and the ONE place
+ * RWF-028 widens what counts as a definitely-abrupt invocation.
+ *
+ * Two invocation kinds are recognised, and each asks
+ * {@link resolveInvocationTargetIdentity} the same question — "which
+ * exact local function node does this syntax provably invoke?" — before
+ * asking anything at all about what invoking it does:
+ *
+ * ```text
+ * bail()        alias()      h.bail()       -- a CALL
+ * new bail()    new alias()  new h.bail()   -- a CONSTRUCT
+ * ```
+ *
+ * The two differ in exactly one way, and it is the reason they are not
+ * collapsed: `[[Call]]` runs the body of anything callable, while
+ * `[[Construct]]` exists only on a CONSTRUCTABLE function. An arrow,
+ * an `async` function and a generator each have no `[[Construct]]` at
+ * all, so `new` on one throws a `TypeError` WITHOUT EVER ENTERING THE
+ * BODY — verified under real `node` v22 for all three. That is still a
+ * non-completing module evaluation, but for a reason that has nothing to
+ * do with the body this relation reads, so claiming it here would be
+ * claiming a proof this relation did not perform. It is refused instead,
+ * and recorded as a characterised limitation in
+ * tests/validation/FINDINGS.md.
+ *
+ * `async`/generator are refused on the CALL side too, for RWF-016's own
+ * reason ({@link isAsyncOrGeneratorCallable}): calling one returns a
+ * rejected promise or an unstarted generator, never a synchronous throw.
+ * That refusal is now reached through a resolver that also resolves
+ * aliases and object members, so `const alias = asyncBail; alias();` is
+ * refused by the same single test rather than by three separate ones.
+ */
+function isDefinitelyAbruptInvocation(
+  expression: ts.Expression,
+  depth: number,
+): boolean {
   const unwrapped = unwrapParentheses(expression);
-  if (
-    !ts.isCallExpression(unwrapped) ||
-    !ts.isIdentifier(unwrapped.expression)
-  ) {
-    return false;
+
+  if (ts.isCallExpression(unwrapped)) {
+    const target = resolveExactLocalCallable(unwrapped.expression);
+    if (target === undefined) {
+      return false;
+    }
+    return callableAlwaysThrows(target, depth);
   }
-  const target = resolveExactLocalCallable(unwrapped.expression);
-  return target !== undefined && cannotCompleteNormally(target);
+
+  if (ts.isNewExpression(unwrapped)) {
+    const target = resolveInvocationTargetIdentity(unwrapped.expression);
+    if (target === undefined || !isConstructableCallable(target)) {
+      return false;
+    }
+    return callableAlwaysThrows(target, depth);
+  }
+
+  return false;
+}
+
+/**
+ * Whether `new fn()` would actually ENTER `fn`'s body (RWF-028).
+ *
+ * Only an ordinary, non-`async`, non-generator `function` — declaration
+ * or expression — has a `[[Construct]]` internal method. Arrows, `async`
+ * functions and generators do not, and `new` on one of them throws
+ * `TypeError: X is not a constructor` before the body runs. Since
+ * {@link resolveInvocationTargetIdentity} only ever returns one of those
+ * three node kinds, this test is exact rather than approximate.
+ */
+function isConstructableCallable(
+  fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
+): boolean {
+  return (
+    (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) &&
+    !isAsyncOrGeneratorCallable(fn)
+  );
 }
 
 /**
@@ -1983,8 +2713,111 @@ function fileHasDefinitelyAbruptCallable(sourceFile: ts.SourceFile): boolean {
       break;
     }
   }
+  if (!found) {
+    found = moduleReachableCallableCandidates(sourceFile).some((candidate) =>
+      cannotCompleteNormally(candidate),
+    );
+  }
 
   hasDefinitelyAbruptCallableBySourceFile.set(sourceFile, found);
+  return found;
+}
+
+/**
+ * Every callable RWF-028 can RESOLVE that lives in a module-reachable
+ * statement scope — the top level included, and crucially the scopes
+ * below it, which is where C10's block-scoped bindings live:
+ *
+ * ```js
+ * { const bail = () => { throw new Error("boom"); }; bail(); }
+ * ```
+ *
+ * {@link fileHasDefinitelyAbruptCallable}'s completeness argument is that
+ * a file with no always-throwing candidate provably has no
+ * definitely-abrupt call in it. RWF-028 made a second place a candidate
+ * can live, so the gate has to look there too or it would short-circuit
+ * C10 to `false` before any of the new resolution ran.
+ *
+ * The walk is the same cheap statement-position walk
+ * {@link reassignedModuleReachableNames} uses, and stops at function
+ * bodies for the same reason: a callable declared inside one is not a
+ * module-reachable binding, and RWF-028 does not resolve into one.
+ */
+const moduleReachableCallableCandidatesBySourceFile = new WeakMap<
+  ts.SourceFile,
+  readonly LocalCallable[]
+>();
+
+function moduleReachableCallableCandidates(
+  sourceFile: ts.SourceFile,
+): readonly LocalCallable[] {
+  const cached = moduleReachableCallableCandidatesBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  const found: LocalCallable[] = [];
+
+  function collect(statements: readonly ts.Statement[]): void {
+    for (const statement of statements) {
+      if (ts.isFunctionDeclaration(statement) && statement.body !== undefined) {
+        found.push(statement);
+      } else if (
+        ts.isVariableStatement(statement) &&
+        (statement.declarationList.flags & ts.NodeFlags.Const) !== 0
+      ) {
+        for (const declaration of statement.declarationList.declarations) {
+          if (
+            !ts.isIdentifier(declaration.name) ||
+            declaration.initializer === undefined
+          ) {
+            continue;
+          }
+          const initializer = unwrapParentheses(declaration.initializer);
+          if (
+            ts.isFunctionExpression(initializer) ||
+            ts.isArrowFunction(initializer)
+          ) {
+            found.push(initializer);
+            continue;
+          }
+          // A callable written INLINE as an object-literal property value
+          // is a shape {@link objectLiteralPropertyCallable} can return,
+          // so the gate has to be able to see it too — otherwise whether
+          // `h.run()` is provable would depend on some UNRELATED throwing
+          // callable existing elsewhere in the file, which is precisely
+          // the file-level inference this task must not make.
+          if (ts.isObjectLiteralExpression(initializer)) {
+            for (const property of initializer.properties) {
+              if (!ts.isPropertyAssignment(property)) {
+                continue;
+              }
+              const value = unwrapParentheses(property.initializer);
+              if (ts.isFunctionExpression(value) || ts.isArrowFunction(value)) {
+                found.push(value);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  function visit(node: ts.Node): void {
+    if (ts.isFunctionLike(node)) {
+      return;
+    }
+    const statements = ownStatementsOf(node);
+    if (statements !== undefined) {
+      collect(statements);
+    }
+    if (mayContainNestedStatements(node) || ts.isSourceFile(node)) {
+      ts.forEachChild(node, visit);
+    }
+  }
+  visit(sourceFile);
+
+  moduleReachableCallableCandidatesBySourceFile.set(sourceFile, found);
   return found;
 }
 

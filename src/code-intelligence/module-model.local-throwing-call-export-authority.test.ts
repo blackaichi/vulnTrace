@@ -226,10 +226,18 @@ describe("RWF-016: scope, shadowing and aliasing must not be guessed at", () => 
     ).toBeUndefined();
   });
 
-  it("keeps authority for an ALIASED call -- no new alias resolution", () => {
+  it("RESOLVES a one-hop aliased call (RWF-028 closed this; RWF-016 refused it)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const x = bail;\nx();\nmodule.exports = second;\n`,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("keeps authority for a TWO-hop alias -- one hop is the documented bound", () => {
+    expect(
+      defaultExportName(
+        `${TWO}${BAIL_THROWS}const x = bail;\nconst y = x;\ny();\nmodule.exports = second;\n`,
       ),
     ).toBe("second");
   });
@@ -268,12 +276,12 @@ describe("RWF-016: scope, shadowing and aliasing must not be guessed at", () => 
 });
 
 describe("RWF-016: excluded callable shapes", () => {
-  it("keeps authority for a method call (obj.bail())", () => {
+  it("RESOLVES an exact object-literal member call (RWF-028 closed this)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const obj = { bail };\nobj.bail();\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("keeps authority for a computed/registry call", () => {
