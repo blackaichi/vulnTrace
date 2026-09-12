@@ -439,6 +439,42 @@ describe("P1-A1 target-side re-export: PackageInstance exactness survives forwar
   });
 });
 
+describe("P1-A1 target-side re-export: false-NOT_AFFECTED probes", () => {
+  it("stays AFFECTED when the SAME implementation is reached under a DIFFERENT exported name", async () => {
+    // twoname-lib publishes one callable under two names. The advisory
+    // names `vulnerable`; the application calls `alsoVulnerable`. Node
+    // really does execute the advisory's target, so anything but AFFECTED
+    // here is a false negative -- and this is exactly the shape a
+    // subtly-wrong target identity would get wrong while still looking
+    // like a confident answer.
+    const { finding } = await scan({
+      entrypoint: "src/twoname-other-name.cjs",
+      packageName: "twoname-lib",
+      target: "vulnerable",
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+    expect(evidencePath(finding).at(-1) ?? "").toContain(
+      inPackage("twoname-lib", "impl.js"),
+    );
+  });
+
+  it("resolves a LITERAL BRACKET forwarding export to the real implementation", async () => {
+    // `module.exports["vulnerable"] = require("./impl").internalName` --
+    // the P0 literal-bracket export family, now also on the target side.
+    const { finding } = await scan({
+      entrypoint: "src/bracket-reachable.cjs",
+      packageName: "bracket-lib",
+      target: "vulnerable",
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+    expect(evidencePath(finding).at(-1) ?? "").toContain(
+      inPackage("bracket-lib", "impl.js"),
+    );
+  });
+});
+
 describe("P1-A1 target-side re-export: runtime oracle", () => {
   it("the fixture's real-Node ground truth holds", () => {
     // VulnTrace itself never executes target code. This runs the fixture's

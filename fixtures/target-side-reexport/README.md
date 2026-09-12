@@ -62,6 +62,8 @@ each `src/*.cjs` is a consumer entrypoint scanned on its own.
 | `boundary-lib` | relative hop escaping the package root into `outside-lib` | **refused** — advisory ownership is not re-pointed |
 | `crosspkg-lib` | bare-specifier hop into `outside-lib` | **refused**, same reason |
 | `twin-lib` | same name **and** version installed twice (top-level, and nested under `wrapper-lib`), each forwarding to its own impl | each instance answered only by its own install path |
+| `twoname-lib` | one implementation published under **two** export names; the app calls the other one | the shared impl — reaching it under either name really does execute the advisory's target |
+| `bracket-lib` | `module.exports["vulnerable"] = require("./impl").internalName` (literal-bracket form) | `impl.js`'s `internalName` |
 
 Reachability controls: `src/onehop-reachable.cjs` calls the forwarded
 export (→ AFFECTED, with a concrete path into `impl.js`);
