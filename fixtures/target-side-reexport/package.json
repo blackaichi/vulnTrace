@@ -1,0 +1,6 @@
+{
+  "name": "target-side-reexport-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "P1-A1 fixture: the vulnerable PACKAGE publishes its advisory-named symbol through forwarding layers."
+}
