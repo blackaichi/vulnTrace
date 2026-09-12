@@ -1,0 +1,19 @@
+{
+  "name": "app",
+  "version": "1.0.0",
+  "private": true,
+  "main": "./src/index.js",
+  "dependencies": {
+    "lib": "workspace:*",
+    "safelib": "workspace:^",
+    "fwdlib": "workspace:~",
+    "exportslib": "*",
+    "subpathonlylib": "*",
+    "expmainlib": "*",
+    "@scope/lib": "*",
+    "twinlib": "*",
+    "nestedlib": "*",
+    "filelib": "file:../filelib",
+    "linklib": "link:../linklib"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "condsafelib",
+  "version": "1.0.0",
+  "exports": {
+    ".": {
+      "require": "./cjs.cjs",
+      "import": "./esm.mjs"
+    }
+  }
+}

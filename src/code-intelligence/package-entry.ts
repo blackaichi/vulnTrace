@@ -353,9 +353,28 @@ export async function resolveAuthoritativePackageEntries(
   // Node (see `declaresExports`), so it is admissible only for a package
   // that declares none -- there, a path request and a bare request agree
   // by construction, both landing on `main`/`index`.
-  if (!declaresExports(packageInstance)) {
+  //
+  // It is ALSO gated on OWNERSHIP (P1-A4), for the same reason the alias
+  // probe above is: a path request resolves into the instance by
+  // construction, so the instance-identity check below passes trivially
+  // and cannot reject anything. Without ownership, ANY instance would
+  // answer a request for ANY package name with its own `main`/`index` --
+  // the package never has to say "I am `foo`" for the probe to fire.
+  //
+  // That hole was unreachable in practice while this probe only applied to
+  // instances inside `node_modules`, where the alias probe covers the same
+  // ground with an ownership gate. P1-A4 makes packages OUTSIDE
+  // `node_modules` resolvable, and for them this is the ONLY probe that
+  // fires -- so the gate stops being theoretical. `installDirectory` is
+  // deliberately not required here: a workspace package has none, which is
+  // precisely why this probe exists for it.
+  const ownedByThisInstance =
+    parts !== undefined &&
+    manifestName !== undefined &&
+    manifestName === parts.packageName;
+  if (!declaresExports(packageInstance) && ownedByThisInstance) {
     specifiers.add(
-      parts?.subpath === undefined
+      parts.subpath === undefined
         ? packageInstance
         : path.join(packageInstance, parts.subpath),
     );
