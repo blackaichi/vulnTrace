@@ -8,9 +8,11 @@ import {
   refusesLocalIdentifierProvenance,
   resolveCommonJsReExportExpression,
   resolveLocalValue,
+  resolveLocalValueByName,
   unwrapParentheses,
   unwrapValue,
   type CommonJsReExportOrigin,
+  type LocalValueProvenance,
 } from "./commonjs-reexports.js";
 import {
   exactCommonJsExportPropertyName,
@@ -5286,7 +5288,14 @@ export function buildModuleModel(index: SourceIndex): ModuleModel {
 export type EntrypointRootIncompletenessReason =
   | "unresolved_entrypoint_reexport"
   | "unresolved_export_forwarding"
-  | "unresolved_computed_export_name";
+  | "unresolved_computed_export_name"
+  /**
+   * A root candidate that must denote a callable could not be MATERIALIZED
+   * to an actual node (P0-Z round 3). Raised by `entrypointSourceNodes`,
+   * which is the only place that can ask the question, since it alone
+   * holds both the candidates and the call graph.
+   */
+  | "unresolved_entrypoint_root_candidate";
 
 /** One concrete reason a configured entrypoint's root set is incomplete. */
 export interface EntrypointRootIncompleteness {
@@ -5337,6 +5346,39 @@ export interface EntrypointRootCandidates {
    */
   readonly complete: boolean;
   readonly incompleteness: readonly EntrypointRootIncompleteness[];
+  /**
+   * One entry per export binding that could publish a CALLABLE, listing
+   * every alternative that would materialize it (P0-Z round 3).
+   *
+   * THE INVARIANT THIS EXISTS TO ENFORCE: a candidate name is not a root.
+   * A root is a NODE. Before this, `entrypointRootCandidates` contributed
+   * `exp.localName ?? exp.exportedName` and called the derivation
+   * complete — but for `const alias = bad; module.exports.run = alias` the
+   * contributed name is `alias`, while the only callable node is `bad`.
+   * The name matched nothing, the entrypoint got no root beyond
+   * `<module>`, and family C certified `reachableSubgraphComplete: true`
+   * over a sink Node executes. Modeling the export was never the missing
+   * piece; materializing the candidate was.
+   *
+   * A requirement is satisfied by ANY of its `names` or `locations`,
+   * because the same binding can materialize either way: `const alias =
+   * function inner(){}` materializes by POSITION while `const alias =
+   * (u) => ...` is indexed under the variable name and materializes by
+   * NAME. Requiring both would manufacture false incompleteness.
+   *
+   * Bindings that provably publish no callable (`module.exports.x = 42`)
+   * emit NO requirement -- "there is no root here" stays a complete
+   * answer, which is what keeps valid family C proofs alive.
+   */
+  readonly rootRequirements: readonly EntrypointRootRequirement[];
+}
+
+/** One export binding's materialization alternatives (P0-Z round 3). */
+export interface EntrypointRootRequirement {
+  /** The exported name, for diagnostics. */
+  readonly exportedName?: string;
+  readonly names: readonly string[];
+  readonly locations: readonly SourceLocation[];
 }
 
 /**
@@ -5651,6 +5693,54 @@ function computedExportNameWrites(
   return found;
 }
 
+/**
+ * Whether a resolved export value could be a callable at runtime (P0-Z
+ * round 3).
+ *
+ * Deliberately a NEGATIVE test: everything is assumed callable-capable
+ * unless it is one of the few literal forms that provably is not. Getting
+ * this wrong in the permissive direction costs an UNKNOWN; getting it
+ * wrong in the restrictive direction costs a false NOT_AFFECTED, because
+ * a binding wrongly classified "not callable" emits no requirement and
+ * its unmaterialized root goes unnoticed.
+ */
+function mayBeCallableValue(value: ts.Expression): boolean {
+  return !(
+    ts.isNumericLiteral(value) ||
+    ts.isBigIntLiteral(value) ||
+    ts.isStringLiteralLike(value) ||
+    ts.isRegularExpressionLiteral(value) ||
+    value.kind === ts.SyntaxKind.TrueKeyword ||
+    value.kind === ts.SyntaxKind.FalseKeyword ||
+    value.kind === ts.SyntaxKind.NullKeyword ||
+    (ts.isIdentifier(value) && value.text === "undefined")
+  );
+}
+
+/**
+ * The resolved value of a CommonJS PROPERTY export that carries no
+ * `localName` (P0-Z round 3) -- `module.exports.run = obj.bad`, where the
+ * right-hand side is not a bare identifier so no local name was recorded.
+ *
+ * Without this such a binding looks exactly like `module.exports.run = 42`:
+ * both have no `localName`, no `localFunctionLocation`, and would emit no
+ * requirement. One of them can publish a callable.
+ */
+function commonJsPropertyExportValue(
+  index: SourceIndex,
+  exp: ExportBinding,
+): LocalValueProvenance | undefined {
+  if (
+    exp.syntax !== "commonjs" ||
+    exp.kind !== "named" ||
+    exp.exportedName === undefined
+  ) {
+    return undefined;
+  }
+  const rhs = commonJsPropertyExportRhs(index, exp.exportedName);
+  return rhs === undefined ? undefined : resolveLocalValue(index, rhs);
+}
+
 export function entrypointRootCandidates(
   index: SourceIndex,
   model: ModuleModel,
@@ -5658,9 +5748,14 @@ export function entrypointRootCandidates(
   const names = new Set<string>();
   const locations: SourceLocation[] = [];
   const incompleteness: EntrypointRootIncompleteness[] = [];
+  const rootRequirements: EntrypointRootRequirement[] = [];
   let withdrawn = false;
 
   for (const exp of model.exports) {
+    // P0-Z round 3: what this binding would have to materialize to.
+    const requiredNames: string[] = [];
+    const requiredLocations: SourceLocation[] = [];
+    let requiresCallableRoot = false;
     // Unchanged from before RWF-021, including the `exportedName`
     // fallback. For a ROOT that fallback is sound in the direction that
     // matters: landing on a same-name local that is not really the export
@@ -5672,6 +5767,7 @@ export function entrypointRootCandidates(
     const name = exp.localName ?? exp.exportedName;
     if (name) {
       names.add(name);
+      requiredNames.push(name);
     }
     // RWF-003's anonymous-callable evidence, which root selection never
     // consulted before RWF-021: `module.exports = function (u) { ... }`
@@ -5679,9 +5775,76 @@ export function entrypointRootCandidates(
     // root lookup lost it even when attribution was fully precise.
     if (exp.localFunctionLocation) {
       locations.push(exp.localFunctionLocation);
+      requiredLocations.push(exp.localFunctionLocation);
     }
     if (exp.exportAttributionWithdrawn) {
       withdrawn = true;
+    }
+
+    // P0-Z round 3 -- RESOLVE THE EXPORTED LOCAL THROUGH ITS ALIAS CHAIN.
+    //
+    // `exp.localName` is the name the export was written with, which for
+    // `const alias = bad; module.exports.run = alias` is `alias` -- a
+    // variable, not a callable node. The chain walk is RWF-012/013's
+    // existing bounded one (`resolveLocalValue`, entered by name), so
+    // reassignment, cycles, destructuring and non-module-scope bindings
+    // all refuse here exactly as they refuse for attribution. This adds
+    // hops, never permissiveness.
+    const published = exp.localName
+      ? resolveLocalValueByName(index, exp.localName)
+      : commonJsPropertyExportValue(index, exp);
+
+    if (published !== undefined) {
+      switch (published.kind) {
+        case "unmodeled": {
+          // The chain ended on a name this file does not bind -- an
+          // un-reassigned function/class declaration, or an import. THAT
+          // is the callable a root must be looked up by.
+          if (published.name !== undefined) {
+            names.add(published.name);
+            requiredNames.push(published.name);
+          }
+          requiresCallableRoot = true;
+          break;
+        }
+        case "value": {
+          const chased = directValueFunctionLocation(
+            index.sourceFile,
+            published.value,
+          );
+          if (chased) {
+            // An exact function/arrow/class expression: materialized by
+            // POSITION, which needs no name at all (RWF-003's evidence).
+            locations.push(chased);
+            requiredLocations.push(chased);
+            requiresCallableRoot = true;
+          } else if (mayBeCallableValue(published.value)) {
+            // A conditional, a call, a property access: could publish a
+            // callable and this analyzer cannot say which. Requiring it
+            // is what turns the guess into an honest UNKNOWN.
+            requiresCallableRoot = true;
+          }
+          // Anything provably non-callable (a numeric/string literal)
+          // requires no root at all, and must not manufacture one.
+          break;
+        }
+        case "refused": {
+          // RWF-013/013b proved the file rewrites this binding, so what it
+          // publishes is genuinely undetermined. The stale declaration must
+          // not be rooted, and pretending the derivation is complete is the
+          // defect this whole effort removes.
+          requiresCallableRoot = true;
+          break;
+        }
+      }
+    }
+
+    if (requiresCallableRoot) {
+      rootRequirements.push({
+        exportedName: exp.exportedName,
+        names: requiredNames,
+        locations: requiredLocations,
+      });
     }
     // P0-Z: an export forwarded from another module has no root in THIS
     // file. Recorded rather than silently contributing nothing, which is
@@ -5740,6 +5903,7 @@ export function entrypointRootCandidates(
     locations,
     complete: incompleteness.length === 0,
     incompleteness,
+    rootRequirements,
   };
 }
 

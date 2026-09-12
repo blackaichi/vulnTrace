@@ -729,7 +729,52 @@ function entrypointSourceNodes(
     }
   }
 
-  return { sources, incompleteness: candidates.incompleteness };
+  // P0-Z round 3 -- THE ROOT MATERIALIZATION CONTRACT.
+  //
+  // A candidate NAME is not a root; a NODE is. Every check above can
+  // silently find nothing, and before this the derivation was still
+  // reported COMPLETE -- which is exactly how `const alias = bad;
+  // module.exports.run = alias` certified `reachableSubgraphComplete:
+  // true` over a live sink: `alias` names no callable, `bad` was never
+  // contributed, and the entrypoint ended up rooted at `<module>` alone.
+  //
+  // Asked HERE and nowhere else because this is the only layer holding
+  // both the candidates and the call graph -- `entrypointRootCandidates`
+  // cannot answer "did this materialize" without the graph, which is the
+  // missing semantic dependency that justifies touching this file at all.
+  //
+  // A requirement is satisfied by ANY of its alternatives: the same
+  // binding materializes by POSITION for `const alias = function(){}` and
+  // by NAME for an arrow indexed under its variable. Bindings that
+  // provably publish no callable emit no requirement, so "there is no
+  // root here" remains a complete answer and valid Family C survives.
+  const unmaterialized = candidates.rootRequirements.filter(
+    (requirement) =>
+      !requirement.names.some((name) =>
+        graph.nodes.some(
+          (n) => n.module === entrypoint.filePath && n.name === name,
+        ),
+      ) &&
+      !requirement.locations.some((location) =>
+        graph.nodes.some(
+          (n) =>
+            n.module === entrypoint.filePath &&
+            n.location?.line === location.line &&
+            n.location?.column === location.column,
+        ),
+      ),
+  );
+
+  return {
+    sources,
+    incompleteness: [
+      ...candidates.incompleteness,
+      ...unmaterialized.map((requirement) => ({
+        reason: "unresolved_entrypoint_root_candidate" as const,
+        exportedName: requirement.exportedName,
+      })),
+    ],
+  };
 }
 
 /**

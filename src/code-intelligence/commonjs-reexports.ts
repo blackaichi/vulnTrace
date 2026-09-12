@@ -934,23 +934,46 @@ export function classifyLocalBinding(
 export type LocalValueProvenance =
   | { readonly kind: "value"; readonly value: ts.Expression }
   | { readonly kind: "refused" }
-  | { readonly kind: "unmodeled" };
+  /**
+   * Nothing in this file binds the name the chain ended on.
+   *
+   * `name` carries THAT terminal identifier (P0-Z round 3). The walk
+   * already knew it and used to discard it, which cost the one fact an
+   * entrypoint ROOT needs: for `const alias = bad;` the chain ends
+   * "unmodeled" on `bad` — an un-reassigned function declaration — and
+   * `bad` is exactly the callable a root must be looked up by. Without it
+   * the only available name was `alias`, which matches no callable node,
+   * so root derivation contributed a name that could never materialize
+   * and still reported COMPLETE. Optional so every existing caller, all
+   * of which read only `kind`, is untouched.
+   */
+  | { readonly kind: "unmodeled"; readonly name?: string };
 
-export function resolveLocalValue(
+/**
+ * {@link resolveLocalValue}, entered by NAME rather than by expression.
+ *
+ * The chain walk itself lives here, in ONE implementation, so the
+ * expression-entered and name-entered forms cannot drift apart — the
+ * hazard the codebase already warns about for `classifyLocalBinding`'s
+ * mirrors. Root derivation needs the name-entered form because an
+ * `ExportBinding` carries `localName`, a name, and never the expression
+ * it came from.
+ */
+function resolveLocalChainFromName(
   index: SourceIndex,
-  expr: ts.Expression,
+  startName: string,
 ): LocalValueProvenance {
   const visited = new Set<string>();
-  let node = unwrapValue(expr);
+  let name = startName;
 
-  while (ts.isIdentifier(node)) {
+  for (;;) {
     // The cycle guard, asked before the hop is classified: `const a = b;
     // const b = a` gives two individually impeccable bindings, so no
     // per-hop proof can catch it and the walk would not terminate.
-    if (visited.has(node.text)) {
+    if (visited.has(name)) {
       return { kind: "refused" };
     }
-    visited.add(node.text);
+    visited.add(name);
 
     // The per-hop proof is {@link classifyLocalBinding}, unchanged and
     // undiluted — this relation adds hops, never permissiveness. Building
@@ -959,14 +982,38 @@ export function resolveLocalValue(
     // chain walker if there is only one implementation of them, and
     // `"refused"`/`"unmodeled"` propagate out of the chain carrying
     // exactly the meaning they carry for a single binding.
-    const hop = classifyLocalBinding(index, node.text);
-    if (hop.kind !== "single-assignment") {
+    const hop = classifyLocalBinding(index, name);
+    if (hop.kind === "refused") {
       return hop;
     }
-    node = unwrapValue(hop.value);
+    if (hop.kind === "unmodeled") {
+      return { kind: "unmodeled", name };
+    }
+    const value = unwrapValue(hop.value);
+    if (!ts.isIdentifier(value)) {
+      return { kind: "value", value };
+    }
+    name = value.text;
   }
+}
 
-  return { kind: "value", value: node };
+export function resolveLocalValue(
+  index: SourceIndex,
+  expr: ts.Expression,
+): LocalValueProvenance {
+  const node = unwrapValue(expr);
+  if (!ts.isIdentifier(node)) {
+    return { kind: "value", value: node };
+  }
+  return resolveLocalChainFromName(index, node.text);
+}
+
+/** {@link resolveLocalValue} for a name this file exports (P0-Z round 3). */
+export function resolveLocalValueByName(
+  index: SourceIndex,
+  name: string,
+): LocalValueProvenance {
+  return resolveLocalChainFromName(index, name);
 }
 
 /**
