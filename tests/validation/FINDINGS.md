@@ -7421,3 +7421,274 @@ canonical validation baseline is **unchanged**: 18 passed / 5 KNOWN_FAIL
   out of scope** and untouched.
 - **`export * from` stays unresolved** as a forwarding hop — unchanged from
   P1-A1; P1-B ESM work.
+
+---
+
+## RWF-032 — A monorepo's own local packages had no identity, so advisories about them were answered from project-root resolution with no instance gating (P1-A4)
+
+**Classification: soundness / target-identity correction, in BOTH
+directions, plus new coverage.** The verdict differential below contains a
+removed false NOT_AFFECTED and two removed false AFFECTEDs.
+
+**Discovered:** P1-A4's identity inventory, by probing `identifyModule`
+and `resolveAuthoritativePackageEntries` against a real npm-workspace
+monorepo before writing any code.
+**Reproduced for this task:** by running the branch's own workspace suite
+with discovery disabled, which reproduces merged main's behavior exactly
+(`ScanOptions.withoutWorkspaceDiscovery`). Every baseline claim below is a
+passing assertion in `verdict.workspaces.integration.test.ts § Z`, not a
+recollection.
+
+### The defect
+
+`identifyModule` can name a package two ways: from a `node_modules/<name>`
+path segment, or from dependency-graph PROVENANCE (`KnownPackageRoots`,
+VT-307c-fix-4b). A monorepo's own `packages/lib` matches neither. It has
+no `node_modules` segment, and npm writes its lockfile entry as a
+versionless `link`, which `buildDependencyGraph` skips because it can form
+no `DependencyNode` ("inherent to unversioned/local links", as that file
+already said).
+
+So a workspace package's files came back as bare paths — no
+`packageName`, no `packageInstance`:
+
+```
+packages/lib/index.js  =>  { resolvedFile }        // and nothing else
+```
+
+`graphPackageInstances` therefore found no instance of the advisory's
+package name, and target resolution took its **Site B** fallback: resolve
+`target.module` once from the PROJECT ROOT, bind the export in whatever
+file that lands on, or a phantom. That path predates P1-A2 and has no
+instance gating and no public-entry authority — for workspace packages, it
+was still the live path.
+
+Three consequences, all measured:
+
+1. **A forwarded workspace sink was a false NOT_AFFECTED.** `fwdlib`'s
+   entry publishes `vulnerable` by forwarding it to `impl.js#internal`.
+   Project-root resolution found no `vulnerable` *defined* in `index.js`
+   — because it is a forward — produced a phantom, searched, and certified
+   the target unreachable. Real `node` shows the implementation really
+   runs from the consumer.
+2. **Two packages' evidence was mixed.** A finding about
+   `packages/scopedtwin` (which declares `@scope/lib` but is not what the
+   name resolves to) was answered with `packages/scopedlib`'s
+   genuinely-reached `api.js`. Symmetrically, a finding about the SAFE
+   installed `mixedlib` was answered with the vulnerable workspace copy's
+   reachability. Both false AFFECTED.
+3. **Negatives rested on no entry authority.** Where the project-root
+   resolution simply didn't export the advisory's name, main answered
+   NOT_AFFECTED — a negative that no public-entry authority supported.
+
+What main did NOT get wrong, pinned as negative results so the defect's
+boundary is explicit: a package *under* `node_modules`, even nested inside
+a workspace member, always had identity from its path shape, so
+instance-exactness already worked there; and a workspace finding never
+inherited an installed twin's verdict, because the twin DOES have an
+identity and VT-212 instance-exactness refuses rather than substitutes.
+Merged main was **uninformative** about local packages, not systematically
+wrong about them.
+
+### The fix
+
+One missing authority, added at the identity layer and nowhere else:
+`dependencies/workspaces.ts` reads the repository's own `workspaces`
+declaration and hands the resulting canonical roots to
+`buildKnownPackageRoots`. Everything downstream is untouched P1-A1/A2/A3
+machinery, which could not run for these packages before only because it
+had no exact instance to run against. **There is no workspace-specific
+target resolver, and no workspace-specific forwarding or entry semantics.**
+
+A directory becomes a package root only when BOTH hold: the root
+manifest's own `workspaces` declaration covers it, AND it really contains
+a readable `package.json`. Authoritative metadata plus a real manifest —
+never a directory that merely looks like a package. This is the same
+discipline `KnownPackageRoots` already applies to installed packages,
+where provenance rather than filesystem shape is what admits a root.
+
+Identity is the **canonical root**. Not the name, not the version, not
+both: two workspace packages declaring the same name and version are two
+packages, and a workspace copy and an installed copy of the same name and
+version are two packages. Conversely two spellings that realpath to one
+directory are ONE package — which is not a VulnTrace convention but what
+Node does, since it loads and caches by realpath. The fixture's runtime
+oracle asserts both directions out of process, including that
+`node_modules/lib` and `packages/lib` really produce a single
+`require.cache` entry.
+
+### A second defect the differential oracle found
+
+The absolute-install-PATH probe in `resolveAuthoritativePackageEntries`
+had **no ownership gate**. A path request resolves into the instance by
+construction, so the existing instance-identity check passes trivially and
+can reject nothing — meaning any instance would answer a request for ANY
+package name with its own `main`/`index`. The package never had to say "I
+am `foo`".
+
+That was unreachable in practice while the probe applied only inside
+`node_modules`, where the alias probe covers the same ground *with* an
+ownership gate. P1-A4 makes packages outside `node_modules` resolvable,
+and for them this is the only probe that fires — so the hole stopped being
+theoretical. It is now gated on the instance's own manifest declaring the
+advisory's name, exactly as the alias probe is. A strict tightening: all
+59 P1-A3 package-entry tests are unchanged by it.
+
+### Workspace discovery is bounded, and fails closed
+
+Three plain directory enumerations, each rooted at its pattern's own
+literal prefix: a literal path, a trailing `*`, a trailing `**` (depth- and
+count-capped). Never a repository-wide `package.json` scan, and
+deliberately **not a glob engine** (P1-A4 § NON-GOALS).
+
+Every other pattern shape — negations, a wildcard anywhere but the final
+segment, `?`, character classes, brace expansion, extglobs, absolute
+patterns, anything containing `..` — discovers nothing and is REPORTED as
+unsupported. So is a `workspaces` value whose shape is not an array of
+strings or an object with a `packages` array. Reporting matters as much as
+refusing: "this repo declares no workspaces" and "this repo declares
+workspaces this analyzer cannot read" must stay distinguishable, because a
+package that silently disappears is a package a negative verdict can then
+be built on.
+
+Two directories are never admitted: the monorepo root (it is not one of
+its own child packages) and anything under `node_modules` (installed
+packages already have an identity authority; a second one for the same
+question is a worse failure mode than one).
+
+**Object-form `workspaces`** (`{"packages": [...]}`), a perfectly valid npm
+manifest, previously made `parsePackageJson` **throw** and failed the whole
+scan — a hard failure, not a fail-closed one. The raw value is now
+preserved and interpreted where the semantics live, exactly as
+`exports`/`imports` already are.
+
+### Discovery is not reachability
+
+Admitting a root changes only the ATTRIBUTION of files the analysis
+already reached. It loads nothing, adds nothing to any call graph, and
+makes nothing reachable. `ModuleLoadClosure` is untouched: it consumes
+`identifyModule` exactly as before and its Family A/B/C contracts are
+unchanged. A merely-discovered workspace package is not a loaded one.
+
+### Runtime oracle
+
+`fixtures/workspaces/verify.cjs` — real `node`, out of process, 39 checks
+establishing ground truth BEFORE any expectation was written. It caught
+one of this task's own wrong assumptions immediately (a deep import into a
+package declaring no `exports` does resolve, so `safelib/sibling` is
+reachable as a path — which is precisely why its existence must not
+establish authority).
+
+`workspaces.differential-oracle.test.ts` compares real Node against
+VulnTrace on identity and entry, both asked **from the true consumer**
+(`packages/app`) rather than from the repository root — the distinction
+that decides which of two shadowing copies is correct.
+
+**Disagreements on supported shapes: 0.**
+
+One divergence is characterized rather than removed. Where Node refuses a
+name because nothing is INSTALLED under it (two workspace packages both
+named `dup`), the entry relation still reports that instance's own `main`
+— truthfully, since the package does declare that name. Importability is a
+question the relation deliberately does not model. Rather than assert a
+refusal it does not make, the guarantee is recovered directly and
+asserted: an instance no consumer can import contributes no graph nodes,
+so its entry binds no target and AFFECTED is unreachable by construction.
+
+### Verdict differential
+
+Merged main `9a320c4` behavior vs this branch, over all 25 advisory/
+consumer pairs in `fixtures/workspaces`:
+
+| Movement | Count | Where |
+| --- | --- | --- |
+| NOT_AFFECTED → AFFECTED | 1 | `fwdlib` — a false NOT_AFFECTED removed |
+| AFFECTED → UNKNOWN | 2 | `scopedtwin`, installed `mixedlib` — two false AFFECTEDs removed |
+| NOT_AFFECTED → UNKNOWN | 5 | negatives that no entry authority supported |
+| UNKNOWN → AFFECTED | 0 | — |
+| UNKNOWN → NOT_AFFECTED | 0 | — |
+| AFFECTED → NOT_AFFECTED | 0 | — |
+
+**Zero new NOT_AFFECTED verdicts of any kind**, so the "every
+UNKNOWN→NOT_AFFECTED needs manual positive proof" requirement is
+vacuously satisfied, and no AFFECTED→NOT_AFFECTED audit is needed.
+
+The single new AFFECTED carries exact instance, authoritative entry,
+concrete path (`packages/fwdlib/impl.js`) and runtime agreement — the
+oracle asserts the implementation's own marker really comes back from the
+consumer.
+
+The 5 NOT_AFFECTED→UNKNOWN are a real **precision cost, recorded rather
+than buried**. They are workspace packages now being held to exactly the
+standard installed packages already meet: P1-A2's contract for "the
+authoritative public entry does not publish this export" is UNKNOWN. Main
+produced NOT_AFFECTED there from a project-root resolution with no entry
+authority behind it. Giving up a negative is the safe direction, and
+keeping one that no authority supports is what RWF-030 exists to prevent.
+
+The canonical validation baseline is **unchanged**: 18 passed / 5
+KNOWN_FAIL (`VAL-002`, `VAL-003`, `RWB-03`, `RWB-05`, `RWB-09b`), identical
+to `9a320c4`. `RWB-05` remains KNOWN_FAIL on RWF-002, untouched.
+
+### Corpus
+
+Measured across every vendored manifest in `tests/validation/fixtures` and
+`fixtures` — **226 manifests**:
+
+| | Count |
+| --- | --- |
+| manifests declaring `workspaces` | 1 |
+| — array form | 1 |
+| — object form | 0 |
+| — unsupported shape | 0 |
+| scoped package names | 4 |
+
+The single `workspaces` declaration is **P1-A4's own fixture**. The
+vendored real-world corpus contains **no monorepos at all**, so it can
+neither validate nor measure workspace behavior, and nothing here is
+evidence about workspace prevalence in the npm ecosystem. Fixture coverage
+is not extrapolated into ecosystem coverage.
+
+### Package-manager capability
+
+Based on tested filesystem layout only, never on package-manager branding:
+
+| Layout | Status |
+| --- | --- |
+| npm workspaces (array form) | supported — tested |
+| npm/Yarn workspaces (object `packages` form) | supported — declaration parsing tested |
+| Yarn classic workspaces, symlink layout | supported where the layout is ordinary symlinks + realpath — same mechanism, not separately fixtured |
+| pnpm workspaces | supported ONLY where ordinary resolver + realpath suffice; `pnpm-workspace.yaml` is NOT read, so a pnpm repo declaring workspaces only there discovers nothing (fails closed) |
+| Yarn Plug'n'Play | unsupported — no `.pnp.cjs` interpretation; fails closed |
+| `file:` / `link:` dependencies | claimed by workspace discovery deliberately NOT; they remain the pre-existing dependency-graph provenance path's business |
+| Nx / Turborepo / Bazel project graphs | unsupported, out of scope |
+| lockfile solving, installation | never — no package manager is run |
+
+### Remaining limitations (deliberately not fixed here)
+
+- **`pnpm-workspace.yaml` is not read.** Only the root `package.json`'s
+  own `workspaces` field is an authority. A pnpm monorepo that declares
+  its packages solely in `pnpm-workspace.yaml` discovers nothing and every
+  advisory about its local packages stays UNKNOWN. Fails closed, and is
+  the most likely next increment.
+- **Glob patterns beyond literal / trailing `*` / trailing `**` are
+  refused,** negations included. A repo whose declaration uses them
+  discovers nothing from those patterns and is told so.
+- **The root package is never an advisory target.** It is excluded from
+  discovery by construction. Whether a monorepo root that declares its own
+  `main`/`exports` should be representable is left open rather than
+  special-cased by name.
+- **`workspace:`/`file:`/`link:` specifiers grant no authority.** Only the
+  resolved path does. A workspace package that a package manager has not
+  materialized into `node_modules` is not importable, and VulnTrace agrees
+  with Node rather than inferring the link that would have existed.
+- **Duplicate workspace names are answered per-instance, not globally.**
+  Each duplicate gets its own symmetric, order-independent answer; there
+  is no global "this name is ambiguous" diagnostic.
+- **Cross-package advisory ownership is still refused, not modelled** —
+  unchanged from P1-A1/A2/A3. A workspace layout does not make cross-
+  package target ownership safe, and P1-A4 changes no ownership rule.
+- **No multi-instance target expansion** — unchanged; instance exactness
+  is preserved, advisory → many-instance expansion remains P1-A5.
+- **RWF-002 is untouched**, and `RWB-05` remains UNKNOWN for the
+  reachability-scoping reason P1-A1 recorded.

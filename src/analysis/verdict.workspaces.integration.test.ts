@@ -221,6 +221,108 @@ describe("P1-A4 § Z: the baseline P1-A4 changes", () => {
     expect(withoutDiscovery.finding?.verdict).toBe("AFFECTED");
   });
 
+  it("BASELINE DEFECT 1: a forwarded workspace sink was a FALSE NOT_AFFECTED", async () => {
+    // The one verdict main got outright wrong. `fwdlib`'s public entry
+    // publishes `vulnerable` by FORWARDING it to impl.js#internal, and the
+    // consumer really executes it (verify.cjs asserts the marker the
+    // implementation returns). With no instance to anchor to, resolution
+    // fell back to the project root, found no `vulnerable` in index.js --
+    // because it is a forward, not a definition -- and reported a
+    // confident negative about a sink that genuinely runs.
+    //
+    // Anchoring at the instance lets P1-A1's forwarding relation run, and
+    // the false negative becomes a true positive at an exact path.
+    const withoutDiscovery = await scan({
+      entrypoint: `${APP}/fwdlib-consumer.cjs`,
+      packageName: "fwdlib",
+      packageInstance: "packages/fwdlib",
+      withoutWorkspaceDiscovery: true,
+    });
+    expect(withoutDiscovery.finding?.verdict).toBe("NOT_AFFECTED");
+
+    const withDiscovery = await scan({
+      entrypoint: `${APP}/fwdlib-consumer.cjs`,
+      packageName: "fwdlib",
+      packageInstance: "packages/fwdlib",
+    });
+    expect(withDiscovery.finding?.verdict).toBe("AFFECTED");
+    expect(resolvedTarget(withDiscovery.finding)).toContain(
+      path.join("packages", "fwdlib", "impl.js"),
+    );
+  });
+
+  it("BASELINE DEFECT 2: a scoped TWIN inherited the resolved package's reachability", async () => {
+    // packages/scopedtwin declares `@scope/lib` but is not what the name
+    // resolves to. Without identity, its finding was answered with
+    // packages/scopedlib's genuinely-reached api.js -- one package's
+    // evidence reported as another's, a false AFFECTED.
+    const withoutDiscovery = await scan({
+      entrypoint: `${APP}/scope-api-consumer.cjs`,
+      packageName: "@scope/lib",
+      targetModule: "@scope/lib/api",
+      packageInstance: "packages/scopedtwin",
+      withoutWorkspaceDiscovery: true,
+    });
+    expect(withoutDiscovery.finding?.verdict).toBe("AFFECTED");
+
+    const withDiscovery = await scan({
+      entrypoint: `${APP}/scope-api-consumer.cjs`,
+      packageName: "@scope/lib",
+      targetModule: "@scope/lib/api",
+      packageInstance: "packages/scopedtwin",
+    });
+    expect(withDiscovery.finding?.verdict).not.toBe("AFFECTED");
+  });
+
+  it("BASELINE DEFECT 3: a SAFE installed copy inherited the workspace copy's reachability", async () => {
+    // The same mixing, the other way round. The finding is about the safe
+    // installed mixedlib at packages/lib/node_modules/mixedlib; what runs
+    // is the vulnerable workspace copy. Without identity the safe copy was
+    // reported AFFECTED on the other copy's evidence.
+    const withoutDiscovery = await scan({
+      entrypoint: `${APP}/mixedlib-consumer.cjs`,
+      packageName: "mixedlib",
+      packageInstance: "packages/lib/node_modules/mixedlib",
+      withoutWorkspaceDiscovery: true,
+    });
+    expect(withoutDiscovery.finding?.verdict).toBe("AFFECTED");
+
+    const withDiscovery = await scan({
+      entrypoint: `${APP}/mixedlib-consumer.cjs`,
+      packageName: "mixedlib",
+      packageInstance: "packages/lib/node_modules/mixedlib",
+    });
+    expect(withDiscovery.finding?.verdict).not.toBe("AFFECTED");
+  });
+
+  it("COST: workspace packages now refuse where main produced an unauthorized negative", async () => {
+    // The differential's only movement AWAY from a verdict, recorded
+    // deliberately rather than buried. safelib's public entry publishes
+    // `safe` and not `vulnerable`. Main answered NOT_AFFECTED from a
+    // project-root resolution with no public-entry authority behind it;
+    // P1-A2's contract for "the authoritative entry does not publish this
+    // export" is UNKNOWN, and workspace packages are now held to exactly
+    // that standard rather than a weaker one of their own.
+    //
+    // A negative given up is the safe direction, and the alternative --
+    // keeping a negative that no entry authority supports -- is the thing
+    // RWF-030 exists to prevent.
+    const withoutDiscovery = await scan({
+      entrypoint: `${APP}/safelib-consumer.cjs`,
+      packageName: "safelib",
+      packageInstance: "packages/safelib",
+      withoutWorkspaceDiscovery: true,
+    });
+    expect(withoutDiscovery.finding?.verdict).toBe("NOT_AFFECTED");
+
+    const withDiscovery = await scan({
+      entrypoint: `${APP}/safelib-consumer.cjs`,
+      packageName: "safelib",
+      packageInstance: "packages/safelib",
+    });
+    expect(withDiscovery.finding?.verdict).toBe("UNKNOWN");
+  });
+
   it("the baseline never MIXES the installed twin into the workspace twin's answer", async () => {
     // Worth pinning as a NEGATIVE result, because it is the obvious place
     // a workspace/installed mix-up would have shown up and it does not.
