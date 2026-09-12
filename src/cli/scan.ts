@@ -17,6 +17,7 @@ import { loadConfigFile, parseConfig } from "../config/load.js";
 import type { Config } from "../config/schema.js";
 import {
   buildDependencyGraph,
+  discoverWorkspacePackages,
   loadPackageJsonFile,
   loadPackageLockFile,
 } from "../dependencies/index.js";
@@ -304,9 +305,31 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // identifyModule calls (Site A instance-matching, VT-300's closure-
   // widening guard) use the exact same identity authority as the finding's
   // own packageInstance just below.
+  //
+  // P1-A4 adds the second provenance authority: the repository's own
+  // `workspaces` declaration. A monorepo's local packages are frequently
+  // absent from the dependency graph entirely (a lockfile link entry
+  // carries no version, so it forms no DependencyNode), and their physical
+  // roots have no `node_modules` segment -- so without this they have NO
+  // package identity at all, and every advisory naming one fails closed to
+  // UNKNOWN. Discovery is bounded by the declaration itself and never
+  // scans the repository at large; an uninterpretable declaration
+  // discovers nothing rather than guessing. Adding a root changes only
+  // ATTRIBUTION of files the analysis already reached -- it loads nothing
+  // and makes nothing reachable (P1-A4 § MODULE LOAD CLOSURE).
+  const workspaces = discoverWorkspacePackages(projectRoot);
+  for (const reason of workspaces.unsupported) {
+    io.stderr(`vulntrace: ${reason}\n`);
+  }
   const knownPackageRoots = buildKnownPackageRoots(
     dependencyNodes,
     projectRoot,
+    workspaces.packages.map((workspacePackage) => ({
+      canonicalRoot: workspacePackage.canonicalRoot,
+      packageName:
+        workspacePackage.packageName ??
+        path.basename(workspacePackage.canonicalRoot),
+    })),
   );
 
   let entrypointsResult;

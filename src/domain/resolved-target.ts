@@ -113,6 +113,31 @@ export function canonicalizePackageInstancePath(rawPath: string): string {
 export type KnownPackageRoots = ReadonlyMap<PackageInstanceId, string>;
 
 /**
+ * A LOCAL package root — a package that is part of the scanned repository
+ * rather than installed into it: an npm/Yarn/pnpm workspace member, or any
+ * other package root established by authoritative repository metadata
+ * (P1-A4).
+ *
+ * This exists so {@link buildKnownPackageRoots} can admit such a root
+ * WITHOUT the domain layer having to know how it was discovered. The
+ * discovery authority lives in `dependencies/workspaces.ts`; this is only
+ * the shape it hands over — a canonical root and the name its own manifest
+ * declares. Crucially it is still the ROOT that is identity here, exactly
+ * as for an installed instance: `packageName` is carried for the
+ * advisory-name match and for explainability, and can never merge two
+ * distinct roots or split one.
+ *
+ * A caller must never synthesize one of these from a directory that merely
+ * looks like a package. Admitting an arbitrary directory as a package root
+ * is precisely the failure `KnownPackageRoots` was introduced to prevent
+ * (see this type's own doc comment above).
+ */
+export interface LocalPackageRoot {
+  readonly canonicalRoot: string;
+  readonly packageName: string;
+}
+
+/**
  * Builds {@link KnownPackageRoots} from the full dependency graph
  * (VT-307c-fix-4b) -- every `DependencyNode`'s every `location`,
  * canonicalized through the exact same {@link canonicalizePackageInstancePath}
@@ -128,6 +153,7 @@ export type KnownPackageRoots = ReadonlyMap<PackageInstanceId, string>;
 export function buildKnownPackageRoots(
   nodes: readonly DependencyNode[],
   projectRoot: string,
+  localPackageRoots: readonly LocalPackageRoot[] = [],
 ): KnownPackageRoots {
   const roots = new Map<string, string>();
   for (const node of nodes) {
@@ -136,6 +162,18 @@ export function buildKnownPackageRoots(
         path.resolve(projectRoot, location),
       );
       roots.set(canonicalRoot, node.name);
+    }
+  }
+  for (const local of localPackageRoots) {
+    const canonicalRoot = canonicalizePackageInstancePath(local.canonicalRoot);
+    // The dependency graph is the older and more specific authority for a
+    // root it already named, so it is never overwritten here. This matters
+    // only for the map's NAME value, and only as a tie-break that no
+    // downstream answer actually depends on: `identifyKnownPackageInstance`
+    // prefers the package's own manifest name over this value either way.
+    // Not overwriting keeps the merge order-independent.
+    if (!roots.has(canonicalRoot)) {
+      roots.set(canonicalRoot, local.packageName);
     }
   }
   return roots;

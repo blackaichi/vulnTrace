@@ -40,7 +40,23 @@ const PackageJsonSchema = z.object({
    */
   exports: z.unknown().optional(),
   imports: z.unknown().optional(),
-  workspaces: z.array(z.string()).optional(),
+  /**
+   * `workspaces` has TWO authoritative spellings in the ecosystem — the
+   * npm array (`["packages/*"]`) and the Yarn-style object
+   * (`{ "packages": ["packages/*"] }`) — plus whatever else a real
+   * manifest may contain. Typing it as an array made the object form, a
+   * perfectly valid npm manifest, throw `PackageJsonValidationError` and
+   * fail the whole scan (P1-A4): a hard failure, not a fail-closed one.
+   *
+   * So the raw value is preserved and interpreted exactly where `exports`
+   * and `imports` already are — by the module that owns those semantics,
+   * here `dependencies/workspaces.ts`, which accepts both spellings and
+   * fails CLOSED (discovers nothing, reports the declaration as
+   * unsupported) on any shape it does not interpret. package.json is an
+   * external format VulnTrace does not own; rejecting a manifest over it
+   * is not this schema's job.
+   */
+  workspaces: z.unknown().optional(),
 });
 
 export type PackageJson = z.infer<typeof PackageJsonSchema>;
