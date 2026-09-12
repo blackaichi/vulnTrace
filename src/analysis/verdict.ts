@@ -437,6 +437,124 @@ async function findExportNodeThroughForwarding(
 }
 
 /**
+ * The package's AUTHORITATIVE PUBLIC ENTRY for one exact installed
+ * instance (P1-A2; RWF-030) — the single file whose export table decides
+ * what `pkg#<name>` means, and the only file an advisory target may be
+ * anchored at.
+ *
+ * Before P1-A2, target attribution asked *every* file of the instance,
+ * independently, whether it exported the advisory's literal name. Nothing
+ * in that loop asked which file the package actually publishes, so an
+ * unrelated sibling that happens to export the same name could answer for
+ * the package. Package membership is a necessary condition on a target,
+ * never a sufficient one: `pkg/other.js` exporting `vulnerable` is not
+ * evidence about what `require("pkg").vulnerable` is.
+ *
+ * The entry is never guessed from a filename. `index.js` is a convention,
+ * not a rule — a package whose `package.json` says `"main":
+ * "lib/entry.js"` publishes `lib/entry.js`, and a root `index.js` next to
+ * it is just another sibling. So this asks the SAME resolver the call
+ * graph itself used, with the advisory's own bare specifier, and lets the
+ * existing module-resolution semantics (`main`, `exports`, `index`
+ * fallback, conditional branches, the file/package `type` scope) answer.
+ * P1-A2 adds no package-resolution semantics of its own; it changes only
+ * WHERE target resolution starts.
+ *
+ * A package can have more than one public entry file, and which one is
+ * real depends on the importer, so this probes a small, FIXED, fully
+ * enumerated set of (specifier, context) pairs and returns every distinct
+ * file that lands inside exactly this instance:
+ *
+ * - **contexts**: each configured/discovered ENTRYPOINT file, in sorted
+ *   order, then `referenceFile` (the project root), then the instance's
+ *   own `package.json`. The entrypoints are what make a conditional
+ *   export resolve through the branch the analyzed application really
+ *   uses — VT-204's regression, where a project-root `package.json`
+ *   context picks `require` while the app's own ESM import picks
+ *   `import`. The instance's own `package.json` is the only context from
+ *   which a NESTED install (`a/node_modules/pkg`) of a name that also
+ *   exists at the top level can be reached at all.
+ * - **specifiers**: the advisory's own module specifier, and the
+ *   instance's absolute install DIRECTORY. The second is what keeps an
+ *   npm-ALIASED install resolvable (VT-306/RWF-009:
+ *   `"foo-alias": "npm:foo@1.2.3"` installs package `foo` at
+ *   `node_modules/foo-alias`, so no context resolves the advisory's name
+ *   `foo` into it — but the directory names the same public surface
+ *   without going through any name at all).
+ *
+ * Returning the UNION rather than one winner is deliberate. Every member
+ * is a genuine public entry under some real resolution context, so the
+ * union cannot admit a sibling; and it means no answer depends on which
+ * probe happened to run first, on graph traversal order, or on file
+ * enumeration order. The existing OR-across-nodes contract in
+ * `checkReachability` then does its usual job over the attributed nodes.
+ *
+ * Every probe is gated on exact `packageInstance` identity, compared as a
+ * whole install path by the single identity authority (`identifyModule`),
+ * so no probe can answer this instance's advisory with another install's
+ * entry — same-name/same-version twins included.
+ *
+ * A declaration-only or builtin resolution is skipped, never accepted:
+ * the same VT-304 discipline as everywhere else — a `.d.ts` is not a
+ * runtime public surface.
+ *
+ * Returns an empty array when nothing lands inside exactly this instance.
+ * The caller must then refuse, never widen: an entry that cannot be
+ * established is an UNKNOWN target, not a licence to go back to searching
+ * siblings.
+ */
+async function resolveAuthoritativePublicEntries(
+  resolver: ModuleResolver,
+  moduleSpecifier: string,
+  packageInstance: string,
+  referenceFile: string,
+  entrypointFiles: readonly string[],
+  knownPackageRoots: KnownPackageRoots | undefined,
+  memo: Map<string, string[]>,
+): Promise<string[]> {
+  // A rule commonly carries several targets naming the same module, and a
+  // project commonly has several entrypoints. The probe set is small and
+  // bounded either way, but it is also a pure function of (instance,
+  // specifier) for one analysis, and the resolver has no cache of its own
+  // -- so compute it once per analysis rather than once per target.
+  // NUL-separated: an install path and a module specifier can both
+  // contain any ordinary character, so a printable separator could
+  // collide two genuinely different keys into one.
+  const memoKey = `${packageInstance}\u0000${moduleSpecifier}`;
+  const cached = memo.get(memoKey);
+  if (cached) {
+    return cached;
+  }
+
+  const contexts = [
+    ...[...entrypointFiles].sort(),
+    referenceFile,
+    path.join(packageInstance, "package.json"),
+  ];
+  const specifiers = [moduleSpecifier, packageInstance];
+
+  const entries = new Set<string>();
+  for (const specifier of specifiers) {
+    for (const context of contexts) {
+      const resolution = await resolver.resolve(specifier, context);
+      if (resolution.kind !== "resolved") {
+        continue;
+      }
+      if (
+        identifyModule(resolution.resolvedFileName, knownPackageRoots)
+          .packageInstance === packageInstance
+      ) {
+        entries.add(resolution.resolvedFileName);
+      }
+    }
+  }
+
+  const resolvedEntries = [...entries].sort();
+  memo.set(memoKey, resolvedEntries);
+  return resolvedEntries;
+}
+
+/**
  * A phantom placeholder for a target that could not be matched to any real
  * graph node. Not a guess at reachability: nothing in the graph points to
  * it (its id can never collide with a real generated one — see
@@ -561,12 +679,39 @@ function readInstalledVersion(packageInstance: string): string | undefined {
  *   what VT-212/VT-300 already rely on and guard — see
  *   `confirmedAbsentInstance` above and `hasReachableClosureWideningBlocker`
  *   in `checkReachability`). Deliberately left unchanged by VT-301B.
+ *
+ * **P1-A2 (RWF-030) changed WHERE Site A looks, and nothing else.** Site A
+ * used to sweep every graph-discovered file of the instance, asking each
+ * independently whether it exported `target.export`. That made package
+ * MEMBERSHIP sufficient for target identity when it is only ever
+ * necessary, so an unrelated same-named SIBLING could answer for the
+ * package — a false `AFFECTED` when that sibling was dangerous and
+ * reachable, and (because a found sibling returned before P1-A1's
+ * forwarding chase could run) a false `NOT_AFFECTED` when it shadowed the
+ * genuinely-reached public implementation. Site A now anchors at the
+ * package's own authoritative public entry
+ * ({@link resolveAuthoritativePublicEntries}), attributes there, and
+ * follows only explicit P1-A1 forwarding from it. No path remains from
+ * "some file in this package exports this name" to "this is the
+ * advisory's target". Site B is unchanged — it already resolves the
+ * package's public entry by construction.
  */
 async function resolveTargetNodes(
   graph: CallGraph,
   target: VulnerableSymbolTarget,
   resolver: ModuleResolver,
   referenceFile: string,
+  /**
+   * P1-A2: the analyzed application's own entrypoint files, used ONLY as
+   * module-resolution contexts when locating a package's authoritative
+   * public entry (see {@link resolveAuthoritativePublicEntries}). They are
+   * what makes a conditional export resolve through the branch the
+   * application really uses (VT-204). Never a source of target identity in
+   * their own right.
+   */
+  entrypointFiles: readonly string[],
+  /** Per-analysis memo for {@link resolveAuthoritativePublicEntries}. */
+  publicEntryMemo: Map<string, string[]>,
   packageVersion: string | undefined,
   packageInstance: string | undefined,
   allowSyntheticNameOnlyTargetBinding: boolean,
@@ -619,58 +764,110 @@ async function resolveTargetNodes(
       }
     }
 
-    const nodes: GraphNode[] = [];
-    for (const [, files] of selected) {
-      for (const file of files) {
-        nodes.push(
-          ...findExportNodeInFile(
-            graph,
-            file,
-            target.export,
-            allowSyntheticNameOnlyTargetBinding,
-          ),
-        );
-      }
-    }
-
-    if (nodes.length > 0) {
-      return { nodes };
-    }
-
-    // P1-A1 (RWB-05): no file of this instance exports `target.export`
-    // DIRECTLY. Before concluding the target's identity is unknown, ask
-    // whether the package publishes it through a statically exact
-    // forwarding layer instead -- the dominant shape for any CommonJS
-    // package past trivial size. Strictly a fallback after direct
-    // attribution across every file has already failed, so a package that
-    // really does export the target directly resolves exactly as before,
-    // and strictly additive: when nothing forwards exactly, the
-    // unresolved/UNKNOWN result below is reached unchanged.
+    // P1-A2 (RWF-030) -- AUTHORITATIVE PUBLIC ENTRY ANCHORING.
     //
-    // `visited` is per INSTANCE, not per file: one instance's forwarding
-    // graph is one traversal, so two entry files that converge on the
-    // same implementation cost one walk and can never recurse through
-    // each other. It is deliberately NOT shared across instances -- each
-    // installed instance is a separate question with a separate answer.
-    const forwarded = new Map<GraphNodeId, GraphNode>();
-    for (const [instance, files] of selected) {
+    // This used to be a loop over every graph-discovered file of the
+    // instance, asking each independently whether it exported
+    // `target.export`, with the P1-A1 forwarding chase bolted on
+    // afterwards as a fallback for when none did. That made package
+    // MEMBERSHIP sufficient for target identity, and it is only ever
+    // necessary: an unrelated sibling exporting the same literal name
+    // could answer for the whole package. That produced false AFFECTED
+    // (an advisory bound to a dangerous sibling the package never
+    // publishes) and, because a found sibling returned before the
+    // forwarding chase could run, false NOT_AFFECTED as well (an
+    // unreachable sibling shadowing the genuinely-reached public
+    // implementation). Both directions, one cause.
+    //
+    // Resolution now STARTS at the package's own public entry and follows
+    // only explicit forwarding from there. There is deliberately no
+    // remaining path from "some file in this package exports this name"
+    // to "this is the advisory's target".
+    const resolved = new Map<GraphNodeId, GraphNode>();
+    const refusals: string[] = [];
+
+    for (const [instance] of selected) {
+      const entries = await resolveAuthoritativePublicEntries(
+        resolver,
+        target.module,
+        instance,
+        referenceFile,
+        entrypointFiles,
+        knownPackageRoots,
+        publicEntryMemo,
+      );
+
+      if (entries.length === 0) {
+        // The package's public surface could not be established at all for
+        // this instance. Refuse: UNKNOWN is the sound answer, and falling
+        // back to the sibling scan is exactly what this task removes.
+        refusals.push(
+          `the authoritative public entry of package instance "${instance}" could not be resolved`,
+        );
+        continue;
+      }
+
+      // `visited` is per INSTANCE, not per entry: one instance's
+      // forwarding graph is one traversal, so two public entries that
+      // converge on the same implementation cost one walk and can never
+      // recurse through each other. It is deliberately NOT shared across
+      // instances -- each installed instance is a separate question with a
+      // separate answer.
       const visited = new Set<string>();
-      for (const file of files) {
-        for (const node of await findExportNodeThroughForwarding(
+      let resolvedHere = false;
+
+      for (const entry of entries) {
+        // Step 1 -- the advisory's name against the PUBLIC ENTRY's own
+        // export table, by exactly the structural relation a directly
+        // exported target has always used.
+        // `allowSyntheticNameOnlyTargetBinding` is threaded here, and only
+        // here: this is the position the old per-file loop occupied for
+        // synthetic/test graphs whose "files" never existed on disk (see
+        // BuildFindingOptions). Forwarding hops deliberately keep it off,
+        // exactly as P1-A1 left them.
+        const direct = findExportNodeInFile(
           graph,
-          file,
+          entry,
+          target.export,
+          allowSyntheticNameOnlyTargetBinding,
+        );
+        if (direct.length > 0) {
+          for (const node of direct) {
+            resolved.set(node.id, node);
+          }
+          resolvedHere = true;
+          continue;
+        }
+
+        // Step 2 -- P1-A1's forwarding relation, unchanged and re-used
+        // rather than re-invented, but now ANCHORED at the public entry
+        // instead of swept across every file of the package.
+        const forwarded = await findExportNodeThroughForwarding(
+          graph,
+          entry,
           target.export,
           resolver,
           instance,
           knownPackageRoots,
           visited,
-        )) {
-          forwarded.set(node.id, node);
+        );
+        if (forwarded.length > 0) {
+          for (const node of forwarded) {
+            resolved.set(node.id, node);
+          }
+          resolvedHere = true;
         }
       }
+
+      if (!resolvedHere) {
+        refusals.push(
+          `export "${target.export}" is not published by the authoritative public entry (${entries.join(", ")}) of package instance "${instance}", and no explicit forwarding from it resolves to an implementation`,
+        );
+      }
     }
-    if (forwarded.size > 0) {
-      return { nodes: [...forwarded.values()] };
+
+    if (resolved.size > 0) {
+      return { nodes: [...resolved.values()] };
     }
 
     // Site A (VT-301B; see this function's own doc comment above): the
@@ -680,9 +877,17 @@ async function resolveTargetNodes(
     // existing "could not resolve module" handling degrades this straight
     // to UNKNOWN without ever running a reachability search against a
     // target whose own identity was never established.
+    //
+    // P1-A2 keeps the historical sentence (existing output tests encode
+    // it) and appends the authoritative-entry detail, so the evidence says
+    // WHICH public surface was consulted and why it did not answer --
+    // rather than leaving a reader to assume no file in the package was
+    // examined.
     return {
       nodes: [],
-      unresolvedReason: `export "${target.export}" could not be attributed to any function or class member in the resolved module`,
+      unresolvedReason:
+        `export "${target.export}" could not be attributed to any function or class member in the resolved module` +
+        (refusals.length > 0 ? ` (${refusals.join("; ")})` : ""),
     };
   }
 
@@ -1114,6 +1319,11 @@ async function checkReachability(
   rootIncompleteness: readonly EntrypointRootIncompleteness[];
 }> {
   const referenceFile = path.join(projectRoot, "package.json");
+  // P1-A2: resolution CONTEXTS for locating a package's authoritative
+  // public entry, never target identity themselves. See
+  // `resolveAuthoritativePublicEntries`.
+  const entrypointFiles = entrypoints.map((entrypoint) => entrypoint.filePath);
+  const publicEntryMemo = new Map<string, string[]>();
   let sawUnknown = false;
   let checkedAny = false;
   const reasons: string[] = [];
@@ -1138,6 +1348,8 @@ async function checkReachability(
       target,
       resolver,
       referenceFile,
+      entrypointFiles,
+      publicEntryMemo,
       packageVersion,
       packageInstance,
       allowSyntheticNameOnlyTargetBinding,
