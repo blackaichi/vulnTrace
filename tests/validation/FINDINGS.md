@@ -95,6 +95,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-019 | any CommonJS file where the RWF-016/017/018 shape's throwing call is written as a class element's COMPUTED KEY (`class C { [bail()] = 1; }`, `class C { [bail()]() {} }`) rather than in a value position, above a later export write — the same UMD/feature-detect family, and NOT restricted to `static` elements | RWF-016 proved the CALLEE, RWF-017 proved the call's syntactic POSITION does not change the outcome, and RWF-018 carried it into a class STATIC FIELD initializer. All three read the call out of a VALUE position: `isDefinitelyAbruptCallStatement` dispatched on `ExpressionStatement`/`VariableStatement`, and `isDefinitelyAbruptStaticFieldInitializer` on a `PropertyDeclaration`'s `initializer` gated on the `static` modifier. A computed property name is neither. It is evaluated by ClassDefinitionEvaluation, in declaration order, as each element is defined — the key has to exist before the element can be installed on the class or its prototype — so it runs at class-definition time for an INSTANCE field, a method, a getter and a setter exactly as for a static field, even though those elements' VALUES and BODIES are genuinely deferred. RWF-018 recorded this as the RWF-019 candidate rather than folding a partial version of it in behind a static-field name | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it, that all eight element forms abort the class definition on the same key, and — in the same process — that the same element's instance-field VALUE, a method BODY and a class defined inside an uncalled function genuinely do complete and publish their later export | **Fixed (RWF-019)** |
 | RWF-020 | any CommonJS file where the RWF-016/017/018/019 shape's throwing call is written as a class's `extends` HERITAGE expression (`class C extends bail() {}`) rather than on any class element, above a later export write — the same UMD/feature-detect family, and it fires even when the class body is completely EMPTY | RWF-016 proved the CALLEE, RWF-017 proved the call's syntactic POSITION does not change the outcome, RWF-018 carried it into a class STATIC FIELD's initializer and RWF-019 into any class element's COMPUTED KEY. All four read the call off a STATEMENT or off a class ELEMENT: `isDefinitelyAbruptCallStatement` dispatched on `ExpressionStatement`/`VariableStatement`, `isDefinitelyAbruptStaticFieldInitializer` on a `PropertyDeclaration`'s `initializer`, and `isDefinitelyAbruptComputedClassElementKey` on a `ClassElement`'s `ComputedPropertyName`. A heritage expression is on no element at all — it hangs off the class's `heritageClauses` — and ClassDefinitionEvaluation evaluates it FIRST, before any element exists, because the superclass value is what the new class's prototype chain is built from. So it is the only class-definition-time expression that still runs when the class body is EMPTY, which is exactly the shape (`class C extends bail() {}`) none of the four predecessors could see | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it, measures that a throwing heritage leaves the class's element list entirely unevaluated while a harmless one lets every element run, and — in the same process — that a heritage call which RETURNS, an `extends null`, an `async` callee, a generator callee, a conditional-throw callee, a class defined inside an uncalled function and a class nested in an instance field genuinely do NOT abort module evaluation | **Fixed (RWF-020)** |
 | RWF-021 | any CommonJS file used as a CONFIGURED ENTRYPOINT that exports a top-level callable and carries any RWF-014/015/016/017/018/019 authority-withdrawing construct above the export write — and, independently of any cutoff, any entrypoint exporting an ANONYMOUS callable | Entrypoint reachability ROOTS were read out of export ATTRIBUTION provenance (`exp.localName ?? exp.exportedName` in verdict.ts's `entrypointSourceNodes`). The two questions fail in opposite directions — attribution must REFUSE when it cannot name the exported value, root selection must WIDEN — so every soundness cutoff that correctly withdrew attribution silently deleted the entrypoint's root as well. The exported function's body was then never traversed, and an anonymous export (RWF-003's shape) had no name to be rooted by at all | **Soundness, cross-family** — reproduced end-to-end on `8d18130` as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) for **all four merged cutoff families** (RWF-016/017/018/019) plus the property-export and anonymous-export forms, over an entrypoint whose exported `main` really is published and really does reach the vulnerable sink on every run where the branch is not taken (asserted under real `node`) | **Fixed (RWF-021)** |
+| RWF-029 | `qs` (`RWB-05`); any package whose advisory-named export is FORWARDED from another file rather than declared in the file that exports it — the dominant shape for any CommonJS package past trivial size | TARGET-side attribution (`verdict.ts`'s `findExportNodeInFile`, at Site A) is a PER-FILE relation: it attributes an advisory's `{module, export}` against one file's own export table and nothing else. Real `qs/lib/index.js` forwards `parse` to `lib/parse.js`, which publishes the implementation as an ANONYMOUS whole-module default (canonical export name `"default"`), so the advisory-facing name and the implementation-facing name genuinely differ and **no file in `qs` exports anything called `parse`** — the target could not be attributed at any depth. Not the RWF-004a/b CONSUMER-side chase (whose fixture resolves only because some file there happens to export the advisory's literal name), and not P0-Z's entrypoint ROOT derivation (which must widen where this must refuse) | Precision/coverage only — degrades to UNKNOWN in both directions, never a false AFFECTED or NOT_AFFECTED | **Fixed (P1-A1)** — see below. `RWB-05` itself stays KNOWN_FAIL on the independent, pre-existing RWF-002 the unresolved target was masking |
 | RWF-022 | any CommonJS file where a class's `extends` HERITAGE call RETURNS NORMALLY but hands back a value that is not a constructor (`function notAConstructor() { return 1; }` + `class C extends notAConstructor() {}`), above a later export write — the same UMD/feature-detect family as RWF-016/017/018/019/020, and the half of the heritage family RWF-020 explicitly deferred | RWF-020 asks only whether evaluating the heritage CALL completes, and here it does: `notAConstructor()` is not abrupt under `cannotCompleteNormally`, so `isDefinitelyAbruptCall` refuses it and RWF-020's rule never fires. What ends module evaluation is the VALUE: ClassDefinitionEvaluation validates the superclass before it does anything else with the class, and `1` is neither `null` nor a constructor, so the definition throws `TypeError: Class extends value 1 is not a constructor or null`. The same applies, through a second and deliberately separate mechanism, to an `async` or generator CALLEE — whose call provably returns a `Promise` or a generator object, neither of which is a constructor — which RWF-016 must refuse for the opposite reason (calling one cannot throw synchronously) | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken, on all three of the classifier's routes (numeric-literal return, concise-arrow object return, `async` callee); a real Node-executed circular-import fixture ASSERTS that a cyclic consumer retains the bypassed dangerous export by identity and calls the vulnerable sink through it, that the factory returns normally with `1`, that the later safe write never runs, and that re-requiring re-throws — and, in the same process across a 31-row measured table, that returning a class, an ordinary function or `null` genuinely does NOT abort module evaluation | **Fixed (RWF-022)** |
 
 ---
@@ -6339,3 +6340,268 @@ way rather than as "zero impact", which the script cannot establish.
 - **Requirements are per-entrypoint, not per-export.** One unmaterializable
   export withdraws family C for the whole entrypoint even when every
   sibling export rooted cleanly.
+
+---
+
+## RWF-029 — A package's advisory-named export that is FORWARDED rather than declared could not be attributed at all (P1-A1)
+
+**Classification: P1 coverage / target-resolution improvement.** Not a
+soundness defect. Every affected case previously degraded to UNKNOWN in
+both directions; no false `AFFECTED` and no false `NOT_AFFECTED` existed
+here before, and none is introduced. Implementation review found no
+P0-style defect.
+
+**Discovered:** reproducing `RWB-05` (real `qs@6.10.1` against real
+GHSA-hrpp-h998-j3pp / CVE-2022-24999) on the P0 closure main
+`d36a83cfc2dcc6be30b9a358992e91e55354f70c`.
+
+### The canonical failure mechanism
+
+`RWB-05`'s finding carried exactly one reason:
+
+```text
+could not resolve module "qs": export "parse" could not be attributed to
+any function or class member in the resolved module
+```
+
+That is `verdict.ts`'s Site A (VT-301B) — the package instance genuinely
+IS in the graph, but the advisory's symbol could not be attributed to any
+node in it. Reading the real installed package says why:
+
+```js
+// qs/lib/index.js -- declares nothing
+var stringify = require('./stringify');
+var parse = require('./parse');
+module.exports = { formats: formats, parse: parse, stringify: stringify };
+
+// qs/lib/parse.js -- the implementation
+module.exports = function (str, opts) { ... };
+```
+
+`resolveTargetNodes` asks `findExportNodeInFile` for `"parse"` against each
+file of the instance, and that relation is **per-file**: it attributes an
+export against the file's own export table and nothing else. Neither file
+can answer:
+
+- `lib/index.js` advertises the name `parse` but declares no function, and
+  the value it publishes lives in another file;
+- `lib/parse.js` holds the implementation but publishes it as a CommonJS
+  whole-module default — an **anonymous** function expression, whose
+  canonical export name is `"default"`, not `"parse"`.
+
+So the advisory-facing name (`parse`) and the implementation-facing name
+(`default`) are genuinely different names, and **no file in `qs` exports
+anything called `parse`**. Per-file attribution could not answer the
+advisory at any depth.
+
+This is precisely why the case survived RWF-004a/b, which are frequently
+mistaken for it. Those fixed the **consumer-side** chase — a call site
+following a value through a package's re-exports — and their fixture
+(`fixtures/commonjs-reexport-same-package`) resolves only because
+`fixture-lib/lib.js` happens to contain `exports.vulnerable = vulnerable`,
+which per-file attribution finds directly. Change that one spelling to
+`qs`'s and the same fixture would have failed too.
+
+It is also **not** the P0-Z problem it superficially resembles. P0-Z
+derived reachability ROOTS from a configured APPLICATION entrypoint's
+forwarded exports. This derives the advisory's TARGET IDENTITY inside the
+vulnerable PACKAGE. Root selection must WIDEN when uncertain; target
+identity must REFUSE — opposite failure directions, so the two deliberately
+do not share a relation, and nothing in P1-A1 touches root derivation.
+
+### The fix
+
+One new pure module, `src/code-intelligence/export-forwarding.ts`, holds
+the **hop rule** and nothing else: given a module model and a requested
+name, which literal specifier does that value come from, and under which
+name over there. It is a function of export facts the model already
+derived, never a resolver and never a second source of export facts.
+
+It has exactly two consumers, and the rule was **extracted verbatim** from
+the first rather than written afresh, so the two can never drift on the one
+question they must answer identically:
+
+- `call-graph.ts`'s `resolveEsmReExport` / `resolveCommonJsReExport` — the
+  consumer-side chase, behaviorally unchanged (316/316 call-graph tests
+  pass);
+- `verdict.ts`'s new `findExportNodeThroughForwarding` — the target-side
+  chase, added at Site A **strictly as a fallback** after direct
+  attribution across every file of the instance has already failed. A
+  package that exports its target directly resolves exactly as before.
+
+Supported hops, each an authoritative binding and never a name search:
+
+| shape | forwards to |
+| ----- | ----------- |
+| `exports.v = require("./impl").v` | `impl#v` |
+| `exports.v = require("./impl").internalName` (**rename**) | `impl#internalName` |
+| `module.exports = { v: require("./impl") }` / `var impl = require("./impl"); module.exports = { v: impl }` (**the `qs` shape**) | `impl#default` |
+| `module.exports = require("./impl")` (whole module) | `impl#<same name>` |
+| `module.exports = require("./impl").v` | only `default` → `impl#v` |
+| `const a = impl.internalName; exports.v = a` (single-assignment alias) | `impl#internalName` |
+| `export { internalName as v } from "./impl.js"` | `impl#internalName` |
+| `export { default as v } from "./impl.js"` | `impl#default` |
+
+Chains of any length resolve by recursion through the same relation, so a
+two-hop barrel (`index → api → impl`) differs from a one-hop only in how
+many times it runs.
+
+### What it refuses, and why that is the point
+
+Every negative outcome is a refusal, never a fallback — the target stays
+unresolved and the finding stays UNKNOWN:
+
+- a **reassigned** alias (RWF-013/RWF-025 semantics — the stale initializer
+  is not what Node publishes);
+- the stale **first** of duplicate export writes (last-write-wins is Node's
+  real semantics, and the last write is what resolves);
+- a **dynamic/computed** specifier, a **conditional** export write;
+- `export * from` — a star export is never resolved by guessing;
+- an unresolved, builtin or **declaration-only** resolution (the same
+  VT-304 discipline as both halves of the call graph's chase);
+- a forwarding **cycle** (`a → b → a`), which terminates on the repeated
+  `file#exportName` hop and yields no nodes rather than picking an
+  arbitrary member. As in `call-graph.ts` there is deliberately no extra
+  depth cap: the visited set already bounds traversal, while a cap would
+  return "no target" indistinguishably from "no forwarding" on a legitimate
+  deep chain.
+
+### PackageInstance and package ownership
+
+Every hop's resolved file must belong to **exactly** the advisory's own
+`packageInstance`, compared as a whole install path by the single identity
+authority (`identifyModule`). This is the one place the target-side chase
+deliberately differs from the consumer-side one, which RWF-004b correctly
+un-gated.
+
+The asymmetry is not an oversight. Following a **value** across a package
+boundary is sound — that is what the runtime does. Re-pointing an
+**advisory** across one is a different claim: an advisory naming `pkg-a`
+answered with an implementation inside `pkg-b` silently re-interprets whose
+vulnerability it is. P1-A1 does not broaden package ownership semantics, so
+a bare-specifier cross-package hop and a relative hop that escapes the
+package root (`pkg/index.js → ../../other/file.js`) are both refused. The
+same comparison excludes a same-name/same-version twin install, since two
+installs at different paths are different instances.
+
+### Target identity
+
+The node returned is the real implementation's own graph node — its file,
+its source position, its own declared name (or none, for `qs`'s anonymous
+default). The advisory-facing name and the implementation-facing name stay
+separate values throughout the chase, so the public → implementation
+mapping (`pkg.vulnerable` → `pkg/path/to/impl.js:internalName`) remains
+recoverable from the returned identity rather than being collapsed into the
+advisory's name. Nothing is collapsed to package name, version, or
+`name@version`. No external schema changed in this task; existing AFFECTED
+evidence already names the implementation's real file and line.
+
+### Permanent coverage
+
+`fixtures/target-side-reexport` (see its README) isolates thirteen
+forwarding shapes as thirteen installed packages, with per-shape consumer
+entrypoints, asserted by
+`src/analysis/verdict.target-side-reexport.integration.test.ts` (21 tests)
+and `src/code-intelligence/export-forwarding.test.ts` (17 tests).
+
+**Runtime oracle.** `fixtures/target-side-reexport/verify.cjs` asserts,
+under real `node` and out-of-process, which instance and forwarding files
+load, which concrete callable each package really publishes under
+`vulnerable` — **by identity**, not by name — that the reassigned and
+duplicated cases publish the current rather than the stale value, that the
+cycle publishes nothing at all, that the two twins are name- and
+version-identical yet publish different callables, and that every reachable
+consumer really does enter its implementation. VulnTrace itself never
+executes target code; the oracle is test-only.
+
+The suite was confirmed to **discriminate**: with the new Site A fallback
+disabled, 9 of its 21 tests fail — every positive-resolution case — while
+all fail-closed controls pass in both states, which is exactly the required
+asymmetry.
+
+**Behavior.**
+
+| case | before | after |
+| ---- | ------ | ----- |
+| direct export, reached | AFFECTED | AFFECTED (unchanged) |
+| one-hop forward (`qs` shape), reached | UNKNOWN | **AFFECTED**, concrete path into `impl.js` |
+| one-hop forward, never called | UNKNOWN | **NOT_AFFECTED** (family C, unchanged proof) |
+| two-hop forward, reached | UNKNOWN | **AFFECTED**, concrete path |
+| renamed export, reached | UNKNOWN | **AFFECTED**, bound to `internalName` |
+| local alias forward, reached | UNKNOWN | **AFFECTED**, concrete path |
+| duplicate writes, reached | UNKNOWN | **AFFECTED**, bound to the LAST write |
+| same-name decoy in the impl file | UNKNOWN | **AFFECTED** on the real target, never the decoy |
+| reassigned alias | UNKNOWN | UNKNOWN (unchanged — refused) |
+| cycle / dynamic / conditional | UNKNOWN | UNKNOWN (unchanged — refused) |
+| cross-package / package-root escape | UNKNOWN | UNKNOWN (unchanged — refused) |
+| wrong PackageInstance twin | not AFFECTED | not AFFECTED (unchanged) |
+
+The unreachable row is the one that proves exact resolution does not force
+a positive: the same target resolves exactly and then receives a genuine
+negative proof. The refusal rows are the ones that prove it cannot
+manufacture one either.
+
+**Corpus.** `scripts/p1a1-target-forwarding-corpus.mjs` over
+`fixtures/` + `tests/validation/fixtures/`: 744 files scanned, 0
+unparsable, 672 with at least one export, 937 export names examined — 469
+locally attributable, **468 not** (the population no per-file attribution
+could ever answer). Of those, **157 across 57 distinct files** now carry an
+exact forwarding hop (156 CommonJS, 1 ESM; 128 whole-module → `default` —
+the `qs` shape — 22 same-name, 7 renamed), and **311 remain
+ambiguous/unsupported and stay UNKNOWN by design**. This sizes the shape's
+prevalence in this repository's corpora only; it is not a claim about
+ecosystem-wide coverage, and it makes no claim about verdicts, which the
+focused suites and the validation baseline measure.
+
+### `RWB-05` itself: resolved target, second blocker
+
+`RWB-05` is **still a KNOWN_FAIL, and its expected verdict is deliberately
+unchanged.** What changed is the reason, and the change is real progress
+that is worth stating precisely rather than rounding to "fixed" or "not
+fixed".
+
+The target now resolves exactly: `qs#parse` binds to `qs/lib/parse.js`'s
+anonymous whole-module default callable, in `qs`'s own PackageInstance. The
+`could not be attributed` reason is gone.
+
+What blocks the `NOT_AFFECTED` is a **second, independent, pre-existing
+cause that the unresolved target was masking** — `RWF-002`, still open in
+the table above. The reachability search from this entrypoint traverses
+`qs`'s own real transitive dependencies (`get-intrinsic`, `object-inspect`,
+`qs/lib/utils.js`), whose genuinely dynamic constructs place
+`unresolved_target` / `dynamic_member_access` / `unsupported_construct`
+edges inside the reachable subgraph. Family C requires an exhaustive search
+with no unresolved edge anywhere in that subgraph, so it cannot complete,
+and UNKNOWN is the **sound** answer under the current negative-proof
+contract. (Those edges were always there; before P1-A1 the unresolved
+target short-circuited ahead of the search, so they never appeared in the
+evidence.)
+
+Closing `RWB-05` therefore needs the RWF-002 reachability-scoping work, not
+more target resolution. Weakening family C's completeness requirement to
+make the case green would be exactly the manufactured `NOT_AFFECTED` the
+contract forbids, so it was not done, and the oracle was not adjusted to
+the tool. Canonical validation is therefore unchanged at **12 PASS /
+5 KNOWN_FAIL / 0 UNEXPECTED / 17**, with the same five known failures
+(`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`). The case's `reason`
+field was updated to record the true current mechanism; its `expected`
+value and `knownFailure` flag were not touched.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **`RWB-05` stays open on RWF-002.** Target resolution is necessary but
+  not sufficient for that case.
+- **Cross-package advisory ownership is refused, not modeled.** A façade
+  package whose advisory-named export really is another package's callable
+  stays UNKNOWN. Deciding when an advisory may follow a value across a
+  package boundary is a domain-contract question, not a resolution one.
+- **`export * from` stays unresolved** as a forwarding hop. Matching one
+  requested name against an unenumerated set is P1-B ESM work.
+- **No `package.json` `exports`/subpath resolution** was added; the
+  canonical fixture needed none. That is P1-A2.
+- **No multi-instance target expansion.** Instance exactness is preserved
+  for the instance under analysis; advisory → many-instance expansion is
+  P1-A4.
+- **Member/destructured/call-initializer aliases fail closed**, exactly as
+  in RWF-004a — resolving them needs member and heap points-to analysis,
+  which this task is scoped not to build.
