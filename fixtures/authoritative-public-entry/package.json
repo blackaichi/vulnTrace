@@ -1,0 +1,6 @@
+{
+  "name": "authoritative-public-entry-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "P1-A2 fixture: advisory targets must be anchored at the package public entry, never at a same-named sibling."
+}
