@@ -6346,10 +6346,24 @@ way rather than as "zero impact", which the script cannot establish.
 ## RWF-029 — A package's advisory-named export that is FORWARDED rather than declared could not be attributed at all (P1-A1)
 
 **Classification: P1 coverage / target-resolution improvement.** Not a
-soundness defect. Every affected case previously degraded to UNKNOWN in
-both directions; no false `AFFECTED` and no false `NOT_AFFECTED` existed
-here before, and none is introduced. Implementation review found no
-P0-style defect.
+soundness defect.
+
+The claim is scoped deliberately, and the scope is load-bearing: it is
+about **the forwarding relation and the Site A forwarding fallback this
+task introduces**, not about every target-attribution path in the
+analyzer. Within that scope, every affected case previously degraded to
+UNKNOWN in both directions; no false `AFFECTED` and no false
+`NOT_AFFECTED` existed in the forwarding relation before, and none is
+introduced. Implementation review found no P0-style defect in it.
+
+It is explicitly **not** a clean bill of health for the pre-existing
+per-file attribution loop the fallback sits behind. The final independent
+audit of this branch found a false `AFFECTED` in that older path,
+reproduced byte-identically on the P0 closure base `d36a83c`. It is
+untouched by this task, in the over-reporting direction, and recorded
+below as **the RWF-030 candidate** — named as a candidate, not opened as a
+finding, exactly as RWF-018 recorded the RWF-019 candidate rather than
+folding a partial version of it into the task that found it.
 
 **Discovered:** reproducing `RWB-05` (real `qs@6.10.1` against real
 GHSA-hrpp-h998-j3pp / CVE-2022-24999) on the P0 closure main
@@ -6555,13 +6569,36 @@ manufacture one either.
 `fixtures/` + `tests/validation/fixtures/`: 750 files scanned, 0
 unparsable, 678 with at least one export, 944 export names examined — 473
 locally attributable, **471 not** (the population no per-file attribution
-could ever answer). Of those, **160 across 59 distinct files** now carry an
-exact forwarding hop (159 CommonJS, 1 ESM; 130 whole-module → `default` —
-the `qs` shape — 22 same-name, 8 renamed), and **311 remain
-ambiguous/unsupported and stay UNKNOWN by design**. This sizes the shape's
-prevalence in this repository's corpora only; it is not a claim about
-ecosystem-wide coverage, and it makes no claim about verdicts, which the
-focused suites and the validation baseline measure.
+could ever answer). Of those, **160 across 59 distinct files carry an exact
+forwarding hop** (159 CommonJS, 1 ESM; 130 whole-module → `default` — the
+`qs` shape — 22 same-name, 8 renamed), and **311 carry no hop at all and
+stay UNKNOWN by design**.
+
+A hop EXISTING is not a target RESOLVED, and the two must not be reported
+as one number. Following all 160 chains with the production module
+resolver, under the same-PackageInstance gate and cycle guard the
+target-side chase itself uses:
+
+| chain outcome | count |
+| ------------- | ----- |
+| terminates at an attributable implementation in the same PackageInstance | **114** |
+| refused — the hop leaves the PackageInstance | 7 |
+| refused — the specifier did not resolve | 1 |
+| dead end — no further hop, or a cycle | 38 |
+
+So **114**, not 160, is the population this relation can actually resolve
+in these corpora; the other 46 carry an exact hop whose chain then refuses
+or dead-ends, which is the fail-closed outcome working as intended. Even
+114 is a static CEILING rather than a count of resolved targets:
+`verdict.ts` additionally requires the implementation to have a node in the
+call graph of the scan actually being run, which a corpus walk has no way
+to know.
+
+All of these are **resolution measurements, not verdict improvements** — no
+count here implies any finding changed verdict. They size the shape's
+prevalence in this repository's corpora only; this is not a claim about
+ecosystem-wide coverage. Verdicts are measured by the focused suites and
+the canonical validation baseline, and nowhere else.
 
 ### `RWB-05` itself: resolved target, second blocker
 
@@ -6597,10 +6634,59 @@ the tool. Canonical validation is therefore unchanged at **12 PASS /
 field was updated to record the true current mechanism; its `expected`
 value and `knownFailure` flag were not touched.
 
+### The RWF-030 candidate — a same-named SIBLING export can win over the package's public one
+
+Found by this branch's final independent audit, **not** introduced by it,
+and deliberately **not** remediated here.
+
+Target attribution asks each file of the instance, independently, whether
+it exports the advisory's name (`resolveTargetNodes`'s per-file loop over
+`findExportNodeInFile`). Nothing in that loop asks which file is the
+package's authoritative PUBLIC entry, so an unrelated sibling that happens
+to export the same name can answer for the package:
+
+```js
+// pkg/index.js -- the public entry; what the package really publishes
+var impl = require("./impl");
+module.exports = { vulnerable: impl.safeImpl, runOther: require("./other").vulnerable };
+
+// pkg/other.js -- a sibling that genuinely exports the SAME name
+exports.vulnerable = function dangerous(input) { ... };
+```
+
+With a consumer that calls only `runOther`, a rule targeting
+`pkg#vulnerable` binds to `other.js`'s function and reports **AFFECTED**,
+even though what the package publishes as `vulnerable` is `safeImpl` and is
+never called. Under real `node`, `pkg.vulnerable` is `safeImpl`.
+
+Classification:
+
+- **Pre-existing.** Reproduced byte-identically on the P0 closure base
+  `d36a83c`, with the same verdict and the same evidence path.
+- **False `AFFECTED`** — the over-reporting direction, never a false
+  `NOT_AFFECTED`, so it does not touch the negative-proof contract.
+- **Not introduced, and not widened, by P1-A1.** The forwarding fallback
+  runs only when this loop has already found nothing, so it cannot reach
+  this shape at all. It is distinct from RWF-011/VT-301B, which closed the
+  bare-NAME fallback: here the sibling genuinely does export the name, so
+  no name-search guard applies.
+- **Adjacent target-resolution work, for its own cycle.** The direction is
+  to anchor advisory resolution at the package's authoritative public
+  entry/export surface and then follow explicit forwarding from there —
+  which is the same anchor P1-A1 already uses for the forwarding chase —
+  rather than treating every file's export table as equally authoritative.
+
+Recorded as a candidate rather than opened as a finding, and left entirely
+unremediated, so the fix is scoped and proved on its own evidence instead
+of being folded into a task that merely discovered it.
+
 ### Remaining limitations (deliberately not fixed here)
 
 - **`RWB-05` stays open on RWF-002.** Target resolution is necessary but
   not sufficient for that case.
+- **The RWF-030 candidate above is open.** A same-named sibling export can
+  still out-answer the package's public entry, in the false-`AFFECTED`
+  direction.
 - **Cross-package advisory ownership is refused, not modeled.** A façade
   package whose advisory-named export really is another package's callable
   stays UNKNOWN. Deciding when an advisory may follow a value across a
