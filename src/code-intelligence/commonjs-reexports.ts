@@ -1,5 +1,8 @@
 import ts from "typescript";
-import type { SourceIndex } from "./source-index.js";
+import {
+  exactCommonJsExportPropertyName,
+  type SourceIndex,
+} from "./source-index.js";
 
 /**
  * The origin of a statically-resolvable CommonJS re-export (RWF-004a; see
@@ -186,6 +189,38 @@ function staticRequireSpecifier(node: ts.Node): string | undefined {
 
 /** `exports.X = ` / `module.exports.X = `'s property name, or `undefined`. Mirrors source-index.ts's `describeCommonJsExportTarget` for the property form only. */
 function commonJsExportPropertyName(left: ts.Expression): string | undefined {
+  // P0-Z: the element-access spelling of the same two forms --
+  // `exports["X"] = ` / `module.exports["X"] = `. This mirror must accept
+  // exactly what `describeCommonJsExportTarget` accepts, or the two
+  // disagree in the one way that matters: a bracket RE-EXPORT
+  // (`module.exports["run"] = require("./x").run`) would get an export
+  // binding from source-index while losing its `commonJsReExport`
+  // provenance here -- so `isForeignOriginExport` would not recognise it,
+  // root derivation would report COMPLETE, and the false NOT_AFFECTED this
+  // work exists to remove would reopen in a new shape. Both sites share
+  // `exactCommonJsExportPropertyName` for that reason.
+  if (ts.isElementAccessExpression(left)) {
+    const name = exactCommonJsExportPropertyName(left.argumentExpression);
+    if (name === undefined) {
+      return undefined;
+    }
+    if (
+      ts.isIdentifier(left.expression) &&
+      left.expression.text === "exports"
+    ) {
+      return name;
+    }
+    if (
+      ts.isPropertyAccessExpression(left.expression) &&
+      ts.isIdentifier(left.expression.expression) &&
+      left.expression.expression.text === "module" &&
+      left.expression.name.text === "exports"
+    ) {
+      return name;
+    }
+    return undefined;
+  }
+
   if (!ts.isPropertyAccessExpression(left)) {
     return undefined;
   }

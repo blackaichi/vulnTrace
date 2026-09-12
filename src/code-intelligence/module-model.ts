@@ -13,6 +13,7 @@ import {
   type CommonJsReExportOrigin,
 } from "./commonjs-reexports.js";
 import {
+  exactCommonJsExportPropertyName,
   type IndexedExport,
   type IndexedFunction,
   type SourceIndex,
@@ -5320,8 +5321,12 @@ export interface EntrypointRootCandidates {
    * edge, and report `unreachable` — which family C serialized as
    * `reachableSubgraphComplete: true`. The subgraph really was exhausted;
    * it was simply never ROOTED correctly, and the analyzer had no way to
-   * say so. P0-Z reproduced six false NOT_AFFECTED verdicts on exactly
-   * that mechanism, against runtime-reachable targets.
+   * say so. P0-Z reproduced this against runtime-reachable targets in
+   * three rounds: six forms in the original audit, two more (a two-hop
+   * chain and a dynamic computed export name) while remediating it, and a
+   * final six -- every element-access CommonJS export spelling -- in the
+   * focused re-audit, where the key was statically exact but
+   * `describeCommonJsExportTarget` modeled only the dot form.
    *
    * Deliberately NOT expressed by emptying or widening `names`: this is
    * uncertainty about WHICH ROOT, not about which callable is the export,
@@ -5627,8 +5632,15 @@ function computedExportNameWrites(
       node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
       ts.isElementAccessExpression(node.left) &&
       isCommonJsExportObject(node.left.expression) &&
-      !ts.isStringLiteralLike(node.left.argumentExpression) &&
-      !ts.isNumericLiteral(node.left.argumentExpression)
+      // P0-Z: refuse exactly the keys source-index.ts could NOT name. The
+      // two must use one predicate: a key it names becomes a real export
+      // binding (and therefore a root), and a key it refuses has no
+      // binding anywhere, so it must surface here as incompleteness. An
+      // independent spelling of "looks literal" is how `1e3` -- which
+      // denotes "1000", not "1e3" -- could be excluded from BOTH and
+      // silently report a complete, root-less derivation.
+      exactCommonJsExportPropertyName(node.left.argumentExpression) ===
+        undefined
     ) {
       found.push(node.left);
     }

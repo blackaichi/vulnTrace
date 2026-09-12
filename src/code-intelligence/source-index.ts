@@ -560,9 +560,100 @@ interface CommonJsExportTarget {
   readonly exportedName?: string;
 }
 
+/**
+ * The EXACT property name an element-access key denotes, or `undefined`
+ * when this analyzer cannot name it statically (P0-Z).
+ *
+ * `module.exports["run"] = run` publishes exactly what
+ * `module.exports.run = run` publishes, but only the dot form was ever
+ * modeled: {@link describeCommonJsExportTarget} returned `undefined` for
+ * every element access, so no export binding existed, no entrypoint root
+ * candidate was derived, and root derivation reported COMPLETE with zero
+ * roots. That reproduced a false `NOT_AFFECTED` carrying a complete
+ * Family C proof over a runtime-reachable sink.
+ *
+ * THE ONE PLACE this question is answered. Three call sites need it and
+ * must agree, or the gap reopens in a new shape: this function (export
+ * bindings and therefore roots), `commonJsExportPropertyName` in
+ * commonjs-reexports.ts (re-export provenance, so a bracket re-export is
+ * still recognised as foreign-origin), and `computedExportNameWrites` in
+ * module-model.ts (which must treat exactly the keys NOT named here as
+ * root incompleteness). A key this returns a name for is modeled; a key
+ * it refuses must fail closed as incomplete.
+ *
+ * What counts as exact:
+ *
+ * - a STRING literal, and a no-substitution TEMPLATE literal. Both are
+ *   `ts.isStringLiteralLike`, which is already the predicate the rest of
+ *   this codebase uses for "a statically known string". `.text` is the
+ *   PARSED value, so `["run"]` correctly yields `run` rather than the
+ *   raw source spelling.
+ * - a NUMERIC literal whose text is already the property name it denotes.
+ *   JavaScript stringifies property keys, so `module.exports[0]` publishes
+ *   `"0"`. The round-trip guard is what keeps this from becoming an
+ *   invented normalization scheme: `0` round-trips and is accepted, while
+ *   `1e3` (which denotes `"1000"`, not `"1e3"`) does not and is refused,
+ *   so it degrades to root incompleteness instead of being silently
+ *   mis-named or silently dropped.
+ *
+ * Everything else -- an identifier, a call, a template WITH substitutions,
+ * a bigint, a computed symbol -- is deliberately refused. Those are the
+ * dynamic keys whose published name genuinely is not known until runtime.
+ */
+export function exactCommonJsExportPropertyName(
+  key: ts.Expression,
+): string | undefined {
+  if (ts.isStringLiteralLike(key)) {
+    return key.text;
+  }
+  if (ts.isNumericLiteral(key) && String(Number(key.text)) === key.text) {
+    return key.text;
+  }
+  return undefined;
+}
+
+/**
+ * The exact property name an assignment target publishes, for the
+ * `exports[...]` / `module.exports[...]` element-access forms (P0-Z).
+ */
+function elementAccessExportName(
+  left: ts.ElementAccessExpression,
+): string | undefined {
+  const name = exactCommonJsExportPropertyName(left.argumentExpression);
+  if (name === undefined) {
+    return undefined;
+  }
+  // exports["foo"] = ...
+  if (ts.isIdentifier(left.expression) && left.expression.text === "exports") {
+    return name;
+  }
+  // module.exports["foo"] = ...
+  if (
+    ts.isPropertyAccessExpression(left.expression) &&
+    ts.isIdentifier(left.expression.expression) &&
+    left.expression.expression.text === "module" &&
+    left.expression.name.text === "exports"
+  ) {
+    return name;
+  }
+  return undefined;
+}
+
 function describeCommonJsExportTarget(
   left: ts.Expression,
 ): CommonJsExportTarget | undefined {
+  // P0-Z: `exports["foo"] = ...` / `module.exports["foo"] = ...` publish
+  // exactly what the dot forms below publish, so they produce exactly the
+  // same binding. Only keys this analyzer can name exactly qualify; a
+  // dynamic key yields `undefined` here and is reported as root
+  // incompleteness by module-model.ts instead.
+  if (ts.isElementAccessExpression(left)) {
+    const exportedName = elementAccessExportName(left);
+    return exportedName === undefined
+      ? undefined
+      : { bindingKind: "commonjs-exports-property", exportedName };
+  }
+
   if (!ts.isPropertyAccessExpression(left)) {
     return undefined;
   }
