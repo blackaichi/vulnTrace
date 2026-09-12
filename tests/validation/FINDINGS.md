@@ -97,6 +97,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-021 | any CommonJS file used as a CONFIGURED ENTRYPOINT that exports a top-level callable and carries any RWF-014/015/016/017/018/019 authority-withdrawing construct above the export write — and, independently of any cutoff, any entrypoint exporting an ANONYMOUS callable | Entrypoint reachability ROOTS were read out of export ATTRIBUTION provenance (`exp.localName ?? exp.exportedName` in verdict.ts's `entrypointSourceNodes`). The two questions fail in opposite directions — attribution must REFUSE when it cannot name the exported value, root selection must WIDEN — so every soundness cutoff that correctly withdrew attribution silently deleted the entrypoint's root as well. The exported function's body was then never traversed, and an anonymous export (RWF-003's shape) had no name to be rooted by at all | **Soundness, cross-family** — reproduced end-to-end on `8d18130` as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) for **all four merged cutoff families** (RWF-016/017/018/019) plus the property-export and anonymous-export forms, over an entrypoint whose exported `main` really is published and really does reach the vulnerable sink on every run where the branch is not taken (asserted under real `node`) | **Fixed (RWF-021)** |
 | RWF-029 | `qs` (`RWB-05`); any package whose advisory-named export is FORWARDED from another file rather than declared in the file that exports it — the dominant shape for any CommonJS package past trivial size | TARGET-side attribution (`verdict.ts`'s `findExportNodeInFile`, at Site A) is a PER-FILE relation: it attributes an advisory's `{module, export}` against one file's own export table and nothing else. Real `qs/lib/index.js` forwards `parse` to `lib/parse.js`, which publishes the implementation as an ANONYMOUS whole-module default (canonical export name `"default"`), so the advisory-facing name and the implementation-facing name genuinely differ and **no file in `qs` exports anything called `parse`** — the target could not be attributed at any depth. Not the RWF-004a/b CONSUMER-side chase (whose fixture resolves only because some file there happens to export the advisory's literal name), and not P0-Z's entrypoint ROOT derivation (which must widen where this must refuse) | Precision/coverage only — degrades to UNKNOWN in both directions, never a false AFFECTED or NOT_AFFECTED | **Fixed (P1-A1)** — see below. `RWB-05` itself stays KNOWN_FAIL on the independent, pre-existing RWF-002 the unresolved target was masking |
 | RWF-030 | any installed package with MORE THAN ONE file exporting the advisory's literal name — i.e. any package whose public entry re-publishes an internal callable under a different public name, or that has an internal module sharing a name with a public one. Measured on the real vendored corpus (RUNTIME files only; a `.d.ts` rival can never contribute a target node): **3** genuine npm instances in `tests/validation/fixtures` — `has-symbols`, `call-bind-apply-helpers`, `yallist` — where authoritative resolution selects a different file than the per-file scan would offer. Counting declaration files too gives 6, but the extra three (`call-bound`, `side-channel`, `side-channel-list`) have only an `index.d.ts` rival and are measurement artifacts, not runtime defects | TARGET attribution asked EVERY graph-discovered file of the `PackageInstance`, independently, whether it exported the advisory's name (`resolveTargetNodes`'s per-file loop over `findExportNodeInFile`). Nothing in that loop asked which file the package actually PUBLISHES, so package MEMBERSHIP became sufficient for target identity when it is only ever necessary. `pkg/other.js` exporting `vulnerable` is not evidence about what `require("pkg").vulnerable` is. Distinct from RWF-011/VT-301B, which closed the bare-NAME fallback: here the sibling genuinely does export the name, so no name-search guard applied. Distinct from RWF-029/P1-A1, which fixed the forwarding RELATION but left it as a fallback that ran only AFTER this loop had already found something — so a sibling shadowed it entirely | **Soundness, BOTH directions** — reproduced byte-identically on the P0 closure base `d36a83c` and on the P1-A1 merge base `4a969b2`. False `AFFECTED`: a dangerous, reachable sibling answers for a package whose public `vulnerable` is safe and never called (`publicsafe-lib`; evidence path ended at `node_modules/publicsafe-lib/other.js:5`, while real `node` proves `pkg.vulnerable === impl.safeImpl`). False `NOT_AFFECTED`: because a found sibling returned before P1-A1's forwarding chase could run, an UNREACHABLE sibling shadowed the genuinely-reached public implementation and the finding received a complete negative proof about a callable the advisory never named (`twinpub-lib`, both twins — real `node` confirms `pkg.vulnerable` IS called) | **Fixed (P1-A2)** — see below |
+| RWF-031 | any installed package that declares BOTH `main` and `exports` where the two name different files (14 of the 49 vendored corpus instances declare both), and any advisory whose `module` names a SUBPATH (`qs/lib/parse`, `@scope/pkg/api`) rather than a package root — `schemas/symbol-rule.schema.json` has always permitted the latter | TWO defects in P1-A2's authoritative-public-entry probe set. (1) That set probed the instance's ABSOLUTE INSTALL PATH (the RWF-009 alias handle), and a path request never consults `exports` in real Node — so for `{"main":"./legacy.js","exports":{".":"./modern.js"}}` it admitted `legacy.js`, a file no importer can reach through the package name, as an authoritative public entry. That is RWF-030's own defect restored through a different door. (2) Installed instances were selected by comparing the advisory's whole module specifier against each instance's package NAME, so `"pkg/parse"` matched nothing, `instances.size` was 0, and resolution fell through to Site B — an instance-blind re-resolution that feeds a PHANTOM into the reachability search | **Soundness, BOTH directions** — reproduced on the P1-A2 merge base `eb128b6` by swapping that commit's `verdict.ts` into the branch; 4 of `fixtures/package-entry`'s 30 cases fail there. False `AFFECTED`: a superseded, reachable, dangerous `main` answered for a package whose public `vulnerable` is safe and uncalled (`expmainsafe-lib`), and an invalid `exports` target fell back to a same-named sibling (`badexports-lib`). False `NOT_AFFECTED`, RUNTIME-REACHABLE: a subpath advisory received a complete family-C negative proof about a phantom while real `node` proves the callable IS executed (`subpathfwd-lib/api`, `twin-lib/api`) | **Fixed (P1-A3)** — see below |
 | RWF-022 | any CommonJS file where a class's `extends` HERITAGE call RETURNS NORMALLY but hands back a value that is not a constructor (`function notAConstructor() { return 1; }` + `class C extends notAConstructor() {}`), above a later export write — the same UMD/feature-detect family as RWF-016/017/018/019/020, and the half of the heritage family RWF-020 explicitly deferred | RWF-020 asks only whether evaluating the heritage CALL completes, and here it does: `notAConstructor()` is not abrupt under `cannotCompleteNormally`, so `isDefinitelyAbruptCall` refuses it and RWF-020's rule never fires. What ends module evaluation is the VALUE: ClassDefinitionEvaluation validates the superclass before it does anything else with the class, and `1` is neither `null` nor a constructor, so the definition throws `TypeError: Class extends value 1 is not a constructor or null`. The same applies, through a second and deliberately separate mechanism, to an `async` or generator CALLEE — whose call provably returns a `Promise` or a generator object, neither of which is a constructor — which RWF-016 must refuse for the opposite reason (calling one cannot throw synchronously) | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken, on all three of the classifier's routes (numeric-literal return, concise-arrow object return, `async` callee); a real Node-executed circular-import fixture ASSERTS that a cyclic consumer retains the bypassed dangerous export by identity and calls the vulnerable sink through it, that the factory returns normally with `1`, that the later safe write never runs, and that re-requiring re-throws — and, in the same process across a 31-row measured table, that returning a class, an ordinary function or `null` genuinely does NOT abort module evaluation | **Fixed (RWF-022)** |
 
 ---
@@ -7127,7 +7128,9 @@ requirement to make the case green.
 - **No `package.json` `exports`/subpath advisory support was added.** The
   existing resolver's semantics are used as-is for the default entry; an
   advisory that explicitly targets a subpath is out of scope here. That
-  remains a later P1-A task.
+  remains a later P1-A task. *(Done in P1-A3 — see RWF-031 below, which
+  also found that the install-PATH probe described above could admit a
+  `main` that `exports` supersedes.)*
 - **Cross-package advisory ownership is still refused, not modelled** —
   unchanged from P1-A1.
 - **No multi-instance target expansion** — unchanged; instance exactness
@@ -7138,6 +7141,283 @@ requirement to make the case green.
   than resolution failures — see "Packages with no default public entry"
   above. Failing closed is the correct answer while subpath advisory
   semantics are unimplemented; it is still a coverage boundary, and is
-  recorded as one rather than rounded away.
+  recorded as one rather than rounded away. *(P1-A3/RWF-031 keeps the
+  package-ROOT refusal exactly as it is and adds the missing half: an
+  advisory that explicitly names one of those packages' declared subpaths
+  now resolves authoritatively.)*
 - **`export * from` stays unresolved** as a forwarding hop — unchanged
   from P1-A1; P1-B ESM work.
+
+## RWF-031 — Package-entry semantics: a superseded `main` could answer for an `exports` package, and a SUBPATH advisory was never anchored at its instance (P1-A3)
+
+**Classification: soundness / target-identity correction, in BOTH
+directions.** Not a coverage improvement.
+
+Two defects in the same relation —
+`verdict.ts`'s authoritative-public-entry probe set, introduced by P1-A2 —
+recorded together because they are one family (which public surface of
+which installed instance may answer for an advisory) and are fixed by one
+extraction.
+
+**Discovered:** P1-A3's own resolver inventory, by differentially probing
+real `node` against `ts.resolveModuleName` across every package-entry form
+before writing any code.
+**Reproduced for this task:** on the P1-A2 merge base
+`eb128b67384cee0652dddb963fc214bde4097773`, by swapping that commit's
+`verdict.ts` into this branch and running `fixtures/package-entry`'s own
+suite. 4 of its 30 cases fail there, in both directions.
+
+### Defect 1 — a PATH probe never consults `exports`
+
+P1-A2 resolved a package's authoritative public entry by probing the real
+module resolver with a fixed specifier set:
+
+```ts
+const specifiers = [moduleSpecifier, packageInstance];
+```
+
+The second member — the instance's **absolute install directory** — exists
+so that an npm-ALIASED install stays resolvable (RWF-009: `"foo-alias":
+"npm:foo@1.2.3"` installs package `foo` at `node_modules/foo-alias`, so the
+advisory's own name `foo` resolves into it from no context at all).
+
+But an absolute path is a *path* request, and real Node resolves a path
+request through `main`, never consulting `exports`. Measured directly:
+
+```json
+{ "main": "./legacy.js", "exports": { ".": "./modern.js" } }
+```
+
+```
+require("expmain-lib")                       -> modern.js
+require("/abs/.../node_modules/expmain-lib")  -> legacy.js
+```
+
+`ts.resolveModuleName` reproduces Node exactly here, in both directions —
+so the probe faithfully returned a file that **no importer can reach
+through the package name**, and P1-A2's union admitted it as an
+authoritative public entry.
+
+That is the RWF-030 defect restored through a different door. RWF-030's own
+statement of principle — *package MEMBERSHIP is necessary for target
+identity, never sufficient*; `pkg/other.js` exporting `vulnerable` is not
+evidence about what `require("pkg").vulnerable` is — applies verbatim to a
+`main` that `exports` supersedes.
+
+Three concrete consequences, each a **false AFFECTED**:
+
+- a superseded `main` file that exports the advisory's literal name, is
+  dangerous, and is genuinely reachable (the public entry re-publishes it
+  under a *different* public name) answered for a package whose public
+  `vulnerable` is safe and never called — `expmainsafe-lib`;
+- an `exports` target pointing at a file that is **not there** fell back to
+  a sibling that does export the name — `badexports-lib`;
+- an `exports`-encapsulated internal file became an authoritative public
+  target — reproducible by removing only the new gate (`encap-lib`), though
+  on merged main this particular case was masked by Defect 2, which
+  degraded every subpath advisory to UNKNOWN before it could be reached.
+
+### Defect 2 — a SUBPATH advisory was never anchored at its instance
+
+`resolveTargetNodes` selected installed instances by comparing the
+advisory's module specifier against each instance's package **name**:
+
+```ts
+const instances = graphPackageInstances(graph, target.module, knownPackageRoots);
+```
+
+`target.module` is a free string in `schemas/symbol-rule.schema.json`, so an
+advisory may legitimately name a subpath — `qs/lib/parse`, `pkg/parse`,
+`@scope/pkg/api`. `"pkg/parse"` is never any instance's package name, so the
+comparison matched **nothing**, `instances.size` was 0, and resolution fell
+through to Site B — a fresh, independent, **instance-blind** re-resolution
+that feeds a *phantom* node into the reachability search.
+
+Site B is correct where it was designed to be used (the package was never
+discovered by the graph at all, so "unreachable" is positively established).
+It is not correct here: the package instance genuinely *is* in the graph,
+and a phantom then received a complete family-C negative proof about a
+target whose identity was never established.
+
+Two concrete consequences, each a **runtime-reachable false NOT_AFFECTED** —
+the worst class:
+
+- `subpathfwd-lib/api#vulnerable` — real `node` proves
+  `require("subpathfwd-lib/api").vulnerable` **is** `impl.js`'s callable and
+  **is** executed; merged main reports NOT_AFFECTED;
+- `twin-lib/api#vulnerable` on the alias instance — same cause, additionally
+  losing the PackageInstance distinction the twin fixture exists to pin.
+
+### The remediation
+
+The relation is extracted from `analysis/verdict.ts` into
+`code-intelligence/package-entry.ts` as
+`resolveAuthoritativePackageEntries`, beside the module resolver it
+delegates to, and gains three things:
+
+1. **Specifier splitting.** `parseBarePackageSpecifier` splits a bare
+   specifier into package NAME and SUBPATH, scope-aware, so `@scope/pkg/api`
+   yields name `@scope/pkg` (root `node_modules/@scope/pkg`, never the scope
+   directory) and subpath `api`. The NAME selects installed instances; the
+   whole specifier resolves the entry. A subpath advisory is therefore
+   anchored at `exports["./api"]` **within this finding's own exact
+   PackageInstance**, and never answers for `"."` or vice versa.
+2. **The install-PATH probe is gated** on the instance declaring no
+   `exports` — precisely the condition under which a path request and a bare
+   request provably agree. It remains for instances outside any
+   `node_modules` directory (npm workspace members, `file:` links), where no
+   install-directory name exists.
+3. **The alias handle becomes a BARE specifier.** An aliased instance is
+   probed by its install DIRECTORY (`foo-alias`, `@scope/pkg`), which goes
+   *through* the `exports` algorithm rather than around it. That
+   substitution is gated on OWNERSHIP, never path shape: the instance's own
+   `package.json` must declare the advisory's package name — the package
+   itself saying "I am `foo`", which is exactly what npm writes for an alias
+   install. Without that gate any instance would answer a request for any
+   package name with its own root entry, because a substituted specifier
+   resolves into the instance by construction. Two same-basename packages
+   under different scopes (`@scope/pkg` vs `@other/pkg`) are the shape that
+   makes that concrete, and it is pinned.
+
+No package-resolution semantics are added. Every answer still comes from the
+same `ts.resolveModuleName`-backed resolver the call graph itself uses —
+`exports` (string shorthand, `"."`, explicit subpaths, conditional branches,
+wildcard patterns), `main`, the `index` fallback, and the file/package `type`
+scope. Where that resolver refuses a surface, resolution returns nothing and
+the caller refuses: UNKNOWN, never a sibling scan. P1-A2's union-of-probes
+remains, and remains safe for the same reason — an entry contributes a target
+only when the call graph holds a real node for that resolved file, so a
+candidate from an inactive condition materializes nothing. P1-A1's forwarding
+relation is re-used unchanged, now anchored at a subpath's entry too.
+
+### Evidence
+
+Two independent oracles, neither of which asks the analyzer what it thinks.
+
+**`fixtures/package-entry/verify.cjs`** — 24 checks under real `node`, out of
+process, asserting by callable IDENTITY and resolved FILE: which specifier
+loads which file (or which error code it throws), which callables are
+identical to which, and how many times each is actually executed by each
+consumer.
+
+**`src/code-intelligence/package-entry.differential-oracle.test.ts`** — 28
+shapes, comparing `require.resolve` in a real `node` child process against
+`resolveAuthoritativePackageEntries`, requiring exact agreement **including
+on every refusal**. This is the evidence for the "adds no semantics of its
+own" claim.
+
+Both run in CI. VulnTrace itself never executes target code (AGENTS.md); both
+oracles are test-only, and the analyzer side of the differential is pure
+resolution.
+
+### Real-world controls
+
+The two subpath-only packages P1-A2 identified in the vendored corpus,
+probed by the P1-A3 relation against their real installed copies under
+`tests/validation/fixtures/rwb-05-qs-unused-api`:
+
+| Request | P1-A3 | Real `node` |
+| --- | --- | --- |
+| `dunder-proto` | REFUSED | `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `dunder-proto/get` | `get.js` | `get.js` |
+| `math-intrinsics` | REFUSED | `ERR_PACKAGE_PATH_NOT_EXPORTED` |
+| `math-intrinsics/abs` | `abs.js` | `abs.js` |
+| `math-intrinsics/constants/maxSafeInteger` | `constants/maxSafeInteger.js` | same |
+| `math-intrinsics/notAThing` | REFUSED | `MODULE_NOT_FOUND` |
+| `qs` | `lib/index.js` | `lib/index.js` |
+| `qs/lib/parse` | `lib/parse.js` | `lib/parse.js` |
+
+Both packages' ROOT surface still correctly refuses — P1-A2's behavior,
+unchanged. What is new is that an advisory explicitly naming one of their
+declared subpaths now resolves authoritatively. **No rule in this repository
+names such a subpath, so no finding moves verdict because of it.** The
+capability is real; the verdict impact on this corpus is zero, and is
+recorded as zero rather than implied to be more.
+
+### Corpus
+
+`scripts/p1a3-package-entry-corpus.mjs`. Capability counts describe the
+prevalence of a package-entry SHAPE in these corpora only; they are not a
+claim about npm at large and imply no verdict movement.
+
+Over the vendored real-world corpus (`tests/validation/fixtures`), 49
+installed instances:
+
+| Shape | Instances |
+| --- | --- |
+| `main` only, no `exports` | 26 |
+| declares `exports` | 16 |
+| — of which also declare `main` | 14 |
+| — with an `exports` `"."` entry | 14 |
+| — with the `exports` string shorthand | 0 |
+| — with explicit subpaths (49 subpaths total) | 15 |
+| — with wildcard subpaths | 0 |
+| — SUBPATH-ONLY, no `"."` | 2 |
+| — with any conditional branch | 1 |
+| — with a CUSTOM (unsupported) condition | 0 |
+| scoped names | 0 |
+| install directory ≠ manifest name (npm-ALIAS shape) | 1 |
+| package-root entry resolved | 45 |
+| package-root entry refused | 2 |
+| neither `main` nor `exports` | 5 |
+| unreadable `package.json` | 2 |
+
+**Authoritative-entry selection differences on that corpus: 0.** The P1-A3
+relation selects exactly the same package-root entry as merged main for
+every real vendored instance — including all 14 that declare both `main` and
+`exports`, where in each case the two happen to name the same file. The
+defect shape is real (proved by real `node` and by the fixture), but it does
+not occur in *this* vendored set at the package-root surface. Across both
+corpora together (146 instances) the 5 differences are all in P1-A3's own
+fixture, which is what that fixture is for.
+
+### Verdict differential
+
+Merged main `eb128b6` vs this branch.
+
+| Movement | Count | Where |
+| --- | --- | --- |
+| AFFECTED → NOT_AFFECTED | 1 | `expmainsafe-lib` — a false AFFECTED removed |
+| AFFECTED → UNKNOWN | 1 | `badexports-lib` — a false AFFECTED removed |
+| NOT_AFFECTED → AFFECTED | 2 | `subpathfwd-lib/api`, `twin-lib/api` — runtime-reachable false NOT_AFFECTED removed |
+| UNKNOWN → AFFECTED | 0 | — |
+| UNKNOWN → NOT_AFFECTED | 0 | — |
+| NOT_AFFECTED → UNKNOWN | 0 | — |
+
+All four are in `fixtures/package-entry`, all four are corrections in the
+sound direction, and each is independently proved by real `node`. The
+canonical validation baseline is **unchanged**: 18 passed / 5 KNOWN_FAIL
+(`VAL-002`, `VAL-003`, `RWB-03`, `RWB-05`, `RWB-09b`), identical to
+`eb128b6`. `RWB-05` remains KNOWN_FAIL on RWF-002, exactly as P1-A1 left it.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **Custom `exports` conditions are not supported.** Only what the existing
+  resolver itself surfaces (`import`, `require`, `default`, `node`, `types`)
+  is selectable. An entry reachable only through an arbitrary custom
+  condition fails closed. 0 instances in the vendored corpus use one.
+- **Wildcard subpaths are consumed, never implemented.** Where
+  `ts.resolveModuleName` resolves a pattern, the result is used as-is; where
+  it does not, the answer is UNKNOWN. There is no home-grown partial
+  wildcard matcher, and no test asserts behavior beyond what the resolver
+  itself provides.
+- **A deep import that bypasses the public entry is still a different
+  claim.** `require("pkg/sibling")` at a call site while the advisory names
+  `pkg#vulnerable` remains UNKNOWN — unchanged from P1-A2. What P1-A3 adds
+  is the *advisory-side* subpath, not a consumer-side equivalence.
+- **`"main": false` is read only as "no `main`".** It is treated as the
+  absence of a default entry, which is what real Node does for these
+  packages, rather than modelled as its own negative assertion.
+- **Package-root escape is refused by the resolver, not by a VulnTrace
+  check.** `escape-lib` fails closed because `ts.resolveModuleName` refuses
+  it. No independent containment check was added, deliberately: a
+  second, divergent containment policy is a worse failure mode than one.
+- **Cross-package advisory ownership is still refused, not modelled** —
+  unchanged from P1-A1/P1-A2.
+- **No multi-instance target expansion** — unchanged; instance exactness is
+  preserved, advisory → many-instance expansion remains later P1-A work.
+- **npm workspaces, pnpm virtual stores beyond canonical paths, Yarn PnP,
+  bundler and `browser`-field semantics, and TypeScript `paths` aliases are
+  out of scope** and untouched.
+- **`export * from` stays unresolved** as a forwarding hop — unchanged from
+  P1-A1; P1-B ESM work.
