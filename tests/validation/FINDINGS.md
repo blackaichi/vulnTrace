@@ -6072,13 +6072,13 @@ RWB-11b) is preserved.
 
 | | count |
 | --- | --- |
-| files scanned | 1045 |
+| files scanned | 1048 |
 | files that failed to index | 0 |
-| files with any export | 970 |
-| COMPLETE root derivation | 984 |
-| INCOMPLETE root derivation | 61 |
+| files with any export | 972 |
+| COMPLETE root derivation | 985 |
+| INCOMPLETE root derivation | 63 |
 
-Of the 61, ten are this task's own fixture and the remainder are
+Of the 63, eleven are this task's own fixture and the remainder are
 `node_modules` library internals and circular-import ground-truth helpers —
 none of them a configured entrypoint. Only a file that is BOTH a configured
 entrypoint AND derives roots incompletely can lose a family C proof, which
@@ -6119,3 +6119,106 @@ thresholds.
 - **Root incompleteness is internal analysis state.** It is not serialized
   into the finding schema — it reaches the output only as the `UNKNOWN`
   reason string. No user-facing schema expansion was made.
+
+### P0-Z final remediation — literal-bracket CommonJS exports were never modeled at all
+
+The focused re-audit of the remediation above found **one surviving false
+`NOT_AFFECTED`**, and it was not a re-export:
+
+```js
+const dep = require("vlib");
+function run(u) { return dep.vulnerable(u); }
+module.exports["run"] = run;          // LOCAL callable, statically exact key
+```
+
+Real Node: `LOADED → EXPORT_OBTAINED → SINK_EXECUTED`. The analyzer:
+`NOT_AFFECTED` + `confirmedUnreachableTarget.reachableSubgraphComplete: true`.
+
+**Chronology, stated plainly.** The original P0-Z audit found one root-loss
+family and reproduced six forms of it. The first remediation introduced
+root-derivation completeness and closed those six plus two more it found
+itself (a two-hop chain and a dynamic computed export name). The focused
+re-audit then found that *element-access* CommonJS exports bypassed export
+description entirely — a third route into the same root loss. This entry
+records the fix for that.
+
+**Why it survived the first remediation.** `describeCommonJsExportTarget`
+(source-index.ts) returned `undefined` for anything that was not a
+`PropertyAccessExpression`, so `module.exports["run"]` produced **no export
+binding at all** — not a withdrawn one, not an imprecise one, none. No
+binding means no root candidate. The first remediation then *excluded*
+literal keys from `computedExportNameWrites` on the stated grounds that they
+were "statically named and already modeled". The first half was true and the
+second was false: nothing modeled them. The result was the exact state the
+whole P0-Z effort exists to eliminate — an export write that no layer models,
+reported as a COMPLETE derivation with zero roots.
+
+**The fix.** `exactCommonJsExportPropertyName` is now the single place that
+decides whether an element-access key can be named, and all three sites that
+must agree read it:
+
+| site | consequence of disagreement |
+| ---- | --------------------------- |
+| `describeCommonJsExportTarget` (source-index.ts) | no export binding → no root |
+| `commonJsExportPropertyName` (commonjs-reexports.ts) | a bracket RE-export loses `commonJsReExport`, so `isForeignOriginExport` misses it and the derivation reports COMPLETE again |
+| `computedExportNameWrites` (module-model.ts) | a key refused by the other two must surface as incompleteness, or it is modeled nowhere |
+
+The middle row is not hypothetical: `module.exports["run"] =
+require("./x").run` reproduced the original defect in a new shape when only
+the first site was fixed, and is pinned as a test.
+
+Exact keys are a string literal, a no-substitution template literal (both
+already `ts.isStringLiteralLike` across this codebase), and a numeric literal
+whose text round-trips (`String(Number(text)) === text`). The round-trip
+guard is what keeps this from inventing a normalization scheme:
+TypeScript already normalizes `1e3` to `"1000"` and `0x10` to `"16"`, which
+are the property names JavaScript actually produces, and anything that does
+not round-trip is refused rather than mis-named. Identifiers, calls,
+templates WITH substitutions, bigints and computed symbols stay refused and
+therefore stay incomplete.
+
+**Equivalence, not a parallel path.** `module.exports["run"] = run` now
+produces the same binding, the same root candidate and the same completeness
+as `module.exports.run = run`, asserted directly rather than by inspection —
+including for the `exports` alias and for re-export provenance. Parity was
+verified on the awkward forms too (nested `module.exports.a["b"]`,
+reassigned `exports`, shadowed `module`): bracket inherits whatever the dot
+form already does rather than acquiring new rules of its own.
+
+**Differential (pre-fix `2528feb` → fixed).**
+
+| case | pre-fix | fixed |
+| ---- | ------- | ----- |
+| `module.exports["run"]` | NOT_AFFECTED + Family C | **AFFECTED** |
+| `exports["run"]` | NOT_AFFECTED + Family C | **AFFECTED** |
+| escaped `["run"]` | NOT_AFFECTED + Family C | **AFFECTED** |
+| no-substitution `` [`run`] `` | NOT_AFFECTED + Family C | **AFFECTED** |
+| numeric `[0]` | NOT_AFFECTED + Family C | **AFFECTED** |
+| `["run"] = require("./x").run` | NOT_AFFECTED + Family C | **UNKNOWN**, no Family C |
+
+Five of the six reach AFFECTED rather than UNKNOWN because the root is
+genuinely derivable and a real path exists — the preferred outcome, and the
+reason this was fixed by MODELING the form rather than by declaring it
+incomplete. The safe counterpart (`module.exports["run"] = safeRun`) keeps a
+genuine complete Family C, so bracket support invents no reachability.
+
+Whole-module export, whole-module re-export, dot property export, dynamic
+computed keys, the eight earlier blocker forms, the no-callable-export
+control, Family A and Family B are all unchanged. Full suite 3359/3359;
+canonical validation unchanged at 12 PASS / 5 KNOWN_FAIL / 17.
+`UNKNOWN → NOT_AFFECTED` = 0, `AFFECTED → NOT_AFFECTED` = 0.
+
+**Corpus.** Bracket export syntax occurs in exactly four files across
+`fixtures/` + `tests/`, all of them this task's own fixtures. No
+pre-existing corpus file uses the form, so the fix moved no corpus verdict —
+stated as measured, not as an impact claim.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **Nested export properties are still unmodeled**, in both spellings:
+  `module.exports.a.b = run` and `module.exports.a["b"] = run` alike produce
+  no binding. Bracket now matches dot exactly, so this fix introduces no new
+  asymmetry, but the underlying gap predates P0-Z and is untouched.
+- **Refused keys lose precision, not soundness.** A dynamic key degrades the
+  whole entrypoint to UNKNOWN even when a sibling export is perfectly
+  rootable; incompleteness is per-entrypoint, not per-export.
