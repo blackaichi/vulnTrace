@@ -96,7 +96,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-020 | any CommonJS file where the RWF-016/017/018/019 shape's throwing call is written as a class's `extends` HERITAGE expression (`class C extends bail() {}`) rather than on any class element, above a later export write — the same UMD/feature-detect family, and it fires even when the class body is completely EMPTY | RWF-016 proved the CALLEE, RWF-017 proved the call's syntactic POSITION does not change the outcome, RWF-018 carried it into a class STATIC FIELD's initializer and RWF-019 into any class element's COMPUTED KEY. All four read the call off a STATEMENT or off a class ELEMENT: `isDefinitelyAbruptCallStatement` dispatched on `ExpressionStatement`/`VariableStatement`, `isDefinitelyAbruptStaticFieldInitializer` on a `PropertyDeclaration`'s `initializer`, and `isDefinitelyAbruptComputedClassElementKey` on a `ClassElement`'s `ComputedPropertyName`. A heritage expression is on no element at all — it hangs off the class's `heritageClauses` — and ClassDefinitionEvaluation evaluates it FIRST, before any element exists, because the superclass value is what the new class's prototype chain is built from. So it is the only class-definition-time expression that still runs when the class body is EMPTY, which is exactly the shape (`class C extends bail() {}`) none of the four predecessors could see | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken; a real Node-executed circular-import fixture confirms a cyclic consumer retains the bypassed dangerous export and calls the vulnerable sink through it, measures that a throwing heritage leaves the class's element list entirely unevaluated while a harmless one lets every element run, and — in the same process — that a heritage call which RETURNS, an `extends null`, an `async` callee, a generator callee, a conditional-throw callee, a class defined inside an uncalled function and a class nested in an instance field genuinely do NOT abort module evaluation | **Fixed (RWF-020)** |
 | RWF-021 | any CommonJS file used as a CONFIGURED ENTRYPOINT that exports a top-level callable and carries any RWF-014/015/016/017/018/019 authority-withdrawing construct above the export write — and, independently of any cutoff, any entrypoint exporting an ANONYMOUS callable | Entrypoint reachability ROOTS were read out of export ATTRIBUTION provenance (`exp.localName ?? exp.exportedName` in verdict.ts's `entrypointSourceNodes`). The two questions fail in opposite directions — attribution must REFUSE when it cannot name the exported value, root selection must WIDEN — so every soundness cutoff that correctly withdrew attribution silently deleted the entrypoint's root as well. The exported function's body was then never traversed, and an anonymous export (RWF-003's shape) had no name to be rooted by at all | **Soundness, cross-family** — reproduced end-to-end on `8d18130` as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) for **all four merged cutoff families** (RWF-016/017/018/019) plus the property-export and anonymous-export forms, over an entrypoint whose exported `main` really is published and really does reach the vulnerable sink on every run where the branch is not taken (asserted under real `node`) | **Fixed (RWF-021)** |
 | RWF-029 | `qs` (`RWB-05`); any package whose advisory-named export is FORWARDED from another file rather than declared in the file that exports it — the dominant shape for any CommonJS package past trivial size | TARGET-side attribution (`verdict.ts`'s `findExportNodeInFile`, at Site A) is a PER-FILE relation: it attributes an advisory's `{module, export}` against one file's own export table and nothing else. Real `qs/lib/index.js` forwards `parse` to `lib/parse.js`, which publishes the implementation as an ANONYMOUS whole-module default (canonical export name `"default"`), so the advisory-facing name and the implementation-facing name genuinely differ and **no file in `qs` exports anything called `parse`** — the target could not be attributed at any depth. Not the RWF-004a/b CONSUMER-side chase (whose fixture resolves only because some file there happens to export the advisory's literal name), and not P0-Z's entrypoint ROOT derivation (which must widen where this must refuse) | Precision/coverage only — degrades to UNKNOWN in both directions, never a false AFFECTED or NOT_AFFECTED | **Fixed (P1-A1)** — see below. `RWB-05` itself stays KNOWN_FAIL on the independent, pre-existing RWF-002 the unresolved target was masking |
-| RWF-030 | any installed package with MORE THAN ONE file exporting the advisory's literal name — i.e. any package whose public entry re-publishes an internal callable under a different public name, or that has an internal module sharing a name with a public one. Measured on the real vendored corpus: 6 real npm instances in `tests/validation/fixtures` (`has-symbols`, `side-channel`, `side-channel-list`, `call-bound`, `call-bind-apply-helpers`) where authoritative resolution selects a different file than the per-file scan would offer | TARGET attribution asked EVERY graph-discovered file of the `PackageInstance`, independently, whether it exported the advisory's name (`resolveTargetNodes`'s per-file loop over `findExportNodeInFile`). Nothing in that loop asked which file the package actually PUBLISHES, so package MEMBERSHIP became sufficient for target identity when it is only ever necessary. `pkg/other.js` exporting `vulnerable` is not evidence about what `require("pkg").vulnerable` is. Distinct from RWF-011/VT-301B, which closed the bare-NAME fallback: here the sibling genuinely does export the name, so no name-search guard applied. Distinct from RWF-029/P1-A1, which fixed the forwarding RELATION but left it as a fallback that ran only AFTER this loop had already found something — so a sibling shadowed it entirely | **Soundness, BOTH directions** — reproduced byte-identically on the P0 closure base `d36a83c` and on the P1-A1 merge base `4a969b2`. False `AFFECTED`: a dangerous, reachable sibling answers for a package whose public `vulnerable` is safe and never called (`publicsafe-lib`; evidence path ended at `node_modules/publicsafe-lib/other.js:5`, while real `node` proves `pkg.vulnerable === impl.safeImpl`). False `NOT_AFFECTED`: because a found sibling returned before P1-A1's forwarding chase could run, an UNREACHABLE sibling shadowed the genuinely-reached public implementation and the finding received a complete negative proof about a callable the advisory never named (`twinpub-lib`, both twins — real `node` confirms `pkg.vulnerable` IS called) | **Fixed (P1-A2)** — see below |
+| RWF-030 | any installed package with MORE THAN ONE file exporting the advisory's literal name — i.e. any package whose public entry re-publishes an internal callable under a different public name, or that has an internal module sharing a name with a public one. Measured on the real vendored corpus (RUNTIME files only; a `.d.ts` rival can never contribute a target node): **3** genuine npm instances in `tests/validation/fixtures` — `has-symbols`, `call-bind-apply-helpers`, `yallist` — where authoritative resolution selects a different file than the per-file scan would offer. Counting declaration files too gives 6, but the extra three (`call-bound`, `side-channel`, `side-channel-list`) have only an `index.d.ts` rival and are measurement artifacts, not runtime defects | TARGET attribution asked EVERY graph-discovered file of the `PackageInstance`, independently, whether it exported the advisory's name (`resolveTargetNodes`'s per-file loop over `findExportNodeInFile`). Nothing in that loop asked which file the package actually PUBLISHES, so package MEMBERSHIP became sufficient for target identity when it is only ever necessary. `pkg/other.js` exporting `vulnerable` is not evidence about what `require("pkg").vulnerable` is. Distinct from RWF-011/VT-301B, which closed the bare-NAME fallback: here the sibling genuinely does export the name, so no name-search guard applied. Distinct from RWF-029/P1-A1, which fixed the forwarding RELATION but left it as a fallback that ran only AFTER this loop had already found something — so a sibling shadowed it entirely | **Soundness, BOTH directions** — reproduced byte-identically on the P0 closure base `d36a83c` and on the P1-A1 merge base `4a969b2`. False `AFFECTED`: a dangerous, reachable sibling answers for a package whose public `vulnerable` is safe and never called (`publicsafe-lib`; evidence path ended at `node_modules/publicsafe-lib/other.js:5`, while real `node` proves `pkg.vulnerable === impl.safeImpl`). False `NOT_AFFECTED`: because a found sibling returned before P1-A1's forwarding chase could run, an UNREACHABLE sibling shadowed the genuinely-reached public implementation and the finding received a complete negative proof about a callable the advisory never named (`twinpub-lib`, both twins — real `node` confirms `pkg.vulnerable` IS called) | **Fixed (P1-A2)** — see below |
 | RWF-022 | any CommonJS file where a class's `extends` HERITAGE call RETURNS NORMALLY but hands back a value that is not a constructor (`function notAConstructor() { return 1; }` + `class C extends notAConstructor() {}`), above a later export write — the same UMD/feature-detect family as RWF-016/017/018/019/020, and the half of the heritage family RWF-020 explicitly deferred | RWF-020 asks only whether evaluating the heritage CALL completes, and here it does: `notAConstructor()` is not abrupt under `cannotCompleteNormally`, so `isDefinitelyAbruptCall` refuses it and RWF-020's rule never fires. What ends module evaluation is the VALUE: ClassDefinitionEvaluation validates the superclass before it does anything else with the class, and `1` is neither `null` nor a constructor, so the definition throws `TypeError: Class extends value 1 is not a constructor or null`. The same applies, through a second and deliberately separate mechanism, to an `async` or generator CALLEE — whose call provably returns a `Promise` or a generator object, neither of which is a constructor — which RWF-016 must refuse for the opposite reason (calling one cannot throw synchronously) | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken, on all three of the classifier's routes (numeric-literal return, concise-arrow object return, `async` callee); a real Node-executed circular-import fixture ASSERTS that a cyclic consumer retains the bypassed dangerous export by identity and calls the vulnerable sink through it, that the factory returns normally with `1`, that the later safe write never runs, and that re-requiring re-throws — and, in the same process across a 31-row measured table, that returning a class, an ordinary function or `null` genuinely does NOT abort module evaluation | **Fixed (RWF-022)** |
 
 ---
@@ -6937,7 +6937,7 @@ each checked against the oracle individually.
 shapes as sixteen installed packages, almost all carrying a same-named
 sibling on purpose — the sibling is the attack. Asserted by
 `src/analysis/verdict.authoritative-public-entry.integration.test.ts`
-(25 tests).
+(26 tests).
 
 **Runtime oracle.** `fixtures/authoritative-public-entry/verify.cjs`
 asserts under real `node`, out of process, what each package publishes
@@ -6948,11 +6948,11 @@ rather than the stale value; and that the two name- and version-identical
 twins publish different callables. 16 checks. VulnTrace never executes
 target code; the oracle is test-only.
 
-The suite was confirmed to **discriminate**: against merged main's
-`verdict.ts`, **21 of its 25 tests fail**; on the branch all 25 pass. The
-4 that pass in both states are the unchanged controls (direct export,
-unreachable-but-exact, and the oracle itself) — exactly the required
-asymmetry.
+The suite was confirmed to **discriminate**: run against merged main's
+`verdict.ts`, **21 of its 26 tests fail**; on the branch all 26 pass. The
+5 that pass in both states are the unchanged controls (direct export,
+unreachable-but-exact, the sibling-under-its-real-public-name complement,
+and the oracle itself) — exactly the required asymmetry.
 
 **Order independence** is asserted directly, not assumed: the same scans
 re-run with `graph.nodes` reversed, and with `graph.nodes` sorted by
@@ -6966,19 +6966,32 @@ measurements, not verdict improvements** — nothing here runs a
 reachability search, so no count implies any finding changed verdict. They
 size the shape in *these* corpora only; this is not an ecosystem claim.
 
-Over `fixtures/` + `tests/validation/fixtures/` — 820 files, 0 unparsable,
-125 installed PackageInstances:
+**Runtime files vs declaration files — the two numbers are not
+interchangeable.** A `.d.ts` sibling can never contribute advisory target
+authority: attribution only materializes a node when the call graph holds
+one whose `module` is that exact file, the graph never traverses
+declaration files, and VT-304 refuses declaration-only resolutions
+outright. So a "collision" whose only rival is a `.d.ts` is an artifact of
+walking the tree, not a case the legacy scan could ever have got wrong.
+The script therefore reports both passes, and **`runtimeOnly` is the
+figure that describes real target-authority disagreement**. (An earlier
+revision of this section quoted only the all-files pass; the corrected
+runtime-only figures are the ones below.)
 
-| | count |
-|---|---|
-| instances with a resolvable authoritative public entry | 123 |
-| instances whose entry could not be resolved (→ UNKNOWN, fail-closed) | 2 |
-| export-name candidates the legacy per-file scan drew from | 240 |
-| of those, same-name sibling collisions (legacy could have bound a non-public file) | 172 |
-| authoritative entry selects a **different** target than the legacy scan offered | 18 |
-| legacy had a target, the public entry has **none** (→ UNKNOWN) | 139 |
-| public entry attributes the name directly | 76 |
-| public entry resolves it through explicit forwarding | 25 |
+Over `fixtures/` + `tests/validation/fixtures/`, 125 installed
+PackageInstances, 0 unparsable:
+
+| | all files | **runtime only** |
+|---|---|---|
+| files walked | 820 | **763** |
+| instances with a resolvable authoritative public entry | 123 | **123** |
+| instances with **no default public entry** (subpath-only — see below) | 2 | **2** |
+| export-name candidates the legacy per-file scan drew from | 240 | **234** |
+| of those, same-name sibling collisions | 172 | **163** |
+| authoritative entry selects a **different** target than the legacy scan offered | 18 | **15** |
+| legacy had a target, the public entry has **none** (→ UNKNOWN) | 139 | **133** |
+| public entry attributes the name directly | 76 | **76** |
+| public entry resolves it through explicit forwarding | 25 | **25** |
 
 A collision is an **upper bound** on the legacy defect's reach, never a
 count of real findings: whether the legacy scan actually *would* have
@@ -6986,21 +6999,85 @@ bound a sibling depends on which files the call graph discovered in a
 given scan, which a corpus walk cannot know.
 
 Restricted to the **real vendored npm packages only**
-(`tests/validation/fixtures`, 422 files, 47 instances, this task's own new
-fixture excluded), the shape is present in genuine third-party code: **6**
-cases where authoritative resolution selects a different file than the
-per-file scan would offer, all on the canonical CommonJS `default` name —
+(`tests/validation/fixtures`; 372 runtime files, 47 instances, this task's
+own new fixture excluded), the shape is present in genuine third-party
+code: **3** runtime cases where authoritative resolution selects a
+different file than the per-file scan would offer, all on the canonical
+CommonJS `default` name —
 
 ```text
-has-symbols             default  [index.js, shams.js, test/tests.js, *.d.ts] -> index.js
-side-channel            default  [index.js, index.d.ts]                      -> index.js
-side-channel-list       default  [index.js, index.d.ts]                      -> index.js
-call-bound              default  [index.js, index.d.ts]                      -> index.js
-call-bind-apply-helpers default  [applyBind.js, index.js, *.d.ts]            -> index.js
+has-symbols             default  [index.js, shams.js, test/tests.js] -> index.js
+call-bind-apply-helpers default  [applyBind.js, index.js]            -> index.js
+yallist                 default  [iterator.js, yallist.js]           -> yallist.js
 ```
 
 `has-symbols` is the clearest: an advisory naming `has-symbols#default`
 was bindable to `shams.js` — or to `test/tests.js`.
+
+The all-files pass reports 6 rather than 3 here. The extra three —
+`call-bound`, `side-channel`, `side-channel-list` — each have **only an
+`index.d.ts` rival** beside the real `index.js`, so they are declaration
+artifacts and are **not** runtime authority mismatches. They are recorded
+here as artifacts precisely so they are not mistaken for defects.
+
+### Packages with no default public entry (not a resolver failure)
+
+The two instances the table counts are `dunder-proto` and
+`math-intrinsics`, both vendored under `rwb-05-qs-unused-api`. Neither is
+an ordinary resolution failure:
+
+```json
+{ "main": false, "exports": { "./get": "./get.js", "./set": "./set.js" } }
+```
+
+They are **subpath-only packages**: `"main": false`, and an `exports` map
+that declares only subpaths with no `"."` entry. There is genuinely no
+default public entry to anchor at, so under the P1-A2 contract advisory
+resolution **fails closed** to UNKNOWN. That is the correct answer for a
+task that deliberately does not implement subpath semantics; supporting an
+advisory that explicitly targets a subpath is later P1-A
+package-resolution work, not a gap in this relation.
+
+### Why the multiple-public-entry union is safe (invariant)
+
+A package can resolve to more than one public entry file — conditional
+`exports` legitimately yield one under `import` and another under
+`require`, and the probe set accepts every candidate that lands inside the
+exact `PackageInstance`. Those candidates can attribute the advisory's
+name to *different* implementations, so "each member is a genuine public
+entry" is **not** on its own a sufficient safety argument.
+
+The property the union actually rests on is:
+
+> **A candidate public entry can contribute an advisory target only if
+> `findExportNodeInFile` can materialize a real graph node whose `module`
+> equals that resolved entry file.**
+
+Every return path of that relation ends in a
+`graph.nodes.find(n => n.module === resolvedFile && …)` lookup. A file the
+analyzed scan never traversed therefore yields no node, and an entry
+resolved under an **inapplicable condition is inert**: the analysis
+context itself disambiguates, rather than the union arbitrarily choosing.
+When two conditional entries genuinely *are* both loaded, both really can
+execute, and OR-across-nodes is the correct answer rather than a guess.
+
+The union is also monotone in the safe direction. `checkReachability`
+returns AFFECTED on the first reachable node and requires *no* node
+reachable **and** no unresolved blocker before NOT_AFFECTED. Adding a
+candidate can therefore only move NOT_AFFECTED → AFFECTED or
+NOT_AFFECTED → UNKNOWN; it can never manufacture a negative proof. Going
+UNKNOWN on any multi-entry package would instead have discarded genuine
+AFFECTED results for ordinary dual-condition packages, which is a worse
+trade in both directions.
+
+**Future-refactor warning.** This argument depends on target
+materialization requiring a real graph node. `findExportNodeInFile`'s
+`allowSyntheticNameOnlyTargetBinding` escape hatch still satisfies it
+today — its bare-name fallback is also `n.module === resolvedFile`-gated,
+and no production caller enables it. If a future change ever permits
+synthetic or name-only target materialization **without** requiring a node
+for that exact file, the union's safety argument must be revisited before
+that change lands.
 
 ### Verdict differential (base `4a969b2` → branch)
 
@@ -7055,9 +7132,12 @@ requirement to make the case green.
   unchanged from P1-A1.
 - **No multi-instance target expansion** — unchanged; instance exactness
   is preserved, advisory → many-instance expansion is P1-A4.
-- **An instance whose public entry cannot be resolved is UNKNOWN**, not
-  widened. 2 of the 125 corpus instances are in that state. This is the
-  intended fail-closed direction, but it is a real coverage cost of the
-  change and is recorded as one rather than rounded away.
+- **A package with no default public entry is UNKNOWN**, not widened. 2 of
+  the 125 corpus instances are in that state, and both are SUBPATH-ONLY
+  packages (`"main": false` plus an `exports` map with no `"."`) rather
+  than resolution failures — see "Packages with no default public entry"
+  above. Failing closed is the correct answer while subpath advisory
+  semantics are unimplemented; it is still a coverage boundary, and is
+  recorded as one rather than rounded away.
 - **`export * from` stays unresolved** as a forwarding hop — unchanged
   from P1-A1; P1-B ESM work.
