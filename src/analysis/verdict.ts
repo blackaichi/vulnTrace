@@ -7,6 +7,7 @@ import {
   mapExportsToFunctions,
   type EntrypointRootIncompleteness,
 } from "../code-intelligence/module-model.js";
+import { exportForwardingHops } from "../code-intelligence/export-forwarding.js";
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
 import {
@@ -277,6 +278,165 @@ function findExportNodeInFile(
 }
 
 /**
+ * TARGET-SIDE re-export resolution (P1-A1; RWB-05).
+ *
+ * {@link findExportNodeInFile} attributes an advisory's `{module, export}`
+ * against ONE file's own export table. That is the whole relation, and it
+ * is why a package that publishes its advisory-named symbol through a
+ * forwarding layer could not be attributed at all: real `qs@6.10.1`'s
+ * public entry file is
+ *
+ * ```js
+ * var parse = require('./parse');
+ * module.exports = { formats: formats, parse: parse, stringify: stringify };
+ * ```
+ *
+ * so `qs#parse` names a value that is *defined nowhere in the file that
+ * exports it*. `lib/index.js` has no function called `parse` to attribute,
+ * and `lib/parse.js` publishes its implementation as a CommonJS
+ * whole-module default (`module.exports = function (str, opts) {...}`),
+ * under the canonical export name `"default"`, not `"parse"`. Neither file
+ * alone answers the advisory, and the advisory-facing name and the
+ * implementation-facing name are genuinely different names. Site A
+ * therefore returned `unresolvedReason` and the finding degraded to
+ * UNKNOWN — an honest refusal, and exactly the coverage gap this closes.
+ *
+ * This is deliberately NOT the P0 problem it superficially resembles.
+ * P0-Z derived reachability ROOTS from a configured APPLICATION
+ * entrypoint's forwarded exports; this derives the advisory's TARGET
+ * identity inside the vulnerable PACKAGE. Root derivation must WIDEN when
+ * uncertain, target identity must REFUSE — opposite failure directions, so
+ * the two must not share a relation. Nothing here touches root
+ * derivation.
+ *
+ * **Every hop is authoritative, never a search.** The hop rule is
+ * export-forwarding.ts's, shared verbatim with the call graph's own
+ * consumer-side chase, and it is computed from the export bindings the
+ * module model already derived (a literal `require()` specifier and the
+ * name that `require()` actually selected). Nothing here greps a package
+ * for a function named like the advisory's symbol, and nothing here
+ * matches a same-named function in an unrelated file: attribution on the
+ * far side of a hop is the same structural {@link findExportNodeInFile}
+ * relation, asked under the name the hop itself proved.
+ *
+ * **Renaming is carried, not guessed.** `exports.vulnerable =
+ * require("./impl").internalName` asks the far side for `internalName`;
+ * `module.exports = { vulnerable: require("./impl") }` asks it for
+ * `"default"`, because that IS the whole value Node binds there. The
+ * advisory-facing name (`target.export`) and the implementation-facing
+ * name are separate values throughout, and the node this returns is the
+ * real implementation's own graph node — its file, its source position,
+ * its own declared name (or none at all, for `qs`'s anonymous default) —
+ * so the public → implementation mapping stays recoverable from the
+ * returned identity rather than being collapsed into the advisory's name.
+ *
+ * **Bounded to the advisory's own PackageInstance.** Every hop's resolved
+ * file must belong to exactly `packageInstance`, compared as a whole
+ * install path by the single identity authority (`identifyModule`). This
+ * is the one place this relation deliberately differs from the call
+ * graph's consumer-side chase, which RWF-004b correctly un-gated: a
+ * consumer chasing a façade package's export into the package it really
+ * came from is following the value, whereas an ADVISORY names a package,
+ * and re-pointing `pkg-a`'s advisory at an implementation inside `pkg-b`
+ * would silently re-interpret whose vulnerability this is. P1-A1 does not
+ * broaden package ownership semantics, so a cross-package hop — and
+ * equally a relative hop that escapes the package root
+ * (`pkg/index.js` -> `../../other/file.js`) — is refused and the target
+ * stays unresolved/UNKNOWN. A same-name/same-version twin install is
+ * excluded by the same comparison, since two installs at different paths
+ * are different instances.
+ *
+ * **Cycles terminate, and terminate as UNKNOWN.** `visited` records each
+ * `file#exportName` hop before it is taken, so `a.js -> b.js -> a.js`
+ * stops on the repeat and contributes no nodes rather than recursing or
+ * picking an arbitrary member of the cycle. As in call-graph.ts's chase
+ * there is deliberately no additional fixed depth cap: the visited set
+ * already bounds traversal to the finitely many (file, export name) pairs
+ * reachable through real resolved specifiers, while a depth cap would
+ * silently return "no target" — indistinguishable from "no forwarding" —
+ * on a legitimate deep chain.
+ *
+ * **Every refusal is a refusal, not a fallback.** An unresolved,
+ * declaration-only or builtin specifier, a hop leaving the instance, an
+ * unreadable file, an export the model attributes no forwarding origin to
+ * (a dynamic specifier, a conditional export, a reassigned alias, an
+ * unsupported `export *`, a duplicate last write that is not the
+ * vulnerable value) all yield no nodes, which leaves Site A's existing
+ * `unresolvedReason` and its UNKNOWN exactly as they were. This relation
+ * can only ever ADD an exactly-resolved target; it can never turn an
+ * unresolved one into a negative verdict by itself.
+ *
+ * Returns every distinct node any file of the instance forwards to —
+ * never one arbitrarily chosen candidate — leaving the existing
+ * OR-across-nodes reachability contract in `checkReachability` to do its
+ * job unchanged.
+ */
+async function findExportNodeThroughForwarding(
+  graph: CallGraph,
+  file: string,
+  exportName: string,
+  resolver: ModuleResolver,
+  packageInstance: string,
+  knownPackageRoots: KnownPackageRoots | undefined,
+  visited: Set<string>,
+): Promise<GraphNode[]> {
+  const hopKey = `${file}#${exportName}`;
+  if (visited.has(hopKey)) {
+    return [];
+  }
+  visited.add(hopKey);
+
+  // Structural attribution first, at every depth: the far side of a hop is
+  // resolved by exactly the relation a directly-exported target is, so a
+  // one-hop and a two-hop chain differ only in how many times this runs.
+  // `allowSyntheticNameOnlyTargetBinding` is deliberately NOT threaded
+  // through — the bare-name fallback exists for synthetic graphs with no
+  // file on disk, and a forwarding chase has a real file by construction.
+  const direct = findExportNodeInFile(graph, file, exportName, false);
+  if (direct.length > 0) {
+    return direct;
+  }
+
+  let model;
+  try {
+    model = buildModuleModel(indexSourceFileFromDisk(file));
+  } catch {
+    // Unreadable/unparsable file: no export facts, so no authoritative
+    // hop. Refuse, exactly as an absent forwarding origin does.
+    return [];
+  }
+
+  const nodes: GraphNode[] = [];
+  for (const hop of exportForwardingHops(model, exportName)) {
+    const resolution = await resolver.resolve(hop.specifier, file);
+    // Same VT-304 discipline as both halves of the call graph's chase: a
+    // declaration-only (or builtin, or unresolved) resolution is not a
+    // runtime implementation and must never be chased as one.
+    if (resolution.kind !== "resolved") {
+      continue;
+    }
+    if (
+      identifyModule(resolution.resolvedFileName, knownPackageRoots)
+        .packageInstance !== packageInstance
+    ) {
+      continue;
+    }
+    nodes.push(
+      ...(await findExportNodeThroughForwarding(
+        graph,
+        resolution.resolvedFileName,
+        hop.exportName,
+        resolver,
+        packageInstance,
+        knownPackageRoots,
+        visited,
+      )),
+    );
+  }
+  return nodes;
+}
+
+/**
  * A phantom placeholder for a target that could not be matched to any real
  * graph node. Not a guess at reachability: nothing in the graph points to
  * it (its id can never collide with a real generated one — see
@@ -475,6 +635,42 @@ async function resolveTargetNodes(
 
     if (nodes.length > 0) {
       return { nodes };
+    }
+
+    // P1-A1 (RWB-05): no file of this instance exports `target.export`
+    // DIRECTLY. Before concluding the target's identity is unknown, ask
+    // whether the package publishes it through a statically exact
+    // forwarding layer instead -- the dominant shape for any CommonJS
+    // package past trivial size. Strictly a fallback after direct
+    // attribution across every file has already failed, so a package that
+    // really does export the target directly resolves exactly as before,
+    // and strictly additive: when nothing forwards exactly, the
+    // unresolved/UNKNOWN result below is reached unchanged.
+    //
+    // `visited` is per INSTANCE, not per file: one instance's forwarding
+    // graph is one traversal, so two entry files that converge on the
+    // same implementation cost one walk and can never recurse through
+    // each other. It is deliberately NOT shared across instances -- each
+    // installed instance is a separate question with a separate answer.
+    const forwarded = new Map<GraphNodeId, GraphNode>();
+    for (const [instance, files] of selected) {
+      const visited = new Set<string>();
+      for (const file of files) {
+        for (const node of await findExportNodeThroughForwarding(
+          graph,
+          file,
+          target.export,
+          resolver,
+          instance,
+          knownPackageRoots,
+          visited,
+        )) {
+          forwarded.set(node.id, node);
+        }
+      }
+    }
+    if (forwarded.size > 0) {
+      return { nodes: [...forwarded.values()] };
     }
 
     // Site A (VT-301B; see this function's own doc comment above): the

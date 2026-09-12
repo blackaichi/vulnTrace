@@ -8,6 +8,10 @@ import type {
 } from "../domain/graph.js";
 import type { KnownPackageRoots } from "../domain/resolved-target.js";
 import {
+  commonJsExportForwardingHop,
+  esmExportForwardingHop,
+} from "./export-forwarding.js";
+import {
   classifyClosureWideningCall,
   isStaticRequireCall,
 } from "./loader-constructs.js";
@@ -305,18 +309,16 @@ async function resolveEsmReExport(
   ctx: WalkContext,
   visited: Set<string>,
 ): Promise<GraphNodeId | undefined> {
-  const reExport = prepared.model.exports.find(
-    (exp) =>
-      exp.kind === "re-export" &&
-      exp.exportedName === exportName &&
-      exp.specifier !== undefined,
-  );
-  if (!reExport?.specifier) {
+  // P1-A1: the hop RULE itself now lives in export-forwarding.ts, so the
+  // consumer-side chase here and verdict.ts's target-side chase cannot
+  // drift apart on which hop an export takes. Behaviorally unchanged.
+  const hop = esmExportForwardingHop(prepared.model, exportName);
+  if (!hop) {
     return undefined;
   }
 
   const resolution = await ctx.resolver.resolve(
-    reExport.specifier,
+    hop.specifier,
     prepared.index.filePath,
   );
   // VT-304: a declaration-only resolution must never be chased as though
@@ -332,7 +334,7 @@ async function resolveEsmReExport(
     return undefined;
   }
 
-  const originalName = reExport.localName ?? exportName;
+  const originalName = hop.exportName;
   const directTarget = targetFile.exportNameToNodeId.get(originalName);
   if (directTarget) {
     return directTarget;
@@ -381,55 +383,24 @@ async function resolveCommonJsReExport(
   ctx: WalkContext,
   visited: Set<string>,
 ): Promise<GraphNodeId | undefined> {
-  const own = prepared.model.exports.find(
-    (exp) =>
-      exp.syntax === "commonjs" &&
-      exp.kind === "named" &&
-      exp.exportedName === exportName,
-  );
-  if (own) {
-    const origin = own.commonJsReExport;
-    return origin === undefined
-      ? undefined
-      : followCommonJsReExport(
-          prepared,
-          origin.specifier,
-          origin.importedName ?? "default",
-          ctx,
-          visited,
-        );
-  }
-
-  const whole = prepared.model.exports.find(
-    (exp) =>
-      exp.syntax === "commonjs" &&
-      exp.kind === "default" &&
-      exp.commonJsReExport !== undefined,
-  );
-  const origin = whole?.commonJsReExport;
-  if (!origin) {
+  // P1-A1: both forwarding rules documented above now live in
+  // export-forwarding.ts's {@link commonJsExportForwardingHop}, shared
+  // verbatim with verdict.ts's target-side chase. Behaviorally unchanged
+  // — including the deliberate refusal to fall through to the
+  // whole-module rule when this file has its own unattributable named
+  // export for `exportName`.
+  const hop = commonJsExportForwardingHop(prepared.model, exportName);
+  if (!hop) {
     return undefined;
   }
 
-  if (origin.importedName === undefined) {
-    return followCommonJsReExport(
-      prepared,
-      origin.specifier,
-      exportName,
-      ctx,
-      visited,
-    );
-  }
-
-  return exportName === "default"
-    ? followCommonJsReExport(
-        prepared,
-        origin.specifier,
-        origin.importedName,
-        ctx,
-        visited,
-      )
-    : undefined;
+  return followCommonJsReExport(
+    prepared,
+    hop.specifier,
+    hop.exportName,
+    ctx,
+    visited,
+  );
 }
 
 /**
