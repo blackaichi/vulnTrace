@@ -198,7 +198,7 @@ describe("resolveAuthoritativePackageEntries", () => {
   it("resolves the exports string shorthand", async () => {
     expect(
       await resolvedFiles("shorthand-lib", instance("shorthand-lib")),
-    ).toEqual(["node_modules/shorthand-lib/dist/index.js"]);
+    ).toEqual(["node_modules/shorthand-lib/out/index.js"]);
   });
 
   it("keeps main authoritative for a package with no exports", async () => {
@@ -301,10 +301,10 @@ describe("resolveAuthoritativePackageEntries", () => {
   it("resolves a scoped package at its own root, not the scope directory", async () => {
     expect(
       await resolvedFiles("@scope/pkg", instance("@scope", "pkg")),
-    ).toEqual(["node_modules/@scope/pkg/dist/index.js"]);
+    ).toEqual(["node_modules/@scope/pkg/out/index.js"]);
     expect(
       await resolvedFiles("@scope/pkg/api", instance("@scope", "pkg")),
-    ).toEqual(["node_modules/@scope/pkg/dist/api.js"]);
+    ).toEqual(["node_modules/@scope/pkg/out/api.js"]);
     expect(
       await resolvedFiles("@other/pkg", instance("@other", "pkg")),
     ).toEqual(["node_modules/@other/pkg/index.js"]);
