@@ -60,6 +60,23 @@ assert.strictEqual(
   "computed-key: calling the published callable reaches the vulnerable sink",
 );
 
+// The literal-bracket family found by the focused re-audit. Each publishes
+// `run` under a statically exact key and reaches the vulnerable sink, so
+// none of them may be certified absent.
+for (const name of ["literal-bracket", "bracket-reexport", "dynamic-bracket"]) {
+  const exported = require(`./src/${name}.cjs`);
+  assert.strictEqual(
+    typeof exported.run,
+    "function",
+    `${name}: publishes run`,
+  );
+  assert.strictEqual(
+    exported.run("payload"),
+    "danger:payload",
+    `${name}: calling the published callable reaches the vulnerable sink`,
+  );
+}
+
 // The direct-export control: same reachable sink, root derivable locally.
 const direct = require("./src/direct.cjs");
 assert.strictEqual(

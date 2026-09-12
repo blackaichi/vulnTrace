@@ -94,6 +94,12 @@ const BLOCKER_FORMS: ReadonlyArray<readonly [string, string]> = [
   // name only the runtime knows. Confirmed a live false NOT_AFFECTED with
   // a complete Family C proof before the fix.
   ["dynamic computed export name", "src/computed-key.cjs"],
+  // Found by the focused re-audit: not a re-export, and not dynamic --
+  // a LOCAL callable under a statically exact bracket key, which
+  // `describeCommonJsExportTarget` never modeled at all.
+  ["literal bracket export", "src/literal-bracket.cjs"],
+  ["bracket RE-export", "src/bracket-reexport.cjs"],
+  ["dynamic bracket export", "src/dynamic-bracket.cjs"],
 ];
 
 describe("P0-Z: an unrootable entrypoint export must not yield a Family C proof", () => {

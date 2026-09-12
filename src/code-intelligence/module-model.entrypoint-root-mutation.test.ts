@@ -27,12 +27,20 @@ afterEach(() => {
   }
 });
 
-function completeness(fileName: string, source: string): boolean {
+function candidatesFor(fileName: string, source: string) {
   dir = mkdtempSync(path.join(tmpdir(), "p0z-mut-"));
   const file = path.join(dir, fileName);
   writeFileSync(file, source);
   const index = indexSourceFileFromDisk(file);
-  return entrypointRootCandidates(index, buildModuleModel(index)).complete;
+  return entrypointRootCandidates(index, buildModuleModel(index));
+}
+
+function completeness(fileName: string, source: string): boolean {
+  return candidatesFor(fileName, source).complete;
+}
+
+function rootNames(fileName: string, source: string): ReadonlySet<string> {
+  return candidatesFor(fileName, source).names;
 }
 
 interface Mutation {
@@ -130,15 +138,20 @@ describe("P0-Z: breaking a root assumption flips completeness, restoring it flip
     ).toBe(false);
   });
 
-  it("a LITERAL computed export name stays COMPLETE -- the name is known", () => {
-    // The precision counterpart: `module.exports["run"]` is statically
-    // named and already modeled, so reporting it would cost a valid
-    // Family C proof for no soundness gain.
-    expect(
-      completeness(
-        "lit.js",
-        'function run(){}\nmodule.exports["run"] = run;\n',
-      ),
-    ).toBe(true);
+  it("a LITERAL computed export name is COMPLETE because it is now MODELED", () => {
+    // This assertion predates the focused re-audit, which found its stated
+    // justification ("statically named and already modeled") to be false:
+    // `describeCommonJsExportTarget` recognised only the dot spelling, so
+    // the bracket form produced no export binding at all. COMPLETE with
+    // zero roots was therefore a false NOT_AFFECTED waiting to happen, and
+    // it was reproduced as exactly that.
+    //
+    // The verdict is unchanged and the REASON is now true: the form is
+    // modeled, so a concrete root really is derived. Asserted here rather
+    // than left implicit, because "complete" alone is precisely what
+    // failed to distinguish the two situations.
+    const source = 'function run(){}\nmodule.exports["run"] = run;\n';
+    expect(completeness("lit.js", source)).toBe(true);
+    expect([...rootNames("lit.js", source)]).toContain("run");
   });
 });
