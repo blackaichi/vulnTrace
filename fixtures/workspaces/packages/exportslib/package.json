@@ -1,0 +1,9 @@
+{
+  "name": "exportslib",
+  "version": "1.0.0",
+  "main": "./legacy.js",
+  "exports": {
+    ".": "./dist/index.js",
+    "./api": "./dist/api.js"
+  }
+}

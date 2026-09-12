@@ -1,0 +1,7 @@
+{
+  "name": "workspaces-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "description": "P1-A4 fixture: npm workspace package identity and authoritative entry resolution for packages that live outside node_modules.",
+  "workspaces": ["packages/*"]
+}

@@ -1,0 +1,8 @@
+{
+  "name": "@scope/lib",
+  "version": "1.0.0",
+  "exports": {
+    ".": "./dist/index.js",
+    "./api": "./dist/api.js"
+  }
+}
