@@ -247,6 +247,44 @@ function loadedFixtureFiles() {
   );
 }
 
+// ------------------------------------- same implementation, two names
+// The FALSE-NOT_AFFECTED probe: an advisory naming one of these names
+// describes the very callable the other name reaches.
+{
+  const lib = require("twoname-lib");
+  const impl = require("twoname-lib/impl.js");
+  assert.strictEqual(
+    lib.vulnerable,
+    impl,
+    "twoname: `vulnerable` IS the sibling implementation",
+  );
+  assert.strictEqual(
+    lib.alsoVulnerable,
+    impl,
+    "twoname: `alsoVulnerable` is the SAME callable, by identity",
+  );
+  assert.strictEqual(
+    lib.alsoVulnerable("x"),
+    "twoname-vulnerable:x",
+    "twoname: calling the other name really does execute the advisory's target",
+  );
+}
+
+// ------------------------------------------------ literal-bracket export
+{
+  const lib = require("bracket-lib");
+  assert.strictEqual(
+    lib.vulnerable,
+    require("bracket-lib/impl.js").internalName,
+    "bracket: the literal-bracket export publishes impl's internalName",
+  );
+  assert.strictEqual(
+    lib.vulnerable("x"),
+    "bracket-vulnerable:x",
+    "bracket: reaches the implementation",
+  );
+}
+
 // -------------------------------------------------- reachable consumers
 // Each reachable entrypoint really does reach its concrete implementation.
 {
@@ -259,6 +297,8 @@ function loadedFixtureFiles() {
     ["reassigned-reachable", "reassigned-harmless:x"],
     ["duplicate-reachable", "duplicate-harmless:x"],
     ["twin-nested-consumer", "twin-nested:x"],
+    ["twoname-other-name", "twoname-vulnerable:x"],
+    ["bracket-reachable", "bracket-vulnerable:x"],
   ];
   for (const [name, expected] of cases) {
     const main = require(`./src/${name}.cjs`);

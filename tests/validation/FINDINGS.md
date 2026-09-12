@@ -6498,11 +6498,21 @@ evidence already names the implementation's real file and line.
 
 ### Permanent coverage
 
-`fixtures/target-side-reexport` (see its README) isolates thirteen
-forwarding shapes as thirteen installed packages, with per-shape consumer
+`fixtures/target-side-reexport` (see its README) isolates fifteen
+forwarding shapes as fifteen installed packages, with per-shape consumer
 entrypoints, asserted by
-`src/analysis/verdict.target-side-reexport.integration.test.ts` (21 tests)
+`src/analysis/verdict.target-side-reexport.integration.test.ts` (23 tests)
 and `src/code-intelligence/export-forwarding.test.ts` (17 tests).
+
+Two of the fifteen are explicit **false-verdict probes** rather than
+shapes. `twoname-lib` publishes ONE implementation under TWO export names
+and the application calls the *other* one: Node really does execute the
+advisory's target, so anything but AFFECTED is a false negative — exactly
+the shape a subtly-wrong target identity would get wrong while still
+looking like a confident answer. `bracket-lib` carries the P0
+literal-bracket export form (`module.exports["vulnerable"] =
+require("./impl").internalName`) onto the target side. Both resolve
+correctly.
 
 **Runtime oracle.** `fixtures/target-side-reexport/verify.cjs` asserts,
 under real `node` and out-of-process, which instance and forwarding files
@@ -6515,9 +6525,9 @@ consumer really does enter its implementation. VulnTrace itself never
 executes target code; the oracle is test-only.
 
 The suite was confirmed to **discriminate**: with the new Site A fallback
-disabled, 9 of its 21 tests fail — every positive-resolution case — while
-all fail-closed controls pass in both states, which is exactly the required
-asymmetry.
+disabled, 9 of its then-21 tests fail — every positive-resolution case —
+while all fail-closed controls pass in both states, which is exactly the
+required asymmetry.
 
 **Behavior.**
 
@@ -6542,12 +6552,12 @@ negative proof. The refusal rows are the ones that prove it cannot
 manufacture one either.
 
 **Corpus.** `scripts/p1a1-target-forwarding-corpus.mjs` over
-`fixtures/` + `tests/validation/fixtures/`: 744 files scanned, 0
-unparsable, 672 with at least one export, 937 export names examined — 469
-locally attributable, **468 not** (the population no per-file attribution
-could ever answer). Of those, **157 across 57 distinct files** now carry an
-exact forwarding hop (156 CommonJS, 1 ESM; 128 whole-module → `default` —
-the `qs` shape — 22 same-name, 7 renamed), and **311 remain
+`fixtures/` + `tests/validation/fixtures/`: 750 files scanned, 0
+unparsable, 678 with at least one export, 944 export names examined — 473
+locally attributable, **471 not** (the population no per-file attribution
+could ever answer). Of those, **160 across 59 distinct files** now carry an
+exact forwarding hop (159 CommonJS, 1 ESM; 130 whole-module → `default` —
+the `qs` shape — 22 same-name, 8 renamed), and **311 remain
 ambiguous/unsupported and stay UNKNOWN by design**. This sizes the shape's
 prevalence in this repository's corpora only; it is not a claim about
 ecosystem-wide coverage, and it makes no claim about verdicts, which the
