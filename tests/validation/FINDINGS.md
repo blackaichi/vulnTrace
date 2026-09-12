@@ -6222,3 +6222,120 @@ stated as measured, not as an impact claim.
 - **Refused keys lose precision, not soundness.** A dynamic key degrades the
   whole entrypoint to UNKNOWN even when a sibling export is perfectly
   rootable; incompleteness is per-entrypoint, not per-export.
+
+### P0-Z root-loss remediation, round 3 — an exported local ALIAS is a candidate, not a root
+
+The final focused re-audit of the bracket fix found **one more false
+`NOT_AFFECTED`**, and it was neither a re-export nor a bracket key:
+
+```js
+const dep = require("vlib");
+function bad(u) { return dep.vulnerable(u); }
+const alias = bad;
+module.exports.run = alias;     // also ["run"] = alias, and { run: alias }
+```
+
+Real Node: the export is obtained, `alias` invokes `bad`, and the sink
+executes. The analyzer: `NOT_AFFECTED` +
+`confirmedUnreachableTarget.reachableSubgraphComplete: true`.
+
+**Chronology.** Round 1 found one root-loss family and six forms of it, and
+introduced root-derivation completeness. Round 2 found that element-access
+CommonJS exports bypassed export description entirely. Round 3 — this entry
+— found that *modeling the export was never the last missing piece*. Here
+the binding was modeled, the completeness abstraction saw it, and a
+candidate was contributed. The candidate was simply `alias`.
+
+**The distinction this round adds.** Rounds 1 and 2 were about exports the
+analyzer could not SEE. This one is about a candidate the analyzer could
+not MATERIALIZE:
+
+```text
+exported name   run
+local name      alias      <- what was contributed as the root
+callable node   bad        <- the only thing a root can actually be
+```
+
+`entrypointRootCandidates` contributed `exp.localName ?? exp.exportedName`
+and reported COMPLETE. `alias` matched no node, the entrypoint was rooted at
+`<module>` alone, the search exhausted a subgraph that was never correctly
+rooted, and family C certified it. Reproduced identically on `047b68d`,
+`2528feb` and `04a839a`, and in the dot, bracket AND object-literal
+spellings alike — so it was never bracket-specific, and the bracket work
+neither caused nor widened it.
+
+**The fix, in two halves.**
+
+*Resolution.* An exported local name is now walked through RWF-012/013's
+existing bounded alias chain (`resolveLocalValue`, entered by name). That
+walk already knew the terminal identifier and discarded it; it now carries
+it, which is the one fact a root needs. `const alias = bad` contributes
+`bad`; a function/arrow expression contributes its exact POSITION. The walk
+adds hops, never permissiveness — reassignment, cycles, destructuring and
+non-module-scope bindings refuse exactly as they refuse for attribution.
+The original name is still contributed, so RWF-021's monotonicity holds:
+resolution only ever widens the root set.
+
+*Materialization.* `EntrypointRootCandidates` now carries
+`rootRequirements`: one entry per binding that could publish a callable,
+listing every alternative that would materialize it.
+`entrypointSourceNodes` checks them against the graph and raises
+`unresolved_entrypoint_root_candidate` when none matches. That check lives
+in `verdict.ts` because it is the only layer holding both the candidates
+and the call graph — `entrypointRootCandidates` cannot answer "did this
+materialize" without it.
+
+A requirement is satisfied by ANY alternative, because the same binding
+materializes differently by form: `const alias = function inner(){}` by
+POSITION, `const alias = (u) => ...` by NAME (arrows are indexed under
+their variable). Requiring both would manufacture false incompleteness.
+Bindings that provably publish no callable (`module.exports.x = 42`) emit
+no requirement at all, so "there is no root here" stays a complete answer —
+which is what keeps valid family C proofs alive.
+
+**Behavior.**
+
+| form | before | after |
+| ---- | ------ | ----- |
+| `const alias = bad` (dot / bracket / object-literal / `exports.`) | NOT_AFFECTED + Family C | **AFFECTED**, concrete path |
+| two-hop `const a = bad; const b = a` | NOT_AFFECTED + Family C | **AFFECTED**, concrete path |
+| function-expression / arrow alias | NOT_AFFECTED + Family C | **AFFECTED**, concrete path |
+| reassigned alias (live value dangerous) | NOT_AFFECTED + Family C | **UNKNOWN** |
+| conditional / member / destructured / call-initializer alias | NOT_AFFECTED + Family C | **UNKNOWN** |
+| safe alias, target unreachable | NOT_AFFECTED + Family C | NOT_AFFECTED + Family C (unchanged) |
+| non-callable export, no callable export | NOT_AFFECTED + Family C | NOT_AFFECTED + Family C (unchanged) |
+
+The last two rows are the point: alias support does not globally force
+UNKNOWN. A resolved alias root keeps family C fully available.
+
+No stale declaration is ever rooted — `let alias = bad; alias = safe`
+refuses rather than reporting the original, so the fix adds no false
+AFFECTED in the direction RWF-013/013b guards.
+
+Full suite 3412/3412; canonical validation unchanged at 12 PASS /
+5 KNOWN_FAIL / 17; adversarial 122/122. `UNKNOWN → NOT_AFFECTED` = 0,
+`AFFECTED → NOT_AFFECTED` = 0.
+
+**Corpus.** 1051 files scanned, 988 complete, 63 incomplete — unchanged from
+round 2, because `scripts/p0z-entrypoint-root-corpus.mjs` measures only the
+file-level incompleteness `entrypointRootCandidates` can compute alone. The
+materialization requirement is deliberately graph-dependent and therefore
+invisible to that script; its effect is measured by the focused suites and
+the validation baseline, both of which moved no corpus verdict. Stated this
+way rather than as "zero impact", which the script cannot establish.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **Only exact one-name-per-hop chains resolve.** A member alias
+  (`obj.bad`), a destructured alias, a conditional, and a call-expression
+  initializer all fail closed to UNKNOWN. Resolving them means member and
+  heap points-to analysis, which this task is scoped not to build.
+- **Source rebinding after capture is refused, not modeled.** In
+  `const alias = bad; bad = safe;` the runtime value of `alias` is the
+  ORIGINAL `bad`, but `classifyLocalBinding` sees `bad` reassigned and
+  refuses the chain, so the result is UNKNOWN rather than a root on the
+  captured function. That is the sound direction, and modeling capture
+  semantics properly is a separate piece of work.
+- **Requirements are per-entrypoint, not per-export.** One unmaterializable
+  export withdraws family C for the whole entrypoint even when every
+  sibling export rooted cleanly.
