@@ -156,8 +156,17 @@ export function buildKnownPackageRoots(
  * state for a real scanned project (not VulnTrace's own configuration), so
  * this degrades to `undefined` rather than throwing, letting the caller
  * fall back to the path-derived name.
+ *
+ * Exported (P1-A3) because it is also the ALIAS-OWNERSHIP authority:
+ * `code-intelligence/package-entry.ts` may substitute an instance's install
+ * DIRECTORY for an advisory's package name only when that instance's own
+ * manifest declares the advisory's name -- the package itself saying "I am
+ * `foo`", never a path-shape guess. Kept here, as one reader, rather than
+ * duplicated there.
  */
-function readInstalledPackageName(packageInstance: string): string | undefined {
+export function readInstalledPackageName(
+  packageInstance: string,
+): string | undefined {
   try {
     const raw: unknown = JSON.parse(
       readFileSync(path.join(packageInstance, "package.json"), "utf-8"),
