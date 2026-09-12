@@ -166,6 +166,27 @@ describe("P1-A2: the canonical false AFFECTED (public safe, sibling vulnerable)"
   });
 });
 
+describe("P1-A2: the sibling IS bindable, under its REAL public name", () => {
+  it("resolves `runOther` to the very file that must never answer for `vulnerable`", async () => {
+    // The complement that proves this is target IDENTITY, not a blunt
+    // filter on sibling files. other.js's callable genuinely is what the
+    // package publishes as `runOther`, so an advisory naming THAT symbol
+    // must bind there and report AFFECTED -- the same file the
+    // `vulnerable` advisory is refused.
+    const { finding } = await scan({
+      entrypoint: "src/publicsafe-consumer.cjs",
+      packageName: "publicsafe-lib",
+      target: "runOther",
+      packageInstance: "publicsafe-lib",
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+    expect(resolvedTarget(finding)).toContain(
+      inPackage("publicsafe-lib", "other.js"),
+    );
+  });
+});
+
 // ---------------------------------------------------------------------------
 // Positive controls: the public entry really does publish the target.
 // ---------------------------------------------------------------------------
