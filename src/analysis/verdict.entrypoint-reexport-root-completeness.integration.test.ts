@@ -100,6 +100,10 @@ const BLOCKER_FORMS: ReadonlyArray<readonly [string, string]> = [
   ["literal bracket export", "src/literal-bracket.cjs"],
   ["bracket RE-export", "src/bracket-reexport.cjs"],
   ["dynamic bracket export", "src/dynamic-bracket.cjs"],
+  // P0-Z round 3: not a re-export and not a bracket key -- a plain
+  // exported local ALIAS, whose candidate name never matched a callable.
+  ["exported local alias", "src/alias-export.cjs"],
+  ["REASSIGNED exported alias", "src/alias-reassigned.cjs"],
 ];
 
 describe("P0-Z: an unrootable entrypoint export must not yield a Family C proof", () => {
@@ -161,6 +165,32 @@ describe("P0-Z: the controls that make this a fix rather than a blanket refusal"
 
     expect(finding?.verdict).toBe("NOT_AFFECTED");
     expect(finding?.evidence?.confirmedUnreachableTarget).toBeDefined();
+  });
+
+  it("still issues Family C when an exported ALIAS resolves to a concrete root", async () => {
+    // P0-Z round 3's key control: alias support must not globally force
+    // UNKNOWN. The alias materializes, so the derivation is complete and
+    // the genuinely-unreachable target keeps its real proof.
+    const finding = await scan({
+      entrypoint: "src/alias-safe.cjs",
+      export: "neverCalled",
+    });
+
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toMatchObject({
+      reachableSubgraphComplete: true,
+    });
+  });
+
+  it("finds the real path through an exported alias (AFFECTED, not merely non-C)", async () => {
+    const finding = await scan({
+      entrypoint: "src/alias-export.cjs",
+      export: "dangerousOp",
+    });
+
+    expect(finding?.verdict).toBe("AFFECTED");
+    // Positive evidence, not an absence: a concrete reachable path.
+    expect((finding?.evidence?.path ?? []).length).toBeGreaterThan(0);
   });
 
   it("does not treat a READ of the export object as export forwarding", async () => {

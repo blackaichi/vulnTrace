@@ -77,6 +77,26 @@ for (const name of ["literal-bracket", "bracket-reexport", "dynamic-bracket"]) {
   );
 }
 
+// The exported-local-alias family (P0-Z round 3). Each publishes a
+// callable that reaches the vulnerable sink, so none may be certified
+// absent -- including the reassigned one, whose LIVE value is dangerous.
+for (const name of ["alias-export", "alias-reassigned"]) {
+  const exported = require(`./src/${name}.cjs`);
+  assert.strictEqual(typeof exported.run, "function", `${name}: publishes run`);
+  assert.strictEqual(
+    exported.run("payload"),
+    "danger:payload",
+    `${name}: the published callable reaches the vulnerable sink`,
+  );
+}
+
+// The safe-alias control resolves exactly and never reaches `neverCalled`.
+assert.strictEqual(
+  require("./src/alias-safe.cjs").run("payload"),
+  "danger:payload",
+  "alias-safe: publishes its resolved callable",
+);
+
 // The direct-export control: same reachable sink, root derivable locally.
 const direct = require("./src/direct.cjs");
 assert.strictEqual(
