@@ -610,6 +610,18 @@ async function resolveTargetNodes(
   unresolvedReason?: string;
   confirmedAbsentInstance?: boolean;
   /**
+   * Site B bound a real target node for a file belonging to NO identifiable
+   * package instance (P1-A4 remediation).
+   *
+   * The nodes are genuine and may still establish AFFECTED. What cannot be
+   * established is a NEGATIVE: with no instance identity there is nothing
+   * to confirm the resolved file is the copy this finding is about. The
+   * caller therefore records UNKNOWN-level uncertainty for this target
+   * while still searching it, so a reachable path wins and an unreachable
+   * one degrades to UNKNOWN instead of NOT_AFFECTED.
+   */
+  identityUnverified?: boolean;
+  /**
    * VT-307d's positive module-load absence proof. Deliberately a SEPARATE
    * result from `confirmedAbsentInstance`, never an overload of it: that
    * flag means "the CALL GRAPH never traversed this instance", which is
@@ -900,21 +912,82 @@ async function resolveTargetNodes(
     };
   }
 
-  // Site B (VT-301B; see this function's own doc comment above):
-  // deliberately unchanged -- the package was never discovered by the
-  // graph at all, so a phantom target feeding a genuinely clean,
-  // fully-resolved reachability search to "unreachable" remains correct.
+  // Site B (VT-301B; see this function's own doc comment above): the
+  // package was never discovered by the graph at all, so a phantom target
+  // feeding a genuinely clean, fully-resolved reachability search to
+  // "unreachable" remains correct -- PROVIDED the package could be
+  // identified in the first place.
   const nodes = findExportNodeInFile(
     graph,
     resolution.resolvedFileName,
     target.export,
     allowSyntheticNameOnlyTargetBinding,
   );
+  const identityUnverified =
+    !allowSyntheticNameOnlyTargetBinding &&
+    identifyModule(resolution.resolvedFileName, knownPackageRoots)
+      .packageInstance === undefined;
+
+  if (nodes.length > 0) {
+    // POSITIVE evidence survives missing identity; a NEGATIVE proof does
+    // not. This is the asymmetry the whole gate turns on.
+    //
+    // A real graph node for the advisory's own export, in the file the
+    // advisory's own module specifier resolves to, is genuine: if the
+    // reachability search then finds a concrete path to it, that path
+    // exists and the code really runs. Identity decides WHICH instance a
+    // finding is about, so without it an AFFECTED may be mis-ATTRIBUTED --
+    // but it is never fabricated, and the safe direction is preserved.
+    //
+    // The same search concluding "unreachable" proves much less. Without
+    // identity there is nothing to confirm that the file resolved from the
+    // project root is the copy this finding is about; a sibling local copy
+    // of the same name could be the one that actually runs. So the nodes
+    // are returned (AFFECTED stays reachable) while `identityUnverified`
+    // withdraws the negative, which the caller turns into UNKNOWN.
+    return identityUnverified ? { nodes, identityUnverified } : { nodes };
+  }
+
+  // NEGATIVE proof, by contrast, is exactly what identity underwrites.
+  //
+  // P1-A4's independent audit found a runtime-reachable false NOT_AFFECTED
+  // here. A local (workspace/monorepo) package whose root this analyzer
+  // failed to establish -- an unsupported `workspaces` declaration, a
+  // package manager whose layout is not read, a traversal that hit its
+  // bounds -- has NO `packageInstance`, so `graphPackageInstances` above
+  // finds nothing and execution falls through to this point. The phantom
+  // is then searched, found unreachable, and Family C certifies
+  // NOT_AFFECTED about a sink real `node` executes. The phantom's own
+  // soundness argument (see {@link phantomNode}) assumes the target would
+  // have been BINDABLE had it been reachable, and a forwarded export --
+  // `exports.vulnerable = require("./impl").internal` -- is not bindable
+  // without the RWF-029 chase that only the instance-anchored path runs.
+  //
+  // So: no identity, no phantom, no negative. Refusing here yields UNKNOWN
+  // through the existing "could not be attributed" channel rather than
+  // through a new code path with its own semantics.
+  //
+  // This deliberately does NOT fire for an installed package, which always
+  // has identity from its own `node_modules` path shape -- so the ordinary
+  // and much more common negative ("this dependency is simply never
+  // imported") is untouched. It fires only where identity is genuinely
+  // unavailable, which is precisely where no proof is available either.
+  //
+  // `allowSyntheticNameOnlyTargetBinding` is exempt for the reason it
+  // exists: those graphs describe files that were never on disk, so
+  // path-derived identity is meaningless for them by construction.
+  if (identityUnverified) {
+    return {
+      nodes: [],
+      unresolvedReason:
+        `export "${target.export}" could not be attributed to any function or class member in the resolved module` +
+        ` (module "${target.module}" resolved to "${resolution.resolvedFileName}", which belongs to no identifiable package instance,` +
+        ` so neither an authoritative public entry nor a negative proof can be established for it)`,
+    };
+  }
+
   return {
-    nodes:
-      nodes.length > 0
-        ? nodes
-        : [phantomNode(resolution.resolvedFileName, target.export)],
+    nodes: [phantomNode(resolution.resolvedFileName, target.export)],
   };
 }
 
@@ -1260,6 +1333,7 @@ async function checkReachability(
       nodes: targetNodes,
       unresolvedReason,
       confirmedAbsentInstance,
+      identityUnverified,
       absentFromModuleLoadClosure: targetAbsenceProof,
     } = await resolveTargetNodes(
       graph,
@@ -1284,6 +1358,20 @@ async function checkReachability(
     }
 
     representativeTarget ??= target;
+
+    if (identityUnverified) {
+      // P1-A4 remediation. Site B bound real nodes for a file that belongs
+      // to no identifiable package instance (a local/workspace package
+      // whose root could not be established). Those nodes are still
+      // searched below -- a reachable path returns AFFECTED before this
+      // flag is ever consulted -- but the negative side of the same search
+      // may not be certified: nothing here can confirm the file resolved
+      // from the project root is the copy this finding is about.
+      sawUnknown = true;
+      reasons.push(
+        `module "${target.module}" resolved to a file belonging to no identifiable package instance, so a negative result for it cannot be proved`,
+      );
+    }
 
     if (targetAbsenceProof) {
       // VT-307d: a genuine, positive check ran and concluded -- this
