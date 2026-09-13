@@ -83,6 +83,122 @@ export interface PackageInstanceRegistry {
   >;
 }
 
+/**
+ * ONE discovery record about ONE canonical physical root, before any
+ * reconciliation. Several of these can describe the same root: a lockfile
+ * entry, the repository's `workspaces` declaration, and the
+ * `node_modules` symlink npm writes beside a workspace member are three
+ * records about one physical package.
+ */
+interface InstanceRecord {
+  readonly ownershipNames: ReadonlySet<string>;
+  readonly packageName: string;
+  readonly version?: string;
+  readonly provenance: "dependency-graph" | "workspace";
+  readonly declaredLocation: string;
+}
+
+/**
+ * Reconciles every discovery record about one canonical root into one
+ * {@link CandidatePackageInstance}.
+ *
+ * ## Version — the only field with a soundness consequence
+ *
+ * Version drives advisory applicability, so how disagreement is resolved
+ * decides whether a finding exists at all. The rule is stated over the SET
+ * of versions the records actually DECLARE:
+ *
+ * - exactly one distinct declared version -> that version;
+ * - two or more distinct declared versions -> `undefined`;
+ * - none declared -> `undefined`.
+ *
+ * Being a property of the set, this is order-independent by construction
+ * rather than by care, and a conflict cannot be walked back: records
+ * saying `1.0.0`, then `2.0.0`, then `1.0.0` again contradict each other
+ * whichever order they arrive in, and a later agreeing record does not
+ * un-contradict the earlier pair. A fold comparing "incoming against
+ * current" would restore `1.0.0` there; this cannot.
+ *
+ * Conflict FAILS CLOSED to `undefined`, never to a chosen winner. First,
+ * last, highest, lowest and lexicographic are all arbitrary, and each one
+ * silently converts "the project's own metadata contradicts itself about
+ * this directory" into a confident AFFECTED or NOT_AFFECTED computed from
+ * a version nothing established. `undefined` instead flows through the
+ * existing contract -- indeterminate applicability, UNKNOWN -- which is
+ * the answer the analyzer already knows how to justify.
+ *
+ * ## Silence is NOT conflict
+ *
+ * A record with no `version` makes no competing claim, and is therefore
+ * not part of the distinct-version set. This matters constantly and the
+ * alternative would be a large, pointless coverage loss: an ordinary npm
+ * workspace member is routinely described by a lockfile entry that
+ * carries its version AND a manifest that omits one, and treating that as
+ * a contradiction would make every such package UNKNOWN. It also matches
+ * how every other fallback in this codebase reads a silent source --
+ * `identifyModule` prefers a manifest name and falls back to the path,
+ * `buildDependencyGraph` calls a versionless link entry "inherent to
+ * unversioned/local links" -- none of which treats "this source does not
+ * know" as "this source disagrees".
+ *
+ * ## Everything else
+ *
+ * `ownershipNames` is the union: each record's naming authority is
+ * additive, and an advisory may select the instance by any of them.
+ * `provenance` prefers `"dependency-graph"` when any record has it (the
+ * older and more specific authority). `packageName` and `declaredLocation`
+ * are explainability only; each is chosen by a total order over the
+ * records rather than by arrival, so neither can vary with enumeration
+ * order.
+ */
+function reconcileInstanceMetadata(
+  packageInstance: PackageInstanceId,
+  records: readonly InstanceRecord[],
+): CandidatePackageInstance {
+  const ownershipNames = new Set<string>();
+  const declaredVersions = new Set<string>();
+  for (const entry of records) {
+    for (const name of entry.ownershipNames) {
+      ownershipNames.add(name);
+    }
+    if (entry.version !== undefined) {
+      declaredVersions.add(entry.version);
+    }
+  }
+
+  const version =
+    declaredVersions.size === 1 ? [...declaredVersions][0] : undefined;
+
+  const fromDependencyGraph = records.filter(
+    (entry) => entry.provenance === "dependency-graph",
+  );
+  const preferred =
+    fromDependencyGraph.length > 0 ? fromDependencyGraph : records;
+  const sorted = [...preferred].sort((a, b) =>
+    a.declaredLocation < b.declaredLocation
+      ? -1
+      : a.declaredLocation > b.declaredLocation
+        ? 1
+        : a.packageName < b.packageName
+          ? -1
+          : a.packageName > b.packageName
+            ? 1
+            : 0,
+  );
+  const representative = sorted[0];
+
+  return {
+    packageInstance,
+    ownershipNames,
+    packageName: representative?.packageName ?? [...ownershipNames][0] ?? "",
+    ...(version !== undefined ? { version } : {}),
+    ecosystem: "npm",
+    provenance:
+      fromDependencyGraph.length > 0 ? "dependency-graph" : "workspace",
+    declaredLocation: representative?.declaredLocation ?? packageInstance,
+  };
+}
+
 function compareByRoot(
   a: CandidatePackageInstance,
   b: CandidatePackageInstance,
@@ -136,33 +252,41 @@ export function buildPackageInstanceRegistry(options: {
     return manifestNames.get(canonicalRoot);
   };
 
-  const byRoot = new Map<string, CandidatePackageInstance>();
+  // Discovery records, GROUPED BY canonical physical root -- collected
+  // first, reconciled second (see {@link reconcileInstanceMetadata}).
+  //
+  // Collecting before deciding is what makes the result a function of the
+  // record SET rather than of the order the records arrived in. The
+  // previous shape decided on arrival ("first record to claim a root keeps
+  // it"), which is correct for IDENTITY -- one physical root is one
+  // instance either way -- but silently made every piece of METADATA a
+  // function of enumeration order. Version is the one that matters: it
+  // drives advisory applicability, so a contradictory lockfile could turn
+  // a finding into no finding purely by reordering its own entries.
+  const recordsByRoot = new Map<string, InstanceRecord[]>();
+  const record = (root: string, entry: InstanceRecord): void => {
+    const existing = recordsByRoot.get(root);
+    if (existing) {
+      existing.push(entry);
+    } else {
+      recordsByRoot.set(root, [entry]);
+    }
+  };
 
   for (const node of dependencyNodes) {
     for (const location of node.locations) {
       const packageInstance = canonicalizePackageInstancePath(
         path.resolve(projectRoot, location),
       );
-      // The dependency graph is the more specific authority, so the FIRST
-      // node to claim a canonical root keeps it. `buildDependencyGraph`
-      // emits one node per lockfile entry and lockfile keys are unique, so
-      // two entries can only collide here by resolving to the same
-      // physical directory -- in which case they are the same instance and
-      // merging is correct, not a lost node.
-      if (byRoot.has(packageInstance)) {
-        continue;
-      }
       const ownershipNames = new Set<string>([node.name]);
       const manifestName = manifestNameOf(packageInstance);
       if (manifestName !== undefined) {
         ownershipNames.add(manifestName);
       }
-      byRoot.set(packageInstance, {
-        packageInstance,
+      record(packageInstance, {
         ownershipNames,
         packageName: node.name,
         version: node.version,
-        ecosystem: node.ecosystem,
         provenance: "dependency-graph",
         declaredLocation: location,
       });
@@ -173,35 +297,36 @@ export function buildPackageInstanceRegistry(options: {
     const packageInstance = canonicalizePackageInstancePath(
       workspacePackage.canonicalRoot,
     );
-    if (byRoot.has(packageInstance)) {
-      // Already named by the dependency graph -- the SAME physical package,
-      // reached through a second authority. One instance, one verdict.
-      continue;
-    }
     // A workspace root's identity comes from its own manifest and nowhere
     // else. With no declared name there is nothing an advisory could
     // select it by, and guessing one from the directory name is exactly
-    // the path-shape inference P1-A4 forbids -- so it is not a candidate.
-    // It keeps whatever ATTRIBUTION `KnownPackageRoots` already gives it;
-    // this only declines to let an advisory select it.
+    // the path-shape inference P1-A4 forbids -- so it contributes no
+    // record. It keeps whatever ATTRIBUTION `KnownPackageRoots` already
+    // gives it; this only declines to let an advisory select it.
     const manifestName =
       workspacePackage.packageName ?? manifestNameOf(packageInstance);
     if (manifestName === undefined) {
       continue;
     }
-    byRoot.set(packageInstance, {
-      packageInstance,
+    record(packageInstance, {
       ownershipNames: new Set([manifestName]),
       packageName: manifestName,
-      // Deliberately carried through as-is, `undefined` included: a
-      // private workspace package with no `"version"` has no version, and
-      // borrowing one from an installed sibling of the same name is the
-      // exact identity collapse P1-A5 exists to prevent.
+      // Carried through as-is, `undefined` included: a private workspace
+      // package with no `"version"` has no version, and borrowing one from
+      // an installed sibling of the same name is the exact identity
+      // collapse P1-A5 exists to prevent.
       version: workspacePackage.version,
-      ecosystem: "npm",
       provenance: "workspace",
       declaredLocation: path.relative(projectRoot, packageInstance) || ".",
     });
+  }
+
+  const byRoot = new Map<string, CandidatePackageInstance>();
+  for (const [packageInstance, records] of recordsByRoot) {
+    byRoot.set(
+      packageInstance,
+      reconcileInstanceMetadata(packageInstance, records),
+    );
   }
 
   const instances = [...byRoot.values()].sort(compareByRoot);

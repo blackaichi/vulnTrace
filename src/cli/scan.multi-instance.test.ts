@@ -3,6 +3,7 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from "node:fs";
 import os from "node:os";
@@ -533,5 +534,166 @@ describe("P1-A5: caches are keyed so no instance can answer for another", () => 
     await scan(twinProject(), counting);
 
     expect(queried.filter((q) => q === "vuln-lib@1.0.0")).toHaveLength(1);
+  });
+});
+
+describe("P1-A5: contradictory version metadata for one physical root", () => {
+  /**
+   * A realistic shape that reaches the registry: `node_modules/conf-lib`
+   * is a SYMLINK to `packages/conf-lib`, so both lockfile entries describe
+   * one physical directory -- but they disagree about its version. npm
+   * would not normally write a version on a link entry; a stale or
+   * hand-edited lockfile does.
+   *
+   * Version decides advisory applicability, so before the fix the verdict
+   * for this one physical package depended on which lockfile key happened
+   * to be read first.
+   */
+  function conflictingProject(order: "forward" | "reverse"): string {
+    const entries: [string, unknown][] = [
+      ["packages/conf-lib", { name: "conf-lib", version: "1.0.0" }],
+      ["node_modules/conf-lib", { name: "conf-lib", version: "5.0.0" }],
+    ];
+    const packages = Object.fromEntries([
+      [
+        "",
+        {
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "conf-lib": "1.0.0" },
+        },
+      ],
+      ...(order === "forward" ? entries : [...entries].reverse()),
+    ]);
+
+    const root = project({
+      "vulntrace.yml": CONFIG,
+      "rules.yml": "rules:\n" + rule("GHSA-multi-conf", "conf-lib"),
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { "conf-lib": "1.0.0" },
+      }),
+      "package-lock.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages,
+      }),
+      "src/index.js":
+        "function main(input) {\n  return input;\n}\nmodule.exports = { main };\n",
+      ...under("packages/conf-lib", vulnerablePackage("conf-lib", "1.0.0")),
+    });
+
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, "packages", "conf-lib"),
+      path.join(root, "node_modules", "conf-lib"),
+      "dir",
+    );
+    return root;
+  }
+
+  it("reaches the same verdict whichever lockfile entry is read first", async () => {
+    const provider = providerFor([
+      // 1.0.0 is inside the advisory's range; 5.0.0 is outside it. Picking
+      // a winner by arrival order would therefore decide finding vs no
+      // finding, which is exactly the defect.
+      advisory("conf-lib", "GHSA-multi-conf", "2.0.0"),
+    ]);
+
+    const forward = await scan(conflictingProject("forward"), provider);
+    const reverse = await scan(conflictingProject("reverse"), provider);
+
+    expect(verdictsByInstance(reverse)).toEqual(verdictsByInstance(forward));
+  });
+
+  it("FAILS CLOSED: no confident verdict is derived from a contradicted version", async () => {
+    // A sibling is what makes the advisory discoverable at all, so this
+    // project pairs the contradicted root with an ordinary installed copy
+    // of the same name at a version that IS in range.
+    const root = conflictingProject("forward");
+    writeFileSync(
+      path.join(root, "package-lock.json"),
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": {
+            name: "app",
+            version: "1.0.0",
+            dependencies: { "conf-lib": "1.0.0" },
+          },
+          "packages/conf-lib": { name: "conf-lib", version: "1.0.0" },
+          "node_modules/conf-lib": { name: "conf-lib", version: "5.0.0" },
+          "node_modules/host/node_modules/conf-lib": { version: "1.0.0" },
+        },
+      }),
+    );
+    for (const [relativePath, content] of Object.entries(
+      under(
+        "node_modules/host/node_modules/conf-lib",
+        vulnerablePackage("conf-lib", "1.0.0"),
+      ),
+    )) {
+      const filePath = path.join(root, relativePath);
+      mkdirSync(path.dirname(filePath), { recursive: true });
+      writeFileSync(filePath, content);
+    }
+
+    const findings = await scan(
+      root,
+      providerFor([advisory("conf-lib", "GHSA-multi-conf", "2.0.0")]),
+    );
+    const verdicts = verdictsByInstance(findings);
+
+    // The uncontradicted sibling keeps its own concrete version, and is
+    // evaluated on it -- the contradiction next door does not spread.
+    const sibling = findings.find(
+      (f) => f.packageInstance === "node_modules/host/node_modules/conf-lib",
+    );
+    expect(sibling?.version).toBe("1.0.0");
+    // ...and the contradicted root is UNKNOWN with no version reported,
+    // never a confident verdict computed from 1.0.0 or from 5.0.0.
+    expect(verdicts["packages/conf-lib"]).toBe("UNKNOWN");
+    const conflicted = findings.find(
+      (f) => f.packageInstance === "packages/conf-lib",
+    );
+    expect(conflicted?.version).toBeUndefined();
+  });
+
+  it("CONTROL: agreeing records on one root keep their concrete version", async () => {
+    const root = conflictingProject("forward");
+    writeFileSync(
+      path.join(root, "package-lock.json"),
+      JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": {
+            name: "app",
+            version: "1.0.0",
+            dependencies: { "conf-lib": "1.0.0" },
+          },
+          // Same physical root through two paths, and they AGREE.
+          "packages/conf-lib": { name: "conf-lib", version: "1.0.0" },
+          "node_modules/conf-lib": { name: "conf-lib", version: "1.0.0" },
+        },
+      }),
+    );
+
+    const findings = await scan(
+      root,
+      providerFor([advisory("conf-lib", "GHSA-multi-conf", "2.0.0")]),
+    );
+
+    // One instance, one finding, concrete version preserved -- convergence
+    // must not have become a conflict.
+    expect(findings).toHaveLength(1);
+    expect(findings[0]?.packageInstance).toBe("packages/conf-lib");
+    expect(findings[0]?.version).toBe("1.0.0");
   });
 });
