@@ -38,6 +38,21 @@ interface OracleEntry {
   readonly findingSelector: {
     readonly package: string;
     readonly version: string;
+    /**
+     * The exact installed instance this scenario is about (P1-A5), as the
+     * scan result's own `packageInstance` spells it.
+     *
+     * REQUIRED whenever package+version matches more than one finding --
+     * which is the norm in this suite, because many fixtures deliberately
+     * plant a second, identically named AND versioned install as a decoy
+     * ("the TOP-LEVEL vt2-vuln-lib install, which any resolution keyed on
+     * package name and version rather than on install path would find").
+     * Selecting such a scenario by package+version alone reads whichever
+     * twin the scan happened to emit first, so the oracle would be
+     * answering about the decoy for reasons no assertion states. Omitted
+     * only where exactly one finding matches.
+     */
+    readonly packageInstance?: string;
   };
 }
 
@@ -230,16 +245,36 @@ describe("VulnTrace adversarial validation suite", () => {
           findings: ReadonlyArray<{
             package: string;
             version: string;
+            packageInstance?: string;
             verdict: string;
           }>;
         };
         schemaIssues = validateScanOutput(output);
-        const match = output.findings.find(
+        // Select by package+version, then REQUIRE the result to be
+        // unambiguous. An ambiguous selector is reported as its own
+        // failing outcome rather than silently resolved by array
+        // position: picking the first match makes the suite's answer a
+        // function of emission order, and this suite is full of fixtures
+        // whose whole point is a same-name, same-version decoy install.
+        const candidates = output.findings.filter(
           (f) =>
             f.package === scenario.findingSelector.package &&
             f.version === scenario.findingSelector.version,
         );
-        actual = match ? match.verdict : "NO_FINDING";
+        const wanted = scenario.findingSelector.packageInstance;
+        const matches =
+          wanted === undefined
+            ? candidates
+            : candidates.filter((f) => f.packageInstance === wanted);
+        actual =
+          matches.length === 0
+            ? "NO_FINDING"
+            : matches.length > 1
+              ? `AMBIGUOUS_SELECTOR(${matches
+                  .map((f) => f.packageInstance ?? "<no instance>")
+                  .sort()
+                  .join(", ")})`
+              : (matches[0]?.verdict ?? "NO_FINDING");
       } catch {
         actual = "UNPARSEABLE_OUTPUT";
       }

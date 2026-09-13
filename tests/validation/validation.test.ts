@@ -175,6 +175,7 @@ describe("VulnTrace real-world CVE validation suite", () => {
             package: string;
             version: string;
             vulnerability: string;
+            packageInstance?: string;
             verdict: string;
           }>;
         };
@@ -184,13 +185,27 @@ describe("VulnTrace real-world CVE validation suite", () => {
         // GHSA-35jh-r3h4-6jhm / GHSA-r5fr-rjxr-66jc, both CVE-2021-23337)
         // -- unlike the synthetic suites, package+version alone isn't a
         // unique selector here.
-        const match = output.findings.find(
+        // Unique-match required (P1-A5). These real-world fixtures happen
+        // to contain no two installs sharing a name AND version, so this
+        // selector is unambiguous today -- but the multi-instance fixtures
+        // (rwb-09, rwb-11) are one published patch away from that, and a
+        // selector that silently returns the first of several would then
+        // report a verdict about an install nothing named.
+        const candidates = output.findings.filter(
           (f) =>
             f.package === testCase.findingSelector.package &&
             f.version === testCase.findingSelector.version &&
             f.vulnerability === testCase.findingSelector.vulnerability,
         );
-        actual = match ? match.verdict : "NO_FINDING";
+        actual =
+          candidates.length === 0
+            ? "NO_FINDING"
+            : candidates.length > 1
+              ? `AMBIGUOUS_SELECTOR(${candidates
+                  .map((f) => f.packageInstance ?? "<no instance>")
+                  .sort()
+                  .join(", ")})`
+              : (candidates[0]?.verdict ?? "NO_FINDING");
       } catch {
         actual = "UNPARSEABLE_OUTPUT";
       }
