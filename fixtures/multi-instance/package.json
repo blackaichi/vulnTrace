@@ -1,0 +1,12 @@
+{
+  "name": "multi-instance-fixture",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": ["packages/*"],
+  "dependencies": {
+    "twinlib": "1.0.0",
+    "reallib": "1.0.0",
+    "aliaslib": "npm:reallib@1.0.0",
+    "@scope/dup": "1.0.0"
+  }
+}
