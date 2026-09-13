@@ -8654,7 +8654,7 @@ Reconciliation then reads:
 ### F1-B — authority model, stated
 
 **Neither source wins.** Preferring the manifest destroys every
-uninstalled dependency's version (1004 of this repository's own 3578
+uninstalled dependency's version (1064 of this repository's own 6584
 lockfile entries have no manifest on disk — see Corpus); preferring the
 lockfile is the defect. The analyzer's claim is not "I know which of these
 is right". It is "this project's own metadata does not agree with itself,
@@ -8699,28 +8699,36 @@ manifest read now answers both questions instead of one.
 
 ### Corpus — stated honestly
 
-Measured over every tree in this repository with both a lockfile and an
-installed `node_modules` (351 project roots, 3578 lockfile entries):
+**Corrected.** The figures first recorded here (351 roots, 3578 entries)
+came from a walk that capped its depth and did not descend through nested
+`node_modules` trees, so it silently measured a SUBSET of the repository
+and then described that subset as "every tree". The independent audit
+re-measured without those limits. The corrected figures, over every tree
+with both a lockfile and an installed `node_modules` (1949 project roots,
+6584 lockfile entries):
 
 | | Count |
 | --- | --- |
-| lockfile and manifest both declare a version, and they **agree** | 2536 |
+| lockfile and manifest both declare a version, and they **agree** | 5482 |
 | they **disagree** | **0** |
-| manifest **absent** (declared, not installed) | 1004 |
-| manifest silent / lockfile versionless | 38 |
+| manifest **absent** (declared, not installed) | 1064 |
+| manifest silent / no version claim | 38 |
 | manifest **unreadable** | 0 |
 
 And over 759 manifests for workspace conditions: 3 declare `workspaces`,
 and there are **zero** unsupported shapes, zero unsupported patterns, zero
 duplicate patterns, zero `**` patterns, and zero pnpm-only layouts.
 
-**There are no real disagreements and no incomplete workspace layouts in
-this corpus.** The defects are real — both are reproduced end-to-end from
-constructed trees — but this repository's own trees do not exhibit them,
-and no claim is extrapolated from fixture evidence about how often a
-divergent `node_modules` occurs in the wild.
+Every qualitative conclusion is unchanged by the correction, and the two
+that matter are now established on a 1.8x larger sample: **0 disagreements
+and 0 unreadable manifests.** The corpus does **not** contain a real
+conflicting-version case, and does not exercise any of the defect classes
+F1 closes. The defects are real and both directions are reproduced
+hermetically from constructed trees — but this repository's own trees do
+not exhibit them, and no claim is extrapolated from fixture evidence about
+how often a divergent `node_modules` occurs in the wild.
 
-The 1004 absent manifests are the load-bearing number: they are why
+The 1064 absent manifests are the load-bearing number: they are why
 `absent` must stay a non-claim, and why "make the disk always win" is not
 an available fix.
 
@@ -8751,19 +8759,32 @@ direction this task was allowed to move.
 
 ### Performance
 
+**Corrected.** This section first claimed "zero added filesystem cost",
+which is too broad a statement of a narrower true one.
+
 The registry already read `<root>/package.json` once per canonical root
 (memoized) for the P1-A3 name authority. It now reads the same file once
-per canonical root for BOTH name and version. For a dependency-graph root
-the added filesystem cost is therefore **zero**; the only added reads are
-for workspace roots that previously skipped it, bounded by the number of
-workspace packages.
+per canonical root for BOTH name and version. So there are **no added
+filesystem syscalls for manifest reads** — the same file, read the same
+number of times — and the only added *reads* are for workspace roots that
+previously skipped it, bounded by the number of workspace packages.
 
-Measured on this repository's own tree: 270 distinct lockfile install
-locations, 219 manifest reads, 51 absent, **36 ms total**. The
-scan-performance suite is unchanged and inside its thresholds (2392 ms
-against a 5000 ms bound; 8321 ms against 20000 ms). No memoization
-refactor was attempted and no cache was added — an unsound cache across
-instances is exactly what RWF-033 spent its effort making unrepresentable.
+There is a small CPU increase in the read/parse path, which "zero" did not
+admit. Measured by the audit over 400 roots: the new reader takes
+**~15.8 ms** against **~13.0 ms** for the previous comparable read. For
+scale, the same reader run unmemoized over 20x duplicate locations costs
+**~209.6 ms** — so the per-root memoization is doing what it claims, and
+the observed registry cost is consistent with the memoized figure.
+
+The dominant cost in this phase is neither: it is the **pre-existing,
+unmemoized, per-location `realpath`** in `canonicalizePackageInstancePath`,
+measured at **~415 ms for 8000 locations**. F1 does not touch it, and it is
+the obvious candidate should this phase ever need optimizing.
+
+The scan-performance suite is unchanged and inside its thresholds (2392 ms
+against a 5000 ms bound; 8321 ms against 20000 ms). No memoization refactor
+was attempted and no cache was added — an unsound cache across instances is
+exactly what RWF-033 spent its effort making unrepresentable.
 
 ### Supported / unsupported environment assumptions
 
