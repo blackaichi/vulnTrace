@@ -2,7 +2,9 @@ import path from "node:path";
 import type { DependencyNode } from "../domain/dependency.js";
 import {
   canonicalizePackageInstancePath,
-  readInstalledPackageName,
+  readInstalledManifestIdentity,
+  type InstalledManifestIdentity,
+  type InstalledVersionClaim,
   type PackageInstanceId,
 } from "../domain/resolved-target.js";
 import type { WorkspacePackage } from "./workspaces.js";
@@ -92,6 +94,49 @@ export interface PackageInstanceVersionConflict {
   readonly packageName: string;
   /** Every distinct DECLARED version, sorted, so the report is stable. */
   readonly declaredVersions: readonly string[];
+  /**
+   * Which authorities contributed a version, sorted. Explainability only:
+   * "the lockfile and the package installed on disk disagree" is a
+   * different thing for a reader to go fix than "two lockfile entries
+   * disagree", and the versions alone do not say which happened.
+   */
+  readonly sources: readonly VersionSource[];
+}
+
+/**
+ * Which authority declared a version for a canonical root.
+ *
+ * `"declared"` covers the project's own dependency metadata -- a lockfile
+ * entry or the repository's `workspaces` declaration -- and `"installed"`
+ * is the package's own manifest at that physical root. The distinction
+ * exists for the CONFLICT MESSAGE and nothing else: neither source
+ * outranks the other in {@link reconcileInstanceMetadata}, which is the
+ * whole point (Foundation F1 § 10).
+ */
+export type VersionSource = "declared" | "installed";
+
+/**
+ * One canonical physical root where a package IS installed but its own
+ * manifest cannot be read (Foundation F1-B § 18).
+ *
+ * Reported, and failed closed on. This is not the same as a root with no
+ * manifest at all: there, nothing is installed and the project's declared
+ * version stands unopposed. Here something occupies the directory and the
+ * analyzer cannot establish WHAT -- so a declared version can no longer be
+ * confirmed to describe the code that is actually there, and evaluating an
+ * advisory range against it would be a confident answer about a package
+ * whose identity is unknown. The version becomes `undefined`, exactly as
+ * for a contradiction, and this record is what keeps the resulting silence
+ * legible.
+ */
+export interface PackageInstanceManifestUncertainty {
+  readonly packageInstance: PackageInstanceId;
+  readonly packageName: string;
+  /**
+   * Every version the project's own dependency metadata declared for this
+   * root, sorted -- the claim that could not be confirmed. Possibly empty.
+   */
+  readonly declaredVersions: readonly string[];
 }
 
 export interface PackageInstanceRegistry {
@@ -103,6 +148,13 @@ export interface PackageInstanceRegistry {
    * many contradictory records it had.
    */
   readonly versionConflicts: readonly PackageInstanceVersionConflict[];
+  /**
+   * Every canonical root that has an installed manifest the analyzer could
+   * not read, ordered by canonical root. Disjoint in cause from
+   * {@link versionConflicts} but identical in consequence: no established
+   * version, no provider query, no applicability decision.
+   */
+  readonly untrustedManifests: readonly PackageInstanceManifestUncertainty[];
   /**
    * Every distinct ownership name, each mapped to the instances that may
    * be selected by it, ordered by canonical root.
@@ -136,11 +188,32 @@ interface InstanceRecord {
  *
  * Version drives advisory applicability, so how disagreement is resolved
  * decides whether a finding exists at all. The rule is stated over the SET
- * of versions the records actually DECLARE:
+ * of versions the authorities actually CLAIM -- every discovery record,
+ * plus the package installed at that root (Foundation F1-B):
  *
- * - exactly one distinct declared version -> that version;
- * - two or more distinct declared versions -> `undefined`;
- * - none declared -> `undefined`.
+ * - exactly one distinct claimed version -> that version;
+ * - two or more distinct claimed versions -> `undefined`;
+ * - none claimed -> `undefined`;
+ * - an installed manifest that exists and cannot be read -> `undefined`,
+ *   whatever the records claim.
+ *
+ * ## The installed package is an authority, and it does not outrank one
+ *
+ * The lockfile says what SHOULD be installed; the manifest at the root says
+ * what IS. A divergent `node_modules` makes them disagree, and before F1-B
+ * only the first was consulted -- so an advisory range was evaluated
+ * against a version that described no code on disk, producing a confident
+ * AFFECTED about an absent version in one direction and no finding at all
+ * about a genuinely vulnerable installed one in the other.
+ *
+ * Neither direction is fixed by picking a winner. Preferring the manifest
+ * makes every uninstalled dependency (a lockfile entry with nothing on
+ * disk -- most of them, in an un-installed checkout) lose its version;
+ * preferring the lockfile is the defect. So the manifest joins the SET on
+ * equal terms and a contradiction fails closed, exactly as a contradiction
+ * between two records already did. The analyzer's claim is not "I know
+ * which of these is right" -- it is "this project's own metadata does not
+ * agree with itself, and I will not compute a confident answer from it".
  *
  * Being a property of the set, this is order-independent by construction
  * rather than by care, and a conflict cannot be walked back: records
@@ -160,11 +233,19 @@ interface InstanceRecord {
  * ## Silence is NOT conflict
  *
  * A record with no `version` makes no competing claim, and is therefore
- * not part of the distinct-version set. This matters constantly and the
- * alternative would be a large, pointless coverage loss: an ordinary npm
- * workspace member is routinely described by a lockfile entry that
- * carries its version AND a manifest that omits one, and treating that as
- * a contradiction would make every such package UNKNOWN. It also matches
+ * not part of the distinct-version set. Neither does an ABSENT installed
+ * manifest: a declared root with nothing materialized at it is the
+ * ordinary state of an un-installed checkout -- 1004 of this repository's
+ * own 3578 lockfile entries, measured -- and treating "not installed" as
+ * "disagrees" would delete most of the analyzer's coverage to describe
+ * nothing at all. An UNREADABLE manifest is the opposite case and is NOT
+ * silence: something is installed there and the analyzer cannot establish
+ * what, so the declared version can no longer be confirmed to describe it.
+ * This matters constantly and the alternative would be a large, pointless
+ * coverage loss: an ordinary npm workspace member is routinely described
+ * by a lockfile entry that carries its version AND a manifest that omits
+ * one, and treating that as a contradiction would make every such package
+ * UNKNOWN. It also matches
  * how every other fallback in this codebase reads a silent source --
  * `identifyModule` prefers a manifest name and falls back to the path,
  * `buildDependencyGraph` calls a versionless link entry "inherent to
@@ -184,10 +265,13 @@ interface InstanceRecord {
 function reconcileInstanceMetadata(
   packageInstance: PackageInstanceId,
   records: readonly InstanceRecord[],
+  installed: InstalledVersionClaim,
 ): {
   readonly instance: CandidatePackageInstance;
-  /** Present only when the records declared two or more distinct versions. */
+  /** Present only when two or more distinct versions were claimed. */
   readonly conflict?: PackageInstanceVersionConflict;
+  /** Present only when a manifest is installed and could not be read. */
+  readonly untrustedManifest?: PackageInstanceManifestUncertainty;
 } {
   const ownershipNames = new Set<string>();
   const declaredVersions = new Set<string>();
@@ -200,8 +284,26 @@ function reconcileInstanceMetadata(
     }
   }
 
+  // The installed package's own claim joins the SET on equal terms. It is
+  // not appended to the records above because it is a property of the
+  // ROOT, not of any one discovery record: however many lockfile entries
+  // and workspace patterns named this directory, there is exactly one
+  // package installed in it, and it says one thing about itself.
+  const claimedVersions = new Set(declaredVersions);
+  if (installed.kind === "declared") {
+    claimedVersions.add(installed.version);
+  }
+
+  // Two independent reasons to have no established version, with the same
+  // consequence. `untrusted` is not folded into the conflict set as a
+  // pseudo-version: it is an ABSENCE of a readable claim, and a set of
+  // claimed versions must contain only versions something actually
+  // claimed.
+  const untrusted = installed.kind === "untrusted";
   const version =
-    declaredVersions.size === 1 ? [...declaredVersions][0] : undefined;
+    !untrusted && claimedVersions.size === 1
+      ? [...claimedVersions][0]
+      : undefined;
 
   const fromDependencyGraph = records.filter(
     (entry) => entry.provenance === "dependency-graph",
@@ -235,22 +337,39 @@ function reconcileInstanceMetadata(
     declaredLocation: representative?.declaredLocation ?? packageInstance,
   };
 
-  // Exactly the condition that produced the `undefined` above, so the
-  // report can never disagree with the reconciliation. Deliberately NOT
-  // `version === undefined`: a root whose records simply never declared a
-  // version (size 0) is silent, not contradictory, and must not be
-  // reported as a conflict.
-  if (declaredVersions.size <= 1) {
-    return { instance };
+  // Each condition below is exactly the one that produced the `undefined`
+  // above, so the report can never disagree with the reconciliation.
+  // Deliberately NOT `version === undefined`: a root nothing ever declared
+  // a version for (size 0) is silent, not contradictory, and must not be
+  // reported as either.
+  const untrustedManifest = untrusted
+    ? {
+        packageInstance,
+        packageName,
+        declaredVersions: [...declaredVersions].sort(),
+      }
+    : undefined;
+
+  if (claimedVersions.size <= 1) {
+    return { instance, ...(untrustedManifest ? { untrustedManifest } : {}) };
   }
   return {
     instance,
+    ...(untrustedManifest ? { untrustedManifest } : {}),
     conflict: {
       packageInstance,
       packageName,
       // Sorted, so the message does not depend on which record arrived
       // first; a repeated value collapses because this is a Set.
-      declaredVersions: [...declaredVersions].sort(),
+      declaredVersions: [...claimedVersions].sort(),
+      sources: [
+        ...(declaredVersions.size > 0
+          ? (["declared"] as const)
+          : ([] as const)),
+        ...(installed.kind === "declared"
+          ? (["installed"] as const)
+          : ([] as const)),
+      ],
     },
   };
 }
@@ -299,13 +418,21 @@ export function buildPackageInstanceRegistry(options: {
 }): PackageInstanceRegistry {
   const { dependencyNodes, projectRoot, workspacePackages = [] } = options;
 
-  // One manifest read per canonical root per scan, not one per lookup.
-  const manifestNames = new Map<string, string | undefined>();
-  const manifestNameOf = (canonicalRoot: string): string | undefined => {
-    if (!manifestNames.has(canonicalRoot)) {
-      manifestNames.set(canonicalRoot, readInstalledPackageName(canonicalRoot));
+  // One manifest read per canonical root per scan, not one per lookup --
+  // and ONE read for both fields it answers. Reading the same file twice
+  // (once for the name authority, once for the version claim) would double
+  // this phase's filesystem work for no new information, and could in
+  // principle observe two different files if the tree changed underneath
+  // the scan.
+  const manifests = new Map<string, InstalledManifestIdentity>();
+  const manifestOf = (canonicalRoot: string): InstalledManifestIdentity => {
+    const cached = manifests.get(canonicalRoot);
+    if (cached !== undefined) {
+      return cached;
     }
-    return manifestNames.get(canonicalRoot);
+    const read = readInstalledManifestIdentity(canonicalRoot);
+    manifests.set(canonicalRoot, read);
+    return read;
   };
 
   // Discovery records, GROUPED BY canonical physical root -- collected
@@ -335,7 +462,11 @@ export function buildPackageInstanceRegistry(options: {
         path.resolve(projectRoot, location),
       );
       const ownershipNames = new Set<string>([node.name]);
-      const manifestName = manifestNameOf(packageInstance);
+      // P1-A3's alias ownership, unchanged: the installed package's own
+      // declared name still joins the selection set alongside the
+      // lockfile's. Reconciling versions does not narrow WHICH advisories
+      // may select this instance.
+      const manifestName = manifestOf(packageInstance).name;
       if (manifestName !== undefined) {
         ownershipNames.add(manifestName);
       }
@@ -360,7 +491,7 @@ export function buildPackageInstanceRegistry(options: {
     // record. It keeps whatever ATTRIBUTION `KnownPackageRoots` already
     // gives it; this only declines to let an advisory select it.
     const manifestName =
-      workspacePackage.packageName ?? manifestNameOf(packageInstance);
+      workspacePackage.packageName ?? manifestOf(packageInstance).name;
     if (manifestName === undefined) {
       continue;
     }
@@ -379,20 +510,37 @@ export function buildPackageInstanceRegistry(options: {
 
   const byRoot = new Map<string, CandidatePackageInstance>();
   const versionConflicts: PackageInstanceVersionConflict[] = [];
+  const untrustedManifests: PackageInstanceManifestUncertainty[] = [];
   for (const [packageInstance, records] of recordsByRoot) {
-    const reconciled = reconcileInstanceMetadata(packageInstance, records);
+    const reconciled = reconcileInstanceMetadata(
+      packageInstance,
+      records,
+      // Read here, for EVERY root, rather than only where a record is
+      // missing a version: the installed package is an authority in its
+      // own right, and consulting it only when the declared metadata is
+      // silent is exactly the "declared version wins unopposed" behavior
+      // F1-B exists to remove.
+      manifestOf(packageInstance).version,
+    );
     byRoot.set(packageInstance, reconciled.instance);
     if (reconciled.conflict) {
       versionConflicts.push(reconciled.conflict);
     }
+    if (reconciled.untrustedManifest) {
+      untrustedManifests.push(reconciled.untrustedManifest);
+    }
   }
-  versionConflicts.sort((a, b) =>
+  const byInstanceRoot = (
+    a: { readonly packageInstance: string },
+    b: { readonly packageInstance: string },
+  ): number =>
     a.packageInstance < b.packageInstance
       ? -1
       : a.packageInstance > b.packageInstance
         ? 1
-        : 0,
-  );
+        : 0;
+  versionConflicts.sort(byInstanceRoot);
+  untrustedManifests.sort(byInstanceRoot);
 
   const instances = [...byRoot.values()].sort(compareByRoot);
 
@@ -408,7 +556,7 @@ export function buildPackageInstanceRegistry(options: {
     }
   }
 
-  return { instances, versionConflicts, byOwnershipName };
+  return { instances, versionConflicts, untrustedManifests, byOwnershipName };
 }
 
 /**

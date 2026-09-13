@@ -217,6 +217,107 @@ export function readInstalledPackageName(
 }
 
 /**
+ * What the package ACTUALLY INSTALLED at a canonical root says about its
+ * own version (Foundation F1-B).
+ *
+ * Four outcomes, deliberately distinguished, because collapsing any two of
+ * them is a soundness bug in one direction or a large, pointless coverage
+ * loss in the other:
+ *
+ * - `absent`    — there is no manifest at that root. The root is DECLARED
+ *                 (a lockfile entry, a workspace pattern) but nothing is
+ *                 materialized there, which is the ordinary state of a
+ *                 project whose dependencies are not installed. Nothing is
+ *                 installed, so nothing contradicts the declaration.
+ * - `untrusted` — a manifest IS installed there and its own version claim
+ *                 cannot be read: the file is unparseable or unreadable, or
+ *                 its `"version"` is present but not a usable string. Some
+ *                 package occupies that directory and the analyzer cannot
+ *                 establish which one, which is NOT the same as nothing
+ *                 being installed.
+ * - `silent`    — the manifest parsed and simply declares no version. It
+ *                 makes no competing claim (a private workspace package is
+ *                 routinely versionless), so a declared version stands.
+ * - `declared`  — a concrete version, the package's own statement about
+ *                 itself.
+ *
+ * Separate from {@link readInstalledPackageName} rather than merged with
+ * it: that reader answers a question with a sound FALLBACK (an unreadable
+ * manifest simply yields no name, and the path-derived name still applies),
+ * while this one answers a question where "unreadable" and "not there" have
+ * opposite consequences and must not be folded into one `undefined`.
+ */
+export type InstalledVersionClaim =
+  | { readonly kind: "absent" }
+  | { readonly kind: "untrusted" }
+  | { readonly kind: "silent" }
+  | { readonly kind: "declared"; readonly version: string };
+
+/** One read of `<packageInstance>/package.json`, name and version claim. */
+export interface InstalledManifestIdentity {
+  /** The package's own declared name, when present and valid. */
+  readonly name?: string;
+  readonly version: InstalledVersionClaim;
+}
+
+/**
+ * Reads a canonical package root's own installed manifest ONCE, yielding
+ * both the name authority {@link readInstalledPackageName} already
+ * establishes and the version claim {@link InstalledVersionClaim} defines.
+ *
+ * One read rather than two: the registry needs both fields for the same
+ * root, and a second `readFileSync` of the same file would double the
+ * filesystem work of every scan for no new information.
+ *
+ * A directory that cannot be listed at all (`ENOENT`, `ENOTDIR`) has no
+ * manifest and is `absent`. Every other read failure means a manifest is
+ * there and could not be consumed, which is `untrusted` — the distinction
+ * the type exists for.
+ */
+export function readInstalledManifestIdentity(
+  packageInstance: string,
+): InstalledManifestIdentity {
+  let text: string;
+  try {
+    text = readFileSync(path.join(packageInstance, "package.json"), "utf-8");
+  } catch (error) {
+    const code = (error as { code?: unknown }).code;
+    return {
+      version:
+        code === "ENOENT" || code === "ENOTDIR"
+          ? { kind: "absent" }
+          : { kind: "untrusted" },
+    };
+  }
+
+  let raw: unknown;
+  try {
+    raw = JSON.parse(text);
+  } catch {
+    return { version: { kind: "untrusted" } };
+  }
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return { version: { kind: "untrusted" } };
+  }
+
+  const name = (raw as { name?: unknown }).name;
+  const identity = typeof name === "string" && name.length > 0 ? { name } : {};
+
+  // `"version"` entirely absent is SILENCE; present-but-unusable (a
+  // number, `null`, the empty string) is a claim this analyzer cannot
+  // read, and reading it as silence would let a declared version stand
+  // unopposed against a manifest that is in fact saying something.
+  if (!("version" in raw)) {
+    return { ...identity, version: { kind: "silent" } };
+  }
+  const version = (raw as { version?: unknown }).version;
+  if (typeof version !== "string" || version.length === 0) {
+    return { ...identity, version: { kind: "untrusted" } };
+  }
+  return { ...identity, version: { kind: "declared", version } };
+}
+
+/**
  * Derives a {@link ModuleIdentity} from a resolved file's own absolute
  * path, using its LAST `node_modules/<name>` segment (see
  * SDD-v0.2.md § 4.2's own example) to locate the owning installed package
