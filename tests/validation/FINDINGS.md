@@ -8500,3 +8500,299 @@ So the two records agree, and the distinction is worth stating plainly:
 
 No documentation in this file should now be read as claiming a production
 AFFECTED for a versionless package.
+
+---
+
+## RWF-034 (FOUNDATION F1) — Workspace incompleteness was invisible to machines, and a divergent `node_modules` could not contradict the lockfile
+
+Foundation's first task after P1-A closed. It hardens the uncertainty
+boundary around `PackageInstance` METADATA. It changes no verdict rule, no
+proof contract, no enumeration strategy and no provider interface.
+
+Central rule being enforced: *if metadata needed for advisory applicability
+or package identity is known to be incomplete or contradictory, that
+uncertainty must be represented explicitly and must never be resolved by
+arbitrary preference.*
+
+### P1-A handoff
+
+Base: `30f3a22` (`fix: report a package instance whose declared versions
+contradict each other`), certified before editing — clean tree, identical
+to `origin/main`, and a focused P1-A smoke of 713 tests across 17 files
+covering same-name/same-version twins, Site A/B ownership, RWF-029..033,
+Family A/B/C, `ModuleLoadClosure` and `AnalysisProofContext`, all passing.
+The audited tree and merged `main` are the same tree.
+
+Two gaps the cumulative P1-A audit left open are closed here. Neither is a
+wrong-verdict defect in the workspace case; the second is, in both
+directions, in the version case.
+
+### F1-A — the defect: uncertainty that only a human could see
+
+`discoverWorkspacePackages` already DETECTED every layout it cannot
+enumerate: an uninterpretable `workspaces` declaration, an unsupported
+pattern shape, and (since RWF-032's correction) a truncated traversal. It
+returned them in `WorkspaceDiscovery.unsupported`, and `scan.ts` wrote each
+one to **stderr and nowhere else**.
+
+So a consumer parsing `ScanOutput.diagnostics` — the CI job, the dashboard,
+the `--format html` reader — saw a scan of an incompletely enumerated
+monorepo as **indistinguishable from a scan of a fully enumerated one**.
+The verdict layer still failed closed throughout (a package with no
+identity cannot authorize a negative verdict, per RWF-032's Site B identity
+gate), so no verdict was wrong. But AGENTS.md's "every uncertainty must be
+represented explicitly" is not satisfied by a line on a stream nothing
+structured reads, and "this repository declares no workspaces" and "this
+repository declares workspaces in a form I cannot read" reached the report
+as the same thing: nothing.
+
+### F1-A — what was inventoried
+
+Every workspace discovery signal, classified before anything was written:
+
+| Signal | Before | After |
+| --- | --- | --- |
+| Uninterpretable `workspaces` shape | stderr only | `diagnostics[source=workspaces]` |
+| Unsupported pattern shape (`!x`, `pkg-*`, `..`, absolute, brace/extglob) | stderr only | `diagnostics[source=workspaces]` |
+| Traversal truncated (depth cap 8, 4096 dirs/pattern) | stderr only | `diagnostics[source=workspaces]` |
+| `pnpm-workspace.yaml`-only layout | **entirely dropped** | `diagnostics[source=workspaces]` |
+| Root manifest unreadable | empty result | `diagnostics` if pnpm-only, else silent (scan already exits 3 earlier) |
+
+Only one signal was genuinely absent rather than merely unpublished: the
+pnpm-only layout. Everything else existed and had no way out.
+
+### F1-A — the fix
+
+No second diagnostics architecture. The existing `Diagnostic {source,
+message}` channel carries all of it, under `source: "workspaces"`, and the
+stderr lines are kept — this adds a channel, it does not move one.
+
+- **Truncation** now also states the consequence: "…so package instances
+  under it may not have been analyzed". It does not claim any specific
+  package is safe, and the caps stay: the fix for truncation is to REPORT
+  reaching them, not to remove them.
+- **pnpm-only** is now detected (`pnpm-workspace.yaml` present, root
+  manifest declaring no `workspaces`) and reported. No YAML is parsed, no
+  pattern is inferred, and **no `PackageInstance` is invented** from the
+  file's presence — the analyzer states its own view is incomplete and
+  stops. Only the `.yaml` spelling, because that is the only name pnpm
+  itself accepts; reporting `.yml` would blame a file pnpm ignores.
+- **Determinism**: reasons are deduplicated and sorted (`finish()`). A
+  manifest listing the same unsupported pattern twice describes one thing
+  to go fix, not two, and reordering `workspaces` must not reorder a
+  scan's diagnostics. Asserted as array equality, not set membership.
+- **Empty-string version**: `"version": ""` in a workspace manifest is no
+  longer read as a version, matching the installed-manifest reader below.
+  It would otherwise manufacture a contradiction against a lockfile
+  entry stating a real one.
+
+Reaches JSON and HTML with **no schema change** — `diagnostics` is already
+`{source, message}` in `schemas/result.schema.json`, and this is additive
+content within it.
+
+### F1-B — the defect: the lockfile could not be contradicted
+
+`buildPackageInstanceRegistry` reconciled the version claims of every
+DISCOVERY RECORD about a canonical root (lockfile entries, workspace
+declaration) and failed closed on disagreement — RWF-033's remediation.
+It never consulted **the package actually installed at that root**.
+
+So in a divergent `node_modules`, an advisory range was evaluated against
+a version that describes no code on disk. Both directions reproduced
+end-to-end through the real scan command before any fix
+(`src/cli/scan.metadata-uncertainty.test.ts`):
+
+**Case A — false AFFECTED.** Lockfile `vuln-lib@1.0.0`; installed manifest
+`2.0.0`; advisory `< 1.5.0`. Pre-fix output, verbatim:
+
+```json
+{ "vulnerability": "GHSA-f1-0001", "package": "vuln-lib",
+  "version": "1.0.0", "packageInstance": "node_modules/vuln-lib",
+  "verdict": "AFFECTED",
+  "evidence": { "reasons": ["vulnerable symbol resolved",
+                            "symbol reachable from application entrypoint"] } }
+```
+
+A confident AFFECTED, with a reachability path, about a version that is
+not installed.
+
+**Case B — silent false negative.** Same divergence; advisory
+`>= 2.0.0 < 3.0.0`. The vulnerable version IS what is installed and IS
+reachable. Pre-fix: **zero findings and zero diagnostics.** Not UNKNOWN —
+nothing at all.
+
+A third case fell out of the same reproduction: an **unparseable installed
+manifest** also produced a confident AFFECTED from the declared version.
+
+### F1-B — the fix: one more claim, no new policy
+
+No new applicability policy. The P1-A5/RWF-033 reconciliation model is
+reused exactly: the version is a property of the SET of claims about a
+root, and the set failing closed is what it already did.
+
+`readInstalledManifestIdentity` (`src/domain/resolved-target.ts`) reads
+`<canonical root>/package.json` ONCE and returns both the name authority
+P1-A3 already established and a four-way version claim. The four outcomes
+are the whole design, and collapsing any two is a bug in one direction or
+a large coverage loss in the other:
+
+| Claim | When | Consequence |
+| --- | --- | --- |
+| `absent` | no manifest at that root (`ENOENT`/`ENOTDIR`) | **no claim** — nothing is installed, so nothing contradicts |
+| `untrusted` | manifest exists, unparseable/unreadable, or `version` present but not a non-empty string | **fail closed** — something is installed and we cannot say what |
+| `silent` | manifest parsed, no `version` key | **no claim** — a versionless package is routine |
+| `declared` | a concrete version | joins the claim set on equal terms |
+
+Reconciliation then reads:
+
+- exactly one distinct claimed version → that version;
+- two or more → `undefined` + version-conflict diagnostic;
+- none → `undefined`;
+- `untrusted` → `undefined` + unreadable-manifest diagnostic, whatever the
+  records claim.
+
+### F1-B — authority model, stated
+
+**Neither source wins.** Preferring the manifest destroys every
+uninstalled dependency's version (1004 of this repository's own 3578
+lockfile entries have no manifest on disk — see Corpus); preferring the
+lockfile is the defect. The analyzer's claim is not "I know which of these
+is right". It is "this project's own metadata does not agree with itself,
+and I will not compute a confident answer from it".
+
+Consequences, all asserted:
+
+- `instance.version` is `undefined` on conflict;
+- **zero provider queries** using either contested version — asserted on
+  the recorded query set itself, not on the absence of a finding;
+- no AFFECTED, and no NOT_AFFECTED derived from arbitrary applicability;
+- an explicit, deterministic diagnostic naming the exact
+  `PackageInstance`, both versions, and that no advisory version range was
+  evaluated against it. The conflict record additionally carries `sources`
+  (`declared` / `installed`), because "the lockfile and the disk disagree"
+  is a different thing to go fix than "two lockfile entries disagree".
+
+### F1-B — name authority is untouched
+
+`ownershipNames` still unions the lockfile entry's name and the installed
+manifest's name (P1-A3 alias semantics). Reconciling versions narrows
+WHICH advisories may select an instance not at all — the same single
+manifest read now answers both questions instead of one.
+
+### Behavior matrix (every case asserted end-to-end)
+
+| Case | Result |
+| --- | --- |
+| lockfile `1.2.3` / manifest `1.2.3` | AFFECTED, one query `@1.2.3`, no diagnostic — **unchanged** |
+| lockfile `1.2.3` / manifest has no `version` | AFFECTED at `1.2.3` — manifest makes no competing claim |
+| lockfile `1.0.0` / manifest `2.0.0`, advisory `<1.5.0` | no AFFECTED, no query, conflict diagnostic |
+| lockfile `1.0.0` / manifest `2.0.0`, advisory `>=2.0.0` | no finding, **conflict diagnostic** (was silent) |
+| lockfile `1.0.0` / manifest unparseable | no AFFECTED, no query, unreadable-manifest diagnostic |
+| workspace manifest `1.0.0`, no lockfile entry | AFFECTED at `1.0.0` — the local manifest is the authority |
+| `node_modules/foo` → `packages/foo`, lockfile `1.0.0` vs manifest `2.0.0` | ONE instance, ONE conflict diagnostic, no query |
+| `foo@1.0.0` at root A, `foo@2.0.0` at root B | two instances, **no conflict**, AFFECTED preserved |
+| conflicted instance beside a consistent sibling | sibling keeps its query and its AFFECTED verdict |
+| reversed lockfile entry order | identical diagnostics, verdicts and query set |
+
+### Corpus — stated honestly
+
+Measured over every tree in this repository with both a lockfile and an
+installed `node_modules` (351 project roots, 3578 lockfile entries):
+
+| | Count |
+| --- | --- |
+| lockfile and manifest both declare a version, and they **agree** | 2536 |
+| they **disagree** | **0** |
+| manifest **absent** (declared, not installed) | 1004 |
+| manifest silent / lockfile versionless | 38 |
+| manifest **unreadable** | 0 |
+
+And over 759 manifests for workspace conditions: 3 declare `workspaces`,
+and there are **zero** unsupported shapes, zero unsupported patterns, zero
+duplicate patterns, zero `**` patterns, and zero pnpm-only layouts.
+
+**There are no real disagreements and no incomplete workspace layouts in
+this corpus.** The defects are real — both are reproduced end-to-end from
+constructed trees — but this repository's own trees do not exhibit them,
+and no claim is extrapolated from fixture evidence about how often a
+divergent `node_modules` occurs in the wild.
+
+The 1004 absent manifests are the load-bearing number: they are why
+`absent` must stay a non-claim, and why "make the disk always win" is not
+an available fix.
+
+### Differential vs merged main (`30f3a22`)
+
+Whole-suite, both revisions:
+
+| Suite | main | branch |
+| --- | --- | --- |
+| unit + integration | 149 files / 3687 tests | 152 files / **3716** tests |
+| adversarial | 124 / 124 | 124 / 124 |
+| validation | 18 pass, 5 known fail | 18 pass, **same 5**, same verdicts |
+
+The delta is exactly `+3 files / +29 tests` — the three files added here.
+**Every pre-existing test is unchanged**, so the verdict differential is
+empty by construction: no UNKNOWN→AFFECTED, no AFFECTED→NOT_AFFECTED, no
+NOT_AFFECTED→UNKNOWN, no finding→no-finding, in either direction, anywhere
+in the existing corpus. The validation suite's five known failures report
+the same verdicts (UNKNOWN, UNKNOWN, NO_FINDING, UNKNOWN, UNKNOWN) on both
+sides.
+
+Semantic movement is confined to trees that do not occur in this corpus:
+a divergent or unreadable installed manifest degrades a confident verdict
+to no-query-plus-diagnostic, and an incomplete workspace layout gains a
+diagnostic. **No new confident verdict is produced anywhere** — every
+change is confident→indeterminate or silent→explicit, which is the only
+direction this task was allowed to move.
+
+### Performance
+
+The registry already read `<root>/package.json` once per canonical root
+(memoized) for the P1-A3 name authority. It now reads the same file once
+per canonical root for BOTH name and version. For a dependency-graph root
+the added filesystem cost is therefore **zero**; the only added reads are
+for workspace roots that previously skipped it, bounded by the number of
+workspace packages.
+
+Measured on this repository's own tree: 270 distinct lockfile install
+locations, 219 manifest reads, 51 absent, **36 ms total**. The
+scan-performance suite is unchanged and inside its thresholds (2392 ms
+against a 5000 ms bound; 8321 ms against 20000 ms). No memoization
+refactor was attempted and no cache was added — an unsound cache across
+instances is exactly what RWF-033 spent its effort making unrepresentable.
+
+### Supported / unsupported environment assumptions
+
+- npm and Yarn `workspaces` (array and `{packages: [...]}` forms):
+  supported, with the three pattern shapes P1-A4 defines.
+- `pnpm-workspace.yaml`: **not parsed, and now explicitly reported** as an
+  unsupported/incomplete layout. Deliberately not implemented here.
+- Divergent `node_modules`: detected and failed closed, not repaired.
+- `npm link` / content-addressed stores outside the project root: the
+  canonical root is still the identity; nothing here changes that.
+
+### Remaining limitations (deliberately not fixed here)
+
+1. **A versionless lockfile entry is never enumerated at all.**
+   `buildDependencyGraph` forms no `DependencyNode` for an entry without a
+   `version` ("inherent to unversioned/local links"), so such a root
+   reaches the registry through no authority and there is no instance for
+   an installed manifest version to attach to. This is an ENUMERATION gap,
+   not a metadata-authority one; closing it changes what a
+   `DependencyNode` is. Pinned by a test that asserts the current
+   behavior, and it is why the manifest version, in practice, contributes
+   **conflict detection rather than new coverage**: every root the current
+   enumeration can see already carries a declared version from the
+   authority that enumerated it.
+2. **A conflicted instance produces no finding, only a diagnostic.** The
+   absence is now explicit, but it is still an absence rather than a
+   first-class UNKNOWN row. The broader no-finding taxonomy is Foundation
+   F3's, and the UNKNOWN taxonomy is not started.
+3. **Truncated workspace discovery still discards the roots it did find.**
+   Reporting it is half the fix; the other half (RWF-032) is that a
+   package with no identity cannot authorize a negative verdict.
+4. **No `pnpm-workspace.yaml` parsing**, by instruction. The layout is
+   reported, never guessed at.
+5. **RWF-002 untouched**, P1-B not started, `PackageInstance` not
+   redesigned, the provider layer not redesigned.
