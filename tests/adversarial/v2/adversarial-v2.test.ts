@@ -41,6 +41,21 @@ interface OracleEntry {
   readonly findingSelector: {
     readonly package: string;
     readonly version: string;
+    /**
+     * The exact installed instance this scenario is about (P1-A5), as the
+     * scan result's own `packageInstance` spells it.
+     *
+     * REQUIRED whenever package+version matches more than one finding --
+     * which is the norm in this suite, because many fixtures deliberately
+     * plant a second, identically named AND versioned install as a decoy
+     * ("the TOP-LEVEL vt2-vuln-lib install, which any resolution keyed on
+     * package name and version rather than on install path would find").
+     * Selecting such a scenario by package+version alone reads whichever
+     * twin the scan happened to emit first, so the oracle would be
+     * answering about the decoy for reasons no assertion states. Omitted
+     * only where exactly one finding matches.
+     */
+    readonly packageInstance?: string;
   };
 }
 
@@ -113,6 +128,92 @@ const provider = fakeProvider({ "vt2-vuln-lib": [VT2_GHSA] });
 
 const results: ScenarioResult[] = [];
 
+/**
+ * WHY THE ORACLE'S SELECTOR MUST NAME AN INSTANCE (P1-A5).
+ *
+ * Many fixtures in this suite deliberately plant a second install of
+ * `vt2-vuln-lib` at the SAME version as the one the host package really
+ * requires -- "the TOP-LEVEL vt2-vuln-lib install, which any resolution
+ * keyed on package name and version rather than on install path would
+ * find", as the scenarios themselves put it. That decoy exists to catch a
+ * name/version-keyed ANALYZER.
+ *
+ * It also catches a name/version-keyed ORACLE, which is what this guards.
+ * Both installs produce a finding, they can carry DIFFERENT verdicts, and
+ * `findings.find(package && version)` returns whichever the scan emitted
+ * first -- so the suite's answer was a function of emission order, and
+ * nothing asserted which instance it was about. It passed only because
+ * emission order happened to put the nested copy first.
+ */
+describe("v2 oracle selection is instance-aware, not order-dependent", () => {
+  const SCENARIO = "ADV2-072";
+
+  it("the decoy install produces a finding that is genuinely a different answer", async () => {
+    const scenario = oracle.find((entry) => entry.id === SCENARIO);
+    expect(scenario, `${SCENARIO} must exist in expected.json`).toBeDefined();
+    const fixtureDir = path.join(FIXTURES_ROOT, scenario?.dir ?? "");
+    const { io, stdout } = fakeIo();
+
+    await runScanCommand({
+      projectPathArg: fixtureDir,
+      configPathOverride: path.join(fixtureDir, "vulntrace.yml"),
+      provider,
+      noCache: true,
+      io,
+    });
+
+    const output = JSON.parse(stdout.join("")) as {
+      findings: ReadonlyArray<{
+        package: string;
+        version: string;
+        packageInstance?: string;
+        verdict: string;
+      }>;
+    };
+
+    const candidates = output.findings.filter(
+      (f) =>
+        f.package === scenario?.findingSelector.package &&
+        f.version === scenario?.findingSelector.version,
+    );
+
+    // Two installs, identical on every field the old selector looked at.
+    expect(candidates).toHaveLength(2);
+    expect(new Set(candidates.map((f) => f.version)).size).toBe(1);
+    expect(new Set(candidates.map((f) => f.packageInstance)).size).toBe(2);
+
+    // And they do NOT agree -- so which one the oracle read decided the
+    // suite's answer. This is the assertion that makes the fix necessary
+    // rather than merely tidy.
+    expect(new Set(candidates.map((f) => f.verdict)).size).toBe(2);
+
+    // The selector now names the install the host package's own `require`
+    // really resolves (verified out of process against real Node), and
+    // that choice is stable however the findings are ordered.
+    const wanted = scenario?.findingSelector.packageInstance;
+    expect(wanted).toBeDefined();
+    for (const ordering of [candidates, [...candidates].reverse()]) {
+      const picked = ordering.filter((f) => f.packageInstance === wanted);
+      expect(picked).toHaveLength(1);
+      expect(picked[0]?.verdict).toBe(scenario?.expected);
+    }
+  });
+
+  it("every scenario whose selector is ambiguous names its instance", async () => {
+    // A standing guard for new fixtures: if package+version can match more
+    // than one finding, expected.json must say which one. The suite-wide
+    // run reports AMBIGUOUS_SELECTOR(...) rather than guessing, so this
+    // only restates the contract the oracle now enforces.
+    for (const scenario of oracle) {
+      if (scenario.findingSelector.packageInstance !== undefined) {
+        expect(scenario.findingSelector.packageInstance).toMatch(
+          /^node_modules\//,
+        );
+      }
+    }
+  });
+});
+
 describe("VulnTrace independent adversarial validation suite (v2)", () => {
   for (const scenario of oracle) {
     it(`${scenario.id} ${scenario.description}`, async () => {
@@ -134,16 +235,36 @@ describe("VulnTrace independent adversarial validation suite (v2)", () => {
           findings: ReadonlyArray<{
             package: string;
             version: string;
+            packageInstance?: string;
             verdict: string;
           }>;
         };
         schemaIssues = validateScanOutput(output);
-        const match = output.findings.find(
+        // Select by package+version, then REQUIRE the result to be
+        // unambiguous. An ambiguous selector is reported as its own
+        // failing outcome rather than silently resolved by array
+        // position: picking the first match makes the suite's answer a
+        // function of emission order, and this suite is full of fixtures
+        // whose whole point is a same-name, same-version decoy install.
+        const candidates = output.findings.filter(
           (f) =>
             f.package === scenario.findingSelector.package &&
             f.version === scenario.findingSelector.version,
         );
-        actual = match ? match.verdict : "NO_FINDING";
+        const wanted = scenario.findingSelector.packageInstance;
+        const matches =
+          wanted === undefined
+            ? candidates
+            : candidates.filter((f) => f.packageInstance === wanted);
+        actual =
+          matches.length === 0
+            ? "NO_FINDING"
+            : matches.length > 1
+              ? `AMBIGUOUS_SELECTOR(${matches
+                  .map((f) => f.packageInstance ?? "<no instance>")
+                  .sort()
+                  .join(", ")})`
+              : (matches[0]?.verdict ?? "NO_FINDING");
       } catch {
         actual = "UNPARSEABLE_OUTPUT";
       }

@@ -587,16 +587,37 @@ describe("runScanCommand: same package name+version installed at multiple locati
       .sort();
     expect(verdicts).toEqual(["AFFECTED", "NOT_AFFECTED"]);
 
-    const affected = fooFindings.find(
-      (f: { verdict: string }) => f.verdict === "AFFECTED",
-    );
+    // Which instance holds which verdict, asserted by INSTANCE IDENTITY
+    // rather than inferred from an evidence path (P1-A5). The evidence
+    // check below still runs, but it is now corroboration of a named
+    // instance instead of the only thing tying the AFFECTED verdict to
+    // `b`: "some finding is AFFECTED and some path mentions b" is also
+    // satisfiable by the wrong finding.
+    const byInstance: Record<string, string> = {};
+    for (const f of fooFindings as {
+      packageInstance?: string;
+      verdict: string;
+    }[]) {
+      byInstance[f.packageInstance ?? "<none>"] = f.verdict;
+    }
+    expect(byInstance).toEqual({
+      "node_modules/a/node_modules/foo": "NOT_AFFECTED",
+      "node_modules/b/node_modules/foo": "AFFECTED",
+    });
+
+    const affected = (
+      fooFindings as {
+        packageInstance?: string;
+        evidence: { path: string[] };
+      }[]
+    ).find((f) => f.packageInstance === "node_modules/b/node_modules/foo");
     // The AFFECTED finding's own evidence path must reference the actually
     // reached instance's own directory (`b`), not the unreached one (`a`)
     // -- proving the fix carries the correct per-instance identity through
     // to reachability, not merely that "some" finding happens to be
     // AFFECTED by coincidence.
     expect(
-      affected.evidence.path.some((p: string) =>
+      affected?.evidence.path.some((p: string) =>
         p.includes("node_modules/b/node_modules/foo"),
       ),
     ).toBe(true);
