@@ -157,13 +157,15 @@ function project(files: Readonly<Record<string, string>>): string {
 async function scan(
   root: string,
   provider: VulnerabilityProvider,
+  options: { readonly cacheDir?: string } = {},
 ): Promise<readonly ScanFinding[]> {
   const stdout: string[] = [];
   await runScanCommand({
     projectPathArg: root,
     configPathOverride: path.join(root, "vulntrace.yml"),
     provider,
-    noCache: true,
+    noCache: options.cacheDir === undefined,
+    cacheDir: options.cacheDir,
     io: { stdout: (text) => stdout.push(text), stderr: () => {} },
   });
   return (JSON.parse(stdout.join("")) as { findings: ScanFinding[] }).findings;
@@ -476,5 +478,60 @@ describe("P1-A5: results do not depend on enumeration order", () => {
     expect(reversed.map((f) => f.packageInstance)).toEqual(
       forward.map((f) => f.packageInstance),
     );
+  });
+});
+
+describe("P1-A5: caches are keyed so no instance can answer for another", () => {
+  it("gives the identical per-instance split on a cache HIT as on a miss", async () => {
+    // The OSV cache is keyed by (tool version, ecosystem, name, version) --
+    // it never sees a PackageInstance, and it must not: two instances at
+    // the same name and version are asking the provider the same question.
+    // What must NOT happen is the cached ANSWER carrying one instance's
+    // verdict to the other, so the cached run is asserted to reproduce the
+    // full split rather than merely to return some findings.
+    const cacheDir = mkdtempSync(path.join(os.tmpdir(), "vulntrace-cache-"));
+    dirs.push(cacheDir);
+
+    let queries = 0;
+    const counted: VulnerabilityProvider = {
+      queryPackage(query: PackageQuery) {
+        queries += 1;
+        return providerFor([
+          advisory("vuln-lib", "GHSA-multi-0001"),
+        ]).queryPackage(query);
+      },
+    };
+
+    const root = twinProject();
+    const cold = await scan(root, counted, { cacheDir });
+    const coldQueries = queries;
+    const warm = await scan(root, counted, { cacheDir });
+
+    expect(verdictsByInstance(cold)).toEqual({
+      "node_modules/host/node_modules/vuln-lib": "AFFECTED",
+      "node_modules/vuln-lib": "NOT_AFFECTED",
+    });
+    // Identical split, not merely an identical count.
+    expect(verdictsByInstance(warm)).toEqual(verdictsByInstance(cold));
+    // And the second run really did come from the cache.
+    expect(queries).toBe(coldQueries);
+  });
+
+  it("asks the provider once per version, not once per instance", async () => {
+    // Two instances share a name AND version here, so a per-instance query
+    // would double the provider load for no new information.
+    const queried: string[] = [];
+    const counting: VulnerabilityProvider = {
+      queryPackage(query: PackageQuery) {
+        queried.push(`${query.name}@${String(query.version)}`);
+        return providerFor([
+          advisory("vuln-lib", "GHSA-multi-0001"),
+        ]).queryPackage(query);
+      },
+    };
+
+    await scan(twinProject(), counting);
+
+    expect(queried.filter((q) => q === "vuln-lib@1.0.0")).toHaveLength(1);
   });
 });
