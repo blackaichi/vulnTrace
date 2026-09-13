@@ -7788,8 +7788,11 @@ Positive and negative results now depend on identity differently, because
 they are not equally underwritten by it:
 
 - a real graph node for the advisory's export, in the file its own
-  specifier resolves to, still establishes **AFFECTED** — missing identity
-  can mis-attribute such a result, never fabricate it;
+  specifier resolves to, was allowed to establish **AFFECTED**, on the
+  reasoning that missing identity can mis-attribute such a result but never
+  fabricate it. **That reasoning was wrong and is superseded — see
+  "RWF-032 CORRECTION 2" below**, which records the counter-example and the
+  ownership gate that replaced it;
 - the same search concluding "unreachable" no longer establishes
   **NOT_AFFECTED**, because nothing confirms the file resolved from the
   project root is the copy the finding is about;
@@ -7879,3 +7882,108 @@ Yarn PnP is unsupported on the same terms.
 - **The vendored corpus still contains no monorepos**, so none of this is
   validated against real-world workspace repositories. That limitation is
   unchanged and remains the weakest part of P1-A4's evidence.
+
+---
+
+## RWF-032 CORRECTION 2 — a concrete path to the WRONG package instance was enough for AFFECTED
+
+A second independent audit blocked the first remediation. The two defects it
+was written for (silent traversal truncation; missing identity certifying a
+negative) were fixed correctly. It found a third, in the half of Site B that
+remediation deliberately left open.
+
+### The disproven claim
+
+The first remediation permitted a positive result without identity,
+reasoning that a real graph node for the advisory's own export "can
+mis-ATTRIBUTE an AFFECTED to the wrong instance, but never fabricate it".
+Both halves are false:
+
+```
+advisory          : foo
+finding instance  : packages/foo      <- publishes only `safe`
+node_modules/foo  -> packages/bar     <- publishes `vulnerable`, and runs
+runtime           : bar-danger:X
+verdict (before)  : AFFECTED, evidence in packages/bar
+```
+
+The finding's own package contains no such export, so that verdict is
+**fabricated**, not mis-attributed. And it reproduces just as readily with
+identity FULLY available — where `packages/bar` is correctly identified as
+a different instance — so identity presence was never the discriminator.
+
+### Root cause: an asymmetry between the two sites
+
+Site A has always required `instance === packageInstance` before any node
+may answer for a finding (VT-212/ADV2-045: one installed instance must
+never inherit another's reachability). Site B — the fallback taken when the
+call graph holds no node of the advisory's package NAME at all — had no
+equivalent check. It resolved the advisory's module from the PROJECT ROOT
+and bound whatever real node it landed on.
+
+The defect is therefore **not workspace-specific**. Workspaces only made it
+easy to reach, because a local package whose name resolves elsewhere is an
+ordinary monorepo misconfiguration.
+
+### The fix: target ownership, in both directions
+
+Site B now requires the resolved file to belong to the finding's own
+`PackageInstance` before it may establish anything. A concrete graph path
+into another package proves nothing about this one, and neither does that
+other package's absence — so the gate is symmetric: no AFFECTED, and no
+NOT_AFFECTED, from a file the finding does not own.
+
+`identityUnverified`, the first remediation's narrower mechanism, is
+removed rather than layered on: ownership subsumes it, since a file with no
+identity can never equal the finding's instance.
+
+Three things are deliberately untouched:
+
+- a finding with no `packageInstance` (callers predating VT-212) — there is
+  no instance to own the target, so there is nothing to compare;
+- synthetic name-only test graphs, whose "files" were never on disk;
+- the ordinary negative Site B exists for — a package nothing imports. Its
+  files are absent from the graph, the advisory's module still resolves
+  inside the finding's own instance, and the phantom still certifies
+  non-reachability exactly as before.
+
+### The target-authority invariant, stated
+
+A real graph node is **not** sufficient to establish an advisory target.
+For a package-owned advisory, authority requires exact package identity,
+authoritative public-entry resolution, exact symbol attribution, optional
+forwarding, and only then reachability. A concrete path substitutes for
+none of those.
+
+### Results
+
+Wrong-package matrix — all ten shapes (identity absent; identity present;
+same export name; same version; same manifest name; two local packages
+sharing a name; alias-looking directory; scoped advisory; nested
+`node_modules`; symlink to the wrong physical package) now return
+**UNKNOWN**. AFFECTED and NOT_AFFECTED violations: **0**.
+
+Same-name/same-version twins: a finding for the safe copy no longer borrows
+the vulnerable copy's evidence.
+
+Preserved positives and negatives, all asserted: a package that really
+publishes and runs the sink is still AFFECTED; forwarding from the
+finding's own package is still AFFECTED at the implementation file; a
+loaded-but-unused package and a never-imported package are both still
+NOT_AFFECTED.
+
+Verdict differential, `38942d3` → this remediation, over the whole
+`fixtures/workspaces` matrix: **no movement in any class**. The change is
+confined to wrong-package shapes, which the fixture did not contain. The
+private/versionless canonical win (`privlib`, NOT_AFFECTED on merged main →
+AFFECTED here) is unchanged, and the canonical validation baseline remains
+18 passed / 5 KNOWN_FAIL.
+
+### What this says about the earlier record
+
+Two successive remediations of the same function each fixed a real defect
+and each left a narrower one, in the same place: the boundary between
+"there is a file here" and "this file answers for this package". The
+surviving rule is the one Site A already had, now applied on both sides —
+loss or mismatch of package identity cannot produce a verdict in **either**
+direction.

@@ -246,7 +246,17 @@ describe("P1-A4 remediation § A: missing identity + reachable target", () => {
     expect(finding?.verdict).toBe("UNKNOWN");
   });
 
-  it("never answers NOT_AFFECTED for a directly exported sink either", async () => {
+  it("refuses a directly exported sink too -- a bound node is not ownership", async () => {
+    // This case once returned AFFECTED, on the theory that a real graph
+    // node for the advisory's own export is safe to bind even without
+    // identity ("can mis-attribute, never fabricate"). A later audit
+    // disproved that: the same path binds a DIFFERENT package's file when
+    // the advisory's name resolves elsewhere, inventing an AFFECTED about a
+    // package that has no such export
+    // (`verdict.site-b-target-authority.integration.test.ts`).
+    //
+    // Target authority now requires the resolved file to belong to the
+    // finding's own instance, which is exactly what is missing here.
     const repo = repoWith({
       extraFiles: { "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n" },
     });
@@ -260,6 +270,7 @@ describe("P1-A4 remediation § A: missing identity + reachable target", () => {
       packageInstance: repo.libRoot,
     });
     expect(finding?.verdict).not.toBe("NOT_AFFECTED");
+    expect(finding?.verdict).toBe("UNKNOWN");
   });
 
   it("refuses the same way when the declaration shape is unsupported", async () => {
