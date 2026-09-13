@@ -518,6 +518,26 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     });
   }
 
+  // F1-B § 18 -- the same silence, a different cause. A package IS
+  // installed at this root and its own manifest cannot be read, so the
+  // version this project declares for it can no longer be confirmed to
+  // describe the code actually there. Failing closed is the sound answer
+  // and, like a contradiction, it is a silent one without this.
+  for (const uncertain of instanceRegistry.untrustedManifests) {
+    const declared =
+      uncertain.declaredVersions.length > 0
+        ? `the version this project declares for it (${uncertain.declaredVersions.join(", ")}) ` +
+          `could not be confirmed against the package actually installed there`
+        : `its installed version could not be established`;
+    diagnostics.push({
+      source: "dependencies",
+      message:
+        `package instance "${describePackageInstance(uncertain.packageInstance, projectRoot)}" ` +
+        `(${uncertain.packageName}) has an installed package.json that could not be read, so ` +
+        `${declared}; no advisory version range was evaluated against it`,
+    });
+  }
+
   const findings: Finding[] = [];
 
   // Advisory lookup is driven by PACKAGE NAME, and the fan-out below is
