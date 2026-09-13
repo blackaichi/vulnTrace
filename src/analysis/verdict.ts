@@ -31,6 +31,7 @@ import type {
   VulnerableSymbolRule,
   VulnerableSymbolTarget,
 } from "../domain/target.js";
+import { describePackageInstance } from "../dependencies/package-instances.js";
 import type { Finding } from "../domain/verdict.js";
 import {
   type AnalysisProofContext,
@@ -52,7 +53,15 @@ import {
 export interface BuildFindingOptions {
   readonly vulnerability: Vulnerability;
   readonly packageName: string;
-  readonly packageVersion: string;
+  /**
+   * This instance's own installed version, or `undefined` when it could
+   * not be established (P1-A5) -- a private, versionless workspace
+   * package. NEVER a sibling instance's version: the whole point of
+   * per-instance analysis is that one instance's metadata can never stand
+   * in for another's. `undefined` flows through to an omitted
+   * `Finding.version` and, upstream, to an `indeterminate` match result.
+   */
+  readonly packageVersion?: string;
   /**
    * This finding's own installed instance's absolute path (see VT-212,
    * SDD-v0.2.md § 4.3) — the dependency graph's `DependencyNode.locations`,
@@ -1557,11 +1566,30 @@ export async function buildFinding(
     : undefined;
   const graphTruncated = contextTrusted ? context.graphTruncated : true;
 
-  const base = {
+  // Every finding's own identity header (P1-A5 § RESULT IDENTITY).
+  //
+  // `packageInstance` is rendered HERE, from the finding's own
+  // authoritative canonical instance and the context's own project root,
+  // rather than accepted as a caller-supplied label: a label and an
+  // identity that can disagree is a label that will eventually name the
+  // wrong instance. `describePackageInstance` is presentation only -- the
+  // canonical id continues to be what every comparison below uses.
+  const base: Pick<
+    Finding,
+    "vulnerability" | "package" | "version" | "packageInstance"
+  > = {
     vulnerability: vulnerability.id,
     package: packageName,
-    version: packageVersion,
-  } as const;
+    ...(packageVersion !== undefined ? { version: packageVersion } : {}),
+    ...(packageInstance !== undefined
+      ? {
+          packageInstance: describePackageInstance(
+            packageInstance,
+            projectRoot,
+          ),
+        }
+      : {}),
+  };
 
   if (matchResult === "not_affected") {
     return undefined;

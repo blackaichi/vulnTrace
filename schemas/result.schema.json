@@ -39,7 +39,6 @@
         "required": [
           "vulnerability",
           "package",
-          "version",
           "verdict"
         ],
         "properties": {
@@ -53,7 +52,13 @@
           },
           "version": {
             "type": "string",
-            "minLength": 1
+            "minLength": 1,
+            "description": "The installed version this finding is about. OPTIONAL since P1-A5, and omitted only when the instance's own version could not be established at all -- a private, versionless workspace package is the genuine case. It is never borrowed from a sibling instance of the same name and never filled with a sentinel. This relaxation is additive: an instance with no version previously produced no finding whatsoever, so no finding that carried a version before P1-A5 stopped carrying one."
+          },
+          "packageInstance": {
+            "type": "string",
+            "minLength": 1,
+            "description": "WHICH installed instance this finding is about (P1-A5). Project-relative POSIX path when the instance lives inside the scanned project (e.g. \"node_modules/foo\" vs \"packages/app/node_modules/foo\"), canonical absolute path otherwise (a pnpm store, an npm-linked checkout). Two findings sharing an advisory id, a package name and a version but naming different instances are two independent verdicts about two different physical installs -- one may be AFFECTED while the other is NOT_AFFECTED -- and this field is what makes them distinguishable. Presentation only: it is derived from the canonical PackageInstanceId that identity comparisons actually use, and must not be parsed back into one."
           },
           "verdict": {
             "enum": [

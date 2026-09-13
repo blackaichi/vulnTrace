@@ -164,6 +164,10 @@ describe("VT-CONTRACT-03: the production scan uses one proof context", () => {
           "vulnerability",
           "package",
           "version",
+          // P1-A5: the finding's own instance, rendered from its canonical
+          // PackageInstanceId. It is a package path -- never the proof
+          // context, the project root, or anything reachable from them.
+          "packageInstance",
           "verdict",
           "confidence",
           "target",
