@@ -7426,6 +7426,15 @@ canonical validation baseline is **unchanged**: 18 passed / 5 KNOWN_FAIL
 
 ## RWF-032 — A monorepo's own local packages had no identity, so advisories about them were answered from project-root resolution with no instance gating (P1-A4)
 
+> **SUPERSEDED IN PART — read "RWF-032 CORRECTION" at the end of this file
+> before relying on anything below.** An independent audit blocked the
+> first revision of this branch. Its verdict differential was measured
+> without a `package-lock.json`, which a real scan requires, and is an
+> artifact; its "no identity at all" framing is too strong for the
+> production path; and its "fails closed" claim held only of discovery,
+> not of the verdict. Two code defects the audit found (silent traversal
+> truncation, and Site B certifying negatives without identity) are fixed.
+
 **Classification: soundness / target-identity correction, in BOTH
 directions, plus new coverage.** The verdict differential below contains a
 removed false NOT_AFFECTED and two removed false AFFECTEDs.
@@ -7692,3 +7701,181 @@ Based on tested filesystem layout only, never on package-manager branding:
   is preserved, advisory → many-instance expansion remains P1-A5.
 - **RWF-002 is untouched**, and `RWB-05` remains UNKNOWN for the
   reachability-scoping reason P1-A1 recorded.
+
+---
+
+## RWF-032 CORRECTION — the record above was measured in a configuration a real scan cannot be in
+
+An independent soundness audit of the P1-A4 branch **blocked** it and found
+three things wrong. Two were defects in the code, now fixed; the third was
+wrong in this record itself. The account above is preserved as written (it
+is what was believed at the time, and the repository keeps its history),
+and everything it says that conflicts with what follows is **superseded
+here**.
+
+### Correction 1 — "local workspace packages had no identity at all" is too strong
+
+A production scan REQUIRES `package-lock.json` (`cli/scan.ts` returns exit
+3 without one), and npm writes a `packages/<dir>` entry for every workspace
+member that declares both a `name` and a `version`. `buildDependencyGraph`
+turns each into a `DependencyNode` whose `location` is that workspace path,
+and `buildKnownPackageRoots` has always admitted those locations. So on
+merged `9a320c4`, a **versioned** workspace member already had an exact
+`PackageInstance` through ordinary dependency provenance — no workspace
+discovery involved.
+
+The defect is real but NARROWER than stated: it applies to local packages
+the dependency graph does not enumerate. The canonical case is a
+**versionless private workspace package** (`"private": true` with no
+`version`), which is ordinary in real monorepos: npm writes its lockfile
+entry without a version, `buildDependencyGraph` skips it ("inherent to
+unversioned/local links", as that module already said), and the
+repository's own `workspaces` declaration is then the only authority that
+can name it. `fixtures/workspaces/packages/privlib` is that case.
+
+### Correction 2 — the verdict differential above is an artifact
+
+The original differential was measured against a fixture with **no
+`package-lock.json`**. Re-measured with the lockfile a real scan requires,
+merged main already produced the branch's answer for every one of the four
+headline movements:
+
+| case | main, no lockfile | main, WITH lockfile | branch |
+| --- | --- | --- | --- |
+| `fwdlib` | NOT_AFFECTED | **AFFECTED** | AFFECTED |
+| `@scope/lib/api` @ `scopedtwin` | AFFECTED | **UNKNOWN** | UNKNOWN |
+| `mixedlib` @ installed copy | AFFECTED | **UNKNOWN** | UNKNOWN |
+| `safelib` | NOT_AFFECTED | **UNKNOWN** | UNKNOWN |
+
+None of those four is a base-vs-branch difference. The claims of "a false
+NOT_AFFECTED removed" and "two false AFFECTEDs removed" **do not hold** in
+any configuration a scan can run in, and the "5 NOT_AFFECTED→UNKNOWN
+precision cost" was likewise already main's behavior.
+
+`fixtures/workspaces` now ships a realistic `package-lock.json`, and the
+integration suite loads it, so the P1-A4 matrix is measured in production
+configuration.
+
+### Correction 3 — "fails closed" was only true of DISCOVERY
+
+Discovery invents no roots for an unsupported layout, which is what the
+original record meant. But a package with no identity fell through Site B
+in `resolveTargetNodes`, which resolved the advisory's module from the
+project root with no instance gate and no RWF-030 authority, fabricated a
+phantom, and let Family C certify it unreachable. The audit reproduced a
+**runtime-reachable false NOT_AFFECTED** this way. "Fail closed" was false
+at the layer that matters.
+
+### Defect A (found by the audit, fixed) — silent traversal truncation
+
+A `packages/**` walk that hit its depth cap returned its partial result as
+complete and reported nothing: 14 nested packages on disk, 8 discovered,
+`unsupported` empty. The guard intended to prevent it
+(`queue.length > 0` tested after a loop that only exits when the queue is
+empty) could never fire. Truncation is now recorded BY the walk, and a
+pattern that cannot be enumerated completely contributes no roots and is
+reported. The caps stay; a bounded walk must report its bounds, not hide
+them.
+
+The directory budget is now per pattern. Shared, it made discovery depend
+on declaration order — `["big/**", "small/*"]` found nothing while
+`["small/*", "big/**"]` found two packages, same repository, same
+declarations.
+
+### Defect B (found by the audit, fixed) — Site B could certify a negative without identity
+
+Positive and negative results now depend on identity differently, because
+they are not equally underwritten by it:
+
+- a real graph node for the advisory's export, in the file its own
+  specifier resolves to, still establishes **AFFECTED** — missing identity
+  can mis-attribute such a result, never fabricate it;
+- the same search concluding "unreachable" no longer establishes
+  **NOT_AFFECTED**, because nothing confirms the file resolved from the
+  project root is the copy the finding is about;
+- with no node at all, no phantom is fabricated.
+
+This cannot fire for an installed package (always identified by path
+shape), nor for an identified workspace package, so the ordinary negative
+"this dependency is never imported" is untouched.
+
+**LOSS OF PACKAGE IDENTITY CANNOT CREATE NOT_AFFECTED.** That is what makes
+the fail-closed claim true at the verdict layer.
+
+### Corrected verdict differential (production configuration)
+
+Merged main `9a320c4` vs this branch, over all 26 advisory/consumer pairs
+in `fixtures/workspaces`, with the lockfile present:
+
+| Movement | Count | Where |
+| --- | --- | --- |
+| NOT_AFFECTED → AFFECTED | 1 | `privlib` — a runtime-reachable false negative removed |
+| UNKNOWN → AFFECTED | 0 | — |
+| UNKNOWN → NOT_AFFECTED | 0 | — |
+| AFFECTED → UNKNOWN | 0 | — |
+| AFFECTED → NOT_AFFECTED | 0 | — |
+| NOT_AFFECTED → UNKNOWN | 0 | — |
+
+One movement, in the sound direction, independently verified: real `node`
+executes `privlib`'s forwarded implementation, merged main answers
+NOT_AFFECTED for it (reproduced by building `9a320c4`'s own `src` against
+this fixture), and the branch answers AFFECTED anchored at
+`packages/privlib/impl.js`. **Zero new NOT_AFFECTED of any kind**, so no
+positive-proof audit is owed.
+
+Isolating the two changes: against the branch's own Site B gate but with
+discovery disabled, `privlib` reads UNKNOWN rather than NOT_AFFECTED — the
+gate removes the false negative, and discovery converts the resulting
+UNKNOWN into an exact AFFECTED. Each change is necessary; neither alone is
+sufficient.
+
+The canonical validation baseline is unchanged: 18 passed / 5 KNOWN_FAIL,
+`RWB-05` still UNKNOWN on RWF-002.
+
+### What P1-A4 is actually worth, stated honestly
+
+Not "workspace packages had no identity". Specifically:
+
+1. exact `PackageInstance` identity for local packages the dependency
+   graph does not enumerate — versionless/private workspace members above
+   all;
+2. the ownership gate on the absolute-install-path probe, which stopped any
+   instance answering for any package name (independently re-verified: 10
+   adversarial wrong-package pairs, 0 answers);
+3. symlink canonicalization and twin distinctness for local packages,
+   verified against real Node;
+4. the Site B identity gate, which makes missing identity fail to UNKNOWN
+   rather than to a fabricated negative — a guarantee that extends well
+   beyond workspaces;
+5. a foundation for later workspace coverage.
+
+### pnpm, restated
+
+`pnpm-workspace.yaml` is still not read, and support for it is future
+coverage. What has changed is the consequence: a pnpm monorepo's local
+packages get no identity, and a target in one now resolves to **UNKNOWN**
+at the verdict layer rather than to a NOT_AFFECTED built on absent
+identity. That is asserted directly
+(`verdict.local-package-identity.integration.test.ts § A`), not argued.
+Yarn PnP is unsupported on the same terms.
+
+### Remaining limitations (corrected)
+
+- **`pnpm-workspace.yaml` is not read** — fails to UNKNOWN, proven, not
+  assumed.
+- **Glob patterns beyond literal / trailing `*` / trailing `**` are
+  refused**, and a `**` tree deeper than the cap or wider than the
+  per-pattern budget now contributes nothing and says so.
+- **A truncated pattern discards even the roots it found.** The safest of
+  the available options, and cheap because missing identity can no longer
+  produce a negative — but it does cost coverage, and a future revision
+  could keep those roots if it propagated incompleteness precisely.
+- **The root package is never an advisory target**; unchanged.
+- **Duplicate workspace names are answered per instance**, symmetrically
+  and order-independently; there is no global ambiguity diagnostic.
+- **Cross-package advisory ownership is still refused, not modelled**;
+  unchanged from P1-A1/A2/A3.
+- **No multi-instance target expansion** — P1-A5.
+- **The vendored corpus still contains no monorepos**, so none of this is
+  validated against real-world workspace repositories. That limitation is
+  unchanged and remains the weakest part of P1-A4's evidence.

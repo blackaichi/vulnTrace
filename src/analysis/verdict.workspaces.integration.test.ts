@@ -4,6 +4,9 @@ import { describe, expect, it } from "vitest";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
 import { createModuleResolver } from "../code-intelligence/module-resolver.js";
 import { loadTsProject } from "../code-intelligence/ts-project.js";
+import { buildDependencyGraph } from "../dependencies/dependency-graph.js";
+import { loadPackageJsonFile } from "../dependencies/package-json.js";
+import { loadPackageLockFile } from "../dependencies/package-lock.js";
 import { discoverWorkspacePackages } from "../dependencies/workspaces.js";
 import {
   buildKnownPackageRoots,
@@ -68,15 +71,28 @@ async function scan(options: ScanOptions) {
   const entry = path.join(root, ...options.entrypoint.split("/"));
   const resolver = createModuleResolver(loadTsProject(root));
 
-  // The REAL production authority: the repository's own `workspaces`
-  // declaration, read exactly as `cli/scan.ts` reads it. No test-only
-  // root list -- if discovery cannot establish a root, this suite sees
-  // precisely what a real scan would see.
+  // PRODUCTION CONFIGURATION, exactly as `cli/scan.ts` assembles it: the
+  // dependency graph from the fixture's real `package-lock.json` FIRST,
+  // then the repository's own `workspaces` declaration.
+  //
+  // Loading the lockfile is not incidental. A scan requires one (missing
+  // it is exit 3), and npm writes a `packages/<dir>` entry for every
+  // workspace member that declares a name AND version -- which already
+  // reaches `KnownPackageRoots` through dependency provenance. Measuring
+  // this suite without a lockfile, as the first P1-A4 revision did, put
+  // every workspace package in a state a real scan can never be in, and
+  // credited workspace discovery with identity the dependency graph
+  // already supplied. `withoutWorkspaceDiscovery` therefore models merged
+  // main HONESTLY: lockfile provenance present, workspace discovery absent.
+  const dependencyNodes = buildDependencyGraph(
+    loadPackageJsonFile(path.join(root, "package.json")),
+    loadPackageLockFile(path.join(root, "package-lock.json")),
+  );
   const discovery = options.withoutWorkspaceDiscovery
     ? { packages: [], unsupported: [] }
     : discoverWorkspacePackages(root);
   const knownPackageRoots = buildKnownPackageRoots(
-    [],
+    dependencyNodes,
     root,
     discovery.packages.map((workspacePackage) => ({
       canonicalRoot: workspacePackage.canonicalRoot,
@@ -151,67 +167,134 @@ function pathMentions(finding: Finding, ...segments: string[]): boolean {
 const APP = "packages/app/src";
 
 // ---------------------------------------------------------------------------
-// Z -- BASELINE: what a local workspace package was before P1-A4.
+// Z -- BASELINE: what P1-A4 actually changes, in PRODUCTION configuration.
+//
+// The first revision of this section measured a fixture with no
+// package-lock.json and reported four verdict movements. An independent
+// audit showed all four were artifacts of that missing lockfile: a scan
+// REQUIRES one, npm writes a `packages/<dir>` entry for every workspace
+// member declaring a name and version, and those entries already reach
+// `KnownPackageRoots` through dependency provenance. Given the lockfile,
+// merged main already produced the branch's answers for every one of them.
+//
+// What follows is the corrected, honest account. `withoutWorkspaceDiscovery`
+// now models merged main properly: lockfile present, discovery absent.
 // ---------------------------------------------------------------------------
 
-describe("P1-A4 § Z: the baseline P1-A4 changes", () => {
-  it("without workspace discovery a workspace package has NO identity at all", async () => {
-    // This is the whole defect, stated at the identity layer. A local
-    // package's files have no `node_modules` segment, and merged main has
-    // no other authority that can name them -- so `identifyModule` returns
-    // a bare file with no package and no instance.
+describe("P1-A4 § Z: what changes, and what does not", () => {
+  it("CONTROL: a lockfile-backed workspace package already had identity on base", async () => {
+    // `packages/lib` declares a name and a version, so npm's lockfile
+    // enumerates it and `buildKnownPackageRoots` admits it with no help
+    // from workspace discovery. P1-A4 adds nothing here, and saying
+    // otherwise was the audit's central correction.
     const { root } = await scan({
       entrypoint: `${APP}/lib-consumer.cjs`,
       packageName: "lib",
       packageInstance: "packages/lib",
+    });
+    const dependencyNodes = buildDependencyGraph(
+      loadPackageJsonFile(path.join(root, "package.json")),
+      loadPackageLockFile(path.join(root, "package-lock.json")),
+    );
+    const lockfileOnly = buildKnownPackageRoots(dependencyNodes, root);
+
+    expect(
+      identifyModule(
+        path.join(root, "packages", "lib", "index.js"),
+        lockfileOnly,
+      ).packageInstance,
+    ).toBe(canonicalizePackageInstancePath(path.join(root, "packages", "lib")));
+  });
+
+  it("CONTROL: and its verdict is identical with and without discovery", async () => {
+    const withoutDiscovery = await scan({
+      entrypoint: `${APP}/fwdlib-consumer.cjs`,
+      packageName: "fwdlib",
+      packageInstance: "packages/fwdlib",
       withoutWorkspaceDiscovery: true,
     });
-    const file = path.join(root, "packages", "lib", "index.js");
+    const withDiscovery = await scan({
+      entrypoint: `${APP}/fwdlib-consumer.cjs`,
+      packageName: "fwdlib",
+      packageInstance: "packages/fwdlib",
+    });
 
-    const withoutDiscovery = buildKnownPackageRoots([], root);
+    expect(withoutDiscovery.finding?.verdict).toBe("AFFECTED");
+    expect(withDiscovery.finding?.verdict).toBe("AFFECTED");
+  });
+
+  it("THE REAL CASE: a versionless private workspace package has NO lockfile identity", async () => {
+    // `packages/privlib` is `"private": true` with no `version`, which is
+    // ordinary in real monorepos. npm writes its lockfile entry without a
+    // version, `buildDependencyGraph` cannot form a DependencyNode from it
+    // ("inherent to unversioned/local links", as that module already
+    // said), and so it never reaches KnownPackageRoots. The repository's
+    // own `workspaces` declaration is the only authority left.
+    const root = fixturePath(FIXTURE);
+    const dependencyNodes = buildDependencyGraph(
+      loadPackageJsonFile(path.join(root, "package.json")),
+      loadPackageLockFile(path.join(root, "package-lock.json")),
+    );
+    expect(dependencyNodes.some((node) => node.name === "privlib")).toBe(false);
+
+    const lockfileOnly = buildKnownPackageRoots(dependencyNodes, root);
     expect(
-      identifyModule(file, withoutDiscovery).packageInstance,
+      identifyModule(
+        path.join(root, "packages", "privlib", "index.js"),
+        lockfileOnly,
+      ).packageInstance,
     ).toBeUndefined();
-    expect(identifyModule(file, withoutDiscovery).packageName).toBeUndefined();
 
     const discovery = discoverWorkspacePackages(root);
-    const withDiscovery = buildKnownPackageRoots(
-      [],
+    const withWorkspaces = buildKnownPackageRoots(
+      dependencyNodes,
       root,
-      discovery.packages.map((workspacePackage) => ({
-        canonicalRoot: workspacePackage.canonicalRoot,
-        packageName:
-          workspacePackage.packageName ??
-          path.basename(workspacePackage.canonicalRoot),
+      discovery.packages.map((p) => ({
+        canonicalRoot: p.canonicalRoot,
+        packageName: p.packageName ?? path.basename(p.canonicalRoot),
       })),
     );
-    expect(identifyModule(file, withDiscovery).packageInstance).toBe(
-      canonicalizePackageInstancePath(path.join(root, "packages", "lib")),
+    expect(
+      identifyModule(
+        path.join(root, "packages", "privlib", "index.js"),
+        withWorkspaces,
+      ).packageInstance,
+    ).toBe(
+      canonicalizePackageInstancePath(path.join(root, "packages", "privlib")),
     );
-    expect(identifyModule(file, withDiscovery).packageName).toBe("lib");
   });
 
-  it("without identity, a target is bound by project-root resolution instead of the consumer's", async () => {
-    // With no instance to anchor to, resolution falls back to resolving the
-    // advisory's module from the PROJECT ROOT. For the simple case that
-    // happens to reach the same file, so the verdict is unchanged -- P1-A4
-    // changes WHY, not WHAT, here.
-    const { finding } = await scan({
-      entrypoint: `${APP}/lib-consumer.cjs`,
-      packageName: "lib",
-      packageInstance: "packages/lib",
+  it("THE REAL CASE: its forwarded sink is UNKNOWN on base and AFFECTED here", async () => {
+    // Real Node executes privlib's forwarded implementation (asserted by
+    // verify.cjs). Without identity the advisory's name is not bindable in
+    // its entry at all -- it is a forward, not a definition -- so base can
+    // prove nothing; the Site B identity gate makes that UNKNOWN rather
+    // than the false NOT_AFFECTED the audit found. With identity, the
+    // RWF-029 forwarding relation runs and binds the real implementation.
+    const withoutDiscovery = await scan({
+      entrypoint: `${APP}/privlib-consumer.cjs`,
+      packageName: "privlib",
+      packageInstance: "packages/privlib",
       withoutWorkspaceDiscovery: true,
     });
+    expect(withoutDiscovery.finding?.verdict).toBe("UNKNOWN");
+    expect(withoutDiscovery.finding?.verdict).not.toBe("NOT_AFFECTED");
 
-    expect(finding?.verdict).toBe("AFFECTED");
+    const withDiscovery = await scan({
+      entrypoint: `${APP}/privlib-consumer.cjs`,
+      packageName: "privlib",
+      packageInstance: "packages/privlib",
+    });
+    expect(withDiscovery.finding?.verdict).toBe("AFFECTED");
+    expect(resolvedTarget(withDiscovery.finding)).toContain(
+      path.join("packages", "privlib", "impl.js"),
+    );
   });
 
-  it("nested INSTALLED copies were already exact -- P1-A4 changes nothing there", async () => {
-    // Worth pinning explicitly, because it bounds the defect. A package
-    // under `node_modules` -- even nested inside a workspace member -- has
-    // always had an identity from its path shape, so instance-exactness
-    // already worked here without any workspace machinery. The gap P1-A4
-    // closes is specifically packages OUTSIDE `node_modules`.
+  it("nested INSTALLED copies were always exact -- unchanged either way", async () => {
+    // Bounds the defect: a package under `node_modules`, even nested
+    // inside a workspace member, has always had identity from its path
+    // shape.
     const withoutDiscovery = await scan({
       entrypoint: `${APP}/nestedlib-consumer.cjs`,
       packageName: "nestedlib",
@@ -220,144 +303,7 @@ describe("P1-A4 § Z: the baseline P1-A4 changes", () => {
     });
     expect(withoutDiscovery.finding?.verdict).toBe("AFFECTED");
   });
-
-  it("BASELINE DEFECT 1: a forwarded workspace sink was a FALSE NOT_AFFECTED", async () => {
-    // The one verdict main got outright wrong. `fwdlib`'s public entry
-    // publishes `vulnerable` by FORWARDING it to impl.js#internal, and the
-    // consumer really executes it (verify.cjs asserts the marker the
-    // implementation returns). With no instance to anchor to, resolution
-    // fell back to the project root, found no `vulnerable` in index.js --
-    // because it is a forward, not a definition -- and reported a
-    // confident negative about a sink that genuinely runs.
-    //
-    // Anchoring at the instance lets P1-A1's forwarding relation run, and
-    // the false negative becomes a true positive at an exact path.
-    const withoutDiscovery = await scan({
-      entrypoint: `${APP}/fwdlib-consumer.cjs`,
-      packageName: "fwdlib",
-      packageInstance: "packages/fwdlib",
-      withoutWorkspaceDiscovery: true,
-    });
-    expect(withoutDiscovery.finding?.verdict).toBe("NOT_AFFECTED");
-
-    const withDiscovery = await scan({
-      entrypoint: `${APP}/fwdlib-consumer.cjs`,
-      packageName: "fwdlib",
-      packageInstance: "packages/fwdlib",
-    });
-    expect(withDiscovery.finding?.verdict).toBe("AFFECTED");
-    expect(resolvedTarget(withDiscovery.finding)).toContain(
-      path.join("packages", "fwdlib", "impl.js"),
-    );
-  });
-
-  it("BASELINE DEFECT 2: a scoped TWIN inherited the resolved package's reachability", async () => {
-    // packages/scopedtwin declares `@scope/lib` but is not what the name
-    // resolves to. Without identity, its finding was answered with
-    // packages/scopedlib's genuinely-reached api.js -- one package's
-    // evidence reported as another's, a false AFFECTED.
-    const withoutDiscovery = await scan({
-      entrypoint: `${APP}/scope-api-consumer.cjs`,
-      packageName: "@scope/lib",
-      targetModule: "@scope/lib/api",
-      packageInstance: "packages/scopedtwin",
-      withoutWorkspaceDiscovery: true,
-    });
-    expect(withoutDiscovery.finding?.verdict).toBe("AFFECTED");
-
-    const withDiscovery = await scan({
-      entrypoint: `${APP}/scope-api-consumer.cjs`,
-      packageName: "@scope/lib",
-      targetModule: "@scope/lib/api",
-      packageInstance: "packages/scopedtwin",
-    });
-    expect(withDiscovery.finding?.verdict).not.toBe("AFFECTED");
-  });
-
-  it("BASELINE DEFECT 3: a SAFE installed copy inherited the workspace copy's reachability", async () => {
-    // The same mixing, the other way round. The finding is about the safe
-    // installed mixedlib at packages/lib/node_modules/mixedlib; what runs
-    // is the vulnerable workspace copy. Without identity the safe copy was
-    // reported AFFECTED on the other copy's evidence.
-    const withoutDiscovery = await scan({
-      entrypoint: `${APP}/mixedlib-consumer.cjs`,
-      packageName: "mixedlib",
-      packageInstance: "packages/lib/node_modules/mixedlib",
-      withoutWorkspaceDiscovery: true,
-    });
-    expect(withoutDiscovery.finding?.verdict).toBe("AFFECTED");
-
-    const withDiscovery = await scan({
-      entrypoint: `${APP}/mixedlib-consumer.cjs`,
-      packageName: "mixedlib",
-      packageInstance: "packages/lib/node_modules/mixedlib",
-    });
-    expect(withDiscovery.finding?.verdict).not.toBe("AFFECTED");
-  });
-
-  it("COST: workspace packages now refuse where main produced an unauthorized negative", async () => {
-    // The differential's only movement AWAY from a verdict, recorded
-    // deliberately rather than buried. safelib's public entry publishes
-    // `safe` and not `vulnerable`. Main answered NOT_AFFECTED from a
-    // project-root resolution with no public-entry authority behind it;
-    // P1-A2's contract for "the authoritative entry does not publish this
-    // export" is UNKNOWN, and workspace packages are now held to exactly
-    // that standard rather than a weaker one of their own.
-    //
-    // A negative given up is the safe direction, and the alternative --
-    // keeping a negative that no entry authority supports -- is the thing
-    // RWF-030 exists to prevent.
-    const withoutDiscovery = await scan({
-      entrypoint: `${APP}/safelib-consumer.cjs`,
-      packageName: "safelib",
-      packageInstance: "packages/safelib",
-      withoutWorkspaceDiscovery: true,
-    });
-    expect(withoutDiscovery.finding?.verdict).toBe("NOT_AFFECTED");
-
-    const withDiscovery = await scan({
-      entrypoint: `${APP}/safelib-consumer.cjs`,
-      packageName: "safelib",
-      packageInstance: "packages/safelib",
-    });
-    expect(withDiscovery.finding?.verdict).toBe("UNKNOWN");
-  });
-
-  it("the baseline never MIXES the installed twin into the workspace twin's answer", async () => {
-    // Worth pinning as a NEGATIVE result, because it is the obvious place
-    // a workspace/installed mix-up would have shown up and it does not.
-    // Even with no identity for packages/twinlib, the separately installed
-    // node_modules/twinlib DOES have one (path shape), so the graph knows
-    // about an instance of this name that is not this finding's -- and
-    // instance-exactness (VT-212/ADV2-045) refuses rather than substituting
-    // it. Merged main is UNINFORMATIVE about workspace packages, not wrong
-    // about them, and P1-A4 must keep it that way.
-    const withoutDiscovery = await scan({
-      entrypoint: `${APP}/twinlib-consumer.cjs`,
-      packageName: "twinlib",
-      packageInstance: "packages/twinlib",
-      withoutWorkspaceDiscovery: true,
-    });
-    expect(withoutDiscovery.finding?.verdict).toBe("UNKNOWN");
-    expect(
-      pathMentions(withoutDiscovery.finding, "node_modules", "twinlib"),
-    ).toBe(false);
-
-    // With workspace identity the answer stays non-AFFECTED and still
-    // never borrows the installed copy's evidence -- now backed by an
-    // exact canonical root rather than by the absence of one.
-    const withDiscovery = await scan({
-      entrypoint: `${APP}/twinlib-consumer.cjs`,
-      packageName: "twinlib",
-      packageInstance: "packages/twinlib",
-    });
-    expect(withDiscovery.finding?.verdict).not.toBe("AFFECTED");
-    expect(pathMentions(withDiscovery.finding, "node_modules", "twinlib")).toBe(
-      false,
-    );
-  });
 });
-
 // ---------------------------------------------------------------------------
 // A -- The basic npm workspace case.
 // ---------------------------------------------------------------------------

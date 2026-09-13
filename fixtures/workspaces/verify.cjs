@@ -437,5 +437,39 @@ check("the scoped twin declares the same name but is not what resolves", () => {
 });
 
 // ---------------------------------------------------------------------------
+// P -- THE VERSIONLESS PRIVATE WORKSPACE PACKAGE (P1-A4's real case).
+// ---------------------------------------------------------------------------
+
+check("privlib declares no version, so the lockfile records none", () => {
+  const manifest = require(path.join(ROOT, "packages/privlib/package.json"));
+  assert.equal(manifest.name, "privlib");
+  assert.equal(manifest.version, undefined);
+  assert.equal(manifest.private, true);
+  const lock = require(path.join(ROOT, "package-lock.json"));
+  assert.equal(lock.packages["packages/privlib"].version, undefined);
+});
+
+check("privlib nevertheless resolves and RUNS from the app", () => {
+  assert.equal(resolveFrom(APP, "privlib"), "packages/privlib/index.js");
+  const result = require(
+    path.join(APP, "src", "privlib-consumer.cjs"),
+  ).handle("x");
+  assert.match(result, /^privlib\/impl\.js:internal:/);
+});
+
+check("its public export is a FORWARD, not a definition", () => {
+  // This is why the missing identity mattered: the advisory's name is not
+  // declared anywhere in the entry file, so nothing can bind it without
+  // the instance-anchored forwarding chase.
+  const source = fs.readFileSync(
+    path.join(ROOT, "packages/privlib/index.js"),
+    "utf-8",
+  );
+  assert.match(source, /exports\.vulnerable\s*=\s*require\("\.\/impl"\)\.internal/);
+  const impl = require(path.join(ROOT, "packages/privlib/impl.js"));
+  assert.equal(requireFrom(APP, "privlib").vulnerable, impl.internal);
+});
+
+// ---------------------------------------------------------------------------
 
 process.stdout.write(JSON.stringify({ ok: true, checks }, null, 2) + "\n");

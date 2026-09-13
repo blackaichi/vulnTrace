@@ -53,6 +53,7 @@ export {
 } from "./evidence.js";
 export type {
   KnownPackageRoots,
+  LocalPackageRoot,
   ModuleIdentity,
   PackageInstanceId,
   ResolvedTarget,
