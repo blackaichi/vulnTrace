@@ -47,10 +47,3 @@ export {
   CycloneDxSyntaxError,
   CycloneDxValidationError,
 } from "./cyclonedx-errors.js";
-export {
-  type WorkspaceDiscovery,
-  type WorkspacePackage,
-  discoverWorkspacePackages,
-  interpretWorkspacePattern,
-  readWorkspacePatterns,
-} from "./workspaces.js";
