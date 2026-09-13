@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { canonicalizePackageInstancePath } from "../domain/resolved-target.js";
 
@@ -39,10 +39,19 @@ export interface WorkspacePackage {
  */
 export interface WorkspaceDiscovery {
   readonly packages: readonly WorkspacePackage[];
+  /**
+   * Every reason this discovery is INCOMPLETE, deduplicated and sorted.
+   *
+   * Deduplicated because the same condition stated twice is still one
+   * condition: a manifest that lists the same unsupported pattern twice
+   * describes one thing a reader has to go fix, not two. Sorted because
+   * these become machine-readable diagnostics (Foundation F1-A), and a
+   * scan's diagnostics must not depend on the order patterns happen to
+   * appear in `workspaces` -- the same repository, declared in a different
+   * order, is the same repository.
+   */
   readonly unsupported: readonly string[];
 }
-
-const EMPTY: WorkspaceDiscovery = { packages: [], unsupported: [] };
 
 /**
  * Upper bound on how deep a `**` pattern may walk below its own literal
@@ -200,7 +209,12 @@ function readManifestIdentity(packageRoot: string): {
     const version = (raw as { version?: unknown }).version;
     return {
       name: typeof name === "string" && name.length > 0 ? name : undefined,
-      version: typeof version === "string" ? version : undefined,
+      // Non-empty, matching `readInstalledManifestIdentity`'s reading of
+      // the same field in the same file: `"version": ""` is not a version,
+      // and admitting it here would manufacture a contradiction against a
+      // lockfile entry that states a real one.
+      version:
+        typeof version === "string" && version.length > 0 ? version : undefined,
       exists: true,
     };
   } catch {
@@ -367,22 +381,26 @@ export function discoverWorkspacePackages(
 ): WorkspaceDiscovery {
   const rootManifest = readRawManifest(projectRoot);
   if (rootManifest === undefined) {
-    return EMPTY;
+    return finish([], pnpmOnlyReasons(projectRoot));
   }
 
   const patterns = readWorkspacePatterns(
     (rootManifest as { workspaces?: unknown }).workspaces,
   );
   if (patterns === undefined) {
-    return {
-      packages: [],
-      unsupported: [
+    return finish(
+      [],
+      [
         `the root manifest's "workspaces" declaration is not a supported shape (expected an array of patterns, or an object with a "packages" array)`,
       ],
-    };
+    );
   }
   if (patterns.length === 0) {
-    return EMPTY;
+    // No `workspaces` in package.json is ordinarily just "this is not a
+    // monorepo" -- unless the repository declares its workspaces somewhere
+    // this module does not read, which is the one case that must not look
+    // like the ordinary one.
+    return finish([], pnpmOnlyReasons(projectRoot));
   }
 
   const canonicalProjectRoot = canonicalizePackageInstancePath(projectRoot);
@@ -415,7 +433,8 @@ export function discoverWorkspacePackages(
         `workspace pattern "${pattern}" could not be enumerated completely ` +
           `within this analyzer's discovery bounds (depth ${MAX_DESCENDANT_DEPTH}, ` +
           `${MAX_DIRECTORIES_EXAMINED} directories per pattern); every root it ` +
-          `matched was discarded rather than reported as a complete set`,
+          `matched was discarded rather than reported as a complete set, so ` +
+          `package instances under it may not have been analyzed`,
       );
       continue;
     }
@@ -459,8 +478,8 @@ export function discoverWorkspacePackages(
     }
   }
 
-  return {
-    packages: [...byRoot.values()].sort((a, b) =>
+  return finish(
+    [...byRoot.values()].sort((a, b) =>
       a.canonicalRoot < b.canonicalRoot
         ? -1
         : a.canonicalRoot > b.canonicalRoot
@@ -468,7 +487,59 @@ export function discoverWorkspacePackages(
           : 0,
     ),
     unsupported,
-  };
+  );
+}
+
+/**
+ * The filename pnpm reads its workspace declaration from, and this module
+ * deliberately does NOT parse (P1-A4 § NON-GOALS, restated by Foundation
+ * F1-A § 5: "Do not add support in this task").
+ *
+ * Only the `.yaml` spelling: that is the only name pnpm itself accepts, so
+ * matching `.yml` too would report a file pnpm ignores as though it drove
+ * the repository's layout.
+ */
+const PNPM_WORKSPACE_FILE = "pnpm-workspace.yaml";
+
+/**
+ * The reason, if any, that a project with no interpretable `workspaces`
+ * declaration in its own manifest is nonetheless a monorepo this module
+ * cannot enumerate (Foundation F1-A § 5).
+ *
+ * A `pnpm-workspace.yaml` beside a manifest that declares no `workspaces`
+ * means the repository's workspace layout lives entirely in a file this
+ * analyzer does not read. Returning an empty package set for it -- which
+ * is what happened before -- is indistinguishable from "this project has
+ * no local packages", and every local package it hides then has no
+ * identity, no instance, and nothing said about it anywhere in the report.
+ *
+ * This reports; it does not guess. No YAML is parsed, no pattern is
+ * inferred, and no `PackageInstance` is invented from the file's presence:
+ * the analyzer states that its own view is incomplete and stops there.
+ */
+function pnpmOnlyReasons(projectRoot: string): string[] {
+  if (!existsSync(path.join(projectRoot, PNPM_WORKSPACE_FILE))) {
+    return [];
+  }
+  return [
+    `this project declares its workspaces in ${PNPM_WORKSPACE_FILE}, which this ` +
+      `analyzer does not read, and its root manifest declares no "workspaces" of ` +
+      `its own; workspace discovery is incomplete and local packages declared only ` +
+      `there were not identified, so package instances under them may not have ` +
+      `been analyzed`,
+  ];
+}
+
+/**
+ * Finalizes a discovery: the reasons are deduplicated and sorted so the
+ * result is a function of WHAT was uninterpretable, never of the order the
+ * declaration happened to list it in (Foundation F1-A § 6).
+ */
+function finish(
+  packages: readonly WorkspacePackage[],
+  unsupported: readonly string[],
+): WorkspaceDiscovery {
+  return { packages, unsupported: [...new Set(unsupported)].sort() };
 }
 
 /** Reads and JSON-parses a directory's `package.json`, or `undefined`. */
