@@ -54,3 +54,11 @@ export {
   interpretWorkspacePattern,
   readWorkspacePatterns,
 } from "./workspaces.js";
+export {
+  type CandidatePackageInstance,
+  type PackageInstanceRegistry,
+  advisoryQueryVersions,
+  buildPackageInstanceRegistry,
+  describePackageInstance,
+  findApplicablePackageInstances,
+} from "./package-instances.js";

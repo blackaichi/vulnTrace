@@ -581,8 +581,74 @@ describe("NOT_AFFECTED positive proof", () => {
   it("says the package instance is not in the result rather than substituting one", () => {
     const html = renderHtmlReport(scanOutput({ findings: [FAMILY_C_FINDING] }));
 
-    expect(html).toContain("does not carry a canonical package instance");
+    expect(html).toContain("does not carry a package instance");
     expect(html).toContain("not in result");
+  });
+
+  it("prefers the finding's OWN packageInstance over a proof object's", () => {
+    // P1-A5: every finding carries its own instance now, whatever its
+    // verdict, so the column no longer depends on a negative proof having
+    // been issued. The two are the same physical instance rendered for two
+    // different audiences -- project-relative for the row, canonical
+    // absolute inside the proof that must stand alone when quoted.
+    const html = renderHtmlReport(
+      scanOutput({
+        findings: [
+          { ...FAMILY_A_FINDING, packageInstance: "node_modules/unloaded-lib" },
+        ],
+      }),
+    );
+
+    expect(html).toContain("node_modules/unloaded-lib");
+    expect(html).not.toContain("not in result");
+  });
+
+  it("distinguishes two findings that share an advisory, package and version", () => {
+    // The whole point of P1-A5 in the report: same CVE, same name, same
+    // version, two physical installs, two independent verdicts. A reader
+    // must be able to tell which row is which.
+    const html = renderHtmlReport(
+      scanOutput({
+        findings: [
+          {
+            vulnerability: "GHSA-twin",
+            package: "twin-lib",
+            version: "1.2.0",
+            packageInstance: "node_modules/twin-lib",
+            verdict: "UNKNOWN",
+          },
+          {
+            vulnerability: "GHSA-twin",
+            package: "twin-lib",
+            version: "1.2.0",
+            packageInstance: "packages/app/node_modules/twin-lib",
+            verdict: "UNKNOWN",
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("node_modules/twin-lib");
+    expect(html).toContain("packages/app/node_modules/twin-lib");
+  });
+
+  it("says a finding declares no version rather than rendering an empty one", () => {
+    const html = renderHtmlReport(
+      scanOutput({
+        findings: [
+          {
+            vulnerability: "GHSA-priv",
+            package: "privlib",
+            packageInstance: "packages/privlib",
+            verdict: "UNKNOWN",
+          },
+        ],
+      }),
+    );
+
+    expect(html).toContain("no declared version");
+    expect(html).toContain("this instance declares no version");
+    expect(html).toContain("packages/privlib");
   });
 
   it("does not guess a family for a NOT_AFFECTED with no proof evidence object", () => {

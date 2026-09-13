@@ -31,7 +31,16 @@ export interface JsonTarget {
 export interface JsonFinding {
   readonly vulnerability: string;
   readonly package: string;
-  readonly version: string;
+  /** Omitted only when this instance's version could not be established at all (P1-A5). */
+  readonly version?: string;
+  /**
+   * Which installed instance this finding is about (P1-A5) --
+   * project-relative when inside the scanned project, canonical absolute
+   * otherwise. This is what distinguishes two findings that share an
+   * advisory, a package name and a version but describe two different
+   * physical installs with two independent verdicts.
+   */
+  readonly packageInstance?: string;
   readonly verdict: Finding["verdict"];
   readonly confidence?: number;
   readonly target?: JsonTarget;
@@ -69,7 +78,8 @@ export function findingToJson(finding: Finding): JsonFinding {
   const json: {
     vulnerability: string;
     package: string;
-    version: string;
+    version?: string;
+    packageInstance?: string;
     verdict: Finding["verdict"];
     confidence?: number;
     target?: JsonTarget;
@@ -77,9 +87,20 @@ export function findingToJson(finding: Finding): JsonFinding {
   } = {
     vulnerability: finding.vulnerability,
     package: finding.package,
-    version: finding.version,
     verdict: finding.verdict,
   };
+
+  // Emitted between `package` and `verdict` in the domain type's own field
+  // order, and omitted rather than written as `null`/`""` when absent: a
+  // consumer must be able to tell "this instance has no established
+  // version" from "this instance's version is the empty string", and an
+  // absent key is the only encoding that cannot be mistaken for a value.
+  if (finding.version !== undefined) {
+    json.version = finding.version;
+  }
+  if (finding.packageInstance !== undefined) {
+    json.packageInstance = finding.packageInstance;
+  }
 
   if (finding.confidence !== undefined) {
     json.confidence = finding.confidence;

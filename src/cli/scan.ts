@@ -16,17 +16,17 @@ import {
 import { loadConfigFile, parseConfig } from "../config/load.js";
 import type { Config } from "../config/schema.js";
 import {
+  advisoryQueryVersions,
   buildDependencyGraph,
+  buildPackageInstanceRegistry,
   discoverWorkspacePackages,
+  findApplicablePackageInstances,
   loadPackageJsonFile,
   loadPackageLockFile,
 } from "../dependencies/index.js";
 import type { DependencyNode } from "../domain/dependency.js";
 import type { Diagnostic } from "../domain/coverage.js";
-import {
-  buildKnownPackageRoots,
-  canonicalizePackageInstancePath,
-} from "../domain/resolved-target.js";
+import { buildKnownPackageRoots } from "../domain/resolved-target.js";
 import type { Finding } from "../domain/verdict.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
@@ -45,7 +45,7 @@ import {
 import { readOwnVersion } from "../shared/own-version.js";
 import { OsvProvider } from "../vulnerabilities/osv-provider.js";
 import { normalizeOsvVulnerability } from "../vulnerabilities/osv-normalizer.js";
-import { matchVulnerabilities } from "../vulnerabilities/version-matching.js";
+import { matchVersion } from "../vulnerabilities/version-matching.js";
 import type { VulnerabilityProvider } from "../domain/vulnerability.js";
 import { errorMessage } from "./errors.js";
 import { renderHtmlReport } from "./html-report.js";
@@ -118,41 +118,6 @@ export interface RunScanOptions {
   readonly onModuleLoadClosure?: (
     closure: ModuleLoadClosure | undefined,
   ) => void;
-}
-
-/**
- * Groups {@link DependencyNode}s by advisory-lookup key (`name@version`)
- * (VT-307c-fix-1). `buildDependencyGraph` produces one `DependencyNode`
- * per distinct install location (see its own doc comment) -- the same
- * `name@version` can genuinely appear at more than one location (a
- * non-hoisted nested install, an npm alias with an identical real
- * version, ...), and each is a distinct {@link PackageInstanceId}
- * (VT-212/VT-306) that may have entirely different reachability.
- *
- * This groups ONLY for the vulnerability-provider query below, which is
- * identical for every instance sharing a name+version and must not be
- * repeated per instance -- it is deliberately NOT an instance-level
- * dedupe. Every `DependencyNode` in a group is still carried through to
- * its own `buildFinding` call further down: collapsing to a single
- * representative here (the bug this task fixes) silently discarded
- * whichever instance didn't happen to be seen first, which could discard
- * the one actually reached at runtime and reported a false NOT_AFFECTED
- * for the vulnerability as a whole.
- */
-function groupDependenciesForAdvisoryLookup(
-  nodes: readonly DependencyNode[],
-): Map<string, DependencyNode[]> {
-  const groups = new Map<string, DependencyNode[]>();
-  for (const node of nodes) {
-    const key = `${node.name}@${node.version}`;
-    const group = groups.get(key);
-    if (group) {
-      group.push(node);
-    } else {
-      groups.set(key, [node]);
-    }
-  }
-  return groups;
 }
 
 function loadConfig(projectRoot: string, configPathOverride?: string): Config {
@@ -500,110 +465,151 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   });
 
   const cveFilter = options.cveFilter;
-  const dependencyGroups = groupDependenciesForAdvisoryLookup(dependencyNodes);
+
+  // P1-A5 -- THE SCAN'S CANDIDATE PACKAGE INSTANCES, enumerated once.
+  //
+  // Built from authoritative metadata only (lockfile install paths and the
+  // repository's own `workspaces` declaration), converged on the canonical
+  // physical root so a symlink, its target and a lockfile entry naming the
+  // same directory are ONE instance, while two genuinely separate physical
+  // copies of the same name AND version stay two. Never a filesystem hunt
+  // for directories named after a package.
+  const instanceRegistry = buildPackageInstanceRegistry({
+    dependencyNodes,
+    projectRoot,
+    workspacePackages: workspaces.packages,
+  });
+
   const findings: Finding[] = [];
 
-  for (const [, instances] of dependencyGroups) {
-    // Every instance in a group shares the same name+version (that's the
-    // grouping key) -- safe to use the first as the representative for the
-    // one shared provider query and version match below.
-    const representative = instances[0];
-    if (!representative) {
-      continue;
-    }
+  // Advisory lookup is driven by PACKAGE NAME, and the fan-out below is
+  // driven by INSTANCE -- deliberately two different keys.
+  //
+  // The previous shape grouped by `name@version` and did both at once,
+  // which silently made the group's shared version the only version any of
+  // its advisories could ever be evaluated against. An instance whose own
+  // version could not be established therefore belonged to no group and
+  // was never analyzed at all: it produced no finding, not even an
+  // UNKNOWN, and a reader saw a confident NOT_AFFECTED about its sibling
+  // with nothing at all said about it. Splitting the keys is what lets
+  // every instance of a name be evaluated, independently, against every
+  // advisory discovered for that name.
+  for (const [packageName, candidates] of [
+    ...instanceRegistry.byOwnershipName,
+  ].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    // One provider query per distinct installed VERSION of this name --
+    // never one per instance (twins share an answer) and never one per
+    // advisory. Same query set as before this change; only the pairing of
+    // answers to instances widened.
+    const vulnerabilitiesById = new Map<string, Vulnerability>();
 
-    let rawVulnerabilities;
-    const providerStart = Date.now();
-    try {
-      rawVulnerabilities = await provider.queryPackage({
-        ecosystem: representative.ecosystem,
-        name: representative.name,
-        version: representative.version,
-      });
-      providerMs += Date.now() - providerStart;
-    } catch (error) {
-      providerMs += Date.now() - providerStart;
-      io.stderr(
-        `vulntrace: vulnerability provider failure for ${representative.name}@${representative.version}: ${errorMessage(error)}\n`,
-      );
-      return 4;
-    }
-
-    const vulnerabilities: Vulnerability[] = [];
-    for (const raw of rawVulnerabilities) {
+    for (const version of advisoryQueryVersions(candidates)) {
+      let rawVulnerabilities;
+      const providerStart = Date.now();
       try {
-        vulnerabilities.push(
-          normalizeOsvVulnerability(raw, {
-            ecosystem: representative.ecosystem,
-            name: representative.name,
-          }),
-        );
+        rawVulnerabilities = await provider.queryPackage({
+          ecosystem: "npm",
+          name: packageName,
+          version,
+        });
+        providerMs += Date.now() - providerStart;
       } catch (error) {
-        const message = `skipping malformed vulnerability record for ${representative.name}@${representative.version}: ${errorMessage(error)}`;
-        io.stderr(`vulntrace: ${message}\n`);
-        diagnostics.push({ source: "vulnerabilities", message });
+        providerMs += Date.now() - providerStart;
+        io.stderr(
+          `vulntrace: vulnerability provider failure for ${packageName}@${version}: ${errorMessage(error)}\n`,
+        );
+        return 4;
+      }
+
+      for (const raw of rawVulnerabilities) {
+        try {
+          const vulnerability = normalizeOsvVulnerability(raw, {
+            ecosystem: "npm",
+            name: packageName,
+          });
+          // Keyed by advisory id, so the same advisory returned by two
+          // versions' queries is ONE advisory evaluated once per instance,
+          // not one duplicate finding per query that happened to return
+          // it. First write wins under a sorted version order, so which
+          // copy is kept does not depend on enumeration order.
+          if (!vulnerabilitiesById.has(vulnerability.id)) {
+            vulnerabilitiesById.set(vulnerability.id, vulnerability);
+          }
+        } catch (error) {
+          const message = `skipping malformed vulnerability record for ${packageName}@${version}: ${errorMessage(error)}`;
+          io.stderr(`vulntrace: ${message}\n`);
+          diagnostics.push({ source: "vulnerabilities", message });
+        }
       }
     }
 
-    const relevant = cveFilter
-      ? vulnerabilities.filter(
-          (vulnerability) =>
-            vulnerability.id === cveFilter ||
-            vulnerability.aliases.includes(cveFilter),
-        )
-      : vulnerabilities;
+    const relevant = [...vulnerabilitiesById.values()]
+      .filter(
+        (vulnerability) =>
+          cveFilter === undefined ||
+          vulnerability.id === cveFilter ||
+          vulnerability.aliases.includes(cveFilter),
+      )
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 
-    const matches = matchVulnerabilities(representative.version, relevant);
+    // FAN OUT PER EXACT INSTANCE. Each one is resolved, evaluated and
+    // proved entirely on its own: `buildFinding` still reasons about
+    // exactly one PackageInstance per call, and never sees the others.
+    // That is what keeps a path into instance B from making instance A
+    // AFFECTED, and B's absence from proving A safe.
+    for (const candidate of findApplicablePackageInstances(
+      instanceRegistry,
+      packageName,
+    )) {
+      for (const vulnerability of relevant) {
+        // Version applicability, evaluated PER INSTANCE against this
+        // instance's own version and nothing else. An instance with no
+        // established version is `indeterminate` -- it does not borrow a
+        // sibling's version, and it is not silently dropped.
+        const matchResult =
+          candidate.version === undefined
+            ? "indeterminate"
+            : matchVersion(candidate.version, vulnerability.affectedVersions);
 
-    for (const match of matches) {
-      const rule = findRuleForVulnerability(rulesById, match.vulnerability);
+        // Unchanged contract (TASK-011): an instance this advisory
+        // confidently does not apply to produces NO finding. That is a
+        // statement about THIS instance only, and says nothing about any
+        // sibling -- which is precisely why each sibling gets its own
+        // evaluation above rather than inheriting this one.
+        if (matchResult === "not_affected") {
+          continue;
+        }
 
-      // Fan out per installed instance -- and per location within an
-      // instance's own `locations`, honoring its plural shape even though
-      // `buildDependencyGraph` currently only ever populates one location
-      // per node (VT-307c-fix-1 Part 11): every exact install location
-      // this advisory applies to gets its own, independent reachability
-      // evaluation, never sharing or borrowing a verdict from a sibling.
-      for (const instance of instances) {
-        for (const location of instance.locations) {
-          const reachabilityStart = Date.now();
-          const finding = await buildFinding({
-            vulnerability: match.vulnerability,
-            packageName: instance.name,
-            packageVersion: instance.version,
-            // The dependency graph already knows exactly which installed
-            // instance this finding corresponds to (VT-212, SDD-v0.2.md
-            // § 4.3) -- pass it through as the authoritative identity
-            // rather than letting verdict resolution reconstruct it from
-            // the call graph alone, which cannot distinguish "the wrong
-            // instance" from "an instance never reached at all".
-            //
-            // Canonicalized (VT-307c-fix-4): `location` is a LOGICAL
-            // lockfile-derived path, which can differ from the PHYSICAL
-            // path the resolver/call-graph/ModuleLoadClosure side derives
-            // for a symlinked install (pnpm's content-addressed store, an
-            // npm workspace/`file:` link, `npm link`) -- without this, the
-            // two sides would never compare equal for such an install even
-            // though it is the exact same physical code. Canonicalized
-            // here, at construction, rather than deferred to verdict.ts:
-            // the finding must carry its authoritative identity from the
-            // moment it exists, not have it silently redefined by whoever
-            // happens to compare it later.
-            packageInstance: canonicalizePackageInstancePath(
-              path.resolve(projectRoot, location),
-            ),
-            matchResult: match.result,
-            rule,
-            // The one proof context built above (VT-CONTRACT-03), passed
-            // by reference to every finding -- never rebuilt per advisory
-            // or per instance, and structurally incapable of carrying a
-            // closure, graph or entrypoint set from another scan.
-            context: analysisProofContext,
-          });
-          reachabilityMs += Date.now() - reachabilityStart;
-          if (finding) {
-            findings.push(finding);
-          }
+        const rule = findRuleForVulnerability(rulesById, vulnerability);
+        const reachabilityStart = Date.now();
+        const finding = await buildFinding({
+          vulnerability,
+          // The name the ADVISORY selected this instance by, not
+          // necessarily the install directory it lives under: an npm
+          // alias (`"foo-alias": "npm:foo@1.2.0"`) is reported as, and
+          // resolved as, the package it actually is (P1-A3).
+          packageName,
+          packageVersion: candidate.version,
+          // The dependency graph / workspace declaration already knows
+          // exactly which installed instance this finding corresponds to
+          // (VT-212, SDD-v0.2.md § 4.3) -- pass it through as the
+          // authoritative identity rather than letting verdict resolution
+          // reconstruct it from the call graph alone, which cannot
+          // distinguish "the wrong instance" from "an instance never
+          // reached at all". Already canonicalized by the registry, which
+          // is the single place that formula lives.
+          packageInstance: candidate.packageInstance,
+          matchResult,
+          rule,
+          // The one proof context built above (VT-CONTRACT-03), passed by
+          // reference to every finding -- never rebuilt per advisory or
+          // per instance, and structurally incapable of carrying a
+          // closure, graph or entrypoint set from another scan.
+          context: analysisProofContext,
+        });
+        reachabilityMs += Date.now() - reachabilityStart;
+        if (finding) {
+          findings.push(finding);
         }
       }
     }

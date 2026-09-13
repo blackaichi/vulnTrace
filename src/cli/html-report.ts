@@ -317,7 +317,14 @@ function proofFamilyOf(finding: JsonFinding): ProofFamily | undefined {
  */
 function packageInstanceOf(finding: JsonFinding): string | undefined {
   const evidence = finding.evidence;
+  // The finding's OWN instance first (P1-A5). Every finding carries one now,
+  // whatever its verdict, so this column stopped being a NOT_AFFECTED-only
+  // curiosity readable from two negative proofs and became the field that
+  // tells two same-name, same-version rows apart. The proof objects remain
+  // the fallback: they restate the canonical absolute path deliberately, so
+  // a proof stands alone when quoted out of its finding.
   return (
+    finding.packageInstance ??
     evidence?.confirmedAbsentFromModuleLoadClosure?.packageInstance ??
     evidence?.confirmedAbsentInstance?.packageInstance
   );
@@ -643,7 +650,11 @@ function renderOverviewRow(finding: JsonFinding, index: number): string {
     `<td>${badge(verdict)}</td>` +
     `<th scope="row"><a href="#${text(id)}">${text(finding.vulnerability)}</a></th>` +
     `<td>${text(finding.package)}</td>` +
-    `<td>${code(finding.version)}</td>` +
+    `<td>${
+      finding.version !== undefined
+        ? code(finding.version)
+        : `<span class="absent">no declared version</span>`
+    }</td>` +
     `<td>${
       instance ? code(instance) : `<span class="absent">not in result</span>`
     }</td>` +
@@ -709,12 +720,17 @@ function renderFindingDetail(finding: JsonFinding, index: number): string {
     `<dl class="dl">` +
     definitionRow("Advisory", code(finding.vulnerability)) +
     definitionRow("Package", text(finding.package)) +
-    definitionRow("Installed version", code(finding.version)) +
+    (finding.version !== undefined
+      ? definitionRow("Installed version", code(finding.version))
+      : absentRow(
+          "Installed version",
+          "this instance declares no version, so the advisory's version ranges could not be evaluated against it",
+        )) +
     (instance
       ? definitionRow("Package instance", code(instance))
       : absentRow(
           "Package instance",
-          "the scan result does not carry a canonical package instance for this finding (only the two instance-specific negative proofs record one)",
+          "the scan result does not carry a package instance for this finding",
         )) +
     (target
       ? definitionRow("Vulnerable symbol", code(target))
@@ -747,7 +763,13 @@ function renderFindingDetail(finding: JsonFinding, index: number): string {
     `<summary>` +
     `<span class="summary-line">${badge(verdict)} ` +
     `<span class="summary-id">${text(finding.vulnerability)}</span> ` +
-    `<span class="summary-pkg">${text(finding.package)}@${text(finding.version)}</span>` +
+    `<span class="summary-pkg">${text(finding.package)}${
+      finding.version !== undefined ? `@${text(finding.version)}` : ""
+    }${
+      finding.packageInstance !== undefined
+        ? ` <span class="summary-instance">${text(finding.packageInstance)}</span>`
+        : ""
+    }</span>` +
     `</span>` +
     `</summary>` +
     `<div class="finding-body">${facts}${verdictSpecific}</div>` +
@@ -957,6 +979,7 @@ td.summary{max-width:32rem;color:var(--muted)}
 .summary-line{display:inline-flex;flex-wrap:wrap;align-items:center;gap:.5em}
 .summary-id{font-weight:700}
 .summary-pkg{color:var(--muted);font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:.88rem}
+.summary-instance{opacity:.8}.summary-instance::before{content:"\\2022 ";opacity:.6}
 .finding-body{padding:12px 14px 16px}
 .finding[data-verdict="AFFECTED"]{border-left:5px solid var(--affected)}
 .finding[data-verdict="UNKNOWN"]{border-left:5px solid var(--unknown)}

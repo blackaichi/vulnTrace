@@ -24,7 +24,38 @@ export type Verdict = "AFFECTED" | "NOT_AFFECTED" | "UNKNOWN";
 export interface Finding {
   readonly vulnerability: string;
   readonly package: string;
-  readonly version: string;
+  /**
+   * The installed version this finding is about, or `undefined` when the
+   * instance's own version could not be established at all (P1-A5) -- a
+   * private, versionless workspace package is the genuine case. Optional
+   * rather than defaulted: borrowing a sibling instance's version, or
+   * substituting a sentinel, would state something about this instance
+   * that nothing established.
+   *
+   * No finding that had a version before P1-A5 lost one: a versionless
+   * instance previously produced NO finding at all, so this widens what
+   * can be reported without changing the shape of anything already
+   * reported.
+   */
+  readonly version?: string;
+  /**
+   * WHICH installed instance this finding is about (P1-A5), rendered for
+   * output by `describePackageInstance` -- project-relative when the
+   * instance is inside the scanned project, canonical absolute otherwise.
+   *
+   * This is what makes two findings for the same advisory and the same
+   * `package`@`version` distinguishable, which they must be: two installs
+   * of `foo@1.2.0` at different roots are two packages with two
+   * independent verdicts, and one may be AFFECTED while the other is
+   * NOT_AFFECTED. Without it a reader sees two identical rows and cannot
+   * tell which one the evidence belongs to.
+   *
+   * Presentation only. The canonical `PackageInstanceId` remains the
+   * identity everywhere inside the analyzer; this is never compared or
+   * parsed back. Optional because `buildFinding` callers may omit
+   * `packageInstance` (see BuildFindingOptions).
+   */
+  readonly packageInstance?: string;
   readonly verdict: Verdict;
   readonly confidence?: number;
   readonly target?: VulnerableSymbolTarget;

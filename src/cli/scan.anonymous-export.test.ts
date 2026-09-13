@@ -125,12 +125,17 @@ function callingProject(
   });
 }
 
-async function scan(root: string): Promise<{
-  readonly verdict: string;
-  readonly evidence: readonly string[];
-  /** Present only when a Family C negative proof was actually issued. */
-  readonly hasNegativeProof: boolean;
-}> {
+interface ScannedFinding {
+  package: string;
+  packageInstance?: string;
+  verdict: string;
+  evidence?: {
+    path: string[];
+    confirmedUnreachableTarget?: unknown;
+  };
+}
+
+async function scanFindings(root: string): Promise<ScannedFinding[]> {
   const stdout: string[] = [];
   await runScanCommand({
     projectPathArg: root,
@@ -140,16 +145,36 @@ async function scan(root: string): Promise<{
     io: { stdout: (text) => stdout.push(text), stderr: () => {} },
   });
   const output = JSON.parse(stdout.join("")) as {
-    findings: ReadonlyArray<{
-      package: string;
-      verdict: string;
-      evidence?: {
-        path: string[];
-        confirmedUnreachableTarget?: unknown;
-      };
-    }>;
+    findings: ScannedFinding[];
   };
-  const finding = output.findings.find((f) => f.package === "anon-lib");
+  return output.findings;
+}
+
+/**
+ * The single `anon-lib` finding in a single-instance project.
+ *
+ * `instance` selects among SEVERAL installs, and is required as soon as a
+ * project has more than one (P1-A5): picking "the first finding whose
+ * package is anon-lib" out of a multi-instance result is precisely the
+ * package-level collapse per-instance analysis exists to prevent -- it
+ * reads whichever twin the enumeration order happened to emit first and
+ * reports its verdict as though it were the package's.
+ */
+async function scan(
+  root: string,
+  instance?: string,
+): Promise<{
+  readonly verdict: string;
+  readonly evidence: readonly string[];
+  /** Present only when a Family C negative proof was actually issued. */
+  readonly hasNegativeProof: boolean;
+}> {
+  const findings = await scanFindings(root);
+  const finding = findings.find(
+    (f) =>
+      f.package === "anon-lib" &&
+      (instance === undefined || f.packageInstance === instance),
+  );
   return {
     verdict: finding ? finding.verdict : "NO_FINDING",
     evidence: finding?.evidence?.path ?? [],
@@ -228,14 +253,57 @@ describe("scan: RWF-003 anonymous module.exports function, end to end", () => {
         "module.exports = function (b) {\n  return b;\n};\n",
     });
 
-    const { verdict, evidence } = await scan(root);
+    // Two instances, two findings, two INDEPENDENT verdicts (P1-A5). The
+    // reached nested install is AFFECTED; the structurally identical
+    // top-level install of the same name AND the same version is not
+    // reached and is NOT_AFFECTED on its own evidence. Neither answers for
+    // the other, and the result says which is which.
+    const reached = "node_modules/host/node_modules/anon-lib";
+    const unreached = "node_modules/anon-lib";
 
+    const all = (await scanFindings(root)).filter(
+      (f) => f.package === "anon-lib",
+    );
+    expect(all.map((f) => f.packageInstance).sort()).toEqual([
+      unreached,
+      reached,
+    ]);
+
+    const { verdict, evidence } = await scan(root, reached);
     expect(verdict).toBe("AFFECTED");
     for (const step of evidence) {
       if (step.includes("anon-lib")) {
         expect(step).toContain(path.join("host", "node_modules", "anon-lib"));
       }
     }
+
+    const sibling = all.find((f) => f.packageInstance === unreached);
+    expect(sibling?.verdict).toBe("NOT_AFFECTED");
+    // The safe twin's proof is its OWN, and it names its OWN instance --
+    // never the reached one's path, and never merely the package name.
+    // Which family issued it is not this test's subject; that it is
+    // anchored at this exact instance is.
+    const proof =
+      (
+        sibling?.evidence as
+          | {
+              confirmedAbsentFromModuleLoadClosure?: {
+                packageInstance: string;
+              };
+              confirmedAbsentInstance?: { packageInstance: string };
+            }
+          | undefined
+      )?.confirmedAbsentFromModuleLoadClosure ??
+      (
+        sibling?.evidence as
+          { confirmedAbsentInstance?: { packageInstance: string } } | undefined
+      )?.confirmedAbsentInstance;
+    expect(proof?.packageInstance).toContain(
+      path.join(root, "node_modules", "anon-lib"),
+    );
+    expect(proof?.packageInstance).not.toContain(
+      path.join("host", "node_modules", "anon-lib"),
+    );
   });
 });
 
