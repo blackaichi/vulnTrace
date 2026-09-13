@@ -56,29 +56,46 @@ interface ScanFinding {
   };
 }
 
-function advisory(name: string, id: string, fixed = "9.0.0"): RawVulnerability {
+/**
+ * One stubbed OSV record, paired with the package name it is about.
+ *
+ * `RawVulnerability` is deliberately `Record<string, unknown>` (the raw
+ * provider shape is untrusted and is validated downstream), so the name is
+ * carried alongside rather than read back out of the record by the stub.
+ */
+interface StubAdvisory {
+  readonly packageName: string;
+  readonly raw: RawVulnerability;
+}
+
+function advisory(name: string, id: string, fixed = "9.0.0"): StubAdvisory {
   return {
-    id,
-    aliases: [],
-    affected: [
-      {
-        package: { ecosystem: "npm", name },
-        ranges: [{ type: "SEMVER", events: [{ introduced: "0" }, { fixed }] }],
-      },
-    ],
-    references: [],
+    packageName: name,
+    raw: {
+      id,
+      aliases: [],
+      affected: [
+        {
+          package: { ecosystem: "npm", name },
+          ranges: [
+            { type: "SEMVER", events: [{ introduced: "0" }, { fixed }] },
+          ],
+        },
+      ],
+      references: [],
+    },
   };
 }
 
 function providerFor(
-  advisories: readonly RawVulnerability[],
+  advisories: readonly StubAdvisory[],
 ): VulnerabilityProvider {
   return {
     queryPackage(query: PackageQuery): Promise<readonly RawVulnerability[]> {
       return Promise.resolve(
-        advisories.filter((raw) =>
-          raw.affected.some((a) => a.package.name === query.name),
-        ),
+        advisories
+          .filter((entry) => entry.packageName === query.name)
+          .map((entry) => entry.raw),
       );
     },
   };
