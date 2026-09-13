@@ -98,7 +98,7 @@ describe("P1-A4 PackageInstance twin matrix", () => {
   });
 
   it("4. scoped workspace twins — same scoped name and version, DISTINCT", () => {
-    const linked = instanceOf("packages", "scopedlib", "dist", "index.js");
+    const linked = instanceOf("packages", "scopedlib", "out", "index.js");
     const twin = instanceOf("packages", "scopedtwin", "index.js");
 
     expect(linked).toBe(expectedRoot("packages", "scopedlib"));
@@ -119,7 +119,7 @@ describe("P1-A4 PackageInstance twin matrix", () => {
   });
 
   it("5b. the scoped symlink spelling converges too", () => {
-    expect(instanceOf("node_modules", "@scope", "lib", "dist", "api.js")).toBe(
+    expect(instanceOf("node_modules", "@scope", "lib", "out", "api.js")).toBe(
       expectedRoot("packages", "scopedlib"),
     );
   });
@@ -130,7 +130,7 @@ describe("P1-A4 PackageInstance twin matrix", () => {
     // and name are independent, and neither is derived from the other.
     expect(
       identifyModule(
-        path.join(root, "packages", "scopedlib", "dist", "index.js"),
+        path.join(root, "packages", "scopedlib", "out", "index.js"),
         knownPackageRoots,
       ).packageName,
     ).toBe("@scope/lib");

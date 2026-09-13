@@ -402,7 +402,7 @@ describe("P1-A4 § E: workspace exports and subpaths", () => {
 
     expect(finding?.verdict).toBe("AFFECTED");
     expect(resolvedTarget(finding)).toContain(
-      path.join("packages", "exportslib", "dist", "index.js"),
+      path.join("packages", "exportslib", "out", "index.js"),
     );
   });
 
@@ -416,11 +416,11 @@ describe("P1-A4 § E: workspace exports and subpaths", () => {
 
     expect(finding?.verdict).toBe("AFFECTED");
     expect(resolvedTarget(finding)).toContain(
-      path.join("packages", "exportslib", "dist", "api.js"),
+      path.join("packages", "exportslib", "out", "api.js"),
     );
     // The root surface is a different question and must not answer this one.
     expect(
-      pathMentions(finding, "packages", "exportslib", "dist", "index.js"),
+      pathMentions(finding, "packages", "exportslib", "out", "index.js"),
     ).toBe(false);
   });
 
@@ -496,7 +496,7 @@ describe("P1-A4 § G: scoped workspace package", () => {
 
     expect(finding?.verdict).toBe("AFFECTED");
     expect(resolvedTarget(finding)).toContain(
-      path.join("packages", "scopedlib", "dist", "api.js"),
+      path.join("packages", "scopedlib", "out", "api.js"),
     );
   });
 
