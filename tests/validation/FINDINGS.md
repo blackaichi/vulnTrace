@@ -7987,3 +7987,308 @@ and each left a narrower one, in the same place: the boundary between
 surviving rule is the one Site A already had, now applied on both sides —
 loss or mismatch of package identity cannot produce a verdict in **either**
 direction.
+
+---
+
+## RWF-033 — An advisory's instances shared one identity in the report, and enumeration could not see an instance the lockfile had no version for (P1-A5)
+
+**Classification: explainability correction, plus new coverage. No verdict
+in the real-world corpus moved in either direction.** This is the honest
+headline: the per-instance *analysis* was already right, and RWF-033 is
+mostly about being able to *tell*, plus one genuine absence.
+
+**Discovered:** by inventorying how `cli/scan.ts` selects an installed
+instance for an advisory before writing any code, then reading the result
+schema and asking what a reader could distinguish.
+
+**Measured against:** merged main at `d812cca`, built and run side by side
+with this branch over the same 15 configured corpus projects, sharing one
+OSV cache so both sides saw identical advisory inputs.
+
+### What was already correct on main
+
+`buildDependencyGraph` emits one `DependencyNode` per lockfile entry, and
+VT-307c-fix-1 already fanned out per node *and* per `location`, calling
+`buildFinding` once per install location with that location as the
+finding's authoritative `packageInstance`. `graphPackageInstances` already
+keys by canonical path rather than name/version; the public-entry memo is
+already per-finding and keyed `(instance, specifier)`; there is no finding
+dedupe anywhere. None of that needed changing, and none of it changed.
+
+So the true baseline is narrower than "advisories collapsed to one
+instance". They did not. Three things around that fan-out did.
+
+### Defect 1 — two instances, one indistinguishable row
+
+A `Finding` carried `{vulnerability, package, version, verdict}`. Two
+installs of `foo@1.2.0` at different roots therefore produced two
+**byte-identical** JSON objects. The verdicts could legitimately differ —
+one AFFECTED, one NOT_AFFECTED — and nothing in the output said which was
+which.
+
+This was not hypothetical, and it had already caught a test.
+`src/cli/scan.anonymous-export.test.ts`'s twin case selected its finding
+with `findings.find((f) => f.package === "anon-lib")` and silently read
+whichever twin enumeration emitted first. Changing the enumeration order
+flipped that test from AFFECTED to NOT_AFFECTED with no analysis change at
+all — package-level collapse, in a test written specifically to prevent it.
+
+The two negative-proof evidence objects already carried an exact canonical
+`packageInstance`, so a NOT_AFFECTED was partly identifiable; an AFFECTED
+or an UNKNOWN was not identifiable at all.
+
+### Defect 2 — an instance the enumeration could not see
+
+`buildDependencyGraph` skips any lockfile entry with no `name` or no
+`version` — "inherent to unversioned/local links", as it says. A private
+workspace package (`fixtures/workspaces/packages/privlib`, `{"name":
+"privlib"}` with no version) therefore formed no `DependencyNode`, and
+P1-A4's workspace discovery fed only `KnownPackageRoots` — *attribution* —
+never advisory candidacy.
+
+The result was not a wrong verdict. It was **no verdict**: not AFFECTED,
+not NOT_AFFECTED, not UNKNOWN. An advisory naming that package, discovered
+through an installed sibling of the same name, was reported for the sibling
+and the workspace copy was never mentioned. A reader seeing one
+NOT_AFFECTED row reasonably concludes the advisory is handled.
+
+### Defect 3 — applicability was a property of the group, not the instance
+
+Advisory lookup grouped `DependencyNode`s by `name@version`, and that group
+key was also the fan-out key. The group's shared version was therefore the
+only version its advisories could ever be evaluated against, and an
+instance with no established version belonged to no group at all — which is
+the mechanism behind defect 2.
+
+### The remediation
+
+`buildPackageInstanceRegistry` (`src/dependencies/package-instances.ts`)
+converges the two authorities that can name a package root — every
+`DependencyNode` location and every discovered workspace root — on the
+**canonical physical root**. Convergence, not concatenation: an npm
+workspace member is routinely named three times (its lockfile entry, its
+workspace declaration, and the `node_modules/<name>` symlink npm writes),
+and all three are one loaded copy at runtime because Node resolves and
+caches by realpath. The converse is equally load-bearing and is *not*
+dedupe: two genuinely separate physical copies of the same name **and**
+version stay two instances.
+
+`findApplicablePackageInstances(registry, advisoryName)` is the named seam
+the expansion happens at. Enumeration stays out of target resolution, and
+`buildFinding` still reasons about exactly one `PackageInstance` per call
+and never sees the others.
+
+Advisory lookup is now keyed by package **name** and the fan-out by
+**instance**. One provider query per distinct installed version — the same
+query set as before, asserted — then each instance evaluated against its
+own version and nothing else. An instance with no version is
+`indeterminate`; it never borrows a sibling's.
+
+Ownership reuses P1-A3 exactly rather than inventing a rule: an instance is
+selectable by its dependency-graph name *or* by the name its own manifest
+declares (`readInstalledPackageName`, already the alias-ownership
+authority). Selecting on either is conservative in the safe direction —
+over-selecting costs at most an extra UNKNOWN, because instance-scoped
+target resolution independently refuses to anchor an advisory at an
+instance whose manifest does not own the name, while under-selecting
+silently loses a vulnerable copy.
+
+Findings now carry `packageInstance`, rendered inside `buildFinding` from
+the finding's own canonical id and the context's own project root — never
+accepted as a caller-supplied label, because a label that can disagree with
+the identity will eventually name the wrong instance. It is
+project-relative inside the project (`node_modules/foo` vs
+`packages/app/node_modules/foo`, reproducible across checkouts) and
+canonical absolute outside it.
+
+**Site A and Site B were not touched.** The diff of
+`src/analysis/verdict.ts` against `d812cca` is exactly two things: the
+optional `packageVersion`, and the identity header. Multi-instance
+expansion does not reopen Site B as a cross-instance fallback.
+
+### Schema
+
+`findings[].packageInstance` added (optional); `findings[].version` moved
+out of `required`. The relaxation is additive and cannot change any
+finding that existed before: an instance with no version previously
+produced no finding whatsoever, so nothing that carried a version stopped
+carrying one. `schemaVersion` is unchanged at `0.6` because that string
+tracks the SDD document version, not an independently evolving result
+schema.
+
+### Runtime oracle
+
+`fixtures/multi-instance/` is a new hermetic fixture built so the answers
+genuinely differ, and
+`src/dependencies/package-instances.differential-oracle.test.ts` takes
+ground truth from real `node` out of process — `require.resolve`,
+`fs.realpathSync`, nearest ancestor manifest. Resolution only; no fixture
+code is ever loaded.
+
+Real Node, measured:
+
+| consumer | specifier | loads |
+|---|---|---|
+| repo root | `twinlib` | `node_modules/twinlib` |
+| `packages/app` | `twinlib` | `packages/app/node_modules/twinlib` |
+| repo root | `reallib` | `node_modules/reallib` |
+| repo root | `aliaslib` | `node_modules/aliaslib` (declares `reallib`) |
+| repo root | `privlib` | `packages/privlib` (through a symlink; no version) |
+| repo root | `@scope/dup` | `node_modules/@scope/dup` |
+| repo root | `scopeddup` | `packages/scopeddup` (declares `@scope/dup`) |
+
+Required mismatch count against VulnTrace's enumeration: **0**, achieved.
+Every enumerated root is additionally confirmed out of process to exist,
+carry its own manifest, and equal its own realpath.
+
+### Adversarial matrix
+
+Both required counts hold: **false AFFECTED = 0** and **runtime-reachable
+false NOT_AFFECTED = 0** across nested twins, workspace + installed,
+alias vs real, same-name/same-version twins, scoped twins, versionless
+instances, reversed enumeration order, and two advisories over one
+instance.
+
+The suites were **mutation-checked rather than assumed**, because a suite
+that passes against the defect proves nothing:
+
+| mutation | tests that fail |
+|---|---|
+| collapse candidates by `name+version` | 6 |
+| borrow a versionless instance's version from a sibling | 2 |
+| drop canonicalization, so a symlink over-splits | 1 |
+
+### Corpus — stated honestly
+
+Across `fixtures/` and `tests/validation/fixtures/`: 33 projects, 103
+converged instances, 11 package names with more than one instance, 19
+logical paths converged onto an already-known physical root.
+
+But the breakdown matters more than the totals. The **real-world** corpus
+(`tests/validation/fixtures/`) contains exactly two multi-instance
+projects, and both are *same name, different versions*:
+
+- `rwb-09`: `semver@7.5.2` beside the alias install `semver-vulnerable`
+  declaring `semver@7.5.1`;
+- `rwb-11`: `url-parse@1.4.7` nested beside `url-parse@1.4.4` hoisted.
+
+It contains **no same-name/same-version twin and no workspace + installed
+pair**. Those shapes exist only in the hermetic fixtures
+(`fixtures/multi-instance`, `fixtures/workspaces`) and in the v2
+adversarial suite, whose `vt2-vuln-lib@1.0.0` twins are "identical in name,
+version and vulnerable export name, distinguishable only by path".
+
+So: **the corpus evidence for the specific defects RWF-033 closes is weak,
+and fixture success is not extrapolated to it.** What the corpus does show
+is that RWF-033 costs nothing there.
+
+`rwb-11` is worth naming as the real-world shape that already worked and is
+now legible: one advisory, `GHSA-8v38-pw62-9cw2`, AFFECTED at
+`node_modules/consumer/node_modules/url-parse` and NOT_AFFECTED at
+`node_modules/url-parse`. On main those two rows were told apart only by
+their differing `version` string; had the versions matched they would have
+been identical.
+
+### Verdict differential vs merged main (`d812cca`)
+
+Both trees built and run over the same 15 configured corpus projects with a
+shared OSV cache:
+
+| class | count |
+|---|---|
+| advisories where main emits one finding and this branch emits several | 0 |
+| new AFFECTED instances | 0 |
+| new NOT_AFFECTED instances | 0 |
+| new UNKNOWN instances | 0 |
+| findings lost | 0 |
+| verdict changed for a matched instance | 0 |
+
+**No movement in any class.** Not vacuous — those projects produce real
+findings with real verdicts (rwb-11 alone produces 13 across two
+instances); the corpus simply contains none of the shapes that move. Every
+new-instance count being zero is also why no manual negative-proof
+verification was required: this branch produced no new NOT_AFFECTED
+anywhere in the corpus.
+
+The canonical validation baseline is unchanged: **18 passed / 5 known
+failures**, the identical five (`VAL-002`, `VAL-003`, `RWB-03`, `RWB-05`,
+`RWB-09b`).
+
+### RWB-05 / RWF-002 — untouched, deliberately
+
+Not remediated here. `qs#parse` target identity remains exact and the final
+verdict remains UNKNOWN.
+
+`RWB-09b` also remains a known failure, and remains the benchmark-design
+issue already recorded against it: the patched `semver@7.5.2` instance is
+confidently out of range, so it produces **no finding**, while the oracle
+expects the string `NOT_AFFECTED`. Preserving that is deliberate — P1-A5
+was explicitly not to change the confident-out-of-range contract. The
+branch's own end-to-end matrix asserts that contract per instance: an
+out-of-range instance produces no finding while its in-range twin still
+does, each matched against its own version.
+
+### Performance
+
+Measured branch vs main through the real `runScanCommand` with a stubbed
+provider, N nested instances of one name all reachable, M advisories:
+
+| instances | advisories | findings | main | branch |
+|---|---|---|---|---|
+| 1 | 1 | 1 | 141 ms | 139 ms |
+| 5 | 1 | 5 | 266 ms | 313 ms |
+| 10 | 1 | 10 | 422 ms | 444 ms |
+| 20 | 1 | 20 | 849 ms | 845 ms |
+| 40 | 1 | 40 | 2056 ms | 2068 ms |
+| 10 | 5 | 50 | 776 ms | 776 ms |
+| 10 | 20 | 200 | 2680 ms | 2699 ms |
+
+Indistinguishable from main within run-to-run noise, which is expected:
+main already performed the same fan-out. Cost grows with instances ×
+advisories, and the slightly superlinear growth in the instance column is
+the call graph itself growing (each added instance adds a consumer package
+to the graph), not the expansion. `scan-performance` regression thresholds
+are unchanged and still pass (3291 ms / 5000 ms, 9107 ms / 20000 ms).
+
+No cross-instance cache was introduced. The OSV cache is keyed
+`(toolVersion, ecosystem, name, version)` and never sees a
+`PackageInstance` — correctly, since twins at one version are asking the
+same question — and a cache-hit run is asserted to reproduce the full
+per-instance split, not merely to return findings.
+
+### Incomplete enumeration — what is and is not claimed
+
+Enumeration is authoritative-metadata-driven: lockfile install paths and
+declared workspace roots. It never scans the filesystem for directories
+named after a package, and never infers an instance from source text.
+
+Consequently VulnTrace claims "**we analyzed this instance**", never
+"**these are all the instances in this application**". No
+advisory-level, application-wide NOT_AFFECTED is introduced, and none
+should be: verdicts remain per instance. A package physically present but
+named by neither authority is not enumerated — and, because negative
+proofs remain gated on exact instance identity (P1-A4's Site B gate), such
+a package cannot authorize a negative verdict either.
+
+### Remaining limitations (deliberately not fixed here)
+
+- **A workspace member sharing a name with a published package** will be
+  queried against the public advisory database for that name. This is how
+  every SCA tool treats workspace members, and is usually right — a
+  workspace member's name normally *is* its published name — but a local
+  package that coincidentally shares a name with a vulnerable public one
+  will be evaluated against advisories about that public package. The
+  per-instance verdict is still anchored at the local instance and P1-A3's
+  ownership check still gates target anchoring, so the realistic cost is an
+  extra UNKNOWN rather than a false AFFECTED.
+- **Yarn/pnpm workspaces without an npm lockfile** contribute instances
+  only through workspace discovery, which is bounded and fails closed
+  (P1-A4). pnpm's content-addressed store is reached only where the
+  dependency graph or a symlink already names it.
+- **`version` is read from the lockfile entry or the workspace manifest**,
+  not reconciled against the installed package's own manifest. A lockfile
+  that disagrees with what is on disk is not detected here.
+- **The real-world corpus does not exercise the shapes this record is
+  about** (see Corpus above). That is a gap in the corpus, not a claim
+  about the code, and it is the main reason the confidence here rests on
+  the runtime oracle rather than on corpus movement.
