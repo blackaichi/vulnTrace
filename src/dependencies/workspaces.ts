@@ -46,16 +46,18 @@ const EMPTY: WorkspaceDiscovery = { packages: [], unsupported: [] };
 
 /**
  * Upper bound on how deep a `**` pattern may walk below its own literal
- * prefix, and on how many directories one discovery may examine in total.
+ * prefix, and on how many directories ONE PATTERN may examine.
  *
  * P1-A4 § PERFORMANCE forbids an unbounded repository-wide scan. The
  * literal prefix of each declared pattern is what bounds the search
  * DOMAIN; these two caps bound the WORK inside that domain, so a
  * pathological tree (a deeply nested or symlink-cycled monorepo) cannot
- * turn discovery into an unbounded walk. Exceeding either cap fails the
- * pattern closed rather than returning a partial, order-dependent subset —
- * a truncated list would make discovery depend on readdir order, which is
- * exactly what must never decide identity.
+ * turn discovery into an unbounded walk. The caps stay: the fix for the
+ * truncation defect is to REPORT reaching them, not to remove them.
+ *
+ * The directory cap is per pattern rather than per discovery, so one wide
+ * pattern cannot starve the patterns declared after it — see
+ * {@link enumerateCandidates}.
  */
 const MAX_DESCENDANT_DEPTH = 8;
 const MAX_DIRECTORIES_EXAMINED = 4096;
@@ -231,33 +233,59 @@ function isExcludedDirectory(name: string): boolean {
   return name === "node_modules" || name.startsWith(".");
 }
 
-/** Candidate directories for one interpreted pattern, or `undefined` if the walk exceeded its bounds. */
+/**
+ * The candidate directories one interpreted pattern yields, together with
+ * whether that enumeration was COMPLETE.
+ *
+ * `truncated` is recorded at the moment the traversal declines to do work
+ * it would otherwise have done — never inferred afterwards from the state
+ * the loop happens to end in. An earlier version of this module tried the
+ * latter (`if (kind === "descendants" && queue.length > 0)` after a loop
+ * that only exits when the queue is empty), which can never be true: the
+ * partial result was then returned as though it were the whole answer, and
+ * a real workspace package silently lost its identity. Truncation is a
+ * fact about the WALK, so the walk is what has to report it.
+ */
+interface PatternEnumeration {
+  readonly candidates: string[];
+  readonly truncated: boolean;
+}
+
+/** Candidate directories for one interpreted pattern, plus completeness. */
 function enumerateCandidates(
   projectRoot: string,
   pattern: WorkspacePattern,
-  budget: { examined: number },
-): string[] | undefined {
+): PatternEnumeration {
   const base = pattern.prefix
     ? path.resolve(projectRoot, pattern.prefix)
     : path.resolve(projectRoot);
 
   if (pattern.kind === "literal") {
-    budget.examined += 1;
-    return [base];
+    return { candidates: [base], truncated: false };
   }
 
-  const results: string[] = [];
+  // A budget PER PATTERN, not one shared across the declaration. A shared
+  // budget makes the result depend on the order patterns happen to appear
+  // in `workspaces`: a wide pattern listed first could exhaust it and
+  // starve every pattern after it, so the same repository discovered
+  // different packages depending on declaration order alone. Order must
+  // never decide identity.
+  let examined = 0;
+  const candidates: string[] = [];
   const queue: { dir: string; depth: number }[] = [{ dir: base, depth: 0 }];
+  let truncated = false;
 
   while (queue.length > 0) {
     const current = queue.shift();
     if (!current) {
       break;
     }
-    if (budget.examined >= MAX_DIRECTORIES_EXAMINED) {
-      return undefined;
+    if (examined >= MAX_DIRECTORIES_EXAMINED) {
+      // Work remains that this walk will not do.
+      truncated = true;
+      break;
     }
-    budget.examined += 1;
+    examined += 1;
 
     const names = subdirectories(current.dir);
     if (names === undefined) {
@@ -268,12 +296,16 @@ function enumerateCandidates(
         continue;
       }
       const child = path.join(current.dir, name);
-      results.push(child);
-      if (
-        pattern.kind === "descendants" &&
-        current.depth + 1 < MAX_DESCENDANT_DEPTH
-      ) {
-        queue.push({ dir: child, depth: current.depth + 1 });
+      candidates.push(child);
+      if (pattern.kind === "descendants") {
+        if (current.depth + 1 < MAX_DESCENDANT_DEPTH) {
+          queue.push({ dir: child, depth: current.depth + 1 });
+        } else {
+          // The depth cap stops us from descending into a directory that
+          // may itself contain workspace packages. Whether it actually
+          // does is exactly what we are declining to find out.
+          truncated = true;
+        }
       }
     }
     if (pattern.kind === "children") {
@@ -281,14 +313,7 @@ function enumerateCandidates(
     }
   }
 
-  if (pattern.kind === "descendants" && queue.length > 0) {
-    // The depth cap stopped the walk with work still pending: the pattern's
-    // domain is larger than this module will enumerate. Fail it closed
-    // rather than return the subset that happened to fit.
-    return undefined;
-  }
-
-  return results;
+  return { candidates, truncated };
 }
 
 /**
@@ -361,7 +386,6 @@ export function discoverWorkspacePackages(
   }
 
   const canonicalProjectRoot = canonicalizePackageInstancePath(projectRoot);
-  const budget = { examined: 0 };
   const byRoot = new Map<string, WorkspacePackage>();
   const unsupported: string[] = [];
 
@@ -374,10 +398,24 @@ export function discoverWorkspacePackages(
       continue;
     }
 
-    const candidates = enumerateCandidates(projectRoot, interpreted, budget);
-    if (candidates === undefined) {
+    const { candidates, truncated } = enumerateCandidates(
+      projectRoot,
+      interpreted,
+    );
+    if (truncated) {
+      // An INCOMPLETE enumeration must never be published as a complete
+      // one. Every root this pattern did find is discarded along with the
+      // ones it did not, because there is no way to tell a reader -- or a
+      // later negative proof -- which packages are missing. Reporting it
+      // is half the fix: the other half is that a package with no identity
+      // can no longer authorize a negative verdict (see
+      // `analysis/verdict.ts`'s Site B identity gate), so discarding these
+      // roots costs coverage and can never cost soundness.
       unsupported.push(
-        `workspace pattern "${pattern}" exceeded this analyzer's discovery bounds and was ignored`,
+        `workspace pattern "${pattern}" could not be enumerated completely ` +
+          `within this analyzer's discovery bounds (depth ${MAX_DESCENDANT_DEPTH}, ` +
+          `${MAX_DIRECTORIES_EXAMINED} directories per pattern); every root it ` +
+          `matched was discarded rather than reported as a complete set`,
       );
       continue;
     }
