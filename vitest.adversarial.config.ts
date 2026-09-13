@@ -13,5 +13,10 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     include: ["tests/adversarial/**/*.test.ts"],
+    // Same reason as vitest.config.ts and vitest.validation.config.ts:
+    // these scenarios build and scan real projects, and the slowest of
+    // them crosses vitest's 5s default often enough to fail the run on a
+    // busy machine while asserting nothing about speed.
+    testTimeout: 30_000,
   },
 });
