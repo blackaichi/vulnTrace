@@ -278,8 +278,8 @@ interface InstanceRecord {
  * A record with no `version` makes no competing claim, and is therefore
  * not part of the distinct-version set. Neither does an ABSENT installed
  * manifest: a declared root with nothing materialized at it is the
- * ordinary state of an un-installed checkout -- 1004 of this repository's
- * own 3578 lockfile entries, measured -- and treating "not installed" as
+ * ordinary state of an un-installed checkout -- 1064 of this repository's
+ * own 6584 lockfile entries, measured -- and treating "not installed" as
  * "disagrees" would delete most of the analyzer's coverage to describe
  * nothing at all. An UNREADABLE manifest is the opposite case and is NOT
  * silence: something is installed there and the analyzer cannot establish
