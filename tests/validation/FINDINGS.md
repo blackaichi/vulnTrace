@@ -7826,6 +7826,15 @@ this fixture), and the branch answers AFFECTED anchored at
 `packages/privlib/impl.js`. **Zero new NOT_AFFECTED of any kind**, so no
 positive-proof audit is owed.
 
+> **Scope of this row, clarified by P1-A5 — see "RWF-033 CLARIFICATION"
+> at the end of this file.** These 26 pairs are measured through
+> `buildFinding` directly, with `packageVersion: "1.0.0"` and
+> `matchResult: "affected"` supplied by the harness. That is the right
+> experiment for what P1-A4 changed — target identity and reachability —
+> but it supplies the applicability that a real scan of a versionless
+> package cannot derive. A production `vulntrace scan` of this fixture
+> emits **no `privlib` finding at all**, before and after P1-A4 alike.
+
 Isolating the two changes: against the branch's own Site B gate but with
 discovery disabled, `privlib` reads UNKNOWN rather than NOT_AFFECTED — the
 gate removes the false negative, and discovery converts the resulting
@@ -7976,7 +7985,8 @@ Verdict differential, `38942d3` → this remediation, over the whole
 `fixtures/workspaces` matrix: **no movement in any class**. The change is
 confined to wrong-package shapes, which the fixture did not contain. The
 private/versionless canonical win (`privlib`, NOT_AFFECTED on merged main →
-AFFECTED here) is unchanged, and the canonical validation baseline remains
+AFFECTED here — under the supplied-applicability harness; see the scope note
+above) is unchanged, and the canonical validation baseline remains
 18 passed / 5 KNOWN_FAIL.
 
 ### What this says about the earlier record
@@ -8292,3 +8302,172 @@ a package cannot authorize a negative verdict either.
   about** (see Corpus above). That is a gap in the corpus, not a claim
   about the code, and it is the main reason the confidence here rests on
   the runtime oracle rather than on corpus movement.
+
+---
+
+## RWF-033 REMEDIATION — conflicting version metadata, and oracles that could not name an instance
+
+Two defects found by the independent P1-A5 audit. Neither could produce a
+wrong AFFECTED or NOT_AFFECTED on any shape the corpus contains, which is
+why the audit certified; both are real, and both are fixed here.
+
+### Defect 1 — enumeration order could decide an instance's version
+
+The registry converges several discovery records onto one canonical
+physical root. That is right: a lockfile entry, the `workspaces`
+declaration, and the `node_modules` symlink npm writes beside a workspace
+member are three records about one physical package, and Node loads it
+once.
+
+Identity convergence was correct. **Metadata reconciliation was not a
+separate step at all** — the first record to claim a root simply kept its
+own fields. For `version` that has a consequence, because version decides
+advisory applicability. Reproduced directly:
+
+```
+node_modules/conf-lib  ->  symlink to packages/conf-lib
+lockfile: "packages/conf-lib"      version 1.0.0   (in the advisory's range)
+lockfile: "node_modules/conf-lib"  version 5.0.0   (outside it)
+```
+
+One physical directory, two contradictory declared versions. Reading the
+entries in one order produced a finding; reversing them produced none.
+`packageName`, `declaredLocation` and `provenance` were order-dependent the
+same way, with explainability rather than soundness at stake.
+
+**The fix** separates the two questions. Records are collected per
+canonical root first, reconciled second, over the SET of versions the
+records actually declare:
+
+| declared versions | result |
+| --- | --- |
+| exactly one distinct | that version |
+| two or more distinct | `undefined` |
+| none | `undefined` |
+
+Being a property of the set, this is order-independent by construction
+rather than by care, and a conflict cannot be walked back: `1.0.0`,
+`2.0.0`, `1.0.0` stays unresolved. A fold comparing "incoming against
+current" would restore `1.0.0` on the third record; this cannot.
+
+Conflict **fails closed**, never to a winner. First, last, highest, lowest
+and lexicographic are all arbitrary, and each converts "this project's own
+metadata contradicts itself about this directory" into a confident verdict
+computed from a version nothing established. `undefined` instead flows
+through the contract that already exists — indeterminate applicability,
+UNKNOWN, no provider query.
+
+**Silence is deliberately not conflict.** A record with no `version` makes
+no competing claim and is not in the distinct-version set. An ordinary npm
+workspace member is routinely described by a lockfile entry carrying its
+version and a manifest omitting one; counting that as a contradiction would
+make every such package UNKNOWN for no soundness gain. It would also
+contradict how every other fallback here reads a silent source —
+`identifyModule` prefers a manifest name and falls back to the path;
+`buildDependencyGraph` calls a versionless link entry "inherent to
+unversioned/local links". None of them reads "this source does not know" as
+"this source disagrees".
+
+Evidence: the failure was pinned before the fix (both orders, a three-record
+walk-back, a silence control, and a permutation matrix over five metadata
+multisets), plus an end-to-end scan of a contradictory lockfile in both
+orders and an agreeing-records control.
+
+### Defect 2 — the adversarial oracles selected by package + version
+
+Sixteen v2 fixtures deliberately plant a second install of `vt2-vuln-lib`
+at the same name **and** version as the one the host package really
+requires — "the TOP-LEVEL vt2-vuln-lib install, which any resolution keyed
+on package name and version rather than on install path would find", as the
+scenarios themselves say. The decoy exists to catch a name/version-keyed
+ANALYZER.
+
+It also catches a name/version-keyed ORACLE, and the oracles were one.
+`findings.find(package && version)` returns whichever twin the scan emitted
+first, and those twins can carry different verdicts (for ADV2-072: AFFECTED
+at the nested install, NOT_AFFECTED at the decoy). The suite passed only
+because emission order happened to put the nested copy first — every host
+package is named `vt2-<a..t>-lib`, which sorts before `vt2-vuln-lib`. A
+fixture named `vt2-w…` would have flipped the suite's answer with no
+analysis change whatsoever. P1-A5 changed that emission order, which is
+what made this worth fixing now rather than later.
+
+**The fix**: selection filters, then requires a unique result. An ambiguous
+selector becomes its own failing outcome — `AMBIGUOUS_SELECTOR(…)`, naming
+the instances — never silently resolved by array position. Running that
+against the suite is how the sixteen were identified rather than guessed.
+
+Those sixteen now carry `findingSelector.packageInstance`, and the instance
+named is **not "whatever makes the test pass"**: it is the install the host
+package's own `require` really resolves, taken from real `node` out of
+process for all forty fixtures that have a nested copy. It agrees with the
+ambiguity probe in every case.
+
+A guard test pins why this mattered: for ADV2-072 it asserts the two
+candidates are identical on version, differ on instance, and differ on
+**verdict** — so the old selector's answer was decided by ordering — then
+asserts instance-keyed selection returns the same finding under both
+orderings.
+
+v1 needed no disambiguation (no v1 scenario is ambiguous) and validation's
+fixtures contain no same-version twins today; both got the same strictness
+anyway. The two `fooFindings[0]` sites in `scan.test.ts` were left alone:
+each is already guarded by a `toHaveLength(1)` that makes it unambiguous.
+
+### RWF-033 CLARIFICATION — what RWF-032's `privlib` row does and does not say
+
+RWF-032 records `privlib` moving NOT_AFFECTED → AFFECTED, under the heading
+"Corrected verdict differential (production configuration)". That phrase
+corrected an earlier artifact (a measurement taken with no
+`package-lock.json`); it does **not** mean the row was measured through
+`runScanCommand`.
+
+Those 26 advisory/consumer pairs are driven through `buildFinding`
+directly, and the harness supplies:
+
+```
+packageVersion: "1.0.0"
+matchResult:    "affected"
+```
+
+`fixtures/workspaces/packages/privlib` declares `{"name": "privlib",
+"private": true}` and **no version at all**. So the harness supplies exactly
+the applicability a real scan cannot derive for it.
+
+That is the right experiment for what P1-A4 changed. P1-A4 is about target
+IDENTITY and REACHABILITY: given that an advisory applies, does the target
+bind at the correct instance? The answer — it binds at
+`packages/privlib/impl.js`, through the RWF-029 forwarding relation — is
+genuine and unaffected by anything in P1-A5.
+
+What it never established is that a production scan could *derive*
+applicability for a versionless package. It cannot, and under P1-A5 it
+still cannot:
+
+- version is absent, so it is never fabricated and never borrowed from a
+  same-named sibling;
+- `advisoryQueryVersions` contributes no provider query for an instance
+  with no version;
+- applicability is therefore `indeterminate`, which `buildFinding`
+  short-circuits to UNKNOWN **before** `checkReachability` runs — so such an
+  instance can never receive a negative proof or an AFFECTED either.
+
+Measured, both trees, real `vulntrace scan` of `fixtures/workspaces` with a
+`privlib` rule and advisory: **16 provider queries and no `privlib` finding,
+identically before and after P1-A5.** The instance is enumerated (P1-A5) and
+attributed (P1-A4); it simply has no version for an advisory range to be
+evaluated against, and no same-named sibling carries one. Where a sibling
+*does* carry one, the versionless instance is reported as UNKNOWN rather
+than omitted — that is the case `scan.multi-instance.test.ts` pins.
+
+So the two records agree, and the distinction is worth stating plainly:
+
+| question | authority | answer for `privlib` |
+| --- | --- | --- |
+| Which instance owns the target? | P1-A4 / RWF-032 | `packages/privlib`, exactly |
+| Does the target bind and is it reachable? | P1-A4 / RWF-032 | yes, at `impl.js` |
+| Does the advisory's version range apply? | P1-A5 | **not established** |
+| Final production verdict | P1-A5 | no finding, or UNKNOWN when a sibling surfaces the advisory |
+
+No documentation in this file should now be read as claiming a production
+AFFECTED for a versionless package.
