@@ -283,7 +283,20 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // discovers nothing rather than guessing. Adding a root changes only
   // ATTRIBUTION of files the analysis already reached -- it loads nothing
   // and makes nothing reachable (P1-A4 § MODULE LOAD CLOSURE).
+  //
+  // F1-A: discovery incompleteness is MACHINE-READABLE. Every reason
+  // `discoverWorkspacePackages` returns -- an uninterpretable declaration,
+  // an unsupported pattern shape, a truncated traversal, a pnpm-only
+  // layout -- is a package this scan may never have seen, and a reader of
+  // the JSON or HTML report has to be able to see that. Previously these
+  // reached stderr alone: the verdict layer still failed closed, but a
+  // consumer parsing `diagnostics` had no way to tell an incompletely
+  // enumerated monorepo from a fully enumerated one. The stderr line is
+  // kept as well -- it is what a human running the CLI sees first.
   const workspaces = discoverWorkspacePackages(projectRoot);
+  const workspaceDiagnostics: Diagnostic[] = workspaces.unsupported.map(
+    (reason) => ({ source: "workspaces", message: reason }),
+  );
   for (const reason of workspaces.unsupported) {
     io.stderr(`vulntrace: ${reason}\n`);
   }
@@ -334,6 +347,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   }
 
   const diagnostics: Diagnostic[] = [
+    ...workspaceDiagnostics,
     ...entrypointsResult.diagnostics.map((d) => ({
       source: `entrypoints:${d.source}`,
       message: d.message,
