@@ -108,12 +108,14 @@ function recordingProvider(advisories: readonly RawVulnerability[]): {
 }
 
 function rule(id: string, name: string): string {
+  // Quoted: a scoped name starts with `@`, which YAML reserves.
+  const quoted = JSON.stringify(name);
   return (
     `  - id: ${id}\n` +
     `    package:\n` +
-    `      name: ${name}\n` +
+    `      name: ${quoted}\n` +
     `    targets:\n` +
-    `      - module: ${name}\n` +
+    `      - module: ${quoted}\n` +
     `        export: danger\n` +
     `        kind: function\n` +
     `        confidence: 1.0\n`
@@ -627,5 +629,121 @@ describe("F1-B: lockfile vs installed manifest version authority", () => {
         .filter((finding) => finding.package === "other-lib")
         .map((finding) => finding.verdict),
     ).toEqual(["AFFECTED"]);
+  });
+});
+
+describe("F1-B: alias and scoped-package ownership survive version reconciliation", () => {
+  /**
+   * An npm alias install: the directory is `vuln-alias`, the package's own
+   * identity is `vuln-lib`. P1-A3 makes BOTH names select the instance, and
+   * reconciling versions must not narrow that -- the same single manifest
+   * read now answers the name question and the version question.
+   */
+  function aliasProject(installedVersion: string): string {
+    return project({
+      "vulntrace.yml": CONFIG,
+      "rules.yml": "rules:\n" + rule("GHSA-f1-0001", "vuln-lib"),
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "vuln-alias": "npm:vuln-lib@1.0.0" },
+      }),
+      "package-lock.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "app", version: "1.0.0" },
+          "node_modules/vuln-alias": { name: "vuln-lib", version: "1.0.0" },
+        },
+      }),
+      "src/index.js":
+        'const lib = require("vuln-alias");\n' +
+        "function main(input) {\n  return lib.danger(input);\n}\n" +
+        "module.exports = { main };\n",
+      "node_modules/vuln-alias/package.json": JSON.stringify({
+        name: "vuln-lib",
+        version: installedVersion,
+        main: "index.js",
+      }),
+      "node_modules/vuln-alias/index.js": LIB_SOURCE,
+    });
+  }
+
+  it("still selects an aliased instance by its real name when the versions agree (control)", async () => {
+    const { provider, queries } = recordingProvider([
+      advisory("vuln-lib", "GHSA-f1-0001", "0", "2.0.0"),
+    ]);
+
+    const output = await scanOutput(aliasProject("1.0.0"), provider);
+
+    // The advisory names `vuln-lib`; the directory is `vuln-alias`. That
+    // this finding exists at all is the alias-ownership assertion.
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "AFFECTED",
+    ]);
+    expect(output.findings[0]?.packageInstance).toBe("node_modules/vuln-alias");
+    expect(queries.map((query) => query.version)).toEqual(["1.0.0"]);
+    expect(conflictDiagnostics(output)).toEqual([]);
+  });
+
+  it("§ 24.3 -- an aliased instance whose manifest contradicts the lockfile fails closed", async () => {
+    const { provider, queries } = recordingProvider([
+      advisory("vuln-lib", "GHSA-f1-0001", "0", "1.5.0"),
+    ]);
+
+    const output = await scanOutput(aliasProject("2.0.0"), provider);
+
+    expect(
+      output.findings.filter((finding) => finding.verdict === "AFFECTED"),
+    ).toEqual([]);
+    expect(queries.map((query) => query.version)).toEqual([]);
+    expect(conflictDiagnostics(output)).toHaveLength(1);
+    // Reported under its real identity, at its real install directory.
+    expect(conflictDiagnostics(output)[0]).toContain("vuln-lib");
+    expect(conflictDiagnostics(output)[0]).toContain("node_modules/vuln-alias");
+  });
+
+  it("handles a scoped package's contradiction under its full scoped name", async () => {
+    const root = project({
+      "vulntrace.yml": CONFIG,
+      "rules.yml": "rules:\n" + rule("GHSA-f1-0001", "@scope/vuln-lib"),
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "@scope/vuln-lib": "1.0.0" },
+      }),
+      "package-lock.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "app", version: "1.0.0" },
+          "node_modules/@scope/vuln-lib": { version: "1.0.0" },
+        },
+      }),
+      "src/index.js":
+        'const lib = require("@scope/vuln-lib");\n' +
+        "function main(input) {\n  return lib.danger(input);\n}\n" +
+        "module.exports = { main };\n",
+      "node_modules/@scope/vuln-lib/package.json": JSON.stringify({
+        name: "@scope/vuln-lib",
+        version: "2.0.0",
+        main: "index.js",
+      }),
+      "node_modules/@scope/vuln-lib/index.js": LIB_SOURCE,
+    });
+    const { provider, queries } = recordingProvider([
+      advisory("@scope/vuln-lib", "GHSA-f1-0001", "0", "1.5.0"),
+    ]);
+
+    const output = await scanOutput(root, provider);
+
+    expect(
+      output.findings.filter((finding) => finding.verdict === "AFFECTED"),
+    ).toEqual([]);
+    expect(queries.map((query) => query.version)).toEqual([]);
+    expect(conflictDiagnostics(output)).toHaveLength(1);
+    expect(conflictDiagnostics(output)[0]).toContain("@scope/vuln-lib");
   });
 });

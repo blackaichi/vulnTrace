@@ -8692,6 +8692,9 @@ manifest read now answers both questions instead of one.
 | `node_modules/foo` → `packages/foo`, lockfile `1.0.0` vs manifest `2.0.0` | ONE instance, ONE conflict diagnostic, no query |
 | `foo@1.0.0` at root A, `foo@2.0.0` at root B | two instances, **no conflict**, AFFECTED preserved |
 | conflicted instance beside a consistent sibling | sibling keeps its query and its AFFECTED verdict |
+| npm alias `vuln-alias` -> `vuln-lib`, versions agree | AFFECTED, selected by the real name — alias ownership intact |
+| npm alias, manifest contradicts the lockfile | no AFFECTED, no query, conflict reported under the real name at the alias directory |
+| scoped `@scope/vuln-lib`, manifest contradicts | no AFFECTED, no query, conflict under the full scoped name |
 | reversed lockfile entry order | identical diagnostics, verdicts and query set |
 
 ### Corpus — stated honestly
@@ -8727,11 +8730,11 @@ Whole-suite, both revisions:
 
 | Suite | main | branch |
 | --- | --- | --- |
-| unit + integration | 149 files / 3687 tests | 152 files / **3716** tests |
+| unit + integration | 149 files / 3687 tests | 152 files / **3719** tests |
 | adversarial | 124 / 124 | 124 / 124 |
 | validation | 18 pass, 5 known fail | 18 pass, **same 5**, same verdicts |
 
-The delta is exactly `+3 files / +29 tests` — the three files added here.
+The delta is exactly `+3 files / +32 tests` — the three files added here.
 **Every pre-existing test is unchanged**, so the verdict differential is
 empty by construction: no UNKNOWN→AFFECTED, no AFFECTED→NOT_AFFECTED, no
 NOT_AFFECTED→UNKNOWN, no finding→no-finding, in either direction, anywhere
