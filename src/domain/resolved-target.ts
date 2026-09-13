@@ -230,11 +230,16 @@ export function readInstalledPackageName(
  *                 project whose dependencies are not installed. Nothing is
  *                 installed, so nothing contradicts the declaration.
  * - `untrusted` — a manifest IS installed there and its own version claim
- *                 cannot be read: the file is unparseable or unreadable, or
- *                 its `"version"` is present but not a usable string. Some
- *                 package occupies that directory and the analyzer cannot
- *                 establish which one, which is NOT the same as nothing
- *                 being installed.
+ *                 cannot be used. Some package occupies that directory and
+ *                 the analyzer cannot establish which one, which is NOT the
+ *                 same as nothing being installed. The `reason` separates
+ *                 the two ways this happens, because they are different
+ *                 facts about the project and a reader fixes them
+ *                 differently: `"unreadable"` — the file could not be read
+ *                 or parsed at all; `"unusable-version"` — the file read
+ *                 and parsed perfectly well, and its `"version"` is present
+ *                 but not a usable string. Saying the manifest "could not
+ *                 be read" of the second case is simply false.
  * - `silent`    — the manifest parsed and simply declares no version. It
  *                 makes no competing claim (a private workspace package is
  *                 routinely versionless), so a declared version stands.
@@ -249,7 +254,10 @@ export function readInstalledPackageName(
  */
 export type InstalledVersionClaim =
   | { readonly kind: "absent" }
-  | { readonly kind: "untrusted" }
+  | {
+      readonly kind: "untrusted";
+      readonly reason: "unreadable" | "unusable-version";
+    }
   | { readonly kind: "silent" }
   | { readonly kind: "declared"; readonly version: string };
 
@@ -286,7 +294,7 @@ export function readInstalledManifestIdentity(
       version:
         code === "ENOENT" || code === "ENOTDIR"
           ? { kind: "absent" }
-          : { kind: "untrusted" },
+          : { kind: "untrusted", reason: "unreadable" },
     };
   }
 
@@ -294,10 +302,10 @@ export function readInstalledManifestIdentity(
   try {
     raw = JSON.parse(text);
   } catch {
-    return { version: { kind: "untrusted" } };
+    return { version: { kind: "untrusted", reason: "unreadable" } };
   }
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    return { version: { kind: "untrusted" } };
+    return { version: { kind: "untrusted", reason: "unreadable" } };
   }
 
   const name = (raw as { name?: unknown }).name;
@@ -312,7 +320,11 @@ export function readInstalledManifestIdentity(
   }
   const version = (raw as { version?: unknown }).version;
   if (typeof version !== "string" || version.length === 0) {
-    return { ...identity, version: { kind: "untrusted" } };
+    // The manifest read and parsed; only this field is unusable.
+    return {
+      ...identity,
+      version: { kind: "untrusted", reason: "unusable-version" },
+    };
   }
   return { ...identity, version: { kind: "declared", version } };
 }

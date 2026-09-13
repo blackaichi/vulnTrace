@@ -731,8 +731,15 @@ describe("P1-A5: a version conflict is reported, not merely survived", () => {
     );
     expect(conflicts).toHaveLength(1);
     expect(conflicts[0]?.message).toContain("packages/conf-lib");
+    // Foundation F1 labels each version with the authorities that claimed
+    // it. Here `packages/conf-lib` is named by a lockfile entry, by the
+    // repository's `workspaces` declaration, and by its own installed
+    // manifest -- all three claiming 1.0.0 -- while the second lockfile
+    // entry (the `node_modules/conf-lib` symlink to the same root) claims
+    // 5.0.0. Same contradiction as before; it now says where each side
+    // came from.
     expect(conflicts[0]?.message).toContain(
-      "conflicting versions 1.0.0, 5.0.0",
+      "conflicting versions 1.0.0 (declared, installed, workspace), 5.0.0 (declared)",
     );
     expect(conflicts[0]?.message).toContain(
       "no advisory version range was evaluated against it",

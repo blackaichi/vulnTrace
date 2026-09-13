@@ -238,7 +238,9 @@ describe("F1-B: lockfile vs installed manifest version authority", () => {
     expect(queries.map((query) => query.version)).toEqual([]);
     // § 23: the absence of a finding must not be silent.
     expect(conflictDiagnostics(output)).toHaveLength(1);
-    expect(conflictDiagnostics(output)[0]).toContain("1.0.0, 2.0.0");
+    expect(conflictDiagnostics(output)[0]).toContain(
+      "1.0.0 (declared), 2.0.0 (installed)",
+    );
     expect(conflictDiagnostics(output)[0]).toContain("node_modules/vuln-lib");
   });
 
@@ -745,5 +747,265 @@ describe("F1-B: alias and scoped-package ownership survive version reconciliatio
     expect(queries.map((query) => query.version)).toEqual([]);
     expect(conflictDiagnostics(output)).toHaveLength(1);
     expect(conflictDiagnostics(output)[0]).toContain("@scope/vuln-lib");
+  });
+});
+
+describe("F1 remediation: conflict diagnostics state TRUE provenance", () => {
+  /** The one diagnostic naming a version contradiction. */
+  function onlyConflict(output: ScanOutputShape): string {
+    const messages = conflictDiagnostics(output);
+    expect(messages).toHaveLength(1);
+    return messages[0] ?? "";
+  }
+
+  it("labels a declared version and an installed version as what they are", async () => {
+    // THE BLOCKING CASE. Before this fix the message read "...conflicting
+    // versions 1.0.0, 2.0.0 by this project's own dependency metadata",
+    // which is false: 2.0.0 appears nowhere in the lockfile or the root
+    // manifest -- it exists only in node_modules/vuln-lib/package.json.
+    // A reader was sent to grep dependency metadata for a version that was
+    // never there.
+    const root = divergentProject({
+      declaredVersion: "1.0.0",
+      installedVersion: "2.0.0",
+    });
+    const { provider } = recordingProvider([
+      advisory("vuln-lib", "GHSA-f1-0001", "0", "1.5.0"),
+    ]);
+
+    const message = onlyConflict(await scanOutput(root, provider));
+
+    expect(message).toContain("1.0.0 (declared)");
+    expect(message).toContain("2.0.0 (installed)");
+    expect(message).toContain(
+      "these claims come from this project's own dependency metadata and from the package installed on disk",
+    );
+    // The precise false statement this remediation exists to remove.
+    expect(message).not.toContain(
+      "1.0.0, 2.0.0 by this project's own dependency metadata",
+    );
+  });
+
+  it("keeps the accurate all-declared wording when no installed claim exists", async () => {
+    // Two lockfile entries contradict each other; the package installed at
+    // the root they share declares no version at all, so it is silent and
+    // makes no claim. Nothing on disk is implicated, and the message must
+    // not pretend otherwise.
+    const root = project({
+      "vulntrace.yml": CONFIG,
+      "rules.yml": "rules:\n" + rule("GHSA-f1-0001", "vuln-lib"),
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "lib-a": "1.0.0", "lib-b": "1.0.0" },
+      }),
+      "package-lock.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "app", version: "1.0.0" },
+          "node_modules/lib-a": { name: "vuln-lib", version: "1.0.0" },
+          "node_modules/lib-b": { name: "vuln-lib", version: "2.0.0" },
+        },
+      }),
+      "src/index.js":
+        "function main(input) {\n  return input;\n}\nmodule.exports = { main };\n",
+      "real/package.json": JSON.stringify({
+        name: "vuln-lib",
+        main: "index.js",
+      }),
+      "real/index.js": LIB_SOURCE,
+      "node_modules/.package-lock.json": "{}",
+    });
+    symlinkSync(
+      path.join(root, "real"),
+      path.join(root, "node_modules/lib-a"),
+      "dir",
+    );
+    symlinkSync(
+      path.join(root, "real"),
+      path.join(root, "node_modules/lib-b"),
+      "dir",
+    );
+    const { provider } = recordingProvider([
+      advisory("vuln-lib", "GHSA-f1-0001", "0", "9.0.0"),
+    ]);
+
+    const message = onlyConflict(await scanOutput(root, provider));
+
+    expect(message).toContain("1.0.0 (declared), 2.0.0 (declared)");
+    expect(message).toContain(
+      "every claim comes from this project's own dependency metadata",
+    );
+    expect(message).not.toContain("installed on disk");
+  });
+
+  it("attributes one version to every authority that claimed it, without repeating it", async () => {
+    // The workspace declaration and the installed manifest are the SAME
+    // FILE for a workspace root, so both vouch for 1.0.0; the lockfile
+    // entry for that same root says 3.0.0. The version must appear once,
+    // carrying all three labels it has earned.
+    const root = project({
+      "vulntrace.yml": CONFIG,
+      "rules.yml": "rules:\n" + rule("GHSA-f1-0001", "vuln-lib"),
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        workspaces: ["packages/*"],
+        dependencies: { "vuln-lib": "1.0.0" },
+      }),
+      "package-lock.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "app", version: "1.0.0" },
+          "packages/vuln-lib": { name: "vuln-lib", version: "3.0.0" },
+        },
+      }),
+      "src/index.js":
+        "function main(input) {\n  return input;\n}\nmodule.exports = { main };\n",
+      "packages/vuln-lib/package.json": JSON.stringify({
+        name: "vuln-lib",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "packages/vuln-lib/index.js": LIB_SOURCE,
+    });
+    const { provider } = recordingProvider([
+      advisory("vuln-lib", "GHSA-f1-0001", "0", "9.0.0"),
+    ]);
+
+    const message = onlyConflict(await scanOutput(root, provider));
+
+    expect(message).toContain("1.0.0 (installed, workspace), 3.0.0 (declared)");
+  });
+
+  it("produces byte-identical provenance whichever order the claims arrive in", async () => {
+    const build = (reversed: boolean): string => {
+      const entries: [string, unknown][] = [
+        ["node_modules/lib-a", { name: "vuln-lib", version: "1.0.0" }],
+        ["node_modules/lib-b", { name: "vuln-lib", version: "2.0.0" }],
+      ];
+      const ordered = reversed ? [...entries].reverse() : entries;
+      const root = project({
+        "vulntrace.yml": CONFIG,
+        "rules.yml": "rules:\n" + rule("GHSA-f1-0001", "vuln-lib"),
+        "package.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "lib-a": "1.0.0", "lib-b": "1.0.0" },
+        }),
+        "package-lock.json": JSON.stringify({
+          name: "app",
+          version: "1.0.0",
+          lockfileVersion: 3,
+          packages: Object.fromEntries([
+            ["", { name: "app", version: "1.0.0" }],
+            ...ordered,
+          ]),
+        }),
+        "src/index.js":
+          "function main(input) {\n  return input;\n}\nmodule.exports = { main };\n",
+        "real/package.json": JSON.stringify({
+          name: "vuln-lib",
+          version: "5.0.0",
+          main: "index.js",
+        }),
+        "real/index.js": LIB_SOURCE,
+        "node_modules/.package-lock.json": "{}",
+      });
+      symlinkSync(
+        path.join(root, "real"),
+        path.join(root, "node_modules/lib-a"),
+        "dir",
+      );
+      symlinkSync(
+        path.join(root, "real"),
+        path.join(root, "node_modules/lib-b"),
+        "dir",
+      );
+      return root;
+    };
+    const advisories = [advisory("vuln-lib", "GHSA-f1-0001", "0", "9.0.0")];
+
+    const forward = onlyConflict(
+      await scanOutput(build(false), recordingProvider(advisories).provider),
+    );
+    const backward = onlyConflict(
+      await scanOutput(build(true), recordingProvider(advisories).provider),
+    );
+
+    expect(forward).toBe(backward);
+    expect(forward).toContain(
+      "1.0.0 (declared), 2.0.0 (declared), 5.0.0 (installed)",
+    );
+  });
+
+  it("does not say a manifest was unreadable when only its version field is unusable", async () => {
+    // The file reads and parses perfectly; `"version": 123` is simply not
+    // a version. Behavior is unchanged -- still fails closed -- but
+    // "could not be read" describes a corrupt file that does not exist
+    // here, and sends a reader looking for the wrong thing.
+    const root = divergentProject({ declaredVersion: "1.0.0" });
+    writeFileSync(
+      path.join(root, "node_modules/vuln-lib/package.json"),
+      '{"name":"vuln-lib","version":123,"main":"index.js"}',
+    );
+    const { provider, queries } = recordingProvider([
+      advisory("vuln-lib", "GHSA-f1-0001", "0", "9.0.0"),
+    ]);
+
+    const output = await scanOutput(root, provider);
+    const messages = output.diagnostics
+      .filter((diagnostic) => diagnostic.source === "dependencies")
+      .map((diagnostic) => diagnostic.message);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain(
+      'whose "version" field is not a usable version string',
+    );
+    expect(messages[0]).not.toContain("could not be read");
+    // Behavior is untouched: still fails closed, still no query.
+    expect(
+      output.findings.filter((finding) => finding.verdict === "AFFECTED"),
+    ).toEqual([]);
+    expect(queries.map((query) => query.version)).toEqual([]);
+  });
+
+  it("still says 'could not be read' for a genuinely unparseable manifest", async () => {
+    const root = divergentProject({
+      declaredVersion: "1.0.0",
+      installedVersion: null,
+    });
+    const { provider } = recordingProvider([
+      advisory("vuln-lib", "GHSA-f1-0001", "0", "9.0.0"),
+    ]);
+
+    const messages = (await scanOutput(root, provider)).diagnostics
+      .filter((diagnostic) => diagnostic.source === "dependencies")
+      .map((diagnostic) => diagnostic.message);
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toContain(
+      "has an installed package.json that could not be read",
+    );
+  });
+
+  it("emits no conflict diagnostic when declared and installed agree (control)", async () => {
+    const { provider } = recordingProvider([
+      advisory("vuln-lib", "GHSA-f1-0001", "0", "9.0.0"),
+    ]);
+
+    const output = await scanOutput(
+      divergentProject({ declaredVersion: "1.2.3", installedVersion: "1.2.3" }),
+      provider,
+    );
+
+    expect(conflictDiagnostics(output)).toEqual([]);
+    expect(
+      output.diagnostics.filter((d) => d.source === "dependencies"),
+    ).toEqual([]);
   });
 });

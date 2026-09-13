@@ -92,28 +92,64 @@ export interface PackageInstanceVersionConflict {
   readonly packageInstance: PackageInstanceId;
   /** The name this instance is reported under, for a readable message. */
   readonly packageName: string;
-  /** Every distinct DECLARED version, sorted, so the report is stable. */
+  /** Every distinct claimed version, sorted, so the report is stable. */
   readonly declaredVersions: readonly string[];
   /**
-   * Which authorities contributed a version, sorted. Explainability only:
-   * "the lockfile and the package installed on disk disagree" is a
-   * different thing for a reader to go fix than "two lockfile entries
-   * disagree", and the versions alone do not say which happened.
+   * Which authorities contributed a version anywhere on this root, sorted
+   * and deduplicated -- the UNION over {@link versionClaims}. Lets a
+   * renderer say in one clause whether the installed package is involved
+   * at all, without walking the per-version detail.
    */
   readonly sources: readonly VersionSource[];
+  /**
+   * Each conflicting version paired with the authorities that claimed it,
+   * ordered by version. This is what makes the diagnostic's provenance
+   * TRUE rather than merely plausible.
+   */
+  readonly versionClaims: readonly PackageInstanceVersionClaim[];
 }
 
 /**
- * Which authority declared a version for a canonical root.
+ * Which authority claimed a version for a canonical root.
  *
- * `"declared"` covers the project's own dependency metadata -- a lockfile
- * entry or the repository's `workspaces` declaration -- and `"installed"`
- * is the package's own manifest at that physical root. The distinction
- * exists for the CONFLICT MESSAGE and nothing else: neither source
- * outranks the other in {@link reconcileInstanceMetadata}, which is the
- * whole point (Foundation F1 § 10).
+ * - `"declared"`  — the dependency graph, i.e. this project's own
+ *                   dependency metadata (`package.json` + the lockfile it
+ *                   resolved to). Deliberately NOT called "lockfile": the
+ *                   graph is what this layer is handed, and nothing here
+ *                   guarantees a given node came from a lockfile entry.
+ * - `"workspace"` — the repository's own `workspaces` declaration.
+ * - `"installed"` — the manifest of the package actually installed at that
+ *                   physical root.
+ *
+ * The distinction exists for the CONFLICT MESSAGE and nothing else:
+ * neither source outranks the other in
+ * {@link reconcileInstanceMetadata}, which is the whole point (Foundation
+ * F1 § 10).
+ *
+ * Note that `"installed"` can contribute AT MOST ONE version to a root --
+ * a directory has one manifest -- so a conflict can never be
+ * installed-only. Every conflict involves at least one declared or
+ * workspace claim.
  */
-export type VersionSource = "declared" | "installed";
+export type VersionSource = "declared" | "workspace" | "installed";
+
+/**
+ * One concrete version claimed for a root, and every authority that
+ * claimed it.
+ *
+ * This is the shape the conflict message is rendered from. A flat list of
+ * versions cannot say WHERE each came from, and a flat list of sources
+ * cannot say WHICH version each vouched for -- and it is exactly that
+ * pairing a reader needs, because "the lockfile says 1.0.0 and the
+ * installed package says 2.0.0" and "two lockfile entries disagree and the
+ * disk agrees with one of them" are different problems with different
+ * fixes.
+ */
+export interface PackageInstanceVersionClaim {
+  readonly version: string;
+  /** Every authority claiming this version, sorted, deduplicated. */
+  readonly sources: readonly VersionSource[];
+}
 
 /**
  * One canonical physical root where a package IS installed but its own
@@ -132,6 +168,13 @@ export type VersionSource = "declared" | "installed";
 export interface PackageInstanceManifestUncertainty {
   readonly packageInstance: PackageInstanceId;
   readonly packageName: string;
+  /**
+   * Why the installed manifest's version could not be used. Carried
+   * through so the message can say which actually happened: a manifest
+   * that parsed fine but carries `"version": 123` was READ perfectly well,
+   * and reporting it as unreadable is false.
+   */
+  readonly reason: "unreadable" | "unusable-version";
   /**
    * Every version the project's own dependency metadata declared for this
    * root, sorted -- the claim that could not be confirmed. Possibly empty.
@@ -275,12 +318,30 @@ function reconcileInstanceMetadata(
 } {
   const ownershipNames = new Set<string>();
   const declaredVersions = new Set<string>();
+  // version -> every authority that claimed it. Built alongside the sets
+  // rather than reconstructed afterwards: provenance that is re-derived
+  // later is provenance that can drift from what actually happened, which
+  // is the defect this pairing exists to prevent.
+  const claimSources = new Map<string, Set<VersionSource>>();
+  const claim = (version: string, source: VersionSource): void => {
+    const existing = claimSources.get(version);
+    if (existing) {
+      existing.add(source);
+    } else {
+      claimSources.set(version, new Set([source]));
+    }
+  };
+
   for (const entry of records) {
     for (const name of entry.ownershipNames) {
       ownershipNames.add(name);
     }
     if (entry.version !== undefined) {
       declaredVersions.add(entry.version);
+      claim(
+        entry.version,
+        entry.provenance === "workspace" ? "workspace" : "declared",
+      );
     }
   }
 
@@ -289,10 +350,10 @@ function reconcileInstanceMetadata(
   // ROOT, not of any one discovery record: however many lockfile entries
   // and workspace patterns named this directory, there is exactly one
   // package installed in it, and it says one thing about itself.
-  const claimedVersions = new Set(declaredVersions);
   if (installed.kind === "declared") {
-    claimedVersions.add(installed.version);
+    claim(installed.version, "installed");
   }
+  const claimedVersions = new Set(claimSources.keys());
 
   // Two independent reasons to have no established version, with the same
   // consequence. `untrusted` is not folded into the conflict set as a
@@ -342,13 +403,15 @@ function reconcileInstanceMetadata(
   // Deliberately NOT `version === undefined`: a root nothing ever declared
   // a version for (size 0) is silent, not contradictory, and must not be
   // reported as either.
-  const untrustedManifest = untrusted
-    ? {
-        packageInstance,
-        packageName,
-        declaredVersions: [...declaredVersions].sort(),
-      }
-    : undefined;
+  const untrustedManifest =
+    installed.kind === "untrusted"
+      ? {
+          packageInstance,
+          packageName,
+          reason: installed.reason,
+          declaredVersions: [...declaredVersions].sort(),
+        }
+      : undefined;
 
   if (claimedVersions.size <= 1) {
     return { instance, ...(untrustedManifest ? { untrustedManifest } : {}) };
@@ -363,13 +426,16 @@ function reconcileInstanceMetadata(
       // first; a repeated value collapses because this is a Set.
       declaredVersions: [...claimedVersions].sort(),
       sources: [
-        ...(declaredVersions.size > 0
-          ? (["declared"] as const)
-          : ([] as const)),
-        ...(installed.kind === "declared"
-          ? (["installed"] as const)
-          : ([] as const)),
-      ],
+        ...new Set([...claimSources.values()].flatMap((each) => [...each])),
+      ].sort(),
+      versionClaims: [...claimSources.entries()]
+        .map(([version, sources]) => ({
+          version,
+          sources: [...sources].sort(),
+        }))
+        .sort((a, b) =>
+          a.version < b.version ? -1 : a.version > b.version ? 1 : 0,
+        ),
     },
   };
 }

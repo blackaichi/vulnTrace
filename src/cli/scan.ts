@@ -507,13 +507,28 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // finding and moves no verdict: a contradiction in the project's own
   // metadata is an absence of information, not evidence of anything.
   for (const conflict of instanceRegistry.versionConflicts) {
+    // Every version is labelled with the authorities that actually claimed
+    // it, from the registry's own provenance -- never re-derived here, and
+    // never assumed. The previous wording attributed every conflicting
+    // version to "this project's own dependency metadata", which stopped
+    // being true the moment the installed manifest became a claimant: it
+    // sent a reader to grep a lockfile for a version that only ever
+    // existed on disk.
+    const claims = conflict.versionClaims
+      .map((claim) => `${claim.version} (${claim.sources.join(", ")})`)
+      .join(", ");
+    // A statement about who made CLAIMS, not about who disagrees with
+    // whom: when three authorities claim two versions, "A and B disagree"
+    // is frequently false, while this is always exactly true.
+    const origin = conflict.sources.includes("installed")
+      ? `these claims come from this project's own dependency metadata and from the package installed on disk`
+      : `every claim comes from this project's own dependency metadata`;
     diagnostics.push({
       source: "dependencies",
       message:
         `package instance "${describePackageInstance(conflict.packageInstance, projectRoot)}" ` +
-        `(${conflict.packageName}) is declared with conflicting versions ` +
-        `${conflict.declaredVersions.join(", ")} by this project's own dependency metadata; ` +
-        `its installed version could not be established, so no advisory version range was ` +
+        `(${conflict.packageName}) has conflicting versions ${claims}; ${origin}; ` +
+        `its version could not be established, so no advisory version range was ` +
         `evaluated against it`,
     });
   }
@@ -529,11 +544,19 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         ? `the version this project declares for it (${uncertain.declaredVersions.join(", ")}) ` +
           `could not be confirmed against the package actually installed there`
         : `its installed version could not be established`;
+    // A manifest carrying `"version": 123` was read, and parsed, perfectly
+    // well -- only the field is unusable. Saying it "could not be read"
+    // describes a different failure and sends a reader looking for a
+    // corrupt file that is not there.
+    const fault =
+      uncertain.reason === "unreadable"
+        ? `has an installed package.json that could not be read`
+        : `has an installed package.json whose "version" field is not a usable version string`;
     diagnostics.push({
       source: "dependencies",
       message:
         `package instance "${describePackageInstance(uncertain.packageInstance, projectRoot)}" ` +
-        `(${uncertain.packageName}) has an installed package.json that could not be read, so ` +
+        `(${uncertain.packageName}) ${fault}, so ` +
         `${declared}; no advisory version range was evaluated against it`,
     });
   }
