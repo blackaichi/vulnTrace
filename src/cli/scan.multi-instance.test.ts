@@ -155,11 +155,16 @@ function project(files: Readonly<Record<string, string>>): string {
   return root;
 }
 
-async function scan(
+interface ScanOutputShape {
+  readonly findings: ScanFinding[];
+  readonly diagnostics: { readonly source: string; readonly message: string }[];
+}
+
+async function scanOutput(
   root: string,
   provider: VulnerabilityProvider,
   options: { readonly cacheDir?: string } = {},
-): Promise<readonly ScanFinding[]> {
+): Promise<ScanOutputShape> {
   const stdout: string[] = [];
   await runScanCommand({
     projectPathArg: root,
@@ -169,7 +174,15 @@ async function scan(
     cacheDir: options.cacheDir,
     io: { stdout: (text) => stdout.push(text), stderr: () => {} },
   });
-  return (JSON.parse(stdout.join("")) as { findings: ScanFinding[] }).findings;
+  return JSON.parse(stdout.join("")) as ScanOutputShape;
+}
+
+async function scan(
+  root: string,
+  provider: VulnerabilityProvider,
+  options: { readonly cacheDir?: string } = {},
+): Promise<readonly ScanFinding[]> {
+  return (await scanOutput(root, provider, options)).findings;
 }
 
 /** `instance -> verdict`, the shape every case below actually asserts. */
@@ -236,6 +249,63 @@ function twinProject(
     ...under("node_modules/vuln-lib", vulnerablePackage("vuln-lib", "1.0.0")),
     ...extraFiles,
   });
+}
+
+/**
+ * A realistic shape that reaches the registry: `node_modules/conf-lib`
+ * is a SYMLINK to `packages/conf-lib`, so both lockfile entries describe
+ * one physical directory -- but they disagree about its version. npm
+ * would not normally write a version on a link entry; a stale or
+ * hand-edited lockfile does.
+ *
+ * Version decides advisory applicability, so before the fix the verdict
+ * for this one physical package depended on which lockfile key happened
+ * to be read first.
+ */
+function conflictingProject(order: "forward" | "reverse"): string {
+  const entries: [string, unknown][] = [
+    ["packages/conf-lib", { name: "conf-lib", version: "1.0.0" }],
+    ["node_modules/conf-lib", { name: "conf-lib", version: "5.0.0" }],
+  ];
+  const packages = Object.fromEntries([
+    [
+      "",
+      {
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "conf-lib": "1.0.0" },
+      },
+    ],
+    ...(order === "forward" ? entries : [...entries].reverse()),
+  ]);
+
+  const root = project({
+    "vulntrace.yml": CONFIG,
+    "rules.yml": "rules:\n" + rule("GHSA-multi-conf", "conf-lib"),
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: { "conf-lib": "1.0.0" },
+    }),
+    "package-lock.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      packages,
+    }),
+    "src/index.js":
+      "function main(input) {\n  return input;\n}\nmodule.exports = { main };\n",
+    ...under("packages/conf-lib", vulnerablePackage("conf-lib", "1.0.0")),
+  });
+
+  mkdirSync(path.join(root, "node_modules"), { recursive: true });
+  symlinkSync(
+    path.join(root, "packages", "conf-lib"),
+    path.join(root, "node_modules", "conf-lib"),
+    "dir",
+  );
+  return root;
 }
 
 describe("P1-A5: one advisory, several instances, independent verdicts", () => {
@@ -538,63 +608,6 @@ describe("P1-A5: caches are keyed so no instance can answer for another", () => 
 });
 
 describe("P1-A5: contradictory version metadata for one physical root", () => {
-  /**
-   * A realistic shape that reaches the registry: `node_modules/conf-lib`
-   * is a SYMLINK to `packages/conf-lib`, so both lockfile entries describe
-   * one physical directory -- but they disagree about its version. npm
-   * would not normally write a version on a link entry; a stale or
-   * hand-edited lockfile does.
-   *
-   * Version decides advisory applicability, so before the fix the verdict
-   * for this one physical package depended on which lockfile key happened
-   * to be read first.
-   */
-  function conflictingProject(order: "forward" | "reverse"): string {
-    const entries: [string, unknown][] = [
-      ["packages/conf-lib", { name: "conf-lib", version: "1.0.0" }],
-      ["node_modules/conf-lib", { name: "conf-lib", version: "5.0.0" }],
-    ];
-    const packages = Object.fromEntries([
-      [
-        "",
-        {
-          name: "app",
-          version: "1.0.0",
-          dependencies: { "conf-lib": "1.0.0" },
-        },
-      ],
-      ...(order === "forward" ? entries : [...entries].reverse()),
-    ]);
-
-    const root = project({
-      "vulntrace.yml": CONFIG,
-      "rules.yml": "rules:\n" + rule("GHSA-multi-conf", "conf-lib"),
-      "package.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        workspaces: ["packages/*"],
-        dependencies: { "conf-lib": "1.0.0" },
-      }),
-      "package-lock.json": JSON.stringify({
-        name: "app",
-        version: "1.0.0",
-        lockfileVersion: 3,
-        packages,
-      }),
-      "src/index.js":
-        "function main(input) {\n  return input;\n}\nmodule.exports = { main };\n",
-      ...under("packages/conf-lib", vulnerablePackage("conf-lib", "1.0.0")),
-    });
-
-    mkdirSync(path.join(root, "node_modules"), { recursive: true });
-    symlinkSync(
-      path.join(root, "packages", "conf-lib"),
-      path.join(root, "node_modules", "conf-lib"),
-      "dir",
-    );
-    return root;
-  }
-
   it("reaches the same verdict whichever lockfile entry is read first", async () => {
     const provider = providerFor([
       // 1.0.0 is inside the advisory's range; 5.0.0 is outside it. Picking
@@ -695,5 +708,72 @@ describe("P1-A5: contradictory version metadata for one physical root", () => {
     expect(findings).toHaveLength(1);
     expect(findings[0]?.packageInstance).toBe("packages/conf-lib");
     expect(findings[0]?.version).toBe("1.0.0");
+  });
+});
+
+describe("P1-A5: a version conflict is reported, not merely survived", () => {
+  it("G/H. emits one diagnostic, makes no query, and invents no finding", async () => {
+    const queried: string[] = [];
+    const counting: VulnerabilityProvider = {
+      queryPackage(query: PackageQuery) {
+        queried.push(`${query.name}@${String(query.version)}`);
+        return providerFor([
+          advisory("conf-lib", "GHSA-multi-conf", "2.0.0"),
+        ]).queryPackage(query);
+      },
+    };
+
+    const output = await scanOutput(conflictingProject("forward"), counting);
+
+    // The contradiction is stated out loud...
+    const conflicts = output.diagnostics.filter(
+      (d) => d.source === "dependencies",
+    );
+    expect(conflicts).toHaveLength(1);
+    expect(conflicts[0]?.message).toContain("packages/conf-lib");
+    expect(conflicts[0]?.message).toContain(
+      "conflicting versions 1.0.0, 5.0.0",
+    );
+    expect(conflicts[0]?.message).toContain(
+      "no advisory version range was evaluated against it",
+    );
+
+    // ...without inventing a verdict for it, and without asking the
+    // provider about a version nothing established.
+    expect(output.findings).toEqual([]);
+    expect(queried.filter((q) => q.startsWith("conf-lib@"))).toEqual([]);
+  });
+
+  it("reports the identical diagnostic whichever order the records arrive in", async () => {
+    const provider = providerFor([
+      advisory("conf-lib", "GHSA-multi-conf", "2.0.0"),
+    ]);
+    const forward = await scanOutput(conflictingProject("forward"), provider);
+    const reverse = await scanOutput(conflictingProject("reverse"), provider);
+
+    const messages = (o: ScanOutputShape) =>
+      o.diagnostics
+        .filter((d) => d.source === "dependencies")
+        .map((d) => d.message);
+
+    expect(messages(reverse)).toEqual(messages(forward));
+  });
+
+  it("says nothing about ordinary twins at different versions", async () => {
+    // Two installs of one name at two versions is the normal multi-instance
+    // case, not contradictory metadata, and must stay quiet.
+    const output = await scanOutput(
+      twinProject(),
+      providerFor([advisory("vuln-lib", "GHSA-multi-0001")]),
+    );
+
+    expect(
+      output.diagnostics.filter((d) => d.source === "dependencies"),
+    ).toEqual([]);
+    // And the existing per-instance split is untouched.
+    expect(verdictsByInstance(output.findings)).toEqual({
+      "node_modules/host/node_modules/vuln-lib": "AFFECTED",
+      "node_modules/vuln-lib": "NOT_AFFECTED",
+    });
   });
 });

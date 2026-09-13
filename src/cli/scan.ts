@@ -19,6 +19,7 @@ import {
   advisoryQueryVersions,
   buildDependencyGraph,
   buildPackageInstanceRegistry,
+  describePackageInstance,
   discoverWorkspacePackages,
   findApplicablePackageInstances,
   loadPackageJsonFile,
@@ -479,6 +480,29 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     projectRoot,
     workspacePackages: workspaces.packages,
   });
+
+  // A package root whose own discovery records CONTRADICT each other about
+  // the version fails closed in the registry: no version, no provider
+  // query, no verdict derived from a version nothing established. Sound,
+  // but silent -- such an instance simply contributes nothing to the
+  // report, and a reader cannot tell "nothing was wrong here" from "this
+  // project's metadata contradicts itself and the question was never
+  // asked".
+  //
+  // Said out loud here, as a diagnostic and nothing more. It creates no
+  // finding and moves no verdict: a contradiction in the project's own
+  // metadata is an absence of information, not evidence of anything.
+  for (const conflict of instanceRegistry.versionConflicts) {
+    diagnostics.push({
+      source: "dependencies",
+      message:
+        `package instance "${describePackageInstance(conflict.packageInstance, projectRoot)}" ` +
+        `(${conflict.packageName}) is declared with conflicting versions ` +
+        `${conflict.declaredVersions.join(", ")} by this project's own dependency metadata; ` +
+        `its installed version could not be established, so no advisory version range was ` +
+        `evaluated against it`,
+    });
+  }
 
   const findings: Finding[] = [];
 

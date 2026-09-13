@@ -8353,9 +8353,38 @@ current" would restore `1.0.0` on the third record; this cannot.
 Conflict **fails closed**, never to a winner. First, last, highest, lowest
 and lexicographic are all arbitrary, and each converts "this project's own
 metadata contradicts itself about this directory" into a confident verdict
-computed from a version nothing established. `undefined` instead flows
-through the contract that already exists — indeterminate applicability,
-UNKNOWN, no provider query.
+computed from a version nothing established.
+
+What is actually observable, stated in layers rather than as a single
+verdict — an earlier draft of this record said "indeterminate applicability,
+UNKNOWN", which is true only when something else already surfaced the
+advisory:
+
+1. the instance's reconciled version becomes `undefined`;
+2. it therefore contributes **no provider query** — there is no version to
+   ask about, and no sibling's version is ever borrowed;
+3. if nothing else establishes an advisory candidate for that package name,
+   **no finding is emitted at all** for the instance;
+4. where an advisory IS materialised anyway — a same-named sibling carries a
+   concrete version and its query returns one — applicability for this
+   instance is `indeterminate` and the finding is **UNKNOWN**;
+5. either way a **diagnostic** records the conflict (`source:
+   "dependencies"`), naming the instance and the contradictory versions, so
+   outcome (3) is not silent.
+
+Step 5 exists because steps 1–3 are sound but invisible: an instance that
+contributes nothing to the report is indistinguishable from a package about
+which nothing was wrong. The diagnostic changes no verdict and creates no
+finding — a contradiction in the project's own metadata is an absence of
+information, not evidence of anything (AGENTS.md: every uncertainty must be
+represented explicitly).
+
+The diagnostic is one entry per canonical root however many contradictory
+records it had, with the version set sorted and de-duplicated, so its
+content does not depend on enumeration order. Nothing is reported for a root
+that is merely silent about its version, for records that agree, or for two
+genuinely different roots at two versions — that last is ordinary
+multi-instance installation, not contradictory metadata.
 
 **Silence is deliberately not conflict.** A record with no `version` makes
 no competing claim and is not in the distinct-version set. An ordinary npm

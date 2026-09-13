@@ -522,6 +522,143 @@ describe("P1-A5 metadata reconciliation on one canonical root", () => {
   });
 });
 
+describe("P1-A5 version-conflict reporting", () => {
+  /**
+   * The conflict is REPORTED, never resolved. Reconciliation already fails
+   * closed; these cases pin that the report agrees with it exactly -- one
+   * entry per contradictory root, none for a root that is merely silent or
+   * that agrees, and none for two roots that are simply different packages.
+   */
+  function registryFor(
+    versions: readonly (string | undefined)[],
+    order: "forward" | "reverse",
+    // Both orderings must be compared against the SAME tree: the conflict
+    // record carries an absolute canonical root, so two temp directories
+    // would differ for a reason that has nothing to do with ordering.
+    existingRoot?: string,
+  ) {
+    const root =
+      existingRoot ??
+      tree({
+        "packages/foo/package.json": manifest("foo", "1.0.0"),
+      });
+    const spellings = [
+      "packages/foo",
+      "packages/../packages/foo",
+      "./packages/foo",
+    ];
+    const dependencyNodes = versions.flatMap((version, index) =>
+      version === undefined
+        ? []
+        : [node("foo", version, spellings[index] ?? `packages/foo/../foo`)],
+    );
+    const workspacePackages = versions.flatMap((version) =>
+      version === undefined
+        ? [
+            {
+              canonicalRoot: canonicalizePackageInstancePath(
+                path.join(root, "packages/foo"),
+              ),
+              packageName: "foo",
+              pattern: "packages/*",
+            } satisfies WorkspacePackage,
+          ]
+        : [],
+    );
+    return {
+      root,
+      registry: buildPackageInstanceRegistry({
+        dependencyNodes:
+          order === "forward"
+            ? dependencyNodes
+            : [...dependencyNodes].reverse(),
+        projectRoot: root,
+        workspacePackages,
+      }),
+    };
+  }
+
+  it("A. reports ONE conflict for a root with two contradictory versions", () => {
+    const { root, registry } = registryFor(["1.0.0", "2.0.0"], "forward");
+
+    expect(registry.versionConflicts).toHaveLength(1);
+    const conflict = registry.versionConflicts[0];
+    expect(describePackageInstance(conflict?.packageInstance ?? "", root)).toBe(
+      "packages/foo",
+    );
+    expect(conflict?.packageName).toBe("foo");
+    expect(conflict?.declaredVersions).toEqual(["1.0.0", "2.0.0"]);
+    // And it agrees with what reconciliation actually did.
+    expect(registry.instances[0]?.version).toBeUndefined();
+  });
+
+  it("B. reports the identical conflict with the records reversed", () => {
+    const forward = registryFor(["1.0.0", "2.0.0"], "forward");
+    const reverse = registryFor(["1.0.0", "2.0.0"], "reverse", forward.root);
+
+    expect(JSON.stringify(reverse.registry.versionConflicts)).toBe(
+      JSON.stringify(forward.registry.versionConflicts),
+    );
+  });
+
+  it("C. collapses a repeated conflicting value into one entry", () => {
+    const { registry } = registryFor(["1.0.0", "2.0.0", "1.0.0"], "forward");
+
+    expect(registry.versionConflicts).toHaveLength(1);
+    // Sorted and de-duplicated: the set of claims, not the list of records.
+    expect(registry.versionConflicts[0]?.declaredVersions).toEqual([
+      "1.0.0",
+      "2.0.0",
+    ]);
+  });
+
+  it("D. reports NO conflict for a known version beside a silent source", () => {
+    // Silence is not a competing claim (see reconcileInstanceMetadata).
+    for (const order of ["forward", "reverse"] as const) {
+      const { registry } = registryFor(["1.0.0", undefined], order);
+      expect(registry.versionConflicts).toEqual([]);
+      expect(registry.instances[0]?.version).toBe("1.0.0");
+    }
+  });
+
+  it("E. reports NO conflict when the records agree", () => {
+    const { registry } = registryFor(["1.0.0", "1.0.0"], "forward");
+
+    expect(registry.versionConflicts).toEqual([]);
+    expect(registry.instances[0]?.version).toBe("1.0.0");
+  });
+
+  it("F. reports NO conflict for two DIFFERENT physical roots", () => {
+    // Two installs of one name at two versions is ordinary, and is exactly
+    // what per-instance analysis exists for -- not contradictory metadata.
+    const root = tree({
+      "node_modules/foo/package.json": manifest("foo", "1.0.0"),
+      "node_modules/host/node_modules/foo/package.json": manifest(
+        "foo",
+        "2.0.0",
+      ),
+    });
+    const registry = buildPackageInstanceRegistry({
+      dependencyNodes: [
+        node("foo", "1.0.0", "node_modules/foo"),
+        node("foo", "2.0.0", "node_modules/host/node_modules/foo"),
+      ],
+      projectRoot: root,
+    });
+
+    expect(registry.versionConflicts).toEqual([]);
+    expect(registry.instances.map((i) => i.version).sort()).toEqual([
+      "1.0.0",
+      "2.0.0",
+    ]);
+  });
+
+  it("reports no conflict for an ordinary single-record root", () => {
+    const { registry } = registryFor(["1.0.0"], "forward");
+    expect(registry.versionConflicts).toEqual([]);
+  });
+});
+
 describe("P1-A5 advisory query versions", () => {
   it("asks once per distinct version, never once per instance", () => {
     const root = tree({
