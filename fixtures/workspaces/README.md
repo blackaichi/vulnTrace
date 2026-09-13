@@ -26,10 +26,30 @@ Identity is the **canonical root**, never the name or version:
 | `packages/dupa` vs `packages/dupb` | both declare `"name": "dup"` — **two packages**, and `require("dup")` resolves to neither |
 | `node_modules/lib` → `packages/lib` | symlink and physical path — **one package** (Node caches by realpath; the oracle asserts one `require.cache` entry) |
 
+## Production configuration
+
+This fixture ships a realistic **`package-lock.json`**, and the integration
+suite loads it. That is not decoration: a scan requires a lockfile (exit 3
+without one), and npm enumerates every workspace member that declares a
+name AND version — which already gives those members identity through
+ordinary dependency provenance, with no workspace discovery involved.
+
+The first revision of this fixture had no lockfile, and an audit showed its
+reported verdict movements were artifacts of that. See the "RWF-032
+CORRECTION" section of `tests/validation/FINDINGS.md`.
+
+`packages/privlib` is the case that genuinely needs P1-A4: `"private": true`
+with **no `version`**, so npm writes its lockfile entry without one, no
+`DependencyNode` is formed, and the repository's own `workspaces`
+declaration is the only authority left. Its export is FORWARDED, so without
+an instance to anchor at, the advisory's name is not bindable in its entry
+at all.
+
 ## Layout
 
 ```
 package.json                      workspaces: ["packages/*"]
+package-lock.json                 real npm workspace lockfile
 node_modules/
   lib, safelib, fwdlib, ...       symlinks into packages/ (what an install materializes)
   @scope/lib                      symlink -> packages/scopedlib
@@ -46,6 +66,7 @@ packages/
   scopedlib/                      name "@scope/lib"; directory ≠ name
   twinlib/                        workspace twin of node_modules/twinlib
   dupa/, dupb/                    both named "dup"
+  privlib/                        private, NO version -> absent from the dependency graph
 filelib/, linklib/                file:/link: targets — NOT workspace members
 ```
 
