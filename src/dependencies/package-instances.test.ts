@@ -330,6 +330,198 @@ describe("P1-A5 candidate instance enumeration", () => {
   });
 });
 
+describe("P1-A5 metadata reconciliation on one canonical root", () => {
+  /**
+   * Identity convergence and METADATA reconciliation are different
+   * questions, and conflating them is how enumeration order leaks into a
+   * verdict. Two discovery records that resolve to one physical root are
+   * one instance -- that part was always right. But when those records
+   * DISAGREE about the version, keeping whichever arrived first makes the
+   * instance's version, and therefore the advisory applicability computed
+   * from it, a function of input order.
+   */
+  function conflictingRegistry(order: "forward" | "reverse") {
+    const root = tree({
+      "packages/foo/package.json": manifest("foo", "1.0.0"),
+    });
+    // Both records name the SAME physical directory -- the second through
+    // a `node_modules` path that canonicalizes onto it -- but disagree
+    // about the version. A stale or hand-edited lockfile is the realistic
+    // source; npm itself would not normally write this.
+    const records = [
+      node("foo", "1.0.0", "packages/foo"),
+      node("foo", "2.0.0", "packages/../packages/foo"),
+    ];
+    return {
+      root,
+      registry: buildPackageInstanceRegistry({
+        dependencyNodes: order === "forward" ? records : [...records].reverse(),
+        projectRoot: root,
+      }),
+    };
+  }
+
+  it("converges conflicting records to ONE instance, as it always did", () => {
+    const { root, registry } = conflictingRegistry("forward");
+    expect(rootsFor(registry, "foo", root)).toEqual(["packages/foo"]);
+  });
+
+  it("does not let enumeration order decide the version", () => {
+    const forward = conflictingRegistry("forward");
+    const reverse = conflictingRegistry("reverse");
+
+    const versionOf = (r: ReturnType<typeof conflictingRegistry>) =>
+      findApplicablePackageInstances(r.registry, "foo")[0]?.version;
+
+    expect(versionOf(reverse)).toEqual(versionOf(forward));
+  });
+
+  it("FAILS CLOSED: two conflicting declared versions leave no version at all", () => {
+    // Not first, not last, not highest, not lowest. The project's own
+    // metadata contradicts itself about this exact directory, so the
+    // honest answer is that its version is not established -- which flows
+    // to `indeterminate` applicability and an UNKNOWN, never to a
+    // confident verdict computed from an arbitrarily chosen version.
+    const { registry } = conflictingRegistry("forward");
+    expect(
+      findApplicablePackageInstances(registry, "foo")[0]?.version,
+    ).toBeUndefined();
+  });
+
+  it("stays conflicted once conflicted, even if a third record agrees again", () => {
+    // A fold that merely compares "incoming vs current" can be walked back
+    // to a concrete value by a later record. 1.0.0 -> 2.0.0 -> 1.0.0 must
+    // remain unresolved, because the contradiction is a property of the
+    // whole record SET, not of the last comparison.
+    const root = tree({
+      "packages/foo/package.json": manifest("foo", "1.0.0"),
+    });
+    const registry = buildPackageInstanceRegistry({
+      dependencyNodes: [
+        node("foo", "1.0.0", "packages/foo"),
+        node("foo", "2.0.0", "packages/../packages/foo"),
+        node("foo", "1.0.0", "./packages/foo"),
+      ],
+      projectRoot: root,
+    });
+
+    expect(
+      findApplicablePackageInstances(registry, "foo")[0]?.version,
+    ).toBeUndefined();
+  });
+
+  it("a source that is SILENT about the version is not a conflict", () => {
+    // Absence is not a competing claim. Every fallback in this codebase
+    // reads "this source does not know" as a reason to consult the other
+    // source, never as a contradiction -- `identifyModule` prefers a
+    // manifest name and falls back to the path, `buildDependencyGraph`
+    // calls a versionless link entry "inherent to unversioned/local
+    // links". Treating silence as conflict would turn every ordinary npm
+    // workspace member -- present in the lockfile WITH a version and
+    // discovered again from a manifest WITHOUT one -- into an UNKNOWN, a
+    // large coverage loss for no soundness gain.
+    const root = tree({ "packages/foo/package.json": manifest("foo") });
+    const records = {
+      dependencyNodes: [node("foo", "1.0.0", "packages/foo")],
+      projectRoot: root,
+      workspacePackages: [
+        {
+          canonicalRoot: canonicalizePackageInstancePath(
+            path.join(root, "packages/foo"),
+          ),
+          packageName: "foo",
+          pattern: "packages/*",
+        } satisfies WorkspacePackage,
+      ],
+    };
+
+    const registry = buildPackageInstanceRegistry(records);
+    expect(findApplicablePackageInstances(registry, "foo")[0]?.version).toBe(
+      "1.0.0",
+    );
+    expect(registry.instances).toHaveLength(1);
+  });
+
+  it("is identical across every permutation of the same metadata multiset", () => {
+    const permutationsOf = <T>(items: readonly T[]): T[][] =>
+      items.length <= 1
+        ? [[...items]]
+        : items.flatMap((item, index) =>
+            permutationsOf([
+              ...items.slice(0, index),
+              ...items.slice(index + 1),
+            ]).map((rest) => [item, ...rest]),
+          );
+
+    const cases: readonly (readonly (string | undefined)[])[] = [
+      ["1.0.0", "2.0.0"],
+      ["1.0.0", undefined],
+      ["1.0.0", "2.0.0", "1.0.0"],
+      ["1.0.0", "1.0.0"],
+      [undefined, undefined],
+    ];
+
+    for (const versions of cases) {
+      const root = tree({
+        "packages/foo/package.json": manifest("foo", "1.0.0"),
+      });
+      const spellings = [
+        "packages/foo",
+        "packages/../packages/foo",
+        "./packages/foo",
+      ];
+      const results = new Set<string>();
+
+      for (const permuted of permutationsOf([...versions.keys()])) {
+        const dependencyNodes = permuted
+          .filter((index) => versions[index] !== undefined)
+          .map((index) =>
+            node(
+              "foo",
+              versions[index] as string,
+              spellings[index] ?? `packages/foo/../foo${index}`,
+            ),
+          );
+        const workspacePackages = permuted
+          .filter((index) => versions[index] === undefined)
+          .map(
+            () =>
+              ({
+                canonicalRoot: canonicalizePackageInstancePath(
+                  path.join(root, "packages/foo"),
+                ),
+                packageName: "foo",
+                pattern: "packages/*",
+              }) satisfies WorkspacePackage,
+          );
+
+        const registry = buildPackageInstanceRegistry({
+          dependencyNodes,
+          projectRoot: root,
+          workspacePackages,
+        });
+        results.add(
+          JSON.stringify(
+            registry.instances.map((instance) => ({
+              root: describePackageInstance(instance.packageInstance, root),
+              version: instance.version ?? null,
+              packageName: instance.packageName,
+              provenance: instance.provenance,
+              declaredLocation: instance.declaredLocation,
+              ownershipNames: [...instance.ownershipNames].sort(),
+            })),
+          ),
+        );
+      }
+
+      expect(
+        results.size,
+        `permutations of ${JSON.stringify(versions)} produced ${results.size} different registries: ${[...results].join(" | ")}`,
+      ).toBe(1);
+    }
+  });
+});
+
 describe("P1-A5 advisory query versions", () => {
   it("asks once per distinct version, never once per instance", () => {
     const root = tree({
