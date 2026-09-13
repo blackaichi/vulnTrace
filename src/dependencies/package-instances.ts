@@ -70,9 +70,39 @@ export interface CandidatePackageInstance {
  * lookup. Built EXACTLY ONCE per scan and threaded through, never rebuilt
  * per advisory (see {@link buildPackageInstanceRegistry}).
  */
+/**
+ * One canonical physical root whose discovery records DISAGREE about the
+ * version (P1-A5 remediation).
+ *
+ * Reported, not resolved. {@link reconcileInstanceMetadata} already fails
+ * closed for this case -- the instance's version becomes `undefined`, no
+ * provider query is made for it, and no verdict is derived from a version
+ * nothing established. That is the sound outcome, and it is also a SILENT
+ * one: the instance simply contributes nothing to the report, so a reader
+ * cannot tell "this package is fine" from "this project's own metadata
+ * contradicts itself about this package and the question was never asked".
+ *
+ * This record is what lets the CLI say the second thing out loud. It
+ * changes no verdict and creates no finding (AGENTS.md: every uncertainty
+ * must be represented explicitly).
+ */
+export interface PackageInstanceVersionConflict {
+  readonly packageInstance: PackageInstanceId;
+  /** The name this instance is reported under, for a readable message. */
+  readonly packageName: string;
+  /** Every distinct DECLARED version, sorted, so the report is stable. */
+  readonly declaredVersions: readonly string[];
+}
+
 export interface PackageInstanceRegistry {
   /** Every instance, ordered by canonical root, deduplicated by it. */
   readonly instances: readonly CandidatePackageInstance[];
+  /**
+   * Every canonical root whose records contradicted each other about the
+   * version, ordered by canonical root. Exactly one entry per root, however
+   * many contradictory records it had.
+   */
+  readonly versionConflicts: readonly PackageInstanceVersionConflict[];
   /**
    * Every distinct ownership name, each mapped to the instances that may
    * be selected by it, ordered by canonical root.
@@ -154,7 +184,11 @@ interface InstanceRecord {
 function reconcileInstanceMetadata(
   packageInstance: PackageInstanceId,
   records: readonly InstanceRecord[],
-): CandidatePackageInstance {
+): {
+  readonly instance: CandidatePackageInstance;
+  /** Present only when the records declared two or more distinct versions. */
+  readonly conflict?: PackageInstanceVersionConflict;
+} {
   const ownershipNames = new Set<string>();
   const declaredVersions = new Set<string>();
   for (const entry of records) {
@@ -187,15 +221,37 @@ function reconcileInstanceMetadata(
   );
   const representative = sorted[0];
 
-  return {
+  const packageName =
+    representative?.packageName ?? [...ownershipNames][0] ?? "";
+
+  const instance: CandidatePackageInstance = {
     packageInstance,
     ownershipNames,
-    packageName: representative?.packageName ?? [...ownershipNames][0] ?? "",
+    packageName,
     ...(version !== undefined ? { version } : {}),
     ecosystem: "npm",
     provenance:
       fromDependencyGraph.length > 0 ? "dependency-graph" : "workspace",
     declaredLocation: representative?.declaredLocation ?? packageInstance,
+  };
+
+  // Exactly the condition that produced the `undefined` above, so the
+  // report can never disagree with the reconciliation. Deliberately NOT
+  // `version === undefined`: a root whose records simply never declared a
+  // version (size 0) is silent, not contradictory, and must not be
+  // reported as a conflict.
+  if (declaredVersions.size <= 1) {
+    return { instance };
+  }
+  return {
+    instance,
+    conflict: {
+      packageInstance,
+      packageName,
+      // Sorted, so the message does not depend on which record arrived
+      // first; a repeated value collapses because this is a Set.
+      declaredVersions: [...declaredVersions].sort(),
+    },
   };
 }
 
@@ -322,12 +378,21 @@ export function buildPackageInstanceRegistry(options: {
   }
 
   const byRoot = new Map<string, CandidatePackageInstance>();
+  const versionConflicts: PackageInstanceVersionConflict[] = [];
   for (const [packageInstance, records] of recordsByRoot) {
-    byRoot.set(
-      packageInstance,
-      reconcileInstanceMetadata(packageInstance, records),
-    );
+    const reconciled = reconcileInstanceMetadata(packageInstance, records);
+    byRoot.set(packageInstance, reconciled.instance);
+    if (reconciled.conflict) {
+      versionConflicts.push(reconciled.conflict);
+    }
   }
+  versionConflicts.sort((a, b) =>
+    a.packageInstance < b.packageInstance
+      ? -1
+      : a.packageInstance > b.packageInstance
+        ? 1
+        : 0,
+  );
 
   const instances = [...byRoot.values()].sort(compareByRoot);
 
@@ -343,7 +408,7 @@ export function buildPackageInstanceRegistry(options: {
     }
   }
 
-  return { instances, byOwnershipName };
+  return { instances, versionConflicts, byOwnershipName };
 }
 
 /**
