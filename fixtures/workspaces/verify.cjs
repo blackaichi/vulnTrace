@@ -195,8 +195,8 @@ check("the superseded workspace main is unreachable through the name", () => {
 });
 
 check("workspace exports \".\" and \"./api\" are DISTINCT surfaces", () => {
-  assert.equal(resolveFrom(APP, "exportslib"), "packages/exportslib/dist/index.js");
-  assert.equal(resolveFrom(APP, "exportslib/api"), "packages/exportslib/dist/api.js");
+  assert.equal(resolveFrom(APP, "exportslib"), "packages/exportslib/out/index.js");
+  assert.equal(resolveFrom(APP, "exportslib/api"), "packages/exportslib/out/api.js");
   assert.notEqual(
     requireFrom(APP, "exportslib").vulnerable,
     requireFrom(APP, "exportslib/api").vulnerable,
@@ -204,8 +204,8 @@ check("workspace exports \".\" and \"./api\" are DISTINCT surfaces", () => {
 });
 
 check("both exportslib surfaces belong to ONE workspace package root", () => {
-  assert.equal(packageRootOf(path.join(ROOT, "packages/exportslib/dist/index.js")), "packages/exportslib");
-  assert.equal(packageRootOf(path.join(ROOT, "packages/exportslib/dist/api.js")), "packages/exportslib");
+  assert.equal(packageRootOf(path.join(ROOT, "packages/exportslib/out/index.js")), "packages/exportslib");
+  assert.equal(packageRootOf(path.join(ROOT, "packages/exportslib/out/api.js")), "packages/exportslib");
 });
 
 check("exportslib's superseded main is unreachable through the name", () => {
@@ -233,15 +233,15 @@ check("...while its declared subpath resolves authoritatively", () => {
 // ---------------------------------------------------------------------------
 
 check("a scoped workspace package resolves under its real scoped name", () => {
-  assert.equal(resolveFrom(APP, "@scope/lib"), "packages/scopedlib/dist/index.js");
-  assert.equal(resolveFrom(APP, "@scope/lib/api"), "packages/scopedlib/dist/api.js");
+  assert.equal(resolveFrom(APP, "@scope/lib"), "packages/scopedlib/out/index.js");
+  assert.equal(resolveFrom(APP, "@scope/lib/api"), "packages/scopedlib/out/api.js");
 });
 
 check("its canonical root is the DIRECTORY, not the manifest name", () => {
   // The directory is `packages/scopedlib`; the name is `@scope/lib`. The
   // root is identity; the name is metadata.
   assert.equal(
-    packageRootOf(path.join(ROOT, "packages/scopedlib/dist/api.js")),
+    packageRootOf(path.join(ROOT, "packages/scopedlib/out/api.js")),
     "packages/scopedlib",
   );
   assert.equal(
@@ -429,7 +429,7 @@ check("the scoped twin declares the same name but is not what resolves", () => {
     require(path.join(ROOT, "packages/scopedtwin/package.json")).name,
     "@scope/lib",
   );
-  assert.equal(resolveFrom(APP, "@scope/lib"), "packages/scopedlib/dist/index.js");
+  assert.equal(resolveFrom(APP, "@scope/lib"), "packages/scopedlib/out/index.js");
   assert.notEqual(
     fs.realpathSync(path.join(ROOT, "packages/scopedtwin")),
     fs.realpathSync(path.join(ROOT, "packages/scopedlib")),
