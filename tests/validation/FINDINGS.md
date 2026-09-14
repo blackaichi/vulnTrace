@@ -10044,13 +10044,36 @@ actually reports.
 
 ### Production differential (F4 § 30)
 
-**Zero, structurally.** `git diff main` over `src/analysis`, `src/cli`,
-`src/domain`, `src/code-intelligence`, `src/dependencies`, `src/rules`,
-`src/vulnerabilities`, `src/config`, `src/cache`, `src/performance`,
-`schemas/`, `rules/`, `config/` and `scripts/` is **empty**. The only
-non-test change is `src/testing/finding.ts`, and a repository-wide grep
-confirms nothing outside `*.test.ts` imports `testing/finding` or
-`testing/proof-mutation`. There is no production behavior to move.
+**Zero, and established by comparing the BUILT ARTIFACT rather than by
+reasoning about which directories look production-ish.**
+
+The whole change is five files:
+
+```
+src/analysis/verdict.f4-proof-mutation.test.ts     (new, test)
+src/testing/finding.f4-closure-hardening.test.ts   (new, test)
+src/testing/proof-mutation.ts                      (new, test harness)
+src/testing/finding.ts                             (test harness)
+tests/validation/FINDINGS.md                       (this record)
+```
+
+Filtering the changed-file list for anything that is not a `*.test.ts`,
+not under `src/testing/`, and not under `tests/` returns **nothing**.
+
+That is still a claim about paths, so it is checked against what actually
+ships. `tsconfig.build.json` excludes `src/**/*.test.ts` and
+`src/testing/**` outright, and `dist/` contains no `testing` directory.
+Building both trees to separate output directories and diffing them:
+
+- **146 emitted `.js` / `.d.ts` files, byte-identical.**
+- The `.map` files differ in exactly one way — the absolute checkout path
+  embedded in `sources[]` (worktree vs. main). Normalizing that path makes
+  them identical too.
+
+So there is no production behavior to move, and the differential is a
+measurement rather than an argument. Worth stating precisely, because the
+mutation suite LIVES in `src/analysis/`: a directory-based check would
+report a diff there and be wrong about what it meant.
 
 ### False-AFFECTED control (F4 § 29)
 
