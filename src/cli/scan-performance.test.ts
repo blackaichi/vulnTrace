@@ -381,3 +381,195 @@ describe("performance baseline: single large file with many local declarations/c
     SINGLE_FILE_THRESHOLD_MS + 5_000,
   );
 });
+
+/**
+ * FOUNDATION F5 — the verdict-phase multiplier.
+ *
+ * The two guards above measure GRAPH CONSTRUCTION, which the F5 baseline
+ * profile confirmed is where ~90% of a scan's wall time goes. Neither of
+ * them reaches the cost F5 exists to remove, for a structural reason:
+ * both use a provider that returns no advisory, so no finding is ever
+ * built and `checkReachability` never runs. The cost F5 removes is paid
+ * only per FINDING.
+ *
+ * That cost was `findings × targets × graph nodes`, with one `realpath`
+ * and one `package.json` read per node: `resolveTargetNodes` re-derived
+ * "which instances of this package does the graph contain" from scratch
+ * for every advisory target. This fixture makes that multiplier visible —
+ * many advisories against one package whose graph has many nodes — and
+ * guards it as a SCALING property rather than an absolute time.
+ *
+ * The assertion is deliberately a ratio, not a millisecond count. An
+ * absolute threshold on a verdict phase this small would measure the
+ * machine (see this file's own history of raising one). A ratio between
+ * two runs of the SAME work at different advisory counts survives a slow
+ * runner, because a slow runner slows both sides.
+ */
+describe("performance baseline: many findings over one package (F5)", () => {
+  /**
+   * With the per-scan index, scaling the advisory count by 8x adds only
+   * the per-advisory verdict work — the graph is indexed once, whatever
+   * the advisory count. Before F5 each advisory re-walked every graph
+   * node, so total work grew with the PRODUCT and this ratio tracked the
+   * advisory multiplier itself.
+   *
+   * Bounded at 4x rather than something tight: the fixed cost (parsing,
+   * graph construction, closure) dominates both runs, so the honest
+   * expectation is a ratio near 1, and the headroom is for runner noise.
+   * A restored `findings × nodes` walk pushes this to ~8x on this
+   * fixture and fails clearly.
+   */
+  const MAX_SCALING_RATIO = 4;
+  const PACKAGE_FILE_COUNT = 40;
+
+  let tmpDirs: string[] = [];
+
+  afterEach(() => {
+    for (const dir of tmpDirs) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+    tmpDirs = [];
+  });
+
+  /** A project with one installed package of many files and `advisoryCount` rules against it. */
+  function buildProject(advisoryCount: number): {
+    root: string;
+    provider: VulnerabilityProvider;
+  } {
+    const root = mkdtempSync(path.join(tmpdir(), "vulntrace-perf-f5-"));
+    tmpDirs.push(root);
+
+    write(
+      root,
+      "package.json",
+      JSON.stringify({
+        name: "f5-fixture",
+        version: "1.0.0",
+        dependencies: { wide: "1.0.0" },
+      }),
+    );
+    write(
+      root,
+      "package-lock.json",
+      JSON.stringify({
+        name: "f5-fixture",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "f5-fixture", version: "1.0.0" },
+          "node_modules/wide": { version: "1.0.0" },
+        },
+      }),
+    );
+
+    // One installed package spread over many files, each contributing
+    // several graph nodes — the fan-out the baseline found dominating.
+    const requires: string[] = [];
+    const exportsList: string[] = [];
+    for (let i = 0; i < PACKAGE_FILE_COUNT; i += 1) {
+      write(
+        root,
+        `node_modules/wide/m${i}.js`,
+        `function danger${i}(x) { return x; }\n` +
+          `function helper${i}(x) { return danger${i}(x); }\n` +
+          `module.exports = { danger${i}, helper${i} };\n`,
+      );
+      requires.push(`const m${i} = require("./m${i}.js");`);
+      exportsList.push(`danger${i}: m${i}.danger${i}`);
+    }
+    write(
+      root,
+      "node_modules/wide/package.json",
+      JSON.stringify({ name: "wide", version: "1.0.0", main: "index.js" }),
+    );
+    write(
+      root,
+      "node_modules/wide/index.js",
+      `${requires.join("\n")}\nmodule.exports = { ${exportsList.join(", ")} };\n`,
+    );
+
+    write(
+      root,
+      "src/index.js",
+      'const wide = require("wide");\n' +
+        "function main(x) { return wide.danger0(x); }\n" +
+        "module.exports = { main };\n",
+    );
+
+    // `advisoryCount` rules, each with its own target, all against `wide`.
+    const rules: string[] = [];
+    for (let i = 0; i < advisoryCount; i += 1) {
+      rules.push(
+        `  - id: GHSA-f5-${i}\n` +
+          `    package:\n      name: wide\n` +
+          `    targets:\n` +
+          `      - module: wide\n        export: danger${i % PACKAGE_FILE_COUNT}\n` +
+          `        kind: function\n        confidence: 1.0\n`,
+      );
+    }
+    write(root, "rules.yml", `rules:\n${rules.join("")}`);
+    writeFileSync(
+      path.join(root, "vulntrace.yml"),
+      "analysis:\n  entrypoints:\n    - src/index.js\nrules:\n  files:\n    - rules.yml\n",
+    );
+
+    const provider: VulnerabilityProvider = {
+      queryPackage: (query) =>
+        Promise.resolve(
+          query.name !== "wide"
+            ? []
+            : Array.from({ length: advisoryCount }, (_unused, i) => ({
+                id: `GHSA-f5-${i}`,
+                aliases: [],
+                references: [],
+                affected: [
+                  {
+                    package: { ecosystem: "npm", name: "wide" },
+                    ranges: [{ type: "SEMVER", events: [{ introduced: "0" }] }],
+                  },
+                ],
+              })),
+        ),
+    };
+    return { root, provider };
+  }
+
+  async function timeScan(advisoryCount: number): Promise<number> {
+    const { root, provider } = buildProject(advisoryCount);
+    const { io, stdout } = fakeIo();
+    const start = Date.now();
+    const exitCode = await runScanCommand({
+      projectPathArg: root,
+      configPathOverride: path.join(root, "vulntrace.yml"),
+      provider,
+      noCache: true,
+      io,
+    });
+    const elapsed = Date.now() - start;
+    // 1, not 0: this fixture deliberately produces findings, and that is
+    // the exit code a scan that reported findings returns.
+    expect(exitCode).toBe(1);
+    // The workload must genuinely produce the findings it claims to —
+    // a scan that silently produced none would make this guard vacuous.
+    expect(
+      (JSON.parse(stdout.join("")) as { findings: unknown[] }).findings.length,
+    ).toBe(advisoryCount);
+    return elapsed;
+  }
+
+  it(`scales sub-linearly in advisory count (ratio < ${MAX_SCALING_RATIO}x for 8x the advisories)`, async () => {
+    // Warm the process (module loading, JIT) so the first measured run
+    // is not paying for both.
+    await timeScan(1);
+
+    const few = await timeScan(4);
+    const many = await timeScan(32);
+
+    // Guard against a degenerate denominator on a very fast machine.
+    const ratio = many / Math.max(few, 1);
+    expect(
+      ratio,
+      `4 advisories: ${few}ms, 32 advisories: ${many}ms (ratio ${ratio.toFixed(2)}x)`,
+    ).toBeLessThan(MAX_SCALING_RATIO);
+  }, 120_000);
+});
