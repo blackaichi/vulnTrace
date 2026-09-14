@@ -96,6 +96,9 @@ describe("buildFinding: dependency not vulnerable", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({}),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -123,6 +126,9 @@ describe("buildFinding: indeterminate version match degrades to UNKNOWN", () => 
       entrypoints: [entrypoint],
       resolver: fakeResolver({}),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -155,6 +161,9 @@ describe("buildFinding: no known vulnerable target", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({}),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -187,6 +196,9 @@ describe("buildFinding: no known vulnerable target", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({}),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -233,6 +245,9 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -291,6 +306,9 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -336,6 +354,9 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       entrypoints: [entrypointA, entrypointB],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -384,6 +405,9 @@ describe("buildFinding: AFFECTED requires sufficient reachable evidence", () => 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -427,6 +451,9 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -482,6 +509,9 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -529,6 +559,9 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -577,6 +610,9 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -618,6 +654,9 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -661,6 +700,9 @@ describe("buildFinding: UNKNOWN when reachability was never actually checked (re
       entrypoints: [],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -710,6 +752,9 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -739,6 +784,9 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
       entrypoints: [entrypoint],
       resolver: fakeResolver({}), // "fixture-lib" is not in the mapping
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -805,6 +853,9 @@ describe("buildFinding: {file, symbol} entrypoints scope reachability to only th
       entrypoints: [symbolScopedEntrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -844,6 +895,9 @@ describe("buildFinding: {file, symbol} entrypoints scope reachability to only th
       entrypoints: [symbolScopedEntrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -895,6 +949,9 @@ describe("buildFinding: allowSyntheticNameOnlyTargetBinding gates the bare-name 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       // Deliberately omitted -- proves the flag, not something else,
       // gates the fallback.
     });
@@ -918,6 +975,9 @@ describe("buildFinding: allowSyntheticNameOnlyTargetBinding gates the bare-name 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       allowSyntheticNameOnlyTargetBinding: false,
     });
 
@@ -937,6 +997,9 @@ describe("buildFinding: allowSyntheticNameOnlyTargetBinding gates the bare-name 
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       allowSyntheticNameOnlyTargetBinding: true,
     });
 
@@ -975,6 +1038,9 @@ describe("buildFinding: Site B (package never discovered by the graph at all) is
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
+      // Every graph, path and resolver in this suite is synthetic; no real
+      // closure can be built over files that do not exist (F2-A).
+      syntheticGraphHasNoRealFiles: true,
       allowSyntheticNameOnlyTargetBinding: false,
     });
 

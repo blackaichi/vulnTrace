@@ -149,6 +149,7 @@ function siteBGraph(): CallGraph {
 async function findingFor(options: {
   graph: CallGraph;
   moduleLoadClosure?: ModuleLoadClosure;
+  moduleLoadClosureUnavailable?: boolean;
   packageInstance?: string;
   graphTruncated?: boolean;
 }) {
@@ -164,7 +165,12 @@ async function findingFor(options: {
     resolver: fakeResolver({ "fixture-lib": LIB_FILE }),
     projectRoot: "/project",
     moduleLoadClosure: options.moduleLoadClosure,
+    moduleLoadClosureUnavailable: options.moduleLoadClosureUnavailable,
     graphTruncated: options.graphTruncated,
+    // This suite's graphs and resolver are synthetic (`/project/...`,
+    // `/node_modules/fixture-lib/index.js` -- no such files exist), so no
+    // real closure can be built for the cases that do not supply one.
+    syntheticGraphHasNoRealFiles: true,
   });
 }
 
@@ -292,24 +298,43 @@ describe("VT-307d cases 2-13: OUT + an incomplete closure -> UNKNOWN", () => {
   });
 });
 
-describe("VT-307d case 14: closure unavailable -> existing conservative verdict", () => {
-  it("falls through to the pre-VT-307d path when no closure was built", async () => {
-    // `undefined` must never be read as "an empty closure". On this clean
-    // Site-B graph the pre-existing path already reaches NOT_AFFECTED on
-    // its own -- the point is that it does so WITHOUT the new evidence.
+describe("VT-307d case 14, superseded by FOUNDATION-F2/F2-A: closure unavailable -> UNKNOWN", () => {
+  it("blocks every call-graph-derived negative when no closure was built", async () => {
+    // BEHAVIOR CHANGE, deliberate. This case previously asserted that an
+    // unavailable closure "falls through to the pre-VT-307d path" and
+    // still reached NOT_AFFECTED on a clean Site-B graph, on the reasoning
+    // that `undefined` merely restored the status quo and was not itself
+    // evidence of a blocker.
+    //
+    // That was unsound. The guard does not ask whether the closure SAW a
+    // problem; it asks whether the loader/syntax/capability precondition
+    // was ESTABLISHED -- and an absent closure establishes nothing. Two
+    // conditions only the closure can detect (a syntax error in a loaded
+    // member; a loader mutation in a non-call position such as
+    // `require.extensions['.js'] = hook`) were reproduced reaching
+    // NOT_AFFECTED with the closure absent and every other precondition
+    // unchanged. See verdict.f2-proof-guards.test.ts for those
+    // reproductions.
+    //
+    // What survives unchanged from the original case is the half that was
+    // always right: an unavailable closure must never MANUFACTURE absence
+    // evidence. It still does not -- it now produces no negative proof of
+    // any kind.
     const finding = await findingFor({
       graph: siteBGraph(),
-      moduleLoadClosure: undefined,
+      moduleLoadClosureUnavailable: true,
     });
 
-    expect(finding?.verdict).toBe("NOT_AFFECTED");
+    expect(finding?.verdict).toBe("UNKNOWN");
     expect(
       finding?.evidence?.confirmedAbsentFromModuleLoadClosure,
       "an unavailable closure must not manufacture absence evidence",
     ).toBeUndefined();
-    expect(finding?.evidence?.reasons).toEqual([
-      "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
-    ]);
+    expect(finding?.evidence?.confirmedAbsentInstance).toBeUndefined();
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
+    expect(finding?.evidence?.reasons?.[0]).toContain(
+      "module_load_closure_unavailable",
+    );
   });
 
   it("leaves an unavailable closure unable to rescue a truncated graph", async () => {
@@ -317,7 +342,7 @@ describe("VT-307d case 14: closure unavailable -> existing conservative verdict"
     // graphTruncated === false (VT-202). Unchanged by VT-307d.
     const finding = await findingFor({
       graph: siteBGraph(),
-      moduleLoadClosure: undefined,
+      moduleLoadClosureUnavailable: true,
       graphTruncated: true,
     });
     expect(finding?.verdict).toBe("UNKNOWN");

@@ -8820,3 +8820,340 @@ exactly what RWF-033 spent its effort making unrepresentable.
    reported, never guessed at.
 5. **RWF-002 untouched**, P1-B not started, `PackageInstance` not
    redesigned, the provider layer not redesigned.
+
+## RWF-035 (FOUNDATION F2) — An absent module-load closure was read as a satisfied guard, and an unclassified dynamic reason was read as safe
+
+Foundation's second task. It hardens the PRECONDITIONS of the negative
+proof families. It adds no proof family, weakens none, changes no
+enumeration strategy, and introduces no new taxonomy.
+
+Central rule being enforced: *a negative proof is valid only when every
+required guard is present and explicitly satisfied; missing guard state
+and unknown enum values must fail closed.*
+
+### P0 — base and baseline
+
+Base: `f8bdbda` (`docs: correct RWF-034 corpus and performance
+measurements`), Foundation F1 / RWF-034 confirmed merged. Clean tree,
+identical to `origin/main`. Focused proof baseline before editing — 623
+tests across Family A, Family B, Family C, `ModuleLoadClosure`,
+`AnalysisProofContext`, the negative-proof contracts and the module-load
+absence suite — all passing. Branch:
+`foundation-f2-proof-guard-hardening`.
+
+### The two defects, stated precisely
+
+Both are the same shape: **information that was missing was reported as
+information that was favourable.**
+
+| | F2-A | F2-B |
+| --- | --- | --- |
+| Site | `callGraphNegativeProofBlockers(undefined)` | `isClosureWideningReason(<unknown>)` |
+| Returned | `[]` — no blockers | `undefined` — falsy, i.e. non-widening |
+| Read by caller as | "the loader/syntax guard passed" | "this construct cannot widen the closure" |
+| Actually meant | "there was no closure to ask" | "nobody has classified this value" |
+| Reachable in production today | **Yes** | No (see below) |
+
+### F2-A — the defect
+
+`callGraphNegativeProofBlockers` returned `[]` for an absent closure. This
+was deliberate and documented, in the helper and again at the call site, as
+an accepted residual risk: `undefined` merely reproduced the pre-VT-307d
+status quo and was "not itself evidence of a blocker".
+
+That reasoning answers the wrong question. The guard does not ask whether
+the closure OBSERVED a problem. It asks whether the loader, syntax-validity
+and execution-capability precondition has been ESTABLISHED — and an absent
+closure establishes nothing. Returning `[]` converted "no information" into
+an affirmative all-clear, which is exactly the "absence of evidence treated
+as evidence" AGENTS.md forbids.
+
+### F2-A — why it is not cosmetic
+
+Two of the conditions a present closure blocks on are conditions the CALL
+GRAPH structurally cannot detect for itself:
+
+- **a syntax error in a loaded member.** `indexSourceFileFromDisk` is
+  error-tolerant, so the graph is built from a partial, silently reshaped
+  AST; unlike the closure (VT-307c-fix-2) it never checks
+  `hasSyntaxErrors`. A `require` and the call that follows it can be
+  swallowed by the same error.
+- **a loader mutation in a NON-CALL position**
+  (`require.extensions['.js'] = hook`). VT-300's own guard inspects
+  unresolved CALL EDGES; an assignment produces no edge for it to see.
+
+Only the closure's whole-file scan sees either. Both were reproduced
+end-to-end reaching `NOT_AFFECTED` with the closure withheld and every
+other precondition unchanged. Measured, pre-fix:
+
+| Scenario | Closure present | Closure absent |
+| --- | --- | --- |
+| Syntax error in a loaded member | UNKNOWN (`parse_failure`) | **NOT_AFFECTED** |
+| `require.extensions['.js'] = hook` | UNKNOWN (`loader_hook_mutation`) | **NOT_AFFECTED** |
+| Unresolved module | UNKNOWN | UNKNOWN (the graph's own unresolved edge catches this one) |
+
+Both false negatives were family C. This is a direct soundness regression,
+not a theoretical one.
+
+### F2-A — closure consumer inventory
+
+Traced rather than assumed, before editing:
+
+| Consumer | Requires | Absent-closure behavior before | After |
+| --- | --- | --- | --- |
+| Family A (module-load absence gate, `verdict.ts`) | `closure !== undefined && complete && rootFiles.length > 0 && !contains(instance)` | already fails closed | unchanged |
+| Family B (`confirmedAbsentInstance` corroboration, `checkReachability`) | `closure !== undefined && complete && !contains(instance)` | already fails closed | unchanged |
+| Family C / the shared call-graph guard (`callGraphNegativeProofBlockers`) | no blocker present | **fail-open** | blocks |
+| `entrypointSourceNodes`'s unindexable-entrypoint path | delegates to the closure's own `parse_failure` | **argument had a hole**: with no closure, that `parse_failure` was recorded nowhere | argument now holds |
+
+The fourth row is worth stating separately: that code returns
+`incompleteness: []` for an entrypoint it cannot index, justified in a
+comment by the fact that the same file is a closure ROOT and so already
+records `parse_failure` there. True when a closure exists; vacuous when one
+does not. F2-A closes that hole as a side effect rather than by a second
+mechanism.
+
+### F2-A — the invariant now
+
+`ModuleLoadClosure` unavailable → a closure-dependent negative-proof
+blocker exists. Encoded as a distinct value,
+`module_load_closure_unavailable`, in a new `CallGraphNegativeProofBlocker`
+vocabulary — deliberately NOT added to `ClosureIncompletenessReason`, which
+is the vocabulary of causes a REAL closure emits while traversing, each
+paired with a `ClosureIncompleteness` record naming the member it occurred
+in. Closure absence has no such member, and modelling it as an
+incompleteness reason would mean inventing a fake `importer` for a walk
+that never ran.
+
+The resulting UNKNOWN carries an actionable reason naming the blocker and
+what is unverified, not a silent fallback.
+
+### F2-A — the cost, stated rather than hidden
+
+A scan with no closure can no longer reach a call-graph-derived
+`NOT_AFFECTED` **at all** — including on a project with no widening
+construct anywhere. That is intended, and there is a test asserting exactly
+that rather than leaving it to be discovered.
+
+In production a closure is absent only when: there were no entrypoints
+(nothing was analyzable, and `scan.ts` already diagnoses it); construction
+threw (`scan.ts` diagnoses and continues); or the context binding REJECTED
+it for not belonging to these entrypoints and this graph — an integrity
+failure. Declining to certify a negative in all three is the correct
+answer.
+
+### F2-B — the defect, and the part of the premise that was false
+
+The task's premise was that `isClosureWideningReason` is allow-list based
+and that a newly-added reason would default to non-widening at build time.
+**That half is false, and was measured rather than assumed**: the function
+was already an exhaustive `switch` with no `default`, and with
+`strict: true` an unclassified value falls off the end and fails to
+typecheck. Verified by adding a reason to the union — `TS2366: Function
+lacks ending return statement`.
+
+The real defect is at RUNTIME, and it is genuine. Falling off the end
+returns `undefined`, which is falsy, so an unrecognized reason was
+classified NON-widening. Measured pre-fix:
+`isClosureWideningReason("<unknown>") === undefined`. Both consumers fail
+OPEN on that:
+
+- `findClosureWideningConstructs` (`loader-constructs.ts`) does
+  `if (!isClosureWideningReason(reason)) return;` — it SKIPS recording the
+  construct, leaving the closure `complete`;
+- `hasReachableClosureWideningBlocker` (`verdict.ts`) does
+  `unresolvedEdges.some(e => isClosureWideningReason(e.reason))` — it finds
+  no blocker.
+
+Either one lets a negative proof through on the strength of a construct
+nobody classified.
+
+### F2-B — the boundary audit
+
+`DynamicCallReason` is internal and type-closed: produced only by
+`call-graph.ts` and `loader-constructs.ts`, and carried across **no**
+deserialization boundary — every `JSON.parse` in the tree was inventoried
+and none of them (the OSV cache included) parses a reason. So the runtime
+half is defence in depth, not a reachable production path today. That is a
+property of today's code, not a promise about tomorrow's, and it costs one
+branch to stop depending on it.
+
+Fail-closed, not fail-loud: the floor returns `true` (widening) rather than
+throwing. A scan's contract is that uncertainty becomes UNKNOWN rather than
+an exception — the same rule `buildFinding` already follows for an
+untrusted `AnalysisProofContext`.
+
+### F2-B — classification matrix (canonical)
+
+No classification decision was changed. Widening (16):
+`dynamic_require`, `dynamic_import`, `eval`, `unresolved_module`,
+`declaration_only_resolution`, `aliased_require`, `create_require`,
+`function_constructor`, `aliased_eval`, `module_require`,
+`module_internal_load`, `vm_execution`, `worker_execution`,
+`child_process_execution`, `loader_hook_mutation`,
+`loader_capability_escape`. Non-widening (3): `unsupported_construct`,
+`dynamic_member_access`, `unresolved_target`. Asserted value-by-value.
+
+### F2-B — the enum-addition guard
+
+Two independent compile-time guards, no source-text assertions:
+
+1. `unclassifiedReasonFailsClosed(reason: never)` in the `default` branch.
+   Adding a reason without a `case` now reports the OFFENDING VALUE —
+   `TS2345: Argument of type '"f2_probe_unclassified"' is not assignable to
+   parameter of type 'never'` — instead of pointing at a closing brace.
+   Verified by adding a reason and reading the error.
+2. `Record<DynamicCallReason, true>` over the test matrix, so a new reason
+   absent from both arrays fails to typecheck in the test too. This is what
+   makes a new reason visible to a REVIEWER, not only to the compiler.
+
+### Other fail-open defaults in the proof-guard code
+
+Audited within the proof-guard files only, as instructed — not broadened
+into a whole-codebase sweep. Every `catch` in `verdict.ts` and
+`module-load-closure.ts` already fails closed (returns `[]`, records
+`parse_failure`, or falls through to an existing gate).
+
+One same-class defect found and fixed because it was trivial:
+`AnalysisProofContextInput.graphTruncated` was optional and defaulted to
+`false` — a caller that said nothing about its graph's coverage was
+recorded as having asserted the graph was COMPLETE, which is the strongest
+claim available and the one VT-202 gates both call-graph proofs on.
+Production always passed it explicitly, so no real scan took that default;
+it was a hole waiting for a second production caller. Now REQUIRED at the
+type level, so no context can be built without stating coverage. Fixed as a
+compile-time change, not a new runtime branch.
+
+### Test-harness honesty, and the 81 tests
+
+Hardening F2-A failed 81 existing tests. They were not adjusted to pass —
+they were categorized:
+
+- **73 were under-simulating production.** They build real projects, real
+  resolvers and real call graphs on disk, but never built a closure,
+  because none was required before. `cli/scan.ts` always builds one.
+  `buildFindingForTest` now builds a REAL gate-eligible closure by default,
+  which makes those tests MORE faithful to production than they were, and
+  all 73 pass unchanged.
+- **22 call sites in `verdict.test.ts` are genuinely synthetic** (fake
+  paths that never exist on disk). They declare it with
+  `syntheticGraphHasNoRealFiles`, the same class of narrow, deliberately
+  visible affordance as the existing `allowSyntheticNameOnlyTargetBinding`.
+- **2 tests exist to prove absence fails closed** and must be able to
+  WITHHOLD the closure explicitly, which `moduleLoadClosureUnavailable`
+  now expresses — by statement rather than by omission, since an omission
+  cannot be told apart from an oversight.
+- **1 test (`VT-307d case 14`) encoded the defect itself** — "closure
+  unavailable → falls through to the pre-VT-307d path" and still
+  `NOT_AFFECTED`. Inverted, with the reasoning recorded in place. The half
+  of it that was always right (an unavailable closure must never
+  MANUFACTURE absence evidence) is retained and still asserted.
+- **1 test moved verdict**, and it was audited rather than edited:
+  `verdict.site-b-target-authority` "does not answer for the wrong instance
+  in the NEGATIVE direction" went `UNKNOWN → NOT_AFFECTED`.
+
+### The one verdict movement, audited
+
+The finding is about `packages/bar`; `node_modules/foo` points at
+`packages/foo`. Nothing resolves to `packages/bar`, so it is absent from
+both the call graph and a complete closure, and family B certifies its own
+absence with an empty evidence path — no `packages/foo` file appears in it,
+which is the invariant the case actually exists to pin. Confirmed against
+the real runtime: executing the consumer never loads `packages/bar` at all.
+
+**Verified independent of F2-A by direct control**: with the production
+files reverted to `main` and only the closure supplied by the harness, the
+case yields `NOT_AFFECTED` identically. The verdict moved because the TEST
+gained a closure that production always had — not because the guard
+changed.
+
+### Differential vs main
+
+The validation corpus was run on both `f8bdbda` and this branch. **All 23
+cases produce identical verdicts.** Movement in every class —
+UNKNOWN→AFFECTED, UNKNOWN→NOT_AFFECTED, AFFECTED→UNKNOWN,
+AFFECTED→NOT_AFFECTED, NOT_AFFECTED→UNKNOWN, NOT_AFFECTED→AFFECTED — is
+**zero**. The same five pre-existing oracle mismatches (RWB-03, RWB-05,
+RWB-09b, VAL-002, VAL-003) appear on both, unchanged.
+
+**No new `NOT_AFFECTED` is introduced anywhere**, so the "every new
+confident negative gets a manual audit" requirement is satisfied vacuously
+at corpus level, and by the single audited test movement above at unit
+level.
+
+### RWB-05 / RWF-002
+
+RWB-05 remains the existing known UNKNOWN on both `main` and this branch.
+F2 was not used to improve its precision, and no target-relevant
+completeness work was done. **RWF-002 is explicitly untouched and
+deferred.**
+
+### Contracts
+
+- **VT-CONTRACT-01** (exactly one of family A/B/C on a `NOT_AFFECTED`;
+  none otherwise) — intact, and additionally asserted on every new F2-A
+  case, including the degraded ones.
+- **VT-CONTRACT-02** (family C evidence structurally required;
+  `reachableSubgraphComplete: true`, no resurrected `callGraphComplete`) —
+  intact.
+- **VT-CONTRACT-03** (`AnalysisProofContext` fails closed) — intact, and
+  strengthened by `graphTruncated` becoming required.
+
+### Proof precondition table (as the code actually reads)
+
+| Family | Preconditions |
+| --- | --- |
+| A | exact instance · closure present · `complete` · gate-eligible · `rootFiles.length > 0` · instance not in `loadedPackageInstances` |
+| B | exact instance · `graphTruncated === false` · absent from call graph · no reachable closure-widening unresolved edge · complete-MLC corroboration of the exact `PackageInstanceId` · **no call-graph negative-proof blocker (now including closure absence)** |
+| C | authoritative exact target · reachable subgraph searched to exhaustion with no unresolved edge · `graphTruncated === false` · exact instance binding · **no call-graph negative-proof blocker (now including closure absence)** |
+
+### False-`NOT_AFFECTED` matrix
+
+| # | Attack | Result |
+| --- | --- | --- |
+| 1 | graph absence + closure undefined | UNKNOWN |
+| 2 | authoritative target unreachable + closure guard unavailable | UNKNOWN |
+| 3 | closure construction rejected (no entrypoints / root mismatch / throw) | UNKNOWN |
+| 4 | closure incomplete | UNKNOWN (unchanged) |
+| 5 | widening dynamic call reason | UNKNOWN (unchanged) |
+| 6 | synthetic unknown runtime `DynamicCallReason` | classified widening → blocks |
+| 7 | empty entrypoint roots | no gate-eligible closure → UNKNOWN |
+| 8 | mismatched proof context | UNKNOWN (unchanged) |
+
+Runtime-reachable false `NOT_AFFECTED`: **0**.
+
+### Positive target authority
+
+Unchanged by design — this task touches no positive path. Wrong-instance,
+same-version twins, Site A/B and forwarding controls all pass; the full
+adversarial suite (124 cases) passes. Regressions: **0**.
+
+### Performance
+
+Negligible, as expected: the change is one branch and one type. Focused
+proof suites and the performance baselines are unchanged (medium synthetic
+project 2450ms against a 5000ms threshold; large single file 8338ms against
+20000ms). Nothing was optimized.
+
+### Verification
+
+Full suite 3760 passed / 0 failed · adversarial 124 passed · validation
+identical to `main` · performance 2 passed · typecheck, lint, prettier,
+build, history-validator all clean. No timeout waivers.
+
+### Remaining limitations
+
+1. **RWF-002 is untouched** and remains open.
+2. **No target-relevant closure completeness.** A closure is complete or it
+   is not; a construct irrelevant to the target still blocks. F2 does not
+   change this, and RWB-05 is its standing example.
+3. **`traversal_truncated` still does not block** the call-graph proofs, by
+   the existing VT-307e argument (it bounds the closure's walk, while
+   `graphTruncated` independently guards the graph's). Unchanged and
+   re-verified, not revisited.
+4. **The F2-B runtime floor is unreachable today.** It is defence in depth
+   against a future producer or boundary, not a fix for an observed
+   production path.
+5. **No generalized proof-mutation harness.** The mutation-like tests here
+   withhold one hardened prerequisite at a time; the general framework
+   remains F4's.
