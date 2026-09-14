@@ -57,7 +57,13 @@ import {
   formatScanOutput,
   validateScanOutput,
   type ScanOutput,
+  type UnreportedCandidate,
 } from "./output.js";
+import {
+  UNCERTAINTY_CATEGORIES,
+  UNCERTAINTY_REASON_CATEGORY,
+  type UncertaintyCategory,
+} from "../domain/uncertainty.js";
 
 export interface RunScanOptions {
   /** The path exactly as the user typed it (used verbatim for `scan.project` in the JSON output). */
@@ -192,6 +198,135 @@ function findRuleForVulnerability(
  *   AGENTS.md: never infer NOT_AFFECTED — nor omit a dependency's findings
  *   entirely — merely because something failed to resolve).
  */
+/**
+ * Widest-to-narrowest, and the canonical primary sort key (F3 § 27).
+ *
+ * Stage order is semantic rather than alphabetical: a reader scanning the
+ * array top to bottom sees "packages may be missing entirely", then
+ * "this known instance could not be placed", then "this known pair does
+ * not apply" -- narrowing, never jumping about.
+ */
+const UNREPORTED_STAGE_ORDER: Record<UnreportedCandidate["stage"], number> = {
+  workspace_discovery: 0,
+  package_identity: 1,
+  advisory_applicability: 2,
+};
+
+/**
+ * Orders `unreportedCandidates` so the array is a function of WHAT was
+ * unreported, never of the order anything happened to be enumerated in
+ * (F3 § 27).
+ *
+ * This matters more here than for `findings`. These entries are produced
+ * from three different loops -- workspace discovery, the registry's
+ * conflict/manifest lists, and the per-instance advisory fan-out -- and
+ * the fan-out's own order comes from `findApplicablePackageInstances`,
+ * which returns the registry's insertion order for a name. Reversing
+ * instance enumeration would otherwise permute this array while changing
+ * nothing about the scan, which is exactly the instability the
+ * determinism suite reverses those orders to catch.
+ *
+ * Every key that distinguishes two entries participates, so the comparator
+ * is total: two entries that compare equal on all five are the same
+ * statement about the same thing.
+ */
+function sortUnreportedCandidates(
+  candidates: readonly UnreportedCandidate[],
+): readonly UnreportedCandidate[] {
+  const compare = (a: string | undefined, b: string | undefined): number => {
+    // `undefined` sorts before any string, consistently, so an entry with
+    // no package identity (a workspace note) has a stable position rather
+    // than one that depends on the sort's implementation.
+    if (a === b) return 0;
+    if (a === undefined) return -1;
+    if (b === undefined) return 1;
+    return a < b ? -1 : 1;
+  };
+
+  return [...candidates].sort(
+    (a, b) =>
+      UNREPORTED_STAGE_ORDER[a.stage] - UNREPORTED_STAGE_ORDER[b.stage] ||
+      compare(a.package, b.package) ||
+      compare(a.packageInstance, b.packageInstance) ||
+      compare(a.vulnerability, b.vulnerability) ||
+      compare(a.reason, b.reason) ||
+      compare(a.detail, b.detail),
+  );
+}
+
+/**
+ * Readable labels for the six categories (F3 § 22: "do not dump internal
+ * enums without readable context").
+ *
+ * The token is still printed -- it is the thing a reader greps for, and
+ * the thing the JSON carries -- but never alone.
+ */
+const CATEGORY_LABEL: Record<UncertaintyCategory, string> = {
+  unmodeled_construct: "constructs this analyzer does not model yet",
+  value_uncertainty: "values that are not statically unique",
+  capability_escape: "runtime capabilities that escape static analysis",
+  identity_unresolved: "package/target identity that could not be established",
+  analysis_precondition_unmet: "analysis preconditions that were not met",
+  budget_exceeded: "configured analysis limits",
+};
+
+/**
+ * The human-facing summary of WHY a scan's UNKNOWNs are UNKNOWN (F3 § 22).
+ *
+ * AGGREGATED PER SCAN, not per finding. F3's own example sketches a
+ * per-finding block, and that is what the HTML report renders -- it has
+ * room, and a reader there is looking at one finding. On a terminal it
+ * would be a flood: a real project produces dozens of UNKNOWNs that share
+ * a handful of reasons, and printing the same three lines forty times
+ * buries the one thing the summary exists to convey, which is where the
+ * uncertainty actually concentrates. Counts are carried instead, which is
+ * strictly more information per line.
+ *
+ * Written to STDERR, never stdout. Stdout is this CLI's machine-readable
+ * contract (docs/SDD.md § 24) and adding prose to it would break every
+ * existing consumer -- the same reason `--format html` refuses to write
+ * there.
+ *
+ * Ordered by the taxonomy's declaration order, identically to the JSON, so
+ * a reader comparing the two sees the same sequence.
+ */
+function summarizeUnknownReasons(findings: readonly Finding[]): string[] {
+  const byCategory = new Map<UncertaintyCategory, Map<string, number>>();
+  let unknownCount = 0;
+
+  for (const finding of findings) {
+    if (finding.verdict !== "UNKNOWN") {
+      continue;
+    }
+    unknownCount += 1;
+    for (const entry of finding.unknownReasons ?? []) {
+      const reasons = byCategory.get(entry.category) ?? new Map();
+      reasons.set(entry.reason, (reasons.get(entry.reason) ?? 0) + entry.count);
+      byCategory.set(entry.category, reasons);
+    }
+  }
+
+  if (unknownCount === 0) {
+    return [];
+  }
+
+  const lines = [
+    `${unknownCount} UNKNOWN finding${unknownCount === 1 ? "" : "s"}; why:`,
+  ];
+  for (const category of UNCERTAINTY_CATEGORIES) {
+    const reasons = byCategory.get(category);
+    if (reasons === undefined) {
+      continue;
+    }
+    const rendered = [...reasons.entries()]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([reason, count]) => `${reason} (${count})`)
+      .join(", ");
+    lines.push(`  ${category} — ${CATEGORY_LABEL[category]}: ${rendered}`);
+  }
+  return lines;
+}
+
 export async function runScanCommand(options: RunScanOptions): Promise<number> {
   const scanStart = Date.now();
   const io = options.io ?? defaultIo;
@@ -293,6 +428,22 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // consumer parsing `diagnostics` had no way to tell an incompletely
   // enumerated monorepo from a fully enumerated one. The stderr line is
   // kept as well -- it is what a human running the CLI sees first.
+  //
+  // F3 § 15 adds the SECOND channel, and keeps the boundary between them
+  // explicit. `diagnostics` stays exactly as F1-A left it -- same source,
+  // same words, same count -- because it is the operational channel a
+  // human reads. `unreportedCandidates` carries the same facts as
+  // classified analysis semantics: a truncated traversal is
+  // `budget_exceeded` (raise a limit), an unreadable declaration is
+  // `identity_unresolved` (fix the manifest), and a pattern shape this
+  // analyzer declines is `unmodeled_construct` (implement it). Those call
+  // for three different responses that one English sentence cannot be
+  // aggregated into.
+  //
+  // These entries name NO package, deliberately: what is missing is
+  // precisely the set of packages nobody enumerated, so there is no
+  // identity to attach and inventing one would be worse than saying
+  // nothing (F3 § 5, "enough identity where known").
   const workspaces = discoverWorkspacePackages(projectRoot);
   const workspaceDiagnostics: Diagnostic[] = workspaces.unsupported.map(
     (reason) => ({ source: "workspaces", message: reason }),
@@ -300,6 +451,14 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   for (const reason of workspaces.unsupported) {
     io.stderr(`vulntrace: ${reason}\n`);
   }
+  const unreportedCandidates: UnreportedCandidate[] =
+    workspaces.incompleteness.map((entry) => ({
+      stage: "workspace_discovery",
+      disposition: "undetermined",
+      reason: entry.reason,
+      category: UNCERTAINTY_REASON_CATEGORY[entry.reason],
+      detail: entry.message,
+    }));
   const knownPackageRoots = buildKnownPackageRoots(
     dependencyNodes,
     projectRoot,
@@ -523,13 +682,30 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     const origin = conflict.sources.includes("installed")
       ? `these claims come from this project's own dependency metadata and from the package installed on disk`
       : `every claim comes from this project's own dependency metadata`;
-    diagnostics.push({
-      source: "dependencies",
-      message:
-        `package instance "${describePackageInstance(conflict.packageInstance, projectRoot)}" ` +
-        `(${conflict.packageName}) has conflicting versions ${claims}; ${origin}; ` +
-        `its version could not be established, so no advisory version range was ` +
-        `evaluated against it`,
+    const message =
+      `package instance "${describePackageInstance(conflict.packageInstance, projectRoot)}" ` +
+      `(${conflict.packageName}) has conflicting versions ${claims}; ${origin}; ` +
+      `its version could not be established, so no advisory version range was ` +
+      `evaluated against it`;
+    diagnostics.push({ source: "dependencies", message });
+    // F3 § 16: the SAME message, the same instance, the same provenance --
+    // classified. Emitted here rather than re-derived later precisely so
+    // the two channels cannot word the same fact differently (self-review
+    // attack L). It creates no finding and moves no verdict, exactly as
+    // the diagnostic above does not: this is a statement that
+    // applicability was never evaluated, not a statement about whether the
+    // advisory applies.
+    unreportedCandidates.push({
+      stage: "package_identity",
+      disposition: "undetermined",
+      package: conflict.packageName,
+      packageInstance: describePackageInstance(
+        conflict.packageInstance,
+        projectRoot,
+      ),
+      reason: "installed_version_conflicted",
+      category: UNCERTAINTY_REASON_CATEGORY.installed_version_conflicted,
+      detail: message,
     });
   }
 
@@ -552,12 +728,27 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       uncertain.reason === "unreadable"
         ? `has an installed package.json that could not be read`
         : `has an installed package.json whose "version" field is not a usable version string`;
-    diagnostics.push({
-      source: "dependencies",
-      message:
-        `package instance "${describePackageInstance(uncertain.packageInstance, projectRoot)}" ` +
-        `(${uncertain.packageName}) ${fault}, so ` +
-        `${declared}; no advisory version range was evaluated against it`,
+    const message =
+      `package instance "${describePackageInstance(uncertain.packageInstance, projectRoot)}" ` +
+      `(${uncertain.packageName}) ${fault}, so ` +
+      `${declared}; no advisory version range was evaluated against it`;
+    diagnostics.push({ source: "dependencies", message });
+    // F1-B's second cause, same consequence, same two channels. Kept as a
+    // DISTINCT reason from `installed_version_conflicted` because the
+    // remedies differ -- a contradiction is fixed by reconciling metadata,
+    // an unreadable or unusable installed manifest by reinstalling -- and
+    // collapsing them would hide that from anyone aggregating a corpus.
+    unreportedCandidates.push({
+      stage: "package_identity",
+      disposition: "undetermined",
+      package: uncertain.packageName,
+      packageInstance: describePackageInstance(
+        uncertain.packageInstance,
+        projectRoot,
+      ),
+      reason: "installed_manifest_untrusted",
+      category: UNCERTAINTY_REASON_CATEGORY.installed_manifest_untrusted,
+      detail: message,
     });
   }
 
@@ -642,6 +833,47 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       instanceRegistry,
       packageName,
     )) {
+      // F3 § 4 -- the no-finding path nothing recorded before.
+      //
+      // `advisoryQueryVersions` contributes no query for an instance with
+      // no established version ("there is nothing to ask about"), and that
+      // is correct. An instance whose SIBLINGS have versions is still
+      // evaluated against whatever their queries returned, reaching its
+      // own honest UNKNOWN -- F3 § 4 says to preserve that, and the loop
+      // below does.
+      //
+      // But when NO advisory was surfaced for this name at all, that
+      // rescue never happens: the instance is evaluated against nothing,
+      // produces no finding, and before F3 vanished from the report
+      // entirely. "This package has no known advisories" and "nobody could
+      // ask whether this package has advisories" reached the reader as the
+      // same silence.
+      //
+      // Deliberately NOT a fabricated UNKNOWN finding (F3 § 4: "do not
+      // fabricate advisory findings solely to make taxonomy convenient").
+      // There is no advisory to name, so there is no finding to make --
+      // only a candidate that was never resolvable, which is what this
+      // entry says.
+      if (candidate.version === undefined && relevant.length === 0) {
+        const instance = describePackageInstance(
+          candidate.packageInstance,
+          projectRoot,
+        );
+        unreportedCandidates.push({
+          stage: "package_identity",
+          disposition: "undetermined",
+          package: packageName,
+          packageInstance: instance,
+          reason: "installed_version_unavailable",
+          category: UNCERTAINTY_REASON_CATEGORY.installed_version_unavailable,
+          detail:
+            `package instance "${instance}" (${packageName}) has no established ` +
+            `version, and no advisory was discovered for any sibling instance of ` +
+            `this name, so no advisory was ever evaluated against it; whether any ` +
+            `vulnerability applies to this instance is undetermined`,
+        });
+      }
+
       for (const vulnerability of relevant) {
         // Version applicability, evaluated PER INSTANCE against this
         // instance's own version and nothing else. An instance with no
@@ -658,6 +890,44 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         // sibling -- which is precisely why each sibling gets its own
         // evaluation above rather than inheriting this one.
         if (matchResult === "not_affected") {
+          // F3 § 3, § 17, § 25 -- RECORDED, and recorded as a CONCLUSION.
+          //
+          // The `continue` is untouched: this still produces no finding,
+          // because no finding is the correct output. What changes is that
+          // the reason is now sayable. `RWB-09b` is exactly this state --
+          // a patched semver@7.5.2 whose version is outside the affected
+          // range -- and it was scored as a disagreement only because the
+          // scan's confident "does not apply" and a scan that never
+          // considered the instance produced identical bytes.
+          //
+          // `disposition: "not_applicable"` and the ABSENCE of a
+          // `category` are what keep this out of every uncertainty count
+          // (F3 § 3 forbids turning out-of-range into UNKNOWN now that a
+          // taxonomy exists to hold one).
+          //
+          // It is equally not a NOT_AFFECTED (F3 § 25). This says the
+          // advisory's ranges do not cover the installed version. It says
+          // nothing about reachability -- none ran -- so there is no
+          // negative proof here, and nothing may promote it to one.
+          unreportedCandidates.push({
+            stage: "advisory_applicability",
+            disposition: "not_applicable",
+            vulnerability: vulnerability.id,
+            package: packageName,
+            packageInstance: describePackageInstance(
+              candidate.packageInstance,
+              projectRoot,
+            ),
+            ...(candidate.version !== undefined
+              ? { version: candidate.version }
+              : {}),
+            reason: "advisory_not_applicable_to_installed_version",
+            detail:
+              `installed version ${candidate.version ?? "(unknown)"} is outside every ` +
+              `affected range declared by ${vulnerability.id}, so this advisory does ` +
+              `not apply to this instance; no reachability analysis was performed and ` +
+              `this is not a proof of non-reachability`,
+          });
           continue;
         }
 
@@ -702,6 +972,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     findings: findings.map(findingToJson),
     coverage: computeCoverage(graph),
     diagnostics,
+    unreportedCandidates: sortUnreportedCandidates(unreportedCandidates),
     timings: {
       // Derived, not independently measured -- see PhaseTimings' own doc
       // comment (src/performance/timing.ts) for why.
@@ -715,6 +986,13 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       totalMs: Date.now() - scanStart,
     },
   };
+
+  // F3 § 22. Emitted before the report is rendered or written, so it
+  // reaches a human whether the result went to stdout or to --output, and
+  // so it cannot interleave into the machine-readable stream.
+  for (const line of summarizeUnknownReasons(findings)) {
+    io.stderr(`vulntrace: ${line}\n`);
+  }
 
   const issues = validateScanOutput(output);
   if (issues.length > 0) {

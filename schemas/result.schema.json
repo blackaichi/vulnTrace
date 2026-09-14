@@ -217,6 +217,80 @@
                 }
               }
             }
+          },
+          "unknownReasons": {
+            "type": "array",
+            "description": "FOUNDATION F3. Why this finding is UNKNOWN, machine-readably. Present on UNKNOWN findings and on no others: an AFFECTED carries a reproduced path and a NOT_AFFECTED carries a positive proof, so neither is uncertain and neither may carry this. Purely OBSERVATIONAL -- every entry is derived from the same blockers the verdict rules already acted on, after those rules ran, and removing the field would change no verdict anywhere. It does not replace evidence.reasons, which is retained verbatim and carries the specifics (which module, which file and line) that a token cannot. Entries are deduplicated by (category, reason) and ordered by the taxonomy's own declaration order -- never by count and never by observation order -- so the array is byte-stable across runs.",
+            "items": {
+              "type": "object",
+              "required": [
+                "category",
+                "reason",
+                "count"
+              ],
+              "properties": {
+                "category": {
+                  "enum": [
+                    "unmodeled_construct",
+                    "value_uncertainty",
+                    "capability_escape",
+                    "identity_unresolved",
+                    "analysis_precondition_unmet",
+                    "budget_exceeded"
+                  ],
+                  "description": "The KIND OF WORK this uncertainty represents. unmodeled_construct: a construct the analyzer saw and has not implemented (closeable by frontend work). value_uncertainty: the construct is modeled but the value or destination is not statically unique. capability_escape: the runtime can reach outside bounded static reasoning (eval, dynamic loading, loader mutation) -- largely not closeable. identity_unresolved: a package/instance/version/entry/target identity fact was never established. analysis_precondition_unmet: something the decision depends on was never established at all (unparseable source, no runtime implementation, no vulnerable-symbol rule, no module-load closure). budget_exceeded: a configured bound stopped the work."
+                },
+                "reason": {
+                  "enum": [
+                    "dynamic_member_access",
+                    "dynamic_require",
+                    "dynamic_import",
+                    "eval",
+                    "unresolved_module",
+                    "unresolved_target",
+                    "unsupported_construct",
+                    "declaration_only_resolution",
+                    "aliased_require",
+                    "create_require",
+                    "function_constructor",
+                    "aliased_eval",
+                    "module_require",
+                    "module_internal_load",
+                    "vm_execution",
+                    "worker_execution",
+                    "child_process_execution",
+                    "loader_hook_mutation",
+                    "loader_capability_escape",
+                    "parse_failure",
+                    "traversal_truncated",
+                    "module_load_closure_unavailable",
+                    "vulnerable_target_unresolved",
+                    "advisory_version_applicability_indeterminate",
+                    "no_vulnerable_symbol_rule",
+                    "no_entrypoints_available",
+                    "call_graph_truncated",
+                    "closure_widening_construct_reachable",
+                    "package_instance_absence_uncorroborated",
+                    "entrypoint_root_incomplete",
+                    "unreachability_not_positively_established",
+                    "installed_version_unavailable",
+                    "installed_version_conflicted",
+                    "installed_manifest_untrusted",
+                    "workspace_declaration_uninterpretable",
+                    "workspace_pattern_unsupported",
+                    "workspace_enumeration_truncated",
+                    "workspace_layout_unsupported",
+                    "unclassified_uncertainty_reason"
+                  ],
+                  "description": "The specific reason, one level below category. Every DynamicCallReason appears verbatim, so a token here is the same string the diagnostics prose names."
+                },
+                "count": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "description": "Occurrences observed for this exact (category, reason) pair. A reachability search over a real package produces hundreds of unresolved edges carrying a handful of distinct reasons; this is what lets a consumer see 47 x unsupported_construct rather than 47 rows."
+                }
+              }
+            }
           }
         },
         "if": {
@@ -381,6 +455,117 @@
           "message": {
             "type": "string",
             "minLength": 1
+          }
+        }
+      }
+    },
+    "unreportedCandidates": {
+      "type": "array",
+      "description": "FOUNDATION F3. Vulnerability candidates that produced NO finding row, each with why. NOT FINDINGS: no verdict, no evidence, no confidence, a separate array, and no code path converts one into a finding. Before F3 every one of these states was either invisible or a line of English on stderr, so a confident 'this advisory does not apply to this instance' and 'this scan never considered that instance' reached a consumer as identical bytes. OPTIONAL in this schema so that results produced before F3 remain valid; always emitted, possibly empty, by every scan since. Ordered by (stage, package, packageInstance, vulnerability, reason, detail) so the array is a function of what was unreported, never of enumeration order.",
+      "items": {
+        "type": "object",
+        "required": [
+          "stage",
+          "disposition",
+          "reason",
+          "detail"
+        ],
+        "properties": {
+          "stage": {
+            "enum": [
+              "workspace_discovery",
+              "package_identity",
+              "advisory_applicability"
+            ],
+            "description": "Where in the pipeline the candidate stopped, widest to narrowest. workspace_discovery: an unknown NUMBER of candidates may never have been enumerated, so no package is named. package_identity: a known instance could not be placed against advisory ranges. advisory_applicability: a known instance was evaluated against a known advisory."
+          },
+          "disposition": {
+            "enum": [
+              "not_applicable",
+              "undetermined"
+            ],
+            "description": "Whether the absence of a finding is a CONCLUSION or a GAP, and the most important field here. not_applicable: VulnTrace positively established that the advisory does not apply -- the installed version is outside every affected range. That is real information arrived at with certainty and is NOT uncertainty; it carries no category and must never be counted as an analysis gap. It is equally NOT a NOT_AFFECTED verdict: it is a statement about version ranges only, no reachability analysis ran, and no negative proof exists. undetermined: applicability could not be established, so nothing is claimed either way."
+          },
+          "vulnerability": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The advisory this entry is about, when one was known."
+          },
+          "package": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The package name, when one was known. Absent on a workspace_discovery entry, where what is missing is exactly the set of packages nobody enumerated."
+          },
+          "packageInstance": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The exact installed instance, rendered as in a finding's packageInstance: project-relative POSIX path inside the scanned project, canonical absolute path otherwise. Presentation only; never parsed back into an identity."
+          },
+          "version": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The installed version, when it was established. Omitted rather than defaulted, for the same reason a finding's version is."
+          },
+          "reason": {
+            "enum": [
+              "dynamic_member_access",
+              "dynamic_require",
+              "dynamic_import",
+              "eval",
+              "unresolved_module",
+              "unresolved_target",
+              "unsupported_construct",
+              "declaration_only_resolution",
+              "aliased_require",
+              "create_require",
+              "function_constructor",
+              "aliased_eval",
+              "module_require",
+              "module_internal_load",
+              "vm_execution",
+              "worker_execution",
+              "child_process_execution",
+              "loader_hook_mutation",
+              "loader_capability_escape",
+              "parse_failure",
+              "traversal_truncated",
+              "module_load_closure_unavailable",
+              "vulnerable_target_unresolved",
+              "advisory_version_applicability_indeterminate",
+              "no_vulnerable_symbol_rule",
+              "no_entrypoints_available",
+              "call_graph_truncated",
+              "closure_widening_construct_reachable",
+              "package_instance_absence_uncorroborated",
+              "entrypoint_root_incomplete",
+              "unreachability_not_positively_established",
+              "installed_version_unavailable",
+              "installed_version_conflicted",
+              "installed_manifest_untrusted",
+              "workspace_declaration_uninterpretable",
+              "workspace_pattern_unsupported",
+              "workspace_enumeration_truncated",
+              "workspace_layout_unsupported",
+              "unclassified_uncertainty_reason",
+              "advisory_not_applicable_to_installed_version"
+            ],
+            "description": "The specific reason, from the same vocabulary unknownReasons uses -- one token namespace, not two -- plus advisory_not_applicable_to_installed_version, which is deliberately NOT an uncertainty reason: it has no category, can never appear in unknownReasons, and so cannot be aggregated into an uncertainty count by mistake."
+          },
+          "category": {
+            "enum": [
+              "unmodeled_construct",
+              "value_uncertainty",
+              "capability_escape",
+              "identity_unresolved",
+              "analysis_precondition_unmet",
+              "budget_exceeded"
+            ],
+            "description": "The uncertainty class, present IF AND ONLY IF disposition is undetermined. Its absence on a not_applicable entry is structural: a confident non-applicability has no uncertainty class because it is not uncertain."
+          },
+          "detail": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Human-readable explanation; always present. Where the same condition also appears in diagnostics, this is the same sentence, so the two channels cannot word one fact differently."
           }
         }
       }

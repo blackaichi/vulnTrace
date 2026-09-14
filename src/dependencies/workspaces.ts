@@ -37,6 +37,41 @@ export interface WorkspacePackage {
  * Conflating those two is how an analyzer silently loses a package and
  * then reports a confident negative about it.
  */
+/**
+ * WHY a workspace discovery is incomplete, as a token rather than as prose
+ * (FOUNDATION F3 § 15).
+ *
+ * F1-A made these conditions VISIBLE, by putting each one's message into
+ * `ScanOutput.diagnostics` instead of only on stderr. It did not make them
+ * CLASSIFIABLE: a consumer still had to pattern-match English to tell "a
+ * configured traversal bound stopped the walk" from "this analyzer does
+ * not read `pnpm-workspace.yaml`", and those two call for completely
+ * different responses -- raise a limit, versus implement a file format.
+ *
+ * The four values map onto three different F3 categories, which is the
+ * whole argument for typing them (see `domain/uncertainty.ts`):
+ * `workspace_enumeration_truncated` is `budget_exceeded`,
+ * `workspace_declaration_uninterpretable` is `identity_unresolved`, and
+ * the two "this analyzer declines to read that shape" cases are genuine,
+ * closeable `unmodeled_construct` gaps.
+ *
+ * The tokens are deliberately the SAME strings the taxonomy uses, so a
+ * reader comparing a diagnostic against a structured reason sees one
+ * vocabulary rather than two that have to be kept in sync.
+ */
+export type WorkspaceDiscoveryIncompletenessReason =
+  | "workspace_declaration_uninterpretable"
+  | "workspace_pattern_unsupported"
+  | "workspace_enumeration_truncated"
+  | "workspace_layout_unsupported";
+
+/** One reason a workspace discovery is incomplete, classified and explained. */
+export interface WorkspaceDiscoveryIncompleteness {
+  readonly reason: WorkspaceDiscoveryIncompletenessReason;
+  /** The operational message; also what reaches `diagnostics` verbatim. */
+  readonly message: string;
+}
+
 export interface WorkspaceDiscovery {
   readonly packages: readonly WorkspacePackage[];
   /**
@@ -49,8 +84,20 @@ export interface WorkspaceDiscovery {
    * scan's diagnostics must not depend on the order patterns happen to
    * appear in `workspaces` -- the same repository, declared in a different
    * order, is the same repository.
+   *
+   * Exactly `incompleteness.map((entry) => entry.message)` since F3. It is
+   * retained as its own field rather than derived at each call site
+   * because it is the OPERATIONAL channel -- the lines a human running the
+   * CLI reads on stderr, and the `diagnostics` entries F1-A established --
+   * and F3 § 15 keeps that channel separate from the analysis-semantics
+   * one on purpose. Same facts, same words, two audiences.
    */
   readonly unsupported: readonly string[];
+  /**
+   * The same reasons, classified (F3 § 15). One entry per entry in
+   * {@link unsupported}, in the same order.
+   */
+  readonly incompleteness: readonly WorkspaceDiscoveryIncompleteness[];
 }
 
 /**
@@ -391,7 +438,15 @@ export function discoverWorkspacePackages(
     return finish(
       [],
       [
-        `the root manifest's "workspaces" declaration is not a supported shape (expected an array of patterns, or an object with a "packages" array)`,
+        {
+          // The declaration exists and could not be interpreted AT ALL, so
+          // the set of local packages -- their names, their roots -- is
+          // unestablished. That is an identity failure, which is why it is
+          // a different token from `workspace_pattern_unsupported`, where
+          // the declaration parsed and one pattern shape was declined.
+          reason: "workspace_declaration_uninterpretable",
+          message: `the root manifest's "workspaces" declaration is not a supported shape (expected an array of patterns, or an object with a "packages" array)`,
+        },
       ],
     );
   }
@@ -405,14 +460,19 @@ export function discoverWorkspacePackages(
 
   const canonicalProjectRoot = canonicalizePackageInstancePath(projectRoot);
   const byRoot = new Map<string, WorkspacePackage>();
-  const unsupported: string[] = [];
+  const unsupported: WorkspaceDiscoveryIncompleteness[] = [];
 
   for (const pattern of patterns) {
     const interpreted = interpretWorkspacePattern(pattern);
     if (interpreted === undefined) {
-      unsupported.push(
-        `workspace pattern "${pattern}" is not a supported shape and was ignored`,
-      );
+      unsupported.push({
+        // A documented npm/Yarn pattern shape (`!x`, `pkg-*`, brace
+        // expansion, ...) this analyzer declines to interpret. Someone
+        // could implement it, deterministically -- which is exactly what
+        // makes it an `unmodeled_construct` and therefore P1-B material.
+        reason: "workspace_pattern_unsupported",
+        message: `workspace pattern "${pattern}" is not a supported shape and was ignored`,
+      });
       continue;
     }
 
@@ -429,13 +489,18 @@ export function discoverWorkspacePackages(
       // can no longer authorize a negative verdict (see
       // `analysis/verdict.ts`'s Site B identity gate), so discarding these
       // roots costs coverage and can never cost soundness.
-      unsupported.push(
-        `workspace pattern "${pattern}" could not be enumerated completely ` +
+      unsupported.push({
+        // A CONFIGURED bound stopped the walk. F3 § 11 is explicit that
+        // budget exhaustion must stay distinct from a syntax gap: raising
+        // the bound closes this, and no frontend work does.
+        reason: "workspace_enumeration_truncated",
+        message:
+          `workspace pattern "${pattern}" could not be enumerated completely ` +
           `within this analyzer's discovery bounds (depth ${MAX_DESCENDANT_DEPTH}, ` +
           `${MAX_DIRECTORIES_EXAMINED} directories per pattern); every root it ` +
           `matched was discarded rather than reported as a complete set, so ` +
           `package instances under it may not have been analyzed`,
-      );
+      });
       continue;
     }
 
@@ -517,16 +582,26 @@ const PNPM_WORKSPACE_FILE = "pnpm-workspace.yaml";
  * inferred, and no `PackageInstance` is invented from the file's presence:
  * the analyzer states that its own view is incomplete and stops there.
  */
-function pnpmOnlyReasons(projectRoot: string): string[] {
+function pnpmOnlyReasons(
+  projectRoot: string,
+): WorkspaceDiscoveryIncompleteness[] {
   if (!existsSync(path.join(projectRoot, PNPM_WORKSPACE_FILE))) {
     return [];
   }
   return [
-    `this project declares its workspaces in ${PNPM_WORKSPACE_FILE}, which this ` +
-      `analyzer does not read, and its root manifest declares no "workspaces" of ` +
-      `its own; workspace discovery is incomplete and local packages declared only ` +
-      `there were not identified, so package instances under them may not have ` +
-      `been analyzed`,
+    {
+      // A file format this analyzer declines to read. Like an unsupported
+      // pattern shape, it is closeable frontend work rather than a bound
+      // or an identity failure -- the declaration is right there and is
+      // perfectly well-defined; nothing here parses it.
+      reason: "workspace_layout_unsupported",
+      message:
+        `this project declares its workspaces in ${PNPM_WORKSPACE_FILE}, which this ` +
+        `analyzer does not read, and its root manifest declares no "workspaces" of ` +
+        `its own; workspace discovery is incomplete and local packages declared only ` +
+        `there were not identified, so package instances under them may not have ` +
+        `been analyzed`,
+    },
   ];
 }
 
@@ -537,9 +612,27 @@ function pnpmOnlyReasons(projectRoot: string): string[] {
  */
 function finish(
   packages: readonly WorkspacePackage[],
-  unsupported: readonly string[],
+  incompleteness: readonly WorkspaceDiscoveryIncompleteness[],
 ): WorkspaceDiscovery {
-  return { packages, unsupported: [...new Set(unsupported)].sort() };
+  // Deduplicated and sorted BY MESSAGE, exactly as before F3 -- the
+  // message is what identifies a condition (two patterns can be
+  // unsupported for the same reason token but are two distinct things to
+  // go fix), and sorting by it keeps `unsupported`'s existing byte-for-byte
+  // ordering contract intact.
+  const byMessage = new Map<string, WorkspaceDiscoveryIncompleteness>();
+  for (const entry of incompleteness) {
+    if (!byMessage.has(entry.message)) {
+      byMessage.set(entry.message, entry);
+    }
+  }
+  const sorted = [...byMessage.values()].sort((a, b) =>
+    a.message < b.message ? -1 : a.message > b.message ? 1 : 0,
+  );
+  return {
+    packages,
+    unsupported: sorted.map((entry) => entry.message),
+    incompleteness: sorted,
+  };
 }
 
 /** Reads and JSON-parses a directory's `package.json`, or `undefined`. */
