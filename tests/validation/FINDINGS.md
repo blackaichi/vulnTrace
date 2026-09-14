@@ -9417,11 +9417,38 @@ attempted. What is now visible is **what prevents Family C**:
 | `capability_escape` | — | **0** |
 
 The headline for P2: **not one of RWB-05's 84 blocker occurrences is a
-capability escape.** Nothing about that UNKNOWN is a fundamental limit of
-static analysis; all of it is closeable work, split roughly half frontend
-coverage and half target/export resolution. That is a materially different
-conclusion from "real code contains `eval`, so UNKNOWN is inevitable", and
-it could not be drawn from the prose before.
+capability escape.** None of them is a construct that can load or execute
+code the graph never discovered, so none is a fundamental limit of static
+analysis. That is a materially different conclusion from "real code
+contains `eval`, so UNKNOWN is inevitable", and it could not be drawn from
+the prose before.
+
+**84 IS NOT A WORK ESTIMATE, and this record must not be read as one.**
+The independent F3 audit flagged an earlier phrasing here ("all of it is
+closeable work, split roughly half frontend coverage and half target/export
+resolution") as exactly that misreading, and it was right to. What the
+number measures is the SHAPE of the uncertainty, not the cost of removing
+it:
+
+- The count does **not** prove that all 84 must be modeled, or that 84
+  occurrences imply 84 pieces of work. They collapse into three distinct
+  reasons, and a single frontend or resolution change can discharge many
+  occurrences at once.
+- It does **not** prove remediation is easy. "Classified as a category
+  that is in principle analyzable" is a statement about the KIND of
+  uncertainty, not about its difficulty.
+- Most importantly, it does **not** establish that modeling is the remedy
+  at all. **RWF-002 is not "implement every blocker"; it asks whether an
+  unresolved edge is RELEVANT to a path to the vulnerable target.** A
+  later solution may discharge most of these 84 by proving they cannot
+  reach or influence the target -- target-relevant completeness -- without
+  modeling a single one of them. That is a genuinely different remedy from
+  frontend work, it is the one RWF-035's own limitation #2 already names,
+  and nothing in F3 chooses between them.
+
+What F3 does establish is narrower and still useful: the observed blockers
+are, in principle, analyzable or relevance-classifiable, rather than
+capability escapes that would foreclose both routes.
 
 ### Top unmodeled constructs (F3 § 32) — and why the signal is not yet actionable
 
@@ -9515,10 +9542,17 @@ scale the corpus reaches. No optimization was attempted or needed.
 ### Verification
 
 F3 focused suites: `domain/uncertainty.test.ts` 33, verdict taxonomy matrix
-19, no-finding matrix 11, HTML 10. Full suite **3833 passed / 0 failed**
-across 158 files. Adversarial 124 passed. Validation identical to baseline.
-Performance 2 passed. Typecheck, lint, prettier, build, history-validator
-all clean. No timeout waivers.
+19, no-finding matrix 15, HTML 10, schema additivity 5. Full suite
+**3842 passed / 0 failed** across 158 files. Adversarial 124 passed.
+Validation identical to baseline. Performance 2 passed. Typecheck, lint,
+prettier, build, history-validator all clean. No timeout waivers.
+
+These totals are the FINAL ones, counted after the audit remediation
+below. An earlier draft of this record said 3833 across a no-finding
+matrix of 11; both were written before the last two commits landed and
+were stale rather than wrong-in-kind. The independent audit caught it,
+which is the sort of thing a record's own numbers should never need
+catching for -- gate totals are now written last, not mid-task.
 
 Two of the new tests were **wrong on first write and were fixed rather than
 weakened**, both worth recording because both were asserting something
@@ -9536,6 +9570,44 @@ false about the system:
    would have been asserting that F3 COLLAPSES co-occurring blockers — the
    opposite of what § 19 requires. Narrowed to assert the escape's own
    entry.
+
+### Audit remediation — the one behavior F3 added and did not cover
+
+The independent F3 audit found that `installed_version_unavailable` — the
+single genuinely NEW no-finding path this task introduced, and one this
+record leads with — **had no committed test.** The audit reproduced it by
+hand and confirmed it was reachable and correct, but nothing guarded it:
+it appeared only in `cli/scan.ts` and in the mapping table, and the corpus
+measures zero `undetermined` candidates, so neither the suite nor the
+benchmark would have noticed if it regressed to silence. AGENTS.md
+requires a test for every behavior change, and this was the behavior
+change.
+
+Closed by four regressions driven through the real `runScanCommand`
+orchestration, not through the mapping helper — the helper cannot say
+whether the orchestration still reaches the path:
+
+- a versionless workspace package with no versioned sibling produces **no
+  provider query at all**, no finding, and exactly one `undetermined`
+  candidate naming its exact instance, with no `version` and no
+  `vulnerability` key;
+- neither an AFFECTED nor a NOT_AFFECTED is reached, and it is explicitly
+  not the out-of-range conclusion;
+- the SIBLING CONTROL: with a versioned sibling present, the provider is
+  queried once with the sibling's own version, and the versionless
+  instance still carries no version — it reaches its own instance-local
+  UNKNOWN (`advisory_version_applicability_indeterminate`) rather than
+  borrowing one, which is the § 4 rescue this task had to preserve;
+- the two representations are mutually exclusive: when the rescue happens,
+  `unreportedCandidates` is empty.
+
+The entry is selected by REASON rather than array position, so the
+assertions cannot silently start testing a different entry.
+
+Mutation-checked rather than assumed: disabling the production guard
+(`if (candidate.version === undefined && relevant.length === 0)`) fails
+exactly one of the four and no others, so the regression genuinely
+exercises the path instead of passing regardless.
 
 ### Remaining limitations
 
@@ -9555,11 +9627,26 @@ false about the system:
    category totals are dominated by `no_vulnerable_symbol_rule` and must
    always be reported with it excluded. F7's scorecard should exclude it at
    the source.
-4. **RWF-002 is untouched** and remains open. F3 measured it; it did not
-   move it.
-5. **`unreportedCandidates` does not enumerate packages that were never
+4. **RWF-002 is untouched** and remains open. F3 measured the SHAPE of its
+   uncertainty; it did not move it, did not cost it, and did not choose
+   between its two possible remedies (model the blockers, or prove them
+   target-irrelevant). See the blocker-distribution section above.
+5. **`analysis_precondition_unmet` mixes two ownerships.** The independent
+   F3 audit observed that it holds analyzer-owned preconditions
+   (`parse_failure`, `module_load_closure_unavailable`) alongside
+   `no_vulnerable_symbol_rule`, whose gap is really target-intelligence /
+   configuration — an operator supplies a rule, the analyzer does not
+   establish one. The classification is still correct and, importantly,
+   correctly keeps no-rule OUT of `unmodeled_construct`, where it would
+   corrupt the P1-B ranking. But the six categories have no way to express
+   WHO owns a remediation, and F7's scorecard will likely want an
+   orthogonal owner/remediation-domain dimension. Deliberately not designed
+   or added here: it is a second axis, not a seventh category, and
+   inventing it on the way past would be exactly the unforced widening F3
+   is meant to avoid.
+6. **`unreportedCandidates` does not enumerate packages that were never
    discovered.** A workspace entry says an unknown NUMBER of candidates may
    be missing; it cannot say which, because nothing enumerated them. That
    is honest rather than complete, and no mechanism here can improve it.
-6. **No VEX, and no fourth verdict.** The verdict set is still exactly
+7. **No VEX, and no fourth verdict.** The verdict set is still exactly
    `AFFECTED` / `NOT_AFFECTED` / `UNKNOWN`.
