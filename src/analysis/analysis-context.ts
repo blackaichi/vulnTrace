@@ -1,8 +1,16 @@
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import type { CallGraph } from "../domain/graph.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
-import type { KnownPackageRoots } from "../domain/resolved-target.js";
+import {
+  type KnownPackageRoots,
+  type ScanModuleIdentityCache,
+  createScanModuleIdentityCache,
+} from "../domain/resolved-target.js";
 import type { ModuleLoadClosure } from "./module-load-closure.js";
+import {
+  type ScanAnalysisCaches,
+  createScanAnalysisCaches,
+} from "./scan-caches.js";
 
 /**
  * THE PROOF-CONTEXT CONTRACT (VT-CONTRACT-03).
@@ -102,6 +110,19 @@ export interface AnalysisProofContext {
    * proof is available -- never "an empty closure" -- exactly as before.
    */
   readonly moduleLoadClosure: ModuleLoadClosure | undefined;
+  /**
+   * This scan's DERIVED lookup structures (Foundation F5).
+   *
+   * Not a proof input and never read as evidence: every answer it holds is
+   * one the analysis would otherwise recompute from the graph, the
+   * registry and the filesystem this same context already binds. It lives
+   * here for exactly that reason -- the fields its memo keys leave
+   * implicit (the resolver, the project root, the entrypoints, the
+   * registry, the graph) are this object's own frozen fields, so a memo
+   * reachable only through this context cannot be consulted under a
+   * different set of them. See {@link ScanAnalysisCaches}.
+   */
+  readonly caches: ScanAnalysisCaches;
 }
 
 /**
@@ -218,6 +239,21 @@ export interface AnalysisProofContextInput {
    */
   readonly graphTruncated: boolean;
   readonly moduleLoadClosure?: ModuleLoadClosure;
+  /**
+   * The scan's module-identity memo (Foundation F5), when the scan built
+   * one before this point.
+   *
+   * Optional, and optional in a way that cannot cost correctness. A scan
+   * creates this memo earlier than the context -- `cli/scan.ts` needs it
+   * for the module-load closure's own per-file identification, which
+   * happens before the context exists -- and passes it here so the whole
+   * scan shares ONE memo rather than two. If it is omitted, or if it was
+   * built against a different `knownPackageRoots` registry than this
+   * context's, a fresh correctly-bound memo is created instead and the
+   * caller's is ignored: a mismatched memo is never adopted, never
+   * repaired, and never consulted.
+   */
+  readonly moduleIdentityCache?: ScanModuleIdentityCache;
 }
 
 /**
@@ -239,6 +275,18 @@ export function createAnalysisProofContext(
 ): AnalysisProofContext {
   const entrypoints = Object.freeze([...input.entrypoints]);
 
+  // The memo is adopted only when it was bound to the SAME registry this
+  // context binds. Reference equality, not structural comparison: two
+  // registries with equal contents that are nonetheless different objects
+  // were built by different code at different times, and adopting one
+  // under the other's name is exactly the cross-wiring this module exists
+  // to make unrepresentable. A rejected memo is replaced, not corrected.
+  const identity =
+    input.moduleIdentityCache !== undefined &&
+    input.moduleIdentityCache.knownPackageRoots === input.knownPackageRoots
+      ? input.moduleIdentityCache
+      : createScanModuleIdentityCache(input.knownPackageRoots);
+
   const context = {
     projectRoot: input.projectRoot,
     resolver: input.resolver,
@@ -258,6 +306,13 @@ export function createAnalysisProofContext(
       graphCoversEntrypoints(input.graph, entrypoints)
         ? input.moduleLoadClosure
         : undefined,
+    // Derived from THIS context's own graph and registry, so an index can
+    // never describe an analysis other than this one.
+    caches: createScanAnalysisCaches({
+      graph: input.graph,
+      knownPackageRoots: input.knownPackageRoots,
+      identity,
+    }),
   };
 
   // Non-enumerable so the mark never reaches JSON.stringify, Object.keys,
