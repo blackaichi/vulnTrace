@@ -49,6 +49,14 @@ import {
   analyzeReachability,
   collectReachableUnknownEdges,
 } from "./reachability.js";
+import {
+  aggregateUncertainty,
+  type UncertaintyReason,
+} from "../domain/uncertainty.js";
+import {
+  blockerUncertaintyReason,
+  edgeUncertaintyReason,
+} from "./uncertainty.js";
 
 export interface BuildFindingOptions {
   readonly vulnerability: Vulnerability;
@@ -1256,6 +1264,26 @@ async function checkReachability(
   reachable?: ReachableEvidence;
   sawUnknown: boolean;
   reasons: string[];
+  /**
+   * FOUNDATION F3 -- the same blockers as `reasons`, as typed tokens.
+   *
+   * Strictly PARALLEL to `reasons`, never a replacement for it: every
+   * prose string this function produces still reaches `evidence.reasons`
+   * verbatim, because the prose carries the specifics (which module, which
+   * file, which of the three corroboration failures) that a token cannot
+   * and should not. This array carries the classification, which the prose
+   * cannot: a machine reading `"unsupported_construct at foo.js:12"` has
+   * to parse a message format to learn anything, and would get it wrong
+   * the day that message is reworded.
+   *
+   * ACCUMULATED, NOT SELECTED. Appended at exactly the points that already
+   * set `sawUnknown`, so it observes the same blockers the existing
+   * control flow does -- one token per OCCURRENCE, deduplicated and
+   * counted only later, by `aggregateUncertainty` (F3 § 19/§ 20: multiple
+   * independent blockers must all survive, and no "primary reason" may be
+   * invented). Nothing reads it to decide anything.
+   */
+  uncertaintyReasons: UncertaintyReason[];
   representativeTarget?: VulnerableSymbolTarget;
   /**
    * VT-307d: set when this finding's own exact package instance was proved
@@ -1308,6 +1336,9 @@ async function checkReachability(
   let sawUnknown = false;
   let checkedAny = false;
   const reasons: string[] = [];
+  // F3: written at exactly the points that already push to `reasons`, and
+  // read by nothing in this function. See the field's own doc comment.
+  const uncertaintyReasons: UncertaintyReason[] = [];
   let representativeTarget: VulnerableSymbolTarget | undefined;
   let absentFromModuleLoadClosure:
     ConfirmedAbsentFromModuleLoadClosure | undefined;
@@ -1343,6 +1374,12 @@ async function checkReachability(
       reasons.push(
         `could not resolve module "${target.module}": ${unresolvedReason}`,
       );
+      // F3: the advisory's {module, export} could not be bound to a
+      // callable at all -- an identity fact, not a construct the analyzer
+      // declined to model. `unresolvedReason` itself stays in the prose
+      // above because it names WHICH of several resolution failures
+      // occurred, and that detail has no token.
+      uncertaintyReasons.push("vulnerable_target_unresolved");
       continue;
     }
 
@@ -1389,6 +1426,10 @@ async function checkReachability(
         reasons.push(
           `package instance for module "${target.module}" was never traversed by the call graph, but a closure-widening construct reachable from an entrypoint could load it at runtime`,
         );
+        // F3: VT-300's guard fired. The blocker IS a runtime capability
+        // that escapes the graph's bounded discovery -- classified as the
+        // escape it is, at the verdict layer where it was observed.
+        uncertaintyReasons.push("closure_widening_construct_reachable");
       } else if (packageInstance !== undefined) {
         // VT-307e (hardened by VT-307e's own final audit, which
         // reproduced a false NOT_AFFECTED here): VT-300's guard passing
@@ -1432,6 +1473,13 @@ async function checkReachability(
           absentInstance ??= packageInstance;
         } else {
           sawUnknown = true;
+          // F3: one token for all three corroboration failures (absent,
+          // incomplete, or reporting the instance as loaded). They are one
+          // unmet precondition with three causes, and the prose below --
+          // which is kept verbatim -- is what distinguishes them. Minting
+          // three tokens would fragment the measurement without telling a
+          // consumer anything the message does not already say.
+          uncertaintyReasons.push("package_instance_absence_uncorroborated");
           reasons.push(
             `package instance for module "${target.module}" was never traversed by the call graph, but its absence could not be corroborated by a complete module-load closure (module-load closure is ${
               moduleLoadClosure === undefined
@@ -1457,6 +1505,7 @@ async function checkReachability(
               reachable: { target, path: result.path },
               sawUnknown,
               reasons,
+              uncertaintyReasons,
               representativeTarget: target,
               checkedAny,
               rootIncompleteness,
@@ -1465,6 +1514,17 @@ async function checkReachability(
           if (result.state === "unknown") {
             sawUnknown = true;
             reasons.push(...result.blockers);
+            // F3: taken from the TYPED `unresolvedEdges` that accompany
+            // the prose `blockers`, never by parsing those strings. The
+            // two arrays are produced from the same edge list in the same
+            // order by `analyzeReachability`, so this cannot drift from
+            // what the prose reports -- and a reworded message cannot
+            // silently change a classification.
+            uncertaintyReasons.push(
+              ...result.unresolvedEdges.map((edge) =>
+                edgeUncertaintyReason(edge.reason),
+              ),
+            );
           } else if (result.state === "unreachable") {
             // VT-307e: a POSITIVE family-C result -- this search ran to
             // exhaustion and found no unresolved edge anywhere in the
@@ -1490,6 +1550,7 @@ async function checkReachability(
   return {
     sawUnknown,
     reasons,
+    uncertaintyReasons,
     representativeTarget,
     checkedAny,
     absentFromModuleLoadClosure,
@@ -1595,18 +1656,34 @@ export async function buildFinding(
     return undefined;
   }
 
+  // F3: both of these UNKNOWNs are decided BEFORE reachability is ever
+  // attempted, and both used to carry no evidence and no reason at all --
+  // the html report literally rendered "The scan result records no reason
+  // for this UNKNOWN finding" for them. They now carry the one token that
+  // explains them. Neither branch's CONDITION is touched.
   if (matchResult === "indeterminate") {
-    return { ...base, verdict: "UNKNOWN" };
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      unknownReasons: aggregateUncertainty([
+        "advisory_version_applicability_indeterminate",
+      ]),
+    };
   }
 
   if (!rule || rule.targets.length === 0) {
-    return { ...base, verdict: "UNKNOWN" };
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      unknownReasons: aggregateUncertainty(["no_vulnerable_symbol_rule"]),
+    };
   }
 
   const {
     reachable,
     sawUnknown,
     reasons,
+    uncertaintyReasons,
     representativeTarget,
     checkedAny,
     absentFromModuleLoadClosure,
@@ -1685,6 +1762,11 @@ export async function buildFinding(
       verdict: "UNKNOWN",
       target: representativeTarget,
       evidence: reasons.length > 0 ? { path: [], reasons } : undefined,
+      // F3: EVERY blocker the search accumulated, grouped and counted --
+      // not the first, not the worst. This is the branch that carries
+      // RWB-05's UNKNOWN, and the whole point of F3 § 18/§ 31 is that its
+      // reasons become informative without its verdict moving.
+      unknownReasons: aggregateUncertainty(uncertaintyReasons),
     };
   }
 
@@ -1697,6 +1779,7 @@ export async function buildFinding(
         path: [],
         reasons: ["no entrypoints were available to check reachability from"],
       },
+      unknownReasons: aggregateUncertainty(["no_entrypoints_available"]),
     };
   }
 
@@ -1720,6 +1803,10 @@ export async function buildFinding(
           "call-graph construction was truncated by a configured resource limit (analysis.limits) before every reachable path could be exhaustively searched",
         ],
       },
+      // F3 § 11: a CONFIGURED bound stopped the work. Deliberately its own
+      // category and not a coverage gap -- the analyzer knows how to do
+      // this work and was told not to, so the fix is a limit, not code.
+      unknownReasons: aggregateUncertainty(["call_graph_truncated"]),
     };
   }
 
@@ -1787,6 +1874,17 @@ export async function buildFinding(
             : `call-graph-derived non-reachability cannot be confirmed: the module-load closure recorded ${callGraphProofBlockers.join(", ")}, which can hide a call path to the target or the loading of this instance`,
         ],
       },
+      // F3 § 12/§ 14: each blocker classified individually, preserving the
+      // SPECIFIC reason. An absent closure reports
+      // `module_load_closure_unavailable`
+      // (`analysis_precondition_unmet`); a present-but-incomplete one
+      // reports whatever it actually recorded -- `parse_failure`,
+      // `loader_hook_mutation`, ... -- each landing in its own category.
+      // The tokens here are byte-identical to the ones the prose above
+      // interpolates, so the message and the structure can never disagree.
+      unknownReasons: aggregateUncertainty(
+        callGraphProofBlockers.map(blockerUncertaintyReason),
+      ),
     };
   }
 
@@ -1881,6 +1979,13 @@ export async function buildFinding(
             : "no vulnerable target was searched to exhaustion, so unreachability could not be positively established",
         ],
       },
+      // F3: classified on the SAME condition the prose above branches on,
+      // so the token and the sentence can never describe different things.
+      unknownReasons: aggregateUncertainty([
+        rootIncompleteness.length > 0
+          ? "entrypoint_root_incomplete"
+          : "unreachability_not_positively_established",
+      ]),
     };
   }
 

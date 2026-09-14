@@ -1,5 +1,6 @@
 import type { Evidence } from "./evidence.js";
 import type { VulnerableSymbolTarget } from "./target.js";
+import type { UncertaintyClassification } from "./uncertainty.js";
 
 /**
  * The three allowed verdicts (see docs/SDD.md § 5, AGENTS.md). `UNKNOWN`
@@ -60,4 +61,31 @@ export interface Finding {
   readonly confidence?: number;
   readonly target?: VulnerableSymbolTarget;
   readonly evidence?: Evidence;
+  /**
+   * FOUNDATION F3 -- why this finding is `UNKNOWN`, machine-readably.
+   *
+   * Present ONLY on an `UNKNOWN`, and present on every one of them. An
+   * `AFFECTED` has a reproduced path and a `NOT_AFFECTED` has a positive
+   * proof; neither is uncertain, so neither carries this. That is a
+   * structural statement, asserted by the F3 soundness suite, and it is
+   * what keeps the field from ever being read as "how unsure are we about
+   * this AFFECTED" -- a question this analyzer does not answer and must
+   * not appear to.
+   *
+   * ADDITIVE AND OBSERVATIONAL. It duplicates no decision and makes none:
+   * every entry is derived from the SAME blockers the verdict rules
+   * already acted on, after those rules have run. Removing this field
+   * would change no verdict anywhere, which is precisely the invariant F3
+   * § 24 requires.
+   *
+   * NOT A REPLACEMENT FOR `evidence.reasons`. The prose there is retained
+   * verbatim and still carries the specifics -- which module, which file
+   * and line, which of several resolution failures. These entries carry
+   * the classification and the count, which prose cannot. A consumer that
+   * wants to explain a scan to a human reads the prose; one that wants to
+   * aggregate a corpus reads this.
+   *
+   * ORDERED BY DECLARATION, NOT OBSERVATION -- see `aggregateUncertainty`.
+   */
+  readonly unknownReasons?: readonly UncertaintyClassification[];
 }
