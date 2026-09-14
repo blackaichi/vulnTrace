@@ -27,7 +27,10 @@ import {
 } from "../dependencies/index.js";
 import type { DependencyNode } from "../domain/dependency.js";
 import type { Diagnostic } from "../domain/coverage.js";
-import { buildKnownPackageRoots } from "../domain/resolved-target.js";
+import {
+  buildKnownPackageRoots,
+  createScanModuleIdentityCache,
+} from "../domain/resolved-target.js";
 import type { Finding } from "../domain/verdict.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
@@ -470,6 +473,26 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     })),
   );
 
+  // THE SCAN'S SINGLE MODULE-IDENTITY MEMO (Foundation F5), created here
+  // and nowhere else.
+  //
+  // Its position is load-bearing in the same way the proof context's is:
+  // it binds `knownPackageRoots`, so it must be created after the registry
+  // above is final and before the first thing that identifies a module.
+  // That first consumer is the module-load closure, which runs before the
+  // proof context exists -- so the memo cannot simply be created by
+  // `createAnalysisProofContext` and still cover the closure's own
+  // per-loaded-file identification, which is where a large project pays
+  // the bulk of this cost.
+  //
+  // It is a PERFORMANCE artifact and nothing else: it holds only answers
+  // `identifyModule` already computed, it is consulted only by callers
+  // holding this exact registry, it caches no failure, and it is
+  // discarded when this function returns. Nothing about it crosses a scan
+  // boundary -- a second concurrent `runScanCommand` in the same process
+  // creates its own and shares nothing.
+  const moduleIdentityCache = createScanModuleIdentityCache(knownPackageRoots);
+
   let entrypointsResult;
   let graph;
   let resolver;
@@ -558,6 +581,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       resolver,
       maxFiles: config.analysis.limits.maxFiles,
       knownPackageRoots,
+      moduleIdentityCache,
     });
   } catch (error) {
     // A closure failure disables the absence proof; it never fails the
@@ -636,6 +660,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     graph,
     graphTruncated,
     moduleLoadClosure,
+    moduleIdentityCache,
   });
 
   const cveFilter = options.cveFilter;

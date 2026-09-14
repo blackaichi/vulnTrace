@@ -24,8 +24,13 @@ import {
 } from "../domain/graph.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
 import {
+  type ScanAnalysisCaches,
+  graphPackageInstancesByName,
+} from "./scan-caches.js";
+import {
   identifyModule,
   type KnownPackageRoots,
+  type ScanModuleIdentityCache,
 } from "../domain/resolved-target.js";
 import type {
   VulnerableSymbolRule,
@@ -402,6 +407,8 @@ async function findExportNodeThroughForwarding(
   packageInstance: string,
   knownPackageRoots: KnownPackageRoots | undefined,
   visited: Set<string>,
+  /** This scan's module-identity memo (Foundation F5); performance only. */
+  identityCache: ScanModuleIdentityCache | undefined,
 ): Promise<GraphNode[]> {
   const hopKey = `${file}#${exportName}`;
   if (visited.has(hopKey)) {
@@ -439,8 +446,11 @@ async function findExportNodeThroughForwarding(
       continue;
     }
     if (
-      identifyModule(resolution.resolvedFileName, knownPackageRoots)
-        .packageInstance !== packageInstance
+      identifyModule(
+        resolution.resolvedFileName,
+        knownPackageRoots,
+        identityCache,
+      ).packageInstance !== packageInstance
     ) {
       continue;
     }
@@ -453,6 +463,7 @@ async function findExportNodeThroughForwarding(
         packageInstance,
         knownPackageRoots,
         visited,
+        identityCache,
       )),
     );
   }
@@ -497,10 +508,33 @@ function graphPackageInstances(
   graph: CallGraph,
   packageName: string,
   knownPackageRoots: KnownPackageRoots | undefined,
-): Map<string, Set<string>> {
+  caches: ScanAnalysisCaches | undefined,
+): ReadonlyMap<string, Set<string>> {
+  // Foundation F5: this is the scan's `findings x targets x nodes`
+  // multiplier -- one full walk of every graph node, with one `realpath`
+  // and one `package.json` read per node, per resolved target. When the
+  // scan's derived index is available AND provably describes exactly this
+  // graph and this registry, the same grouping is read back from one pass
+  // taken earlier. When it is not, this walks the graph exactly as before:
+  // the index is an accelerator, never an authority, and its absence is
+  // never read as "no instances" (see `graphPackageInstancesByName`).
+  const indexed = graphPackageInstancesByName(
+    caches,
+    graph,
+    knownPackageRoots,
+    packageName,
+  );
+  if (indexed !== undefined) {
+    return indexed;
+  }
+
   const byInstance = new Map<string, Set<string>>();
   for (const node of graph.nodes) {
-    const identity = identifyModule(node.module, knownPackageRoots);
+    const identity = identifyModule(
+      node.module,
+      knownPackageRoots,
+      caches?.identity,
+    );
     if (identity.packageName !== packageName || !identity.packageInstance) {
       continue;
     }
@@ -622,6 +656,8 @@ async function resolveTargetNodes(
   allowSyntheticNameOnlyTargetBinding: boolean,
   knownPackageRoots: KnownPackageRoots | undefined,
   moduleLoadClosure: ModuleLoadClosure | undefined,
+  /** This scan's derived lookup structures (Foundation F5); performance only. */
+  caches: ScanAnalysisCaches | undefined,
 ): Promise<{
   nodes: GraphNode[];
   unresolvedReason?: string;
@@ -658,6 +694,7 @@ async function resolveTargetNodes(
     graph,
     targetPackageName,
     knownPackageRoots,
+    caches,
   );
 
   if (instances.size > 0) {
@@ -718,6 +755,7 @@ async function resolveTargetNodes(
         entrypointFiles,
         knownPackageRoots,
         memo: publicEntryMemo,
+        moduleIdentityCache: caches?.identity,
       });
 
       if (entries.length === 0) {
@@ -781,6 +819,7 @@ async function resolveTargetNodes(
           instance,
           knownPackageRoots,
           visited,
+          caches?.identity,
         );
         if (forwarded.length > 0) {
           for (const node of forwarded) {
@@ -904,8 +943,11 @@ async function resolveTargetNodes(
     moduleLoadClosure.complete &&
     moduleLoadClosure.rootFiles.length > 0 &&
     !closureContainsPackageInstance(moduleLoadClosure, packageInstance) &&
-    identifyModule(resolution.resolvedFileName, knownPackageRoots)
-      .packageInstance === packageInstance
+    identifyModule(
+      resolution.resolvedFileName,
+      knownPackageRoots,
+      caches?.identity,
+    ).packageInstance === packageInstance
   ) {
     return {
       nodes: [],
@@ -961,8 +1003,11 @@ async function resolveTargetNodes(
   const ownedByFinding =
     packageInstance === undefined ||
     allowSyntheticNameOnlyTargetBinding ||
-    identifyModule(resolution.resolvedFileName, knownPackageRoots)
-      .packageInstance === packageInstance;
+    identifyModule(
+      resolution.resolvedFileName,
+      knownPackageRoots,
+      caches?.identity,
+    ).packageInstance === packageInstance;
 
   if (!ownedByFinding) {
     return {
@@ -1260,6 +1305,8 @@ async function checkReachability(
   allowSyntheticNameOnlyTargetBinding: boolean,
   knownPackageRoots: KnownPackageRoots | undefined,
   moduleLoadClosure: ModuleLoadClosure | undefined,
+  /** This scan's derived lookup structures (Foundation F5); performance only. */
+  caches: ScanAnalysisCaches | undefined,
 ): Promise<{
   reachable?: ReachableEvidence;
   sawUnknown: boolean;
@@ -1332,7 +1379,20 @@ async function checkReachability(
   // public entry, never target identity themselves. See
   // `resolveAuthoritativePackageEntries`.
   const entrypointFiles = entrypoints.map((entrypoint) => entrypoint.filePath);
-  const publicEntryMemo = new Map<string, AuthoritativePackageEntry[]>();
+  // Foundation F5: ONE memo per scan when the caller supplied the scan's
+  // caches, instead of one per finding. The key
+  // `resolveAuthoritativePackageEntries` computes -- the canonical
+  // `PackageInstanceId` and the requested specifier -- was already exact;
+  // what was not exact was its LIFETIME, which threw the answer away at
+  // every finding boundary and so could never serve the shape it exists
+  // for: several advisories naming the same installed package. Widening it
+  // is sound precisely because its remaining inputs (this resolver, this
+  // `referenceFile` derived from the project root, these entrypoint files,
+  // this registry) are fields of the single scan context that owns the
+  // memo and cannot vary while it lives. Without caches, the per-finding
+  // memo is created here exactly as before.
+  const publicEntryMemo =
+    caches?.publicEntries ?? new Map<string, AuthoritativePackageEntry[]>();
   let sawUnknown = false;
   let checkedAny = false;
   const reasons: string[] = [];
@@ -1367,6 +1427,7 @@ async function checkReachability(
       allowSyntheticNameOnlyTargetBinding,
       knownPackageRoots,
       moduleLoadClosure,
+      caches,
     );
 
     if (unresolvedReason) {
@@ -1626,6 +1687,15 @@ export async function buildFinding(
     ? context.moduleLoadClosure
     : undefined;
   const graphTruncated = contextTrusted ? context.graphTruncated : true;
+  // Foundation F5: an untrusted context's DERIVED state is withdrawn for
+  // the same reason its closure is. These caches decide nothing on their
+  // own, but they are still state a fabricated context would control --
+  // an attacker-supplied "index" claiming this graph contains no instance
+  // of a package would be read as `confirmedAbsentInstance`, which IS
+  // evidence. Dropping them makes the analysis recompute everything from
+  // the graph it was handed, which is the conservative path this branch
+  // already takes for every other input.
+  const caches = contextTrusted ? context.caches : undefined;
 
   // Every finding's own identity header (P1-A5 § RESULT IDENTITY).
   //
@@ -1701,6 +1771,7 @@ export async function buildFinding(
     allowSyntheticNameOnlyTargetBinding,
     knownPackageRoots,
     moduleLoadClosure,
+    caches,
   );
 
   if (reachable) {
