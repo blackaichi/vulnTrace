@@ -9650,3 +9650,481 @@ exercises the path instead of passing regardless.
    is honest rather than complete, and no mechanism here can improve it.
 7. **No VEX, and no fourth verdict.** The verdict set is still exactly
    `AFFECTED` / `NOT_AFFECTED` / `UNKNOWN`.
+
+## RWF-037 (FOUNDATION F4) — Every negative-proof prerequisite was guarded; nothing stated the invariant those guards share
+
+Foundation's fourth task. It adds **no proof rule, no verdict, no
+production code and no production behavior**. What it adds is a harness
+that can ask one question systematically, of every prerequisite of every
+negative proof:
+
+> If exactly one thing a valid `NOT_AFFECTED` depends on is removed,
+> corrupted, mismatched or made uncertain — does that proof actually
+> disappear?
+
+Central rule being enforced: *a negative proof must be MONOTONIC with
+respect to lost information. Less trusted information must never produce
+more confidence.*
+
+### F3 handoff
+
+Base: `4d0f58e` (`docs: clarify RWF-002 blocker interpretation, and correct
+stale gate totals`), certified before editing — clean tree, identical to
+`origin/main`, F3's five commits present (`d15106e`..`4d0f58e`), the
+uncertainty taxonomy live. Focused baseline of **916 tests across 14 files**
+(Family A/B/C, VT-CONTRACT-01/02/03, `ModuleLoadClosure` + its differential
+oracle, `AnalysisProofContext`, F2 proof guards, F3 taxonomy, same-version
+twins, Site A/B authority), all passing. Validation suite baseline:
+**5 failed / 18 passed**, the documented benchmark set (VAL-002, VAL-003,
+RWB-03, RWB-05, RWB-09b).
+
+### The gap, stated precisely
+
+`domain/evidence.ts` already states the negative-proof contract as a table:
+three families, each with an enumerated list of prerequisites that must ALL
+hold. Every one of those prerequisites is guarded in production, and every
+guard has a regression test — written when the guard was added, in the
+shape of the defect that motivated it.
+
+That is a set of point checks. What none of them states is the property
+the whole set is supposed to have. The difference matters in a specific,
+non-theoretical way: a point check proves that ONE historical defect does
+not recur. It says nothing about a prerequisite whose defect has not
+happened yet, and nothing at all about whether the family's prerequisite
+LIST is the list the code actually reads.
+
+F4 does not add guards. It takes each family's real, valid proof and
+removes its prerequisites one at a time.
+
+### Proof-input inventory (built from source, not from docs)
+
+Traced through `analysis/verdict.ts` (`buildFinding`, `checkReachability`,
+`resolveTargetNodes`), `analysis/module-load-closure.ts` and
+`analysis/analysis-context.ts`. What a negative proof actually reads:
+
+| input | read by | where |
+| ----- | ------- | ----- |
+| `packageInstance` (exact canonical id) | A, B | family A gate; Site A instance match; Site B ownership gate |
+| authoritative target identity | C | `resolveAuthoritativePackageEntries` + forwarding, Site A |
+| target ownership (`identifyModule(...) === packageInstance`) | A, C | family A gate's last conjunct; Site B's `ownedByFinding` |
+| entrypoint roots | A, B, C | closure roots; reachability sources; every proof's `entrypointRoots` |
+| `CallGraph` | B, C | instance discovery; the reachability BFS |
+| `graphTruncated` | B, C | `buildFinding`'s VT-202 branch |
+| reachable-subgraph completeness | C | `analyzeReachability` returning `unknown` on any unresolved edge |
+| reachable closure-widening blocker | B | `hasReachableClosureWideningBlocker` (VT-300) |
+| `ModuleLoadClosure` presence | A, B, C | family A gate; family B corroboration; `callGraphNegativeProofBlockers` |
+| `closure.complete` | A, B | family A gate; family B corroboration |
+| `closure.incompleteness` reasons | B, C | `callGraphNegativeProofBlockers` + `invalidatesCallGraphNegativeProof` |
+| `closure.rootFiles` non-empty | A | family A gate's gate-eligibility re-assertion |
+| `closure.loadedPackageInstances` | A, B | `closureContainsPackageInstance` |
+| `AnalysisProofContext` brand + mark | A, B, C | `isAnalysisProofContext`, fails closed |
+| closure↔entrypoint and graph↔entrypoint binding | A, B, C | `createAnalysisProofContext` DROPS a closure failing either |
+
+Two facts from that trace are load-bearing below and are NOT in any prose
+description of the families:
+
+1. **Family A does not read the call graph at all.** It is decided at Site
+   B, ahead of `graphTruncated` and ahead of VT-300's widening guard. So
+   `graphTruncated` and a widening call edge are NOT family A
+   prerequisites.
+2. **Family B and family C read the closure DIFFERENTLY.** B's
+   corroboration requires `complete === true` outright; C is gated by
+   `callGraphNegativeProofBlockers`, which excludes `traversal_truncated`.
+   The same closure can therefore withdraw B and leave C standing.
+
+Both are asserted as CONTROL rows rather than left as comments.
+
+### The three baselines (F4 § 2)
+
+Each is a real on-disk project, analyzed by the real production
+composition — `loadTsProject` → `createModuleResolver` →
+`buildGateEligibleModuleLoadClosure` → `buildCallGraph` →
+`createAnalysisProofContext` → `buildFinding`. No mock resolver, no
+hand-written closure, no stub that could skip a guard.
+
+| baseline | project | why this family |
+| -------- | ------- | --------------- |
+| **A** | `vuln-lib` installed; the entrypoint loads nothing | graph discovers no instance of the name (Site B), complete closure does not contain it |
+| **B** | two installs of one name/version; the entrypoint requires and calls the TOP-LEVEL one | graph discovered the OTHER instance (Site A, no match); closure corroborates the nested twin's absence |
+| **C** | `vuln-lib` loaded and called — on its SAFE export only | package is in the graph AND in the closure; the one resolved target has no call path |
+
+A test asserts the three are genuinely different shapes (A's instance is
+absent from both closure and graph; C's is present in both), so a later
+edit cannot silently collapse them into one project analyzed three times.
+
+### Why "expect UNKNOWN" is NOT the invariant (F4 § 8)
+
+The obvious harness asserts that every mutation produces `UNKNOWN`. That
+assertion would be wrong, and the architecture is why: the three families
+make **genuinely different claims**. Family A says an instance cannot
+LOAD. Family C says a resolved symbol is never CALLED. A mutation that
+destroys A's premise need not touch C's.
+
+Three such takeovers occur, and each is audited individually rather than
+counted as a pass:
+
+1. **A + `traversal_truncated` → C.** The single documented exclusion in
+   `invalidatesCallGraphNegativeProof`. A needs `complete` and loses it; C
+   is governed by `graphTruncated`, which is still `false`. The audit also
+   pins the boundary: the same closure truncated AND carrying any other
+   reason blocks C too.
+2. **A + closure-says-loaded → C.** A's claim is destroyed; C's is not.
+   The audit asserts C's own guards independently, and — because this
+   mutation manufactures a state (closure says loaded, graph has no node)
+   that no real project reaches by this route — a second test builds the
+   REAL construct that produces that pair (an ESM `export * from`
+   re-export, which call-graph discovery does not follow) and pins that
+   production reaches **UNKNOWN** there, because the hidden call leaves an
+   unresolved edge in the reachable subgraph. The takeover is a property
+   of the synthetic input, not a claim about production.
+3. **C + instance mismatch → B.** The finding's instance is changed, so
+   the target no longer belongs to it and C is withdrawn. What answers is
+   a family-B absence proof **about the mutated path**. The decisive
+   assertion is identity: the replacement names the mutated instance and
+   never borrows the baseline's.
+
+The invariant the harness actually enforces is narrower and true:
+
+> the mutated, now-unsupported ORIGINAL proof is never still reported.
+
+### Mutation outcome model (F4 § 7)
+
+Every row is classified, not pass/failed:
+
+| class | meaning |
+| ----- | ------- |
+| `invalidated_to_unknown` | the proof is gone and nothing replaced it |
+| `invalidated_by_takeover` | gone; an INDEPENDENT family carries the verdict |
+| `invalidated_to_affected` | gone; a positive path was established instead |
+| `not_a_prerequisite` | a CONTROL row — the family does not depend on this input, and correctly stands |
+| `unsafe_survival` | **forbidden** — the original proof survived its own invalidating mutation |
+
+### Family A mutation matrix
+
+| mutation | outcome | resulting |
+| -------- | ------- | --------- |
+| `closure_absent` | invalidated | UNKNOWN / `module_load_closure_unavailable` |
+| `closure_incomplete_parse_failure` | invalidated | UNKNOWN / `parse_failure` |
+| `closure_incomplete_unresolved_module` | invalidated | UNKNOWN / `unresolved_module` |
+| `closure_roots_empty_so_gate_ineligible` | invalidated | UNKNOWN (context drops it first) |
+| `closure_roots_are_a_foreign_file` | invalidated | UNKNOWN |
+| `closure_reports_this_exact_instance_as_loaded` | invalidated | **takeover → C** (audited) |
+| `package_instance_changed_to_a_different_location` | invalidated | UNKNOWN / `vulnerable_target_unresolved` |
+| `package_instance_withdrawn_entirely` | invalidated | takeover → C |
+| `entrypoint_roots_mismatched` | invalidated | UNKNOWN |
+| `graph_no_longer_covers_the_entrypoints` | invalidated | UNKNOWN |
+| `graph_truncated` | **control** | A stands — A never reads the call graph |
+| `widening_call_edge_in_the_graph_only` | **control** | A stands — VT-300 governs B, not A |
+| `incompleteness_recorded_without_clearing_complete` | **control** | A stands — A's gate reads `complete` |
+
+### Family B mutation matrix
+
+| mutation | outcome | resulting |
+| -------- | ------- | --------- |
+| `closure_absent` | invalidated | UNKNOWN / `package_instance_absence_uncorroborated` |
+| `closure_incomplete_parse_failure` | invalidated | UNKNOWN / same |
+| `closure_incomplete_traversal_truncated` | invalidated | UNKNOWN / same — B requires `complete` outright, unlike the blocker partition |
+| `graph_truncated` | invalidated | UNKNOWN / `call_graph_truncated` |
+| `closure_reports_this_exact_instance_as_loaded` | invalidated | UNKNOWN / same |
+| `widening_construct_reachable_from_an_entrypoint` | invalidated | UNKNOWN / `closure_widening_construct_reachable` |
+| `loader_blocker_recorded_on_the_closure` | invalidated | UNKNOWN / `loader_hook_mutation` |
+| `package_instance_swapped_to_the_REACHED_twin` | invalidated | **AFFECTED** (audited) |
+| `graph_absence_claim_is_no_longer_true` | invalidated | the "never traversed" premise is false; B gone |
+| `entrypoint_roots_mismatched` | invalidated | UNKNOWN |
+| `the_OTHER_instance_is_removed_from_the_graph` | invalidated | no longer Site A at all |
+| `closure_forgets_the_OTHER_instance` | **control** | B stands — corroboration is about THIS instance |
+| `non_widening_unresolved_edge` | **control** | B stands — bounded uncertainty cannot load an undiscovered instance |
+
+### Family C mutation matrix
+
+| mutation | outcome | resulting |
+| -------- | ------- | --------- |
+| `closure_absent` | invalidated | UNKNOWN / `module_load_closure_unavailable` |
+| `closure_incomplete_parse_failure` | invalidated | UNKNOWN / `parse_failure` |
+| `loader_hook_blocker_recorded_on_the_closure` | invalidated | UNKNOWN / `loader_hook_mutation` |
+| `declaration_only_blocker_recorded_on_the_closure` | invalidated | UNKNOWN / `declaration_only_resolution` |
+| `graph_truncated` | invalidated | UNKNOWN / `call_graph_truncated` |
+| `reachable_subgraph_no_longer_complete` | invalidated | UNKNOWN / `unsupported_construct` |
+| `widening_construct_reachable_from_an_entrypoint` | invalidated | UNKNOWN / `dynamic_require` |
+| `authoritative_target_node_removed` | invalidated | UNKNOWN / `vulnerable_target_unresolved` |
+| `target_ownership_withdrawn_via_instance_mismatch` | invalidated | **takeover → B** (audited) |
+| `entrypoint_roots_mismatched` | invalidated | UNKNOWN |
+| `root_coverage_lost_entirely` | invalidated | UNKNOWN / `no_entrypoints_available` |
+| `package_instance_withdrawn_entirely` | **control** | C stands — C's claim is about the TARGET |
+| `closure_incomplete_traversal_truncated_only` | **control** | C stands — the documented exclusion, from C's side |
+| `closure_forgets_this_instance_is_loaded` | **control** | C stands — C never claims the package is unloaded |
+| `a_non_target_node_of_the_same_package_removed` | **control** | C stands |
+| `a_loaded_file_identity_rewritten_in_the_closure` | **control** | C stands |
+
+`reachable_subgraph_no_longer_complete` deliberately uses a NON-widening
+unresolved edge, which isolates `reachableSubgraphComplete` from both
+VT-300's widening guard and `graphTruncated`: that construct could not load
+a new module and no limit was hit — the search simply met something it
+could not resolve, which is precisely what the field denies.
+
+### PackageInstance isolation (F4 § 13)
+
+- **Same-version twins**, both reaching `NOT_AFFECTED`. That verdict
+  agreement is what makes it the sharp test: only the EVIDENCE can reveal
+  identity confusion. They get different families (B for the untraversed
+  one, C for the loaded one) and each names its own root.
+- **Symlink alias**: one physical directory under two paths. Canonicalized
+  to ONE instance — same verdict, same family, not two answers.
+- **Scoped lookalike**: `@scope/vuln-lib`'s vulnerable export is genuinely
+  called; the finding about the unscoped install is family A, and its
+  proof's instance contains no `@scope` segment.
+- One invariant over all baselines: a proof's instance always equals the
+  finding's instance. Family C carries none at all — deliberately, since
+  its evidence is about the target — so there is nothing to mis-name.
+
+### Target identity (F4 § 14)
+
+- A sibling package publishing the same export NAME, genuinely called,
+  produces neither a false AFFECTED nor a proof that names the sibling.
+- A lookalike target node inserted in a sibling root does not supply family
+  C's witness.
+- The sharp version: the real target node removed AND a same-named node
+  added in a sibling root in the same breath → **UNKNOWN /
+  `vulnerable_target_unresolved`**, not a substituted lookalike.
+- A target whose module resolves outside the finding's instance
+  establishes neither an authoritative target nor a negative proof.
+
+### AnalysisProofContext (F4 § 11) and immutability (F4 § 12)
+
+Foreign closure, foreign graph, entrypoints-and-closure swapped together,
+a stale same-project context over a different root set, a mutated
+`graphTruncated`, an unbranded object cast into the parameter, and a
+THAWED spread of a real context (which loses the non-enumerable mark) —
+**all eight fail closed to UNKNOWN with no proof object.**
+
+Immutability is asserted as OBSERVED behavior: the context is frozen,
+writes to `graphTruncated` and `moduleLoadClosure` throw, and
+`entrypoints` is frozen too.
+
+The nested closure object **is** still mutable — `Object.freeze` is
+shallow — and F4 states that as a measured result rather than a caveat.
+The sharp form is the task's attack G: not "could the evidence be
+weakened" but "could a blocker be DELETED after the context was built".
+
+Reproduced: a scan whose closure genuinely recorded `loader_hook_mutation`
+answers UNKNOWN; deleting that record in place through the frozen context
+(`incompleteness = []`, `complete = true`) turns the same context into a
+family C `NOT_AFFECTED`. **The write does change the answer.**
+
+Not fixed here, and the reason is reach rather than convenience. **This
+write has no attacker.** The closure is constructed by the scan, handed to
+the context, and never published on a `Finding`, so nothing an analyzed
+project CONTAINS — the only untrusted input VulnTrace has — can reach it.
+The sole party able to perform the write is code already holding the
+context, which could equally have called `buildFinding` with a fabricated
+closure to begin with. A deep freeze would copy every closure on every scan
+to close a door that opens onto nothing, and F4's scope is explicit that a
+production change needs a concrete exploit. There is none.
+
+What the test buys is that this cannot change silently: if some future
+change ever exposes the closure to untrusted input, that assertion is
+already the statement of what it would then mean.
+
+### Monotonicity (F4 § 19) and restoration (F4 § 20)
+
+Three ladders add uncertainties one at a time (closure absent → graph
+truncated → unresolved edge → target removed, and similar for B). At every
+rung the verdict stays UNKNOWN with no proof object; confidence is never
+restored. The family-A ladder deliberately starts with the mutation that
+hands over to C, so it also proves a second uncertainty cannot resurrect A
+— it can only take C away too.
+
+Four restoration cases confirm each mutation is CAUSAL: remove → UNKNOWN →
+restore the original inputs → the same family, the same instance, the same
+target.
+
+### Composition (F4 § 23)
+
+Six two-prerequisite attacks. Five reach UNKNOWN. The sixth — wrong
+instance + lookalike target node — is the audited takeover, and its own
+invariant is asserted instead: whatever answers is about the MUTATED
+identity, never the baseline's.
+
+### Test-harness hardening (F4 § 24) — the one behavior change, and it is test-only
+
+`buildFindingForTest`'s `syntheticGraphHasNoRealFiles` escape hatch
+synthesizes a closure with `complete: true` and
+`loadedPackageInstances: []`. Read by family A's gate — complete, non-empty
+roots, this instance absent from the loaded set — an EMPTY loaded set
+satisfies the last conjunct for **every instance there could ever be**.
+Such a closure proves every installed package unloadable.
+
+F2's audit found this safe, and was right, for a reason that was entirely
+accidental: the suites passing that flag happen not to pass a
+`packageInstance`, and family A's gate is unreachable without one. That is
+a property of today's call sites, not an invariant. One new synthetic test
+that added a `packageInstance` would have minted a false `NOT_AFFECTED`
+with every production guard intact and **the test harness supplying the
+forged evidence** — the worst possible source, because the suite that
+should catch the regression would be its origin.
+
+F4 makes the accident a rule (option C of the task's three: fail loudly).
+A synthesized default closure and a `packageInstance` may not coexist; the
+caller must supply a truthful closure or declare absence. It fails loudly
+rather than deriving something, because there is nothing truthful to
+derive — the files these graphs describe do not exist, so no traversal can
+establish what such an instance loads. The refusal message names the
+hazard and both remedies, and a test asserts it does.
+
+**Backward compatibility (F4 § 25), audited before the change.** Three
+files touch the flag. `verdict.test.ts` uses it at 22 call sites and passes
+no `packageInstance` at any of them. `verdict.module-load-absence.test.ts`
+uses it at 18 call sites, every one of which supplies a
+`moduleLoadClosure` or sets `moduleLoadClosureUnavailable`. So the rule is
+a no-op for all 40 existing sites, which is what the full suite confirms.
+Classification of the four categories the task asks for: production-like
+tests build a real closure and are untouched; synthetic verdict tests are
+instance-blind and are untouched; intentionally closure-absent tests
+declare it and are untouched; package-instance-sensitive tests must now be
+explicit, and already were.
+
+### Mutation-check results (F4 § 26)
+
+Each guard was disabled in production source, the F4 suite re-run, and the
+source restored. All six produced failures, and in every case the § 28
+metric test caught it independently of the individual rows:
+
+| guard disabled | how | F4 tests failed |
+| -------------- | --- | --------------- |
+| absent closure fails closed | `callGraphNegativeProofBlockers(undefined)` → `[]` | **10** |
+| `graphTruncated` (VT-202) | `buildFinding`'s branch made unreachable | **6** |
+| family A exact-instance ownership | dropped the `identifyModule(...) === packageInstance` conjunct | **3** |
+| `reachableSubgraphComplete` | reachability `unknown` treated as `unreachable` | **5** |
+| `AnalysisProofContext` closure binding | closure kept unconditionally | **8** |
+| F4's own § 24 harness rule | the refusal removed | **1** |
+
+`git diff` confirmed clean source afterwards.
+
+### Mutation summary metric (F4 § 28)
+
+```
+total proof mutations:            48
+invalidated original proof:       38
+  -> UNKNOWN:                     31
+  -> legitimate family takeover:   5
+  -> legitimate AFFECTED:          2
+control rows (not a prerequisite):10
+UNSAFE ORIGINAL PROOF SURVIVED:    0
+```
+
+The metric is asserted, not printed: `unsafe_survival` must be 0, and the
+ledger must be non-trivially populated across all three families — an
+empty ledger would otherwise make every per-row check vacuous.
+
+### Contracts under mutation (F4 § 9, § 10)
+
+`expectExactlyOneProof` runs on **every** outcome the suite produces, not
+once at the end: a `NOT_AFFECTED` carries exactly one negative-proof
+evidence object and anything else carries none (VT-CONTRACT-01). No
+mutation produced a proof-less or double-proof `NOT_AFFECTED`.
+
+VT-CONTRACT-02 is asserted on family C proofs produced UNDER MUTATION, not
+only on a pristine baseline: `reachableSubgraphComplete: true`, and
+`callGraphComplete` absent from the evidence object and from the whole
+serialized finding. Family B's evidence is checked for the same retired
+name.
+
+### Taxonomy is observational (F4 § 18)
+
+F3's tokens are asserted on 20 rows, through an OPTIONAL field whose
+failure never affects the proof invariant. The harness would remain valid
+if the taxonomy were renamed or removed: no row's soundness assertion
+reads it, and `classifyMutation` never consults it. One expectation was
+corrected during development — `root_coverage_lost_entirely` reports
+`no_entrypoints_available`, because with no roots `checkedAny` is false and
+that branch answers ahead of the closure blocker the empty root set also
+produces. Both are correct; the matrix records which one production
+actually reports.
+
+### Production differential (F4 § 30)
+
+**Zero, structurally.** `git diff main` over `src/analysis`, `src/cli`,
+`src/domain`, `src/code-intelligence`, `src/dependencies`, `src/rules`,
+`src/vulnerabilities`, `src/config`, `src/cache`, `src/performance`,
+`schemas/`, `rules/`, `config/` and `scripts/` is **empty**. The only
+non-test change is `src/testing/finding.ts`, and a repository-wide grep
+confirms nothing outside `*.test.ts` imports `testing/finding` or
+`testing/proof-mutation`. There is no production behavior to move.
+
+### False-AFFECTED control (F4 § 29)
+
+Positive authority untouched: wrong-instance Site B, same-version twins,
+forwarding, cross-package re-export, coincidental export names, alias and
+scoped identity, local package identity, and multi-instance scan all pass
+unchanged. **0 new false AFFECTED.** The one AFFECTED the mutation suite
+produces is a deliberate positive takeover — the reached twin genuinely
+calls the vulnerable export.
+
+### Performance (F4 § 31)
+
+Production runtime unchanged (no production code). `scan-performance`: both
+baselines pass — 2410ms against the 5000ms threshold, 8181ms against the
+20000ms threshold.
+
+F4's own focused suite: **96 tests in ~1.7s of test time** (~5.2s wall,
+including transform and collect).
+
+Full suite, both sides measured directly rather than inferred:
+
+| | files | tests | wall |
+| - | ----- | ----- | ---- |
+| main (`4d0f58e`) | 158 | 3842 | 276s |
+| this branch | 160 | 3938 | 187s–228s (two runs) |
+
+F4 adds **2 files and 96 tests**. The wall-clock figures are NOT a
+meaningful delta and are recorded only so nobody reads one as one: this
+machine's own variance across runs of the SAME tree (187s to 228s) is an
+order of magnitude larger than anything F4 contributes, and main's figure
+was measured while another suite was running. The honest statement is the
+test-time one: **~1.7s added to a suite whose own test time is ~195s**. No
+optimization attempted, and none needed.
+
+### Verification
+
+Focused gate (30 files): **1211 passed**. `npm test`: **3938 passed / 160
+files**. Adversarial: **124 passed**. Validation: **5 failed / 18 passed**
+— byte-identical to main's documented benchmark set, re-measured on main
+during this task to confirm. `scan-performance`: 2 passed. `typecheck`,
+`lint`, `prettier --check`, `build`, `validate:history`: all clean. No
+timeout waivers were used.
+
+### RWB-05 / RWF-002 / P1-B — untouched, deliberately
+
+RWF-002 is not remediated, not re-interpreted and not measured differently
+here. RWB-05 still reports UNKNOWN, for the same reason F3 recorded, and
+its blockers are unchanged. P1-B was not started. The verdict semantics,
+the Family A/B/C design and the uncertainty taxonomy are all unchanged.
+
+### Remaining limitations (deliberately not fixed here)
+
+1. **The harness mutates INPUTS, not analyzed source.** It answers "does
+   this guard read this field correctly", not "can a real project produce
+   this state". Where the distinction matters the record says so — the
+   closure-says-loaded takeover is exactly that case, and is paired with
+   the real construct that produces the same pair, which reaches UNKNOWN.
+   A source-level mutation harness is a different and larger instrument.
+2. **A `packageInstance` naming no real install yields a vacuously true
+   family-B proof.** Reproduced by mutation. It is TRUE (nothing is
+   installed there, so nothing traversed it) and it is unreachable in
+   production, where `packageInstance` comes from the dependency graph's
+   own install locations. The property that matters — no identity
+   borrowing — holds: the proof names the path it was asked about.
+3. **Nested closure mutability.** Recorded above; contained, not
+   exploitable, not redesigned.
+4. **Coverage is per-prerequisite, not per-input-value.** 48 mutations over
+   the prerequisites the code actually reads, not a fuzz over the value
+   space. A prerequisite that exists but is read nowhere would not be
+   discovered by this harness — that is what the source inventory, not the
+   matrix, is for.
+5. **Three baselines, one package shape.** Each family has one minimal
+   baseline. A second baseline per family (an ESM project, a workspace
+   link) would broaden the matrix; it would not change what any row
+   asserts, and the existing family-specific suites already cover those
+   loading shapes.
+6. **No new verdict, no VEX, no fourth state.** The verdict set is still
+   exactly `AFFECTED` / `NOT_AFFECTED` / `UNKNOWN`.
