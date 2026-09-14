@@ -57,11 +57,14 @@ export type {
   ModuleIdentity,
   PackageInstanceId,
   ResolvedTarget,
+  ScanIdentityOperations,
+  ScanModuleIdentityCache,
 } from "./resolved-target.js";
 export {
   buildKnownPackageRoots,
   buildResolvedTarget,
   canonicalizePackageInstancePath,
+  createScanModuleIdentityCache,
   identifyModule,
 } from "./resolved-target.js";
 export type { Finding, Verdict } from "./verdict.js";

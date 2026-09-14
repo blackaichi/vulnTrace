@@ -330,6 +330,212 @@ export function readInstalledManifestIdentity(
 }
 
 /**
+ * ONE scan's memo for module-identity attribution (Foundation F5).
+ *
+ * Purely a PERFORMANCE artifact: every answer it returns is the answer
+ * {@link identifyModule} would have computed, for the exact same inputs,
+ * on the same filesystem. It introduces no new identity rule, no new
+ * fallback and no new uncertainty, and it is deliberately incapable of
+ * changing which {@link PackageInstanceId} a file is attributed to -- see
+ * the key discipline below.
+ *
+ * WHY IT EXISTS. `identifyModule` is called once per GRAPH NODE per
+ * resolved advisory target (`analysis/verdict.ts`'s `graphPackageInstances`)
+ * and once per loaded file when the module-load closure enumerates its
+ * package instances. Each call performs one `realpathSync` and one
+ * `package.json` read. Measured on this repository's real-package
+ * validation corpus at the F5 baseline: 2,870 `identifyModule` calls over
+ * 175 distinct files, 2,991 `realpathSync` calls over 82 distinct inputs,
+ * and 2,830 manifest reads over 45 distinct roots -- 94%, 97% and 98%
+ * pure repetition respectively. The single worst shape in that corpus is
+ * one 690-node graph built from TWO files (lodash), which alone accounts
+ * for ~700 of each. The multiplier is `findings x targets x graph nodes`
+ * and is unbounded in the graph's size, so it is the asymptotic cost that
+ * matters here, not the corpus's own absolute milliseconds.
+ *
+ * KEY COMPLETENESS -- the property that makes this sound.
+ * `identifyModule(resolvedFile, knownPackageRoots)` is a pure function of
+ * exactly those two arguments and the filesystem. The cache therefore
+ * BINDS one {@link KnownPackageRoots} registry at construction and keys
+ * everything else on the exact, whole `resolvedFile` string. A caller that
+ * asks with a DIFFERENT registry is not served from the cache at all (see
+ * {@link identifyModule}'s own reference check) -- it falls through to the
+ * uncached computation, which is the pre-F5 behavior. There is no partial
+ * key here: not a package name, not a basename, not a version, not a
+ * directory prefix. Two installs of the same name and version at different
+ * physical roots are two different `resolvedFile` strings resolving to two
+ * different canonical roots, and nothing in this cache can bring them
+ * together.
+ *
+ * FAILURE IS NEVER CACHED. Only a SUCCESSFUL `realpathSync` and a
+ * PRESENT, valid manifest name are stored. A canonicalization that fell
+ * back to the normalized absolute path, and a manifest that was missing,
+ * unreadable, malformed or nameless, are both re-attempted on every
+ * subsequent request -- exactly as an uncached scan would. This is the
+ * one place where a cache could turn a transient failure into a permanent
+ * one, and it deliberately does not: absence of information is never
+ * memoized as information.
+ *
+ * LIFETIME AND OWNERSHIP. Created once in `cli/scan.ts`'s
+ * `runScanCommand`, immediately after the scan's `KnownPackageRoots`
+ * registry exists and before anything consumes it, threaded explicitly
+ * into the module-load closure builder and the scan's
+ * `AnalysisProofContext`, and discarded when the scan returns. There is no
+ * module-scope state here and nothing survives a scan: two scans in one
+ * process share nothing, because each `runScanCommand` call creates its
+ * own.
+ *
+ * BOUNDS. Entries are bounded by the scan's own input scale: at most one
+ * per distinct resolved file the analysis reached (`identities`), and at
+ * most one per distinct canonical package root beneath them
+ * (`canonicalPaths`, `manifestNames`). Nothing here is keyed by anything
+ * an advisory, a rule or a package name contributes, so no adversarial
+ * string can grow it beyond the file set the analyzer already holds in
+ * memory.
+ */
+export interface ScanModuleIdentityCache {
+  /**
+   * The registry this cache's answers were computed against. Compared by
+   * REFERENCE at every use: a different registry means a different
+   * function, so its answers are never served from here.
+   */
+  readonly knownPackageRoots: KnownPackageRoots | undefined;
+  /** `resolvedFile` -> the identity `identifyModule` computed for it. */
+  readonly identities: Map<string, ModuleIdentity>;
+  /** `path.resolve(rawPath)` -> a SUCCESSFUL `realpathSync` result. Fallbacks are absent by design. */
+  readonly canonicalPaths: Map<string, string>;
+  /** canonical package root -> a PRESENT, valid manifest `"name"`. Absences are absent by design. */
+  readonly manifestNames: Map<string, string>;
+  /** Observable operation counts, so a test can assert redundant work really was removed. */
+  readonly operations: ScanIdentityOperations;
+}
+
+/**
+ * Filesystem operations this cache actually performed, and the requests it
+ * served without them.
+ *
+ * Exposed deliberately rather than kept private: F5's claim is an
+ * OPERATION-COUNT claim ("100 identity requests for the same path cost one
+ * `realpathSync`, not 100"), and a claim like that has to be assertable by
+ * a deterministic test rather than by a wall-clock measurement that a busy
+ * machine can invalidate. These are counters on a per-scan object, not
+ * global telemetry, and nothing in the analyzer reads them.
+ */
+export interface ScanIdentityOperations {
+  /** `realpathSync` calls actually issued through this cache. */
+  realpathCalls: number;
+  /** `<root>/package.json` reads actually issued through this cache. */
+  manifestReads: number;
+  /** `identifyModule` requests answered from {@link ScanModuleIdentityCache.identities}. */
+  identityHits: number;
+  /** `identifyModule` requests that had to be computed. */
+  identityMisses: number;
+}
+
+/**
+ * Creates the one identity cache for one scan, bound to that scan's
+ * {@link KnownPackageRoots}.
+ *
+ * `knownPackageRoots` is taken here, at construction, rather than accepted
+ * per call: binding it once is what makes the per-call key complete
+ * without every caller having to remember to include it. Pass the SAME
+ * registry value the scan threads everywhere else -- a cache built against
+ * a different registry simply never serves that caller (it is bypassed,
+ * not consulted and overridden), so a mismatch costs performance and can
+ * never cost correctness.
+ */
+export function createScanModuleIdentityCache(
+  knownPackageRoots: KnownPackageRoots | undefined,
+): ScanModuleIdentityCache {
+  return {
+    knownPackageRoots,
+    identities: new Map<string, ModuleIdentity>(),
+    canonicalPaths: new Map<string, string>(),
+    manifestNames: new Map<string, string>(),
+    operations: {
+      realpathCalls: 0,
+      manifestReads: 0,
+      identityHits: 0,
+      identityMisses: 0,
+    },
+  };
+}
+
+/**
+ * {@link canonicalizePackageInstancePath}, memoized for one scan.
+ *
+ * Identical in every observable respect, with one deliberate asymmetry: a
+ * SUCCESSFUL realpath is remembered, a FALLBACK is not. Remembering a
+ * fallback would mean a path that was momentarily unreadable stays
+ * non-canonical for the rest of the scan even once it becomes readable --
+ * a cache turning a transient failure into a durable one, which is
+ * precisely the error-caching hazard this must not have. Re-attempting
+ * costs one `realpathSync` per request in a case that does not arise for
+ * a package root the analyzer's own resolver or dependency graph just
+ * discovered.
+ */
+function canonicalizeThroughCache(
+  rawPath: string,
+  cache: ScanModuleIdentityCache | undefined,
+): string {
+  if (!cache) {
+    return canonicalizePackageInstancePath(rawPath);
+  }
+  const absolute = path.resolve(rawPath);
+  const memoized = cache.canonicalPaths.get(absolute);
+  if (memoized !== undefined) {
+    return memoized;
+  }
+  cache.operations.realpathCalls += 1;
+  let canonical: string;
+  try {
+    canonical = realpathSync(absolute);
+  } catch {
+    // Not memoized -- see this function's own doc comment.
+    return absolute;
+  }
+  cache.canonicalPaths.set(absolute, canonical);
+  return canonical;
+}
+
+/**
+ * {@link readInstalledPackageName}, memoized for one scan.
+ *
+ * Memoizing the ONE name authority rather than introducing a second one:
+ * `readInstalledPackageName` remains the only reader of an installed
+ * package's own declared name (`code-intelligence/package-entry.ts`'s
+ * alias-ownership gate calls the same function), and this wrapper changes
+ * nothing about what it answers. It is deliberately NOT unified with
+ * `dependencies/package-instances.ts`'s own per-scan manifest memo: that
+ * one memoizes {@link readInstalledManifestIdentity}, which answers a
+ * DIFFERENT question with four distinguished outcomes for the version
+ * claim, and folding the two would mean one of the two call sites silently
+ * acquiring the other's error semantics.
+ *
+ * As with canonicalization, only a PRESENT, valid name is remembered. A
+ * missing, unreadable, malformed or nameless manifest is re-read, so an
+ * absence is never frozen in.
+ */
+function manifestNameThroughCache(
+  packageInstance: string,
+  cache: ScanModuleIdentityCache | undefined,
+): string | undefined {
+  if (!cache) {
+    return readInstalledPackageName(packageInstance);
+  }
+  const memoized = cache.manifestNames.get(packageInstance);
+  if (memoized !== undefined) {
+    return memoized;
+  }
+  cache.operations.manifestReads += 1;
+  const name = readInstalledPackageName(packageInstance);
+  if (name !== undefined) {
+    cache.manifestNames.set(packageInstance, name);
+  }
+  return name;
+}
+
+/**
  * Derives a {@link ModuleIdentity} from a resolved file's own absolute
  * path, using its LAST `node_modules/<name>` segment (see
  * SDD-v0.2.md § 4.2's own example) to locate the owning installed package
@@ -390,16 +596,74 @@ export function readInstalledManifestIdentity(
  * have a physical path, is what makes this the single shared identity
  * authority the VT-307d review requires -- a caller must never be able to
  * get a non-canonical answer by constructing its own resolved-file string.
+ *
+ * `cache` (Foundation F5) is a PERFORMANCE argument and nothing else. It
+ * is optional everywhere, it is consulted only when it was built against
+ * this exact `knownPackageRoots` registry, and every answer it can return
+ * is an answer this function already computed for the same
+ * `resolvedFile`. Omitting it, or passing one bound to a different
+ * registry, changes no result -- only how many `realpathSync` and
+ * `package.json` calls the scan makes. See {@link ScanModuleIdentityCache}
+ * for the key discipline and for why failures are deliberately never
+ * memoized.
  */
 export function identifyModule(
   resolvedFile: string,
   knownPackageRoots?: KnownPackageRoots,
+  cache?: ScanModuleIdentityCache,
+): ModuleIdentity {
+  // The cache is consulted ONLY when it was built against this exact
+  // registry (reference equality -- see {@link ScanModuleIdentityCache}).
+  // A mismatch is not an error and is never "resolved" by overriding one
+  // side with the other: the request simply falls through to the uncached
+  // computation below, which is byte-for-byte the pre-F5 behavior. That
+  // is what makes a wrongly-threaded cache a performance loss and never a
+  // correctness one.
+  const usable =
+    cache && cache.knownPackageRoots === knownPackageRoots ? cache : undefined;
+
+  if (usable) {
+    const memoized = usable.identities.get(resolvedFile);
+    if (memoized !== undefined) {
+      usable.operations.identityHits += 1;
+      return memoized;
+    }
+    usable.operations.identityMisses += 1;
+  }
+
+  const identity = computeModuleIdentity(
+    resolvedFile,
+    knownPackageRoots,
+    usable,
+  );
+  usable?.identities.set(resolvedFile, identity);
+  return identity;
+}
+
+/**
+ * {@link identifyModule}'s own body, with the memo lookup lifted out.
+ *
+ * Separated so the cached and uncached paths are literally the same code
+ * rather than two implementations that have to be kept in agreement --
+ * the failure mode a performance cache most easily introduces. `cache` is
+ * used here only to avoid REDUNDANT filesystem work inside one
+ * computation (canonicalization and the manifest-name read); it never
+ * decides an outcome.
+ */
+function computeModuleIdentity(
+  resolvedFile: string,
+  knownPackageRoots: KnownPackageRoots | undefined,
+  cache: ScanModuleIdentityCache | undefined,
 ): ModuleIdentity {
   const lastIndex = resolvedFile.lastIndexOf(NODE_MODULES_SEGMENT);
   if (lastIndex === -1) {
     return (
       (knownPackageRoots &&
-        identifyKnownPackageInstance(resolvedFile, knownPackageRoots)) || {
+        identifyKnownPackageInstance(
+          resolvedFile,
+          knownPackageRoots,
+          cache,
+        )) || {
         resolvedFile,
       }
     );
@@ -416,7 +680,11 @@ export function identifyModule(
   if (!pathDerivedName) {
     return (
       (knownPackageRoots &&
-        identifyKnownPackageInstance(resolvedFile, knownPackageRoots)) || {
+        identifyKnownPackageInstance(
+          resolvedFile,
+          knownPackageRoots,
+          cache,
+        )) || {
         resolvedFile,
       }
     );
@@ -424,12 +692,13 @@ export function identifyModule(
 
   const rawInstanceLength =
     lastIndex + NODE_MODULES_SEGMENT.length + nameSegments.join("/").length;
-  const packageInstance = canonicalizePackageInstancePath(
+  const packageInstance = canonicalizeThroughCache(
     resolvedFile.slice(0, rawInstanceLength),
+    cache,
   );
 
   const packageName =
-    readInstalledPackageName(packageInstance) ?? pathDerivedName;
+    manifestNameThroughCache(packageInstance, cache) ?? pathDerivedName;
 
   return {
     packageName,
@@ -478,15 +747,16 @@ export function identifyModule(
 function identifyKnownPackageInstance(
   resolvedFile: string,
   knownPackageRoots: KnownPackageRoots,
+  cache?: ScanModuleIdentityCache,
 ): ModuleIdentity | undefined {
-  const canonicalResolvedFile = canonicalizePackageInstancePath(resolvedFile);
+  const canonicalResolvedFile = canonicalizeThroughCache(resolvedFile, cache);
 
   let dir = path.dirname(canonicalResolvedFile);
   let previous: string | undefined;
   while (dir !== previous) {
     const lockfileName = knownPackageRoots.get(dir);
     if (lockfileName !== undefined) {
-      const packageName = readInstalledPackageName(dir) ?? lockfileName;
+      const packageName = manifestNameThroughCache(dir, cache) ?? lockfileName;
       return { packageName, packageInstance: dir, resolvedFile };
     }
     previous = dir;
