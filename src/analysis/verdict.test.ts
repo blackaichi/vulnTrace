@@ -145,6 +145,18 @@ describe("buildFinding: indeterminate version match degrades to UNKNOWN", () => 
       package: "fixture-lib",
       version: "1.0.0",
       verdict: "UNKNOWN",
+      // FOUNDATION F3: the verdict is unchanged; what is new is that this
+      // UNKNOWN now says WHY. Applicability itself was undecidable -- the
+      // installed version could not be established, so no advisory range
+      // was ever evaluated -- which is an identity fact, not a construct
+      // the analyzer declined to model.
+      unknownReasons: [
+        {
+          category: "identity_unresolved",
+          reason: "advisory_version_applicability_indeterminate",
+          count: 1,
+        },
+      ],
     });
   });
 });
@@ -180,6 +192,18 @@ describe("buildFinding: no known vulnerable target", () => {
       package: "fixture-lib",
       version: "1.0.0",
       verdict: "UNKNOWN",
+      // FOUNDATION F3: no rule means no model of what this advisory's
+      // dangerous behavior IS, so reachability had nothing to search for.
+      // A missing precondition of the analysis -- deliberately NOT
+      // `unmodeled_construct`, which is reserved for syntax the frontend
+      // could learn and is the class P1-B is prioritized from.
+      unknownReasons: [
+        {
+          category: "analysis_precondition_unmet",
+          reason: "no_vulnerable_symbol_rule",
+          count: 1,
+        },
+      ],
     });
   });
 
@@ -586,6 +610,17 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
           "call-graph construction was truncated by a configured resource limit (analysis.limits) before every reachable path could be exhaustively searched",
         ],
       },
+      // FOUNDATION F3 test-matrix row F. A CONFIGURED bound stopped the
+      // work, which is its own category: the analyzer knows exactly how to
+      // do this and was told not to, so the fix is a limit rather than
+      // code. The prose reason above is retained verbatim alongside it.
+      unknownReasons: [
+        {
+          category: "budget_exceeded",
+          reason: "call_graph_truncated",
+          count: 1,
+        },
+      ],
     });
   });
 
