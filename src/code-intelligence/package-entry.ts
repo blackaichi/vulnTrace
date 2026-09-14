@@ -5,6 +5,7 @@ import {
   identifyModule,
   readInstalledPackageName,
   type KnownPackageRoots,
+  type ScanModuleIdentityCache,
 } from "../domain/resolved-target.js";
 import type { ModuleResolver } from "./module-resolver.js";
 
@@ -204,8 +205,25 @@ export interface ResolveAuthoritativePackageEntriesOptions {
   /** Analyzed entrypoint files, used ONLY as resolution contexts. */
   readonly entrypointFiles: readonly string[];
   readonly knownPackageRoots?: KnownPackageRoots;
-  /** Per-analysis memo, keyed by (instance, specifier). */
+  /**
+   * Per-analysis memo, keyed by (instance, specifier).
+   *
+   * Since Foundation F5 the caller normally supplies the SCAN's memo
+   * rather than one per finding. The key is unchanged and is unaffected by
+   * the wider lifetime: `packageInstance` is the exact canonical
+   * `PackageInstanceId`, so two same-name/same-version installs at
+   * different physical roots hold separate entries here, and a scan's
+   * other resolution inputs (resolver, reference context, entrypoint
+   * files, registry) are per-scan constants bound alongside the memo.
+   */
   readonly memo?: Map<string, AuthoritativePackageEntry[]>;
+  /**
+   * This scan's module-identity memo (Foundation F5). Performance only:
+   * it is handed to `identifyModule` below so the instance-ownership check
+   * on each probe's resolution does not re-`realpath` and re-read a
+   * manifest the scan has already read. Omitting it changes no answer.
+   */
+  readonly moduleIdentityCache?: ScanModuleIdentityCache;
 }
 
 /**
@@ -296,6 +314,7 @@ export async function resolveAuthoritativePackageEntries(
     entrypointFiles,
     knownPackageRoots,
     memo,
+    moduleIdentityCache,
   } = options;
 
   // A rule commonly carries several targets naming the same module, and a
@@ -388,8 +407,11 @@ export async function resolveAuthoritativePackageEntries(
         continue;
       }
       if (
-        identifyModule(resolution.resolvedFileName, knownPackageRoots)
-          .packageInstance !== packageInstance
+        identifyModule(
+          resolution.resolvedFileName,
+          knownPackageRoots,
+          moduleIdentityCache,
+        ).packageInstance !== packageInstance
       ) {
         continue;
       }

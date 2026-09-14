@@ -8,6 +8,7 @@ import {
   identifyModule,
   type KnownPackageRoots,
   type PackageInstanceId,
+  type ScanModuleIdentityCache,
 } from "../domain/resolved-target.js";
 
 /**
@@ -169,6 +170,21 @@ export interface BuildModuleLoadClosureOptions {
    * that already has a `node_modules` segment.
    */
   readonly knownPackageRoots?: KnownPackageRoots;
+  /**
+   * This scan's module-identity memo (Foundation F5).
+   *
+   * Performance only. The closure identifies EVERY loaded file to
+   * enumerate `loadedPackageInstances`, one `realpath` and one
+   * `package.json` read apiece, and a large project's closure is its
+   * whole reachable file set -- so this is where the per-file cost the F5
+   * baseline measured is paid in bulk. Sharing the scan's memo lets that
+   * work be reused by the verdict phase, which asks the same question of
+   * the same files again. It is consulted only if it was built against
+   * this exact `knownPackageRoots` (see `identifyModule`), so a mismatched
+   * or absent memo simply means the closure computes identities itself,
+   * with byte-identical results.
+   */
+  readonly moduleIdentityCache?: ScanModuleIdentityCache;
 }
 
 /**
@@ -354,7 +370,11 @@ export async function buildModuleLoadClosure(
 
   const loadedPackageInstances = new Set<PackageInstanceId>();
   for (const file of loadedFiles) {
-    const instance = identifyModule(file, knownPackageRoots).packageInstance;
+    const instance = identifyModule(
+      file,
+      knownPackageRoots,
+      options.moduleIdentityCache,
+    ).packageInstance;
     if (instance !== undefined) {
       loadedPackageInstances.add(instance);
     }
