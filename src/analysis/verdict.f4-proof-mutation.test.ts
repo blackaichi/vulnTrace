@@ -22,6 +22,7 @@ import {
   graphWithUnresolvedEdge,
   graphWithWideningEdge,
   graphWithNode,
+  graphWithoutEdgesTo,
   graphWithoutInstance,
   graphWithoutNode,
   mutate,
@@ -985,6 +986,24 @@ describe("F4 family C mutations: the target-unreachability proof", () => {
           moduleLoadClosure: closureForgets(
             closureOf(familyC),
             inputs.packageInstance!,
+          ),
+        }),
+    },
+    {
+      // A real, existing CALL PATH severed -- the entrypoint's call into
+      // `safe()`. Family C's claim is about the path to `vulnerable`,
+      // which there never was one of, so removing a different package's
+      // reachability changes nothing it asserts. Removing edges can only
+      // ever shrink what is reachable, so this direction is the safe one
+      // by construction; the direction that could matter (ADDING a path)
+      // is the AFFECTED case, covered by family B's reached-twin row.
+      mutation: "an_existing_call_path_to_a_non_target_severed",
+      invalidates: false,
+      apply: (inputs) =>
+        mutate(inputs, {
+          graph: graphWithoutEdgesTo(
+            inputs.graph,
+            `${familyC.root}/node_modules/vuln-lib/index.js#safe@2:1`,
           ),
         }),
     },
