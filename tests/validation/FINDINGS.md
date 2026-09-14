@@ -9853,6 +9853,7 @@ Every row is classified, not pass/failed:
 | `package_instance_withdrawn_entirely` | **control** | C stands — C's claim is about the TARGET |
 | `closure_incomplete_traversal_truncated_only` | **control** | C stands — the documented exclusion, from C's side |
 | `closure_forgets_this_instance_is_loaded` | **control** | C stands — C never claims the package is unloaded |
+| `an_existing_call_path_to_a_non_target_severed` | **control** | C stands |
 | `a_non_target_node_of_the_same_package_removed` | **control** | C stands |
 | `a_loaded_file_identity_rewritten_in_the_closure` | **control** | C stands |
 
@@ -10003,12 +10004,12 @@ metric test caught it independently of the individual rows:
 ### Mutation summary metric (F4 § 28)
 
 ```
-total proof mutations:            48
+total proof mutations:            49
 invalidated original proof:       38
   -> UNKNOWN:                     31
   -> legitimate family takeover:   5
   -> legitimate AFFECTED:          2
-control rows (not a prerequisite):10
+control rows (not a prerequisite):11
 UNSAFE ORIGINAL PROOF SURVIVED:    0
 ```
 
@@ -10066,7 +10067,7 @@ Production runtime unchanged (no production code). `scan-performance`: both
 baselines pass — 2410ms against the 5000ms threshold, 8181ms against the
 20000ms threshold.
 
-F4's own focused suite: **96 tests in ~1.7s of test time** (~5.2s wall,
+F4's own focused suite: **97 tests in ~1.7s of test time** (~5.2s wall,
 including transform and collect).
 
 Full suite, both sides measured directly rather than inferred:
@@ -10074,9 +10075,9 @@ Full suite, both sides measured directly rather than inferred:
 | | files | tests | wall |
 | - | ----- | ----- | ---- |
 | main (`4d0f58e`) | 158 | 3842 | 276s |
-| this branch | 160 | 3938 | 187s–228s (two runs) |
+| this branch | 160 | 3939 | 187s–228s (three runs) |
 
-F4 adds **2 files and 96 tests**. The wall-clock figures are NOT a
+F4 adds **2 files and 97 tests**. The wall-clock figures are NOT a
 meaningful delta and are recorded only so nobody reads one as one: this
 machine's own variance across runs of the SAME tree (187s to 228s) is an
 order of magnitude larger than anything F4 contributes, and main's figure
@@ -10086,7 +10087,7 @@ optimization attempted, and none needed.
 
 ### Verification
 
-Focused gate (30 files): **1211 passed**. `npm test`: **3938 passed / 160
+Focused gate (30 files): **1212 passed**. `npm test`: **3939 passed / 160
 files**. Adversarial: **124 passed**. Validation: **5 failed / 18 passed**
 — byte-identical to main's documented benchmark set, re-measured on main
 during this task to confirm. `scan-performance`: 2 passed. `typecheck`,
@@ -10116,7 +10117,7 @@ the Family A/B/C design and the uncertainty taxonomy are all unchanged.
    borrowing — holds: the proof names the path it was asked about.
 3. **Nested closure mutability.** Recorded above; contained, not
    exploitable, not redesigned.
-4. **Coverage is per-prerequisite, not per-input-value.** 48 mutations over
+4. **Coverage is per-prerequisite, not per-input-value.** 49 mutations over
    the prerequisites the code actually reads, not a fuzz over the value
    space. A prerequisite that exists but is read nowhere would not be
    discovered by this harness — that is what the source inventory, not the
