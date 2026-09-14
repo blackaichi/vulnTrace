@@ -99,6 +99,7 @@ function outputWith(finding: JsonFinding): ScanOutput {
     findings: [finding],
     coverage: EMPTY_COVERAGE,
     diagnostics: [],
+    unreportedCandidates: [],
     timings: ZERO_TIMINGS,
   };
 }

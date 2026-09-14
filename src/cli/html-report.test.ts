@@ -56,6 +56,7 @@ function scanOutput(partial: Partial<ScanOutput> = {}): ScanOutput {
     findings: [],
     coverage: EMPTY_COVERAGE,
     diagnostics: [],
+    unreportedCandidates: [],
     timings: EMPTY_TIMINGS,
     ...partial,
   };

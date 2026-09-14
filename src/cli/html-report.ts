@@ -45,7 +45,8 @@ import {
   SUPPORTED_MODEL_STATEMENT,
 } from "../domain/evidence.js";
 import type { PhaseTimings } from "../performance/timing.js";
-import type { JsonFinding, ScanOutput } from "./output.js";
+import type { UncertaintyClassification } from "../domain/uncertainty.js";
+import type { JsonFinding, ScanOutput, UnreportedCandidate } from "./output.js";
 
 /**
  * Presentation order, most actionable first — deliberately NOT the domain
@@ -593,12 +594,25 @@ function renderAffectedEvidence(finding: JsonFinding): string {
  */
 function renderUnknownBlockers(finding: JsonFinding): string {
   const reasons = finding.evidence?.reasons ?? [];
+  // FOUNDATION F3. Rendered ABOVE the prose, because it answers the
+  // question a reader opened this block with -- what KIND of uncertainty
+  // is this, and can anyone do anything about it -- which forty lines of
+  // `unsupported_construct at ...` never did.
+  const classified = renderUncertaintyClasses(finding.unknownReasons ?? []);
 
   if (reasons.length === 0) {
+    // F3: this used to be the whole answer for an UNKNOWN decided before
+    // reachability ran -- an indeterminate version match, or a missing
+    // vulnerable-symbol rule. The report had to GUESS which, in prose,
+    // because the result genuinely carried nothing. It carries a token
+    // now, so the guess is replaced by the scan's own answer, and the
+    // apologetic paragraph survives only for a pre-F3 result.
     return (
       `<section class="blockers">` +
       `<h4>Why this is UNKNOWN</h4>` +
-      `<p class="absent">The scan result records no reason for this UNKNOWN finding. The most common cause is that applicability itself was undecidable before reachability was ever attempted — an indeterminate version match, or no vulnerable-symbol rule for this advisory.</p>` +
+      (classified === ""
+        ? `<p class="absent">The scan result records no reason for this UNKNOWN finding. The most common cause is that applicability itself was undecidable before reachability was ever attempted — an indeterminate version match, or no vulnerable-symbol rule for this advisory.</p>`
+        : classified) +
       `</section>`
     );
   }
@@ -616,9 +630,80 @@ function renderUnknownBlockers(finding: JsonFinding): string {
   return (
     `<section class="blockers">` +
     `<h4>Why this is UNKNOWN</h4>` +
+    classified +
     `<p>Each blocker below is reported exactly as the scan recorded it.</p>` +
     `<ul class="blocker-list">${items.join("")}</ul>` +
     `</section>`
+  );
+}
+
+/**
+ * Readable names for the six F3 categories. The token is always shown
+ * alongside -- it is what the JSON carries and what a reader greps for --
+ * but never on its own (F3 § 22).
+ */
+const CATEGORY_LABEL: Record<string, string> = {
+  unmodeled_construct: "Constructs this analyzer does not model yet",
+  value_uncertainty: "Values that are not statically unique",
+  capability_escape: "Runtime capabilities that escape static analysis",
+  identity_unresolved: "Identity that could not be established",
+  analysis_precondition_unmet: "Analysis preconditions that were not met",
+  budget_exceeded: "Configured analysis limits",
+};
+
+/**
+ * The classified view of an UNKNOWN's blockers (F3 § 23).
+ *
+ * Grouped by category and rendered in the order the result already carries
+ * -- `aggregateUncertainty` sorted it by the taxonomy's declaration order,
+ * and this report re-sorts nothing. A report that reordered would make two
+ * presentations of one scan disagree about emphasis.
+ *
+ * Every reason survives. F3 § 20 forbids picking a primary one, so there
+ * is deliberately no "main cause" styling here and no truncation: a
+ * finding blocked by both an `eval` and a computed member shows both, and
+ * a reader decides which matters.
+ */
+function renderUncertaintyClasses(
+  classifications: readonly UncertaintyClassification[],
+): string {
+  if (classifications.length === 0) {
+    return "";
+  }
+
+  const byCategory = new Map<string, UncertaintyClassification[]>();
+  for (const entry of classifications) {
+    const list = byCategory.get(entry.category);
+    if (list) {
+      list.push(entry);
+    } else {
+      byCategory.set(entry.category, [entry]);
+    }
+  }
+
+  const rows = [...byCategory.entries()].map(([category, entries]) => {
+    const reasons = entries
+      .map(
+        (entry) =>
+          `<li><span class="token">${text(entry.reason)}</span>` +
+          (entry.count > 1
+            ? ` <span class="count">× ${String(entry.count)}</span>`
+            : "") +
+          `</li>`,
+      )
+      .join("");
+    return (
+      `<li class="uncertainty-class">` +
+      `<span class="token">${text(category)}</span> ` +
+      `<span class="reason">${text(CATEGORY_LABEL[category] ?? category)}</span>` +
+      `<ul class="uncertainty-reasons">${reasons}</ul>` +
+      `</li>`
+    );
+  });
+
+  return (
+    `<p>Classified uncertainty, grouped by what kind of work each blocker represents. No single cause is singled out: every blocker the scan recorded is listed.</p>` +
+    `<ul class="uncertainty-list">${rows.join("")}</ul>`
   );
 }
 
@@ -852,6 +937,70 @@ function renderCoverage(coverage: Coverage): string {
   );
 }
 
+/**
+ * FOUNDATION F3 § 23 -- candidates that produced NO finding, in their own
+ * section, explicitly NOT presented as vulnerabilities.
+ *
+ * The self-review's attack N is the whole design constraint here: nothing
+ * in this section may read as "a vulnerability we are fairly sure about".
+ * Four separate defences, none of them decorative:
+ *
+ *  - It is NOT inside `#findings` or `#finding-details`, it is a panel
+ *    beside coverage and diagnostics, and it never appears in the verdict
+ *    counts or the overview table.
+ *  - No verdict badge, no severity, no confidence, no evidence path --
+ *    none of which exist on these entries, and any of which would invite
+ *    the reading.
+ *  - The two dispositions are labelled in WORDS, not tokens, and the
+ *    not-applicable label says what it actually means ("does not apply")
+ *    rather than anything that could be mistaken for a proof of safety.
+ *  - The lead paragraph states the negative directly, because a reader
+ *    skimming headings is exactly who would otherwise get this wrong.
+ */
+function renderUnreportedCandidates(
+  candidates: readonly UnreportedCandidate[],
+): string {
+  if (candidates.length === 0) {
+    return "";
+  }
+
+  const rows = candidates
+    .map((candidate) => {
+      const identity =
+        candidate.packageInstance ?? candidate.package ?? "(whole project)";
+      const advisory = candidate.vulnerability ?? "—";
+      const disposition =
+        candidate.disposition === "not_applicable"
+          ? `<span class="disposition-na">Does not apply</span>`
+          : `<span class="disposition-undetermined">Undetermined</span>`;
+      const classification =
+        candidate.category === undefined
+          ? ""
+          : ` <span class="token">${text(candidate.category)}</span>`;
+      return (
+        `<tr>` +
+        `<td>${disposition}</td>` +
+        `<td>${text(advisory)}</td>` +
+        `<td>${code(identity)}${candidate.version ? ` ${code(candidate.version)}` : ""}</td>` +
+        `<td><span class="token">${text(candidate.reason)}</span>${classification}<br>${text(candidate.detail)}</td>` +
+        `</tr>`
+      );
+    })
+    .join("");
+
+  return (
+    `<section id="unreported-candidates" class="panel">` +
+    `<h2>Candidates with no finding</h2>` +
+    `<p><strong>Nothing in this section is a reported vulnerability.</strong> These are advisory/package pairs that produced no finding row, listed so that a missing row can be told apart from a row nobody could produce.</p>` +
+    `<p>“Does not apply” means the installed version is outside every affected range the advisory declares — a conclusion about version ranges only. No reachability analysis was performed for those rows, so they are <em>not</em> proofs of non-reachability and are not NOT_AFFECTED verdicts. “Undetermined” means VulnTrace could not establish whether the advisory applies, and claims nothing either way.</p>` +
+    `<div class="table-scroll"><table class="kv">` +
+    `<thead><tr><th scope="col">Disposition</th><th scope="col">Advisory</th><th scope="col">Instance</th><th scope="col">Reason</th></tr></thead>` +
+    `<tbody>${rows}</tbody>` +
+    `</table></div>` +
+    `</section>`
+  );
+}
+
 function renderDiagnostics(diagnostics: readonly Diagnostic[]): string {
   if (diagnostics.length === 0) {
     return (
@@ -993,6 +1142,16 @@ ul.plain,ul.blocker-list,ul.reason-list,ul.exclusions{margin:.3em 0;padding-left
 ul.plain{list-style:square}
 .blocker-list li{margin:.3em 0;overflow-wrap:anywhere}
 .token{display:inline-block;background:var(--unknown-bg);color:var(--unknown);border:1px solid currentColor;border-radius:3px;padding:0 .35em;font-weight:700;font-size:.8rem}
+ul.uncertainty-list{margin:.3em 0;padding-left:1.2em;list-style:none}
+.uncertainty-class{margin:.5em 0}
+ul.uncertainty-reasons{margin:.2em 0 .2em .2em;padding-left:1.2em}
+.uncertainty-reasons li{margin:.15em 0;overflow-wrap:anywhere}
+.count{color:var(--muted);font-size:.85em}
+/* Deliberately NOT the AFFECTED colour: nothing in the unreported-candidate
+   table is a reported vulnerability, and colouring it like one would say
+   otherwise louder than the prose says it does not. */
+.disposition-na{color:var(--muted);font-weight:700}
+.disposition-undetermined{color:var(--unknown);font-weight:700}
 ol.path{list-style:none;margin:.4em 0;padding:0}
 .path-step{display:flex;flex-wrap:wrap;align-items:baseline;gap:.6em;padding:7px 10px;border:1px solid var(--line);border-radius:6px;background:var(--panel)}
 .path-label{font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);min-width:8.5rem}
@@ -1176,6 +1335,10 @@ export function renderHtmlReport(output: ScanOutput): string {
     findingsSection +
     detailsSection +
     renderCoverage(output.coverage) +
+    // F3: deliberately AFTER findings and coverage, and before
+    // diagnostics -- it is analysis output, not an operational log, but it
+    // is not a finding either, and its position says so.
+    renderUnreportedCandidates(output.unreportedCandidates ?? []) +
     renderDiagnostics(output.diagnostics) +
     renderTimings(output.timings) +
     `</main>\n` +

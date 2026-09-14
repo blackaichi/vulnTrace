@@ -85,6 +85,7 @@ describe("validateScanOutput", () => {
       callsDynamic: 0,
     },
     diagnostics: [],
+    unreportedCandidates: [],
     timings: {
       parsingMs: 5,
       resolutionMs: 2,
@@ -335,6 +336,7 @@ describe("formatScanOutput", () => {
       callsDynamic: 0,
     },
     diagnostics: [],
+    unreportedCandidates: [],
     timings: {
       parsingMs: 0,
       resolutionMs: 0,

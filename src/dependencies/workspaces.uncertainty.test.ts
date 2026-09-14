@@ -80,6 +80,11 @@ describe("F1-A: pnpm-workspace.yaml-only layouts are explicit, not empty", () =>
     expect(discoverWorkspacePackages(root)).toEqual({
       packages: [],
       unsupported: [],
+      // F3: an ordinary single-package project says nothing in EITHER
+      // channel. The control for "no workspaces" has to stay empty in the
+      // structured view too, or every such scan would grow a phantom
+      // uncertainty entry.
+      incompleteness: [],
     });
   });
 

@@ -66,7 +66,14 @@ describe("runScanCommand against the real OSV network", () => {
       },
     });
 
-    expect(stderr).toEqual([]);
+    // FOUNDATION F3 § 22: every one of these findings is UNKNOWN, so the
+    // scan now says why on the human-facing stream. This project has no
+    // configured vulnerable-symbol rule for any real lodash advisory,
+    // which is a missing PRECONDITION of the analysis rather than a
+    // construct the analyzer declined to model -- the distinction F3 keeps
+    // out of `unmodeled_construct` so the P1-B ranking stays honest.
+    expect(stderr.join("")).toContain("UNKNOWN finding");
+    expect(stderr.join("")).toContain("no_vulnerable_symbol_rule");
     expect(exitCode).toBe(0);
 
     const output = JSON.parse(stdout.join(""));
@@ -76,6 +83,15 @@ describe("runScanCommand against the real OSV network", () => {
       output.findings.every(
         (finding: { package: string; verdict: string }) =>
           finding.package === "lodash" && finding.verdict === "UNKNOWN",
+      ),
+    ).toBe(true);
+    // Against the REAL OSV API: every UNKNOWN carries a structured reason,
+    // and it is the same one, because they all stop at the same place.
+    expect(
+      output.findings.every(
+        (finding: { unknownReasons?: { reason: string }[] }) =>
+          finding.unknownReasons?.length === 1 &&
+          finding.unknownReasons[0]?.reason === "no_vulnerable_symbol_rule",
       ),
     ).toBe(true);
   }, 20_000);

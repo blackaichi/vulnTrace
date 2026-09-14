@@ -180,7 +180,19 @@ describe("E2E vertical slice (TASK-025)", () => {
       io,
     });
 
-    expect(stderr).toEqual([]);
+    // FOUNDATION F3 § 22. A scan that produces an UNKNOWN is no longer
+    // silent about WHY on the human-facing stream. Everything else about
+    // stderr is unchanged -- this is the only line the scan writes, so an
+    // otherwise-clean scan with no UNKNOWN still writes nothing at all
+    // (asserted by the two AFFECTED/NOT_AFFECTED cases above, which still
+    // require `stderr` to be exactly `[]`).
+    //
+    // Stdout is untouched: the machine-readable contract never carries
+    // prose, which is why this goes to stderr and is asserted here rather
+    // than in the JSON body below.
+    expect(stderr.join("")).toContain("1 UNKNOWN finding; why:");
+    expect(stderr.join("")).toContain("value_uncertainty");
+    expect(stderr.join("")).toContain("dynamic_member_access (1)");
     expect(exitCode).toBe(0);
 
     const output: unknown = JSON.parse(stdout.join(""));
@@ -190,6 +202,18 @@ describe("E2E vertical slice (TASK-025)", () => {
     expect(findings[0]).toMatchObject({
       vulnerability: "GHSA-e2e-vertical-slice",
       verdict: "UNKNOWN",
+      // F3 test-matrix row B: a computed member access is a MODELED
+      // construct whose destination is not statically unique. It is
+      // deliberately not `capability_escape` -- it cannot introduce a
+      // module the graph never saw -- and not `unmodeled_construct`, which
+      // no amount of syntax support would close.
+      unknownReasons: [
+        {
+          category: "value_uncertainty",
+          reason: "dynamic_member_access",
+          count: 1,
+        },
+      ],
     });
     // UNKNOWN must never be silently coerced from/into NOT_AFFECTED
     // (AGENTS.md) -- assert it directly rather than only via toMatchObject.
