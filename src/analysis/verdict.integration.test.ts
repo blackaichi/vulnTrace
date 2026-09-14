@@ -754,7 +754,12 @@ describe("buildFinding regression: an installed instance never imported at all (
       entrypoints: entrypointsResult.entrypoints,
       resolver,
       projectRoot: tmpDir,
-      // No knownPackageRoots, no moduleLoadClosure.
+      // No knownPackageRoots, and NO closure -- stated explicitly rather
+      // than by omission, because `buildFindingForTest` now builds a real
+      // closure for any caller that does not say otherwise
+      // (FOUNDATION-F2/F2-A). Withholding it is the entire point of this
+      // case, so it must be impossible to mistake for an oversight.
+      moduleLoadClosureUnavailable: true,
     });
 
     expect(

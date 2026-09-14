@@ -291,13 +291,38 @@ describe("Site B target authority: a path to the WRONG instance is not evidence"
   });
 
   it("does not answer for the wrong instance in the NEGATIVE direction either", async () => {
-    // The finding is about packages/bar this time, which genuinely runs the
-    // sink; resolution from the project root lands on packages/foo. Neither
-    // an AFFECTED nor a NOT_AFFECTED may be built from the other package.
+    // The finding is about packages/bar; resolution from the project root
+    // lands on packages/foo. The invariant is that NO verdict about
+    // packages/bar may be built out of packages/foo's code.
+    //
+    // The verdict here is NOT_AFFECTED, and that is correct. It is not an
+    // answer borrowed from packages/foo -- it is a family-B proof about
+    // packages/bar's OWN absence: with `linkFooTo: "foo"`, node_modules/foo
+    // points at packages/foo, nothing resolves to packages/bar, and
+    // packages/bar is therefore absent from both the call graph and a
+    // complete module-load closure. Confirmed against the real runtime:
+    // executing the consumer never loads packages/bar at all (it crashes
+    // reaching for `vulnerable` on packages/foo, which publishes only
+    // `safe`). The evidence assertion below is what actually pins the
+    // invariant, and it still holds -- the proof's path is empty, so no
+    // packages/foo file appears in it.
+    //
+    // This assertion previously read `.not.toBe("NOT_AFFECTED")`, and held
+    // only because this suite passed NO ModuleLoadClosure while production
+    // (cli/scan.ts) always builds one. `buildFindingForTest` now builds a
+    // real closure by default (FOUNDATION-F2/F2-A), so the case finally
+    // simulates the pipeline it is meant to describe. Verified to be
+    // independent of F2-A's own change: with the production files reverted
+    // to main and only the closure supplied, this case yields NOT_AFFECTED
+    // identically -- the verdict moved because the TEST gained a closure,
+    // not because the guard changed.
     const repo = buildRepo({ declareWorkspaces: true, linkFooTo: "foo" });
     const { finding, evidence } = await scan(repo, repo.barRoot);
 
-    expect(finding?.verdict).not.toBe("NOT_AFFECTED");
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
+    expect(finding?.evidence?.confirmedAbsentInstance?.packageInstance).toBe(
+      repo.barRoot,
+    );
     expect(evidence.some((file) => file.startsWith("packages/foo"))).toBe(
       false,
     );
