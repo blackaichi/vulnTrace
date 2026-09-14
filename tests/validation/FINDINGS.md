@@ -10345,3 +10345,539 @@ the Family A/B/C design and the uncertainty taxonomy are all unchanged.
    loading shapes.
 6. **No new verdict, no VEX, no fourth state.** The verdict set is still
    exactly `AFFECTED` / `NOT_AFFECTED` / `UNKNOWN`.
+
+## RWF-038 (FOUNDATION F5) — The analyzer re-asked the filesystem the same question thousands of times
+
+Foundation's fifth task. It adds **no proof rule, no verdict, no evidence,
+no proof family, no uncertainty reason and no change to `PackageInstance`
+identity**. What it adds is three per-scan memos and one per-scan index,
+each keyed exactly, each incapable of merging two distinct
+`PackageInstanceId`s, and each discarded when the scan returns.
+
+Central rule being enforced: *a faster wrong answer is a regression.*
+Every structure introduced here is DERIVED from an analysis that is
+already final, and every answer it can return is one the analyzer would
+otherwise have recomputed for the same inputs on the same filesystem.
+
+### F4 handoff
+
+Base: `d3dd220` (`docs: correct RWF-037 mutation audit record`), certified
+before editing — clean tree, identical to `origin/main`, F4's six commits
+present (`edf132b`..`d3dd220`), the proof-mutation harness live. Full
+baseline on that SHA, measured rather than assumed: **160 files / 3,939
+tests passing**, 187s.
+
+### Measure first
+
+The prior audit recorded roughly *~415 ms per 8,000 locations* for
+per-location `realpath` work. That number was re-derived rather than
+inherited, because a hotspot that moved would have made this whole task
+optimize the wrong thing.
+
+Method: a removable counting instrumentation (call counts AND distinct-key
+counts) applied to `canonicalizePackageInstancePath`,
+`readInstalledPackageName`, `readInstalledManifestIdentity`,
+`identifyModule`, `readInstalledVersion`, `declaresExports`,
+`resolveAuthoritativePackageEntries`, `graphPackageInstances` and
+`ts.resolveModuleName`, driven over all 15 real-package fixture projects in
+`tests/validation/fixtures/` with the OSV boundary stubbed from each
+fixture's own `rules.yml` so findings are actually produced. (The existing
+`scan-performance` guards cannot see this cost at all: their provider
+returns no advisory, so no finding is built and `checkReachability` never
+runs.)
+
+**Baseline totals across the corpus (main, `d3dd220`):**
+
+| operation | calls | distinct keys | redundancy |
+| --------- | ----: | ------------: | ---------: |
+| `realpathSync` (via `canonicalizePackageInstancePath`) | 2,991 | 82 | 97.3% |
+| `identifyModule` | 2,870 | 175 files | 93.9% |
+| manifest reads (all readers) | 2,896 | 45 roots | 98.4% |
+| of which `readInstalledPackageName` | 2,830 | 45 roots | 98.4% |
+| graph-node identifications in `graphPackageInstances` | 2,614 | — | — |
+| `ts.resolveModuleName` | 1,095 | — | — |
+
+**Phase split (same runs), which is what stops this record overclaiming:**
+
+Parsing/graph construction is **~90%** of corpus wall time; reachability is
+**6.7%** (5.25s of 78.2s); provider time is ~0 with a stub. The redundant
+identity work measured above is real and overwhelming as a COUNT, but at
+~53 µs per `realpathSync` and ~63 µs per manifest read on this machine it
+is only ~340 ms of a 78s corpus. **F5's claim is an operation-count and
+asymptotic claim, not a wall-clock one**, and the corpus numbers below say
+so plainly.
+
+### Ranked hotspots, and the one that actually matters
+
+1. **`graphPackageInstances` — the multiplier.** `verdict.ts` re-derived
+   "which installed instances of this package name does the call graph
+   contain" by walking EVERY graph node and identifying each one, once per
+   resolved advisory target. Each identification cost one `realpathSync`
+   plus one `package.json` read. Cost: `findings × targets × nodes`,
+   unbounded in graph size. `identifyModule` call count tracks graph-node
+   visits almost exactly (2,870 vs 2,614), which is what identifies this
+   as the source.
+2. **`identifyModule` itself**, from the module-load closure's
+   per-loaded-file instance enumeration. Not a multiplier, but O(files),
+   and on a large project the closure IS the reachable file set — this is
+   where the prior audit's 8,000-location figure comes from.
+3. **`readInstalledPackageName`**, 2,830 of the 2,896 manifest reads, and
+   almost all of them reached through (1) and (2).
+4. `ts.resolveModuleName` — 1,095 calls, and resolution is 1.1% of corpus
+   wall time. **Measured NOT to be a hotspot**, so it was left alone (see
+   "Deliberately not done").
+
+The single worst shape in the corpus is `lodash-4.17.15`: a 690-node call
+graph built from **two** files, producing 697 identity calls, 700
+`realpathSync` calls and 697 manifest reads.
+
+### What was built
+
+**1. `ScanModuleIdentityCache` (`domain/resolved-target.ts`).** Three maps
+and a counter block, created once per scan.
+
+| memo | key | value | stored when |
+| ---- | --- | ----- | ----------- |
+| `identities` | the whole `resolvedFile` string | the `ModuleIdentity` | always |
+| `canonicalPaths` | `path.resolve(rawPath)` | the realpath | **only on success** |
+| `manifestNames` | canonical package root | the declared `"name"` | **only when present and valid** |
+
+The cache BINDS one `KnownPackageRoots` at construction and is consulted
+only by a caller holding that same registry **by reference**. That is what
+makes the key complete: `identifyModule(resolvedFile, knownPackageRoots)`
+is a pure function of exactly those two arguments and the filesystem, so
+`(registry, resolvedFile)` is the whole input set. Nothing is keyed on a
+package name, a basename, a version or a directory prefix.
+
+A caller holding a *different* registry is not served and not overridden —
+the request falls through to the uncached computation, which is the pre-F5
+behavior. A mismatched cache therefore costs performance and can never
+cost correctness. `identifyModule`'s cached and uncached paths call ONE
+shared body (`computeModuleIdentity`), so there are not two
+implementations to keep in agreement.
+
+**2. `ScanAnalysisCaches` + `GraphPackageInstanceIndex`
+(`analysis/scan-caches.ts`, new).** Created by
+`createAnalysisProofContext` — deliberately, because that factory already
+binds the graph, the registry, the entrypoints and the resolver into one
+frozen object. That placement is what makes the public-entry memo's key
+complete rather than merely conventional: the inputs its key leaves
+implicit (resolver, reference context derived from `projectRoot`,
+entrypoint files, registry) are fields of the one context that owns the
+memo, and a memo reachable only through that context cannot be consulted
+under a different set of them.
+
+**3. Public-entry memo lifetime, per-finding → per-scan.** Its key was
+already exact (`packageInstance` + `requestedModuleSpecifier`, NUL-joined);
+only its lifetime prevented it from serving the shape it exists for —
+several advisories naming one installed package.
+
+### Ordering, proved rather than asserted
+
+The index is built in ONE forward pass over `graph.nodes`, appending into
+each package name's bucket. For a fixed package name the instances
+therefore appear in first-seen-among-that-name's-nodes order — exactly the
+order the per-name walk produced, because that walk visited the same nodes
+in the same order and skipped the others. This matters because
+`resolveTargetNodes` materializes `[...instances.entries()]` and selects
+from that sequence.
+
+`scan-caches.f5-graph-index.test.ts` asserts it against the walk it
+replaces, as an oracle reproduced in the test file, with entry order AND
+each file set's order compared — under forward AND reversed node order,
+plus an assertion that the two orderings genuinely differ so the
+comparison is not vacuous.
+
+### The index is an accelerator, never an authority
+
+`graphPackageInstancesByName` returns `undefined` — meaning "scan the graph
+yourself", never "there are none" — in every case where the caller's inputs
+are not provably the ones the index was derived from:
+
+- no caches supplied (an untrusted context, or a caller that has none);
+- the caller's graph is not the caches' graph (reference inequality);
+- the caller's registry is not the caches' registry;
+- `graph.nodes.length` no longer matches the indexed count.
+
+Conflating those with an empty answer would be the cached-absence defect a
+performance layer must never introduce: an empty result reads as
+`confirmedAbsentInstance` in `resolveTargetNodes`, which **is** positive
+evidence. The distinction is asserted directly — an absent package name
+returns a defined, empty map; a stale node count returns `undefined`.
+
+`buildFinding` withdraws the caches entirely for a context that fails its
+runtime identity check, exactly as it already withdraws the module-load
+closure. A fabricated context's "index" is never read.
+
+### Failures are never cached as success
+
+This is the one place a cache could turn a transient failure into a
+durable one, and it deliberately does not:
+
+| situation | behavior |
+| --------- | -------- |
+| `realpathSync` throws | fall back to the normalized absolute path, **memoize nothing**, re-attempt next time |
+| manifest missing (`ENOENT`) | path-derived name, **memoize nothing** |
+| manifest unreadable (permissions) | path-derived name, **memoize nothing** |
+| manifest malformed JSON | path-derived name, **memoize nothing** |
+| manifest parses, no usable `"name"` | path-derived name, **memoize nothing** |
+
+Each row has its own test asserting the answer equals the uncached one AND
+that the relevant map is still empty. One test writes a manifest that did
+not exist at first request and confirms a later read sees the declared
+name rather than the earlier absence.
+
+The asymmetry costs one `realpathSync` per request in a case that does not
+arise for a package root the analyzer's own resolver or dependency graph
+just discovered — which the corpus confirms: 181 realpath calls remain for
+82 distinct inputs, i.e. the failure path is essentially unexercised there.
+
+### Operation-count results
+
+Same corpus, same instrumentation, re-applied to the branch:
+
+| operation | main | branch | change |
+| --------- | ---: | -----: | -----: |
+| `realpathSync` | 2,991 | **181** | **−93.9%** |
+| manifest reads (all readers) | 2,896 | **125** | **−95.7%** |
+| `readInstalledPackageName` | 2,830 | **59** | **−97.9%** |
+| full `graphPackageInstances` walks | 17 | **0** | **−100%** |
+| graph-node identifications | 2,614 | 2,225 | −14.9% |
+| `identifyModule` calls | 2,870 | 2,481 | −13.6% |
+| `ts.resolveModuleName` | 1,095 | 1,095 | **0%** |
+| distinct files / canonicalize inputs / roots | 175 / 82 / 45 | 175 / 82 / 45 | **0%** |
+
+Two rows deserve reading carefully rather than being quoted as wins:
+
+- **`identifyModule` calls barely move, and that is correct.** The index
+  still REQUESTS an identity per graph node; what changed is that those
+  requests are served from the memo at no filesystem cost. The distinct-key
+  counts are identical on both sides (175/82/45), which is the actual
+  evidence that the same questions are being asked and only the answering
+  got cheaper.
+- **`ts.resolveModuleName` is unchanged by design**, not by omission.
+
+Worst-case fixtures, where the multiplier lived:
+
+| fixture | graph nodes | realpath (main → branch) | manifest reads (main → branch) |
+| ------- | ----------: | -----------------------: | -----------------------------: |
+| `lodash-4.17.15-vulnerable-call-unknown` | 690 | 700 → **5** | 697 → **4** |
+| `lodash-4.17.15-safe-call-unknown` | 690 | 700 → **5** | 697 → **4** |
+| `rwb-09-semver-multi-instance` | 369 | 857 → **15** | 848 → **12** |
+| `rwb-03-fast-xml-parser-method` | 97 | 109 → **9** | 104 → **6** |
+| `rwb-05-qs-unused-api` | 176 | 269 → **59** | 248 → **40** |
+
+`rwb-09`'s graph-node identifications also halve (738 → 369): it has two
+resolved targets, and the index is built once per scan instead of once per
+target.
+
+### Wall time — reported honestly
+
+| | main | branch |
+| - | ---: | -----: |
+| corpus total (15 fixtures, one run each) | 79,601 ms | 78,154 ms |
+| `npm test` wall | 187 s | 199 s |
+
+**~1.8%, which is within this machine's run-to-run noise and is NOT
+claimed as an improvement.** Per-fixture deltas go both ways (e.g.
+`rwb-11` 2,482 → 2,766 ms, `rwb-09` 6,872 → 6,508 ms), and the `npm test`
+figure moves the WRONG way while adding 40 tests, which is the same noise
+seen from the other side (F4 measured 187-228 s across three runs of one
+unchanged tree). The reason is
+already stated above and was known before the work started: parsing and
+graph construction are ~90% of this corpus's wall time, and the ~340 ms of
+redundant identity work F5 removes is ~0.4% of it. F5 removes an
+asymptotic multiplier that this corpus is too small to expose in
+milliseconds; it does not make parsing faster and does not claim to.
+
+The scaling guard added to `scan-performance` is where the removal is
+visible as time: a fixture with one 40-file installed package and an
+advisory count scaled 4 → 32 must stay under a 4× wall-time ratio. Before
+F5 each advisory re-walked every graph node, so total work grew with the
+product.
+
+### No regression in the guards that existed
+
+`scan-performance`, all three cases: 2,397 ms against the 5,000 ms medium-
+project threshold; 8,224 ms against the 20,000 ms single-large-file
+threshold; the new F5 scaling case passing its ratio bound. No threshold
+was raised.
+
+### Memory cost and bounds
+
+Every structure is bounded by the scan's own input scale, and the bound is
+structural rather than a limit that had to be imposed:
+
+| structure | one entry per | corpus max observed |
+| --------- | ------------- | ------------------: |
+| `identities` | distinct resolved file the analysis reached | 92 |
+| `canonicalPaths` | distinct canonical package root | 21 |
+| `manifestNames` | distinct canonical package root | 19 |
+| `byPackageName` | distinct package name in the graph | small |
+| `publicEntries` | distinct (instance, specifier) pair asked | 14 |
+
+Nothing is keyed by anything an advisory, a rule, a package name or any
+other attacker-influenced string contributes, so no input can grow these
+beyond the file set the analyzer already holds in memory. Values are
+strings and small objects already referenced elsewhere. A bounds test
+asserts the exact entry counts for a 20-package / 40-file project (40 / 20
+/ 20).
+
+### Invalidation: none, by placement
+
+Every cache's lifetime is one immutable analysis pass, so there is no
+invalidation logic — the design point §30 asks for. The identity memo is
+created in `runScanCommand` after `knownPackageRoots` is final and before
+the first consumer (the module-load closure, which runs before the proof
+context exists, and which is where a large project pays this cost in
+bulk). The graph index and public-entry memo are created by
+`createAnalysisProofContext`, after the graph, truncation decision and
+closure are all final.
+
+### Phase boundaries the indexes sit over
+
+| phase | assumed stable | index over it |
+| ----- | -------------- | ------------- |
+| dependency discovery | `knownPackageRoots` once built | identity memo binds it |
+| graph construction | `graph.nodes` once `buildCallGraph` returns | graph index |
+| target resolution | resolver + entrypoints + project root | public-entry memo |
+| verdict evaluation | everything above | nothing cached |
+
+**No proof outcome is memoized.** There is no cached `NOT_AFFECTED`, no
+cached `UNKNOWN`, no cached proof family and no cached reachability result.
+
+### Reachability caching — deliberately NOT done
+
+§11 asks for conservatism and §12 forbids memoizing proof outcomes until
+the proof-input boundary is structurally immutable. Both were honored, and
+for the reason F4 recorded: `AnalysisProofContext` freezes its wrapper and
+snapshots `entrypoints`, but the closure, the graph, `knownPackageRoots`
+and the entrypoint OBJECTS remain live aliases. A reachability cache's key
+would have to include every one of those by value, and it cannot while
+they are mutable references. **F5 does not attempt it, and does not
+worsen the boundary** — it adds a node-count staleness check where there
+was previously no check at all, and every index refuses rather than
+answers when it fires.
+
+That check detects growth or shrinkage of the node list. It does NOT
+detect a node mutated in place; nothing in this codebase does, and F5 does
+not claim otherwise. This is the F4 transitive-mutability debt, carried
+forward unchanged.
+
+### Manifest readers: not consolidated, deliberately
+
+Four readers exist: `readInstalledPackageName` (name),
+`readInstalledManifestIdentity` (name + a four-outcome version claim),
+`verdict.ts`'s `readInstalledVersion`, and `package-entry.ts`'s
+`declaresExports`. §5 says to prefer one existing per-scan memo and to
+consolidate **only if semantics are identical**. They are not —
+`readInstalledManifestIdentity` distinguishes `absent` from `untrusted`
+from `silent` precisely because collapsing them is a soundness bug in one
+direction — so they were not merged.
+
+What the measurement showed is that they did not need to be: 2,830 of the
+2,896 reads came through `readInstalledPackageName`, and the other three
+are already O(instances), not O(nodes × findings). Only the one hot reader
+is memoized, and memoizing it does not create a second authority — it is
+still the only reader of an installed package's declared name, and
+`dependencies/package-instances.ts`'s own existing per-scan manifest memo
+(over the DIFFERENT reader) is untouched. Post-F5 counts:
+`readInstalledManifestIdentity` 52, `declaresExports` 14,
+`readInstalledVersion` 0.
+
+### Resolver reuse — already correct, nothing to do
+
+`createModuleResolver` is called **once per scan** in `cli/scan.ts` and
+returns a stateless object; there was no repeated construction to remove.
+`ts.resolveModuleName` is invoked without a `ts.ModuleResolutionCache`,
+which is a real available optimization — and a **measured non-hotspot**:
+1,095 calls, 1.1% of corpus wall time. Taking it would mean changing
+resolution machinery for ~1% of a cost that is not the bottleneck, so it
+is recorded as a remaining hotspot rather than attempted here.
+
+### Identity controls — twins, aliases, scopes, symlinks, cross-root
+
+Every shape identity attribution distinguishes is asserted **as a
+differential against the uncached function**, not against a fixed expected
+value, so the assertions keep testing equivalence even if attribution
+itself changes later. Each is checked twice — once on the miss path, once
+with every answer served from the memo — because a memo that were merely
+correct on the miss path would pass a single-pass check.
+
+| shape | asserted |
+| ----- | -------- |
+| `foo@1.0.0` at two physical roots | two `PackageInstanceId`s, never one |
+| two roots whose manifests declare DIFFERENT names | neither answers for the other |
+| `@scope/pkg` vs `pkg` | distinct names, distinct instances |
+| `@a/pkg` vs `@b/pkg` | distinct, suffix collision impossible |
+| npm alias (`semver-vulnerable` declaring `"semver"`) | same declared name, two instances |
+| symlink and its physical target | **converge** (one instance) |
+| two symlinks to two different targets | **do not converge** |
+| same relative path under two project roots, ONE cache | two instances |
+| memo bound to registry A, queried with registry B | bypassed; A's memo unpoisoned |
+
+End to end through `runScanCommand`, the same properties are re-asserted on
+real verdicts: two `twin@1.0.0` installs produce two findings with
+DIFFERENT verdicts (a merge would collapse them to one); an alias and its
+canonical namesake stay two; a scoped package resolves AFFECTED while its
+unscoped namesake does not inherit that reachability; a workspace member
+reached through its `node_modules` symlink produces exactly ONE finding
+(a failure to converge would show as a phantom duplicate).
+
+### Concurrency and cross-scan isolation
+
+There is no module-scope mutable state to leak through — confirmed by
+inspection and by test. Two scans of DIFFERENT projects that install the
+same package name and version at the same RELATIVE path, run
+**concurrently** via `Promise.all`, produce results identical to running
+each alone, and neither's findings reference the other's root. A unit test
+asserts a second cache starts cold (0 hits, 1 miss) for a path the first
+cache already answered — which would fail immediately if any memo were
+hoisted to module scope.
+
+### Provider query differential
+
+The scan's provider query set is compared directly, per fixture, between
+main and this branch, and a recording provider in the end-to-end suite
+asserts the shape: exactly one query per (package name, installed
+version), twins at the same version sharing one query (the pre-existing
+`advisoryQueryVersions` contract), and no query issued twice. **No
+deduplication was added and none was removed.**
+
+### Verdict / evidence / candidate / diagnostic differential
+
+Method: both sides scan all 15 fixtures into FIXED destination paths, so
+absolute install paths are identical and the outputs are byte-comparable.
+Compared whole: exit code, stderr, sorted provider query set, and the
+entire JSON output with exactly two fields normalized —
+`scan.id` (a fresh UUID per run) and `timings` (wall-clock). Nothing else
+is normalized, so `findings` (vulnerability, package, version,
+packageInstance, verdict, confidence, target, evidence, negative proofs,
+`unknownReasons`), `unreportedCandidates` (stage, disposition, reason,
+category, instance), `coverage` and `diagnostics` are all compared
+verbatim.
+
+**Result: all 15 fixtures BYTE-IDENTICAL.** 17 findings, 52 provider
+queries and 2,240 diagnostics compared; zero differences.
+
+The comparison is not vacuous — the corpus exercises all three verdicts
+and all three negative-proof families:
+
+| verdict / proof | fixtures |
+| --------------- | -------- |
+| `AFFECTED` | lodash-template, rwb-01, rwb-02, rwb-04, rwb-08, rwb-09 (x2), rwb-11 |
+| `UNKNOWN` | lodash x2, rwb-03, rwb-05, rwb-10 |
+| `NOT_AFFECTED` family A (`confirmedAbsentFromModuleLoadClosure`) | rwb-06 |
+| `NOT_AFFECTED` family B (`confirmedAbsentInstance`) | rwb-11 |
+| `NOT_AFFECTED` family C (`confirmedUnreachableTarget`) | rwb-07 |
+
+An all-UNKNOWN corpus would have proved nothing: the negative proofs are
+exactly what a caching defect would fabricate, and they are present,
+unchanged, and produced through the caches on the branch side.
+
+### Verification
+
+Every gate run to completion on this branch. **No timeout waivers.**
+
+| gate | result |
+| ---- | ------ |
+| F5 focused suite (3 files) | **40 passed**, 2.33s test time |
+| `npm test` | **163 files / 3,979 passed** (main: 160 / 3,939) |
+| adversarial | **124 passed** — identical to main |
+| `scan-performance` | **3 passed** (2,397ms / 5,000; 8,224ms / 20,000; F5 ratio guard) |
+| output differential vs `d3dd220` | **15/15 fixtures byte-identical** |
+| `typecheck` | clean |
+| `lint` | clean |
+| `prettier --check` | clean |
+| `build` | clean |
+| `validate:history` | clean — 30 bootstrap tasks and kit files present |
+
+Included in `npm test` and re-checked as the soundness gate this work
+could most plausibly have broken: the **F4 proof-mutation harness**
+(`verdict.f4-proof-mutation.test.ts`, `finding.f4-closure-hardening.test.ts`),
+Family A/B/C, `AnalysisProofContext` / VT-CONTRACT-03,
+`ModuleLoadClosure` and its differential oracle, F2 proof guards, F3
+taxonomy and no-finding reasons, same-version twins, alias/scoped
+identity, workspaces, public-entry and target resolution, and the
+RWF-029..037 representatives. **The F4 mutation metric is unchanged: 0
+unsafe survivals.** No mutation test became stale, which was the specific
+risk of adding memoization underneath a harness that removes proof inputs
+one at a time — the caches are bound by reference to the very inputs those
+mutations replace, so a mutated input is a different object and is never
+served from a memo built for the original.
+
+The **validation suite was not re-run**: it hits the live OSV API, and its
+documented benchmark set (5 failed / 18 passed) is a network-dependent
+measurement that this work cannot affect — the offline differential above
+covers the same 15 fixtures with the provider stubbed, and found zero
+movement.
+
+### Self-review — the fifteen attacks, and where each is answered
+
+| # | attack | answer |
+| - | ------ | ------ |
+| A | same-name/version twin cache collision | key is the whole `resolvedFile` / canonical root; twin tests, unit and end-to-end |
+| B | same relative path under different project roots | one cache, two roots, two instances — asserted |
+| C | symlink normalization too aggressive | converge test AND non-converge test (two links, two targets) |
+| D | alias/scoped collision | alias, `@scope/pkg` vs `pkg`, `@a/pkg` vs `@b/pkg` |
+| E | error cached as safe absence | nothing is memoized on any failure; five tests, each also asserting the map stayed empty |
+| F | stale graph index after mutation | node-count guard → `undefined` → full walk; asserted. In-place node mutation is NOT detected and is recorded as F4 debt |
+| G | global cache contamination across scans | no module-scope state; cold-second-cache test; concurrent two-scan test |
+| H | nondeterministic Map iteration changes output | index order proved equal to the walk's, forward and reversed; reversed-declaration-order scan compared |
+| I | cached target from wrong PackageInstance | public-entry key is the canonical `PackageInstanceId`; graph index refuses a foreign graph/registry |
+| J | proof/result caching crosses context | no proof outcome is cached at all; untrusted context has its caches withdrawn |
+| K | diagnostics disappear due to memoization | full diagnostic differential; plus a workspace-truncation diagnostic test |
+| L | provider query set changes | query sets compared per fixture; recording-provider assertions |
+| M | unreportedCandidate changes | compared verbatim in the differential |
+| N | performance gain only a benchmark artifact | gains asserted as operation counts on real fixtures, not synthetic timings; wall-clock reported as within noise rather than claimed |
+| O | memory grows without scan-scale bound | entry counts asserted exactly; no key derives from advisory/rule/package input |
+
+### Deliberately not done
+
+- **`ts.ModuleResolutionCache`** — measured non-hotspot (1.1% of wall).
+- **Manifest-reader consolidation** — semantics differ; §5's own condition
+  not met.
+- **Reachability / proof-result caching** — blocked on F4's mutability
+  debt, per §11 and §12.
+- **Threading a cache through `canonicalizePackageInstancePath` itself** —
+  its remaining callers (`cli/scan.ts`, `workspaces.ts`,
+  `package-instances.ts`) are already O(instances); the public identity
+  authority's signature is unchanged.
+- **RWF-002, P1-B, verdict semantics, proof families, `PackageInstance`
+  identity semantics** — all untouched.
+
+### Remaining hotspots (for whoever takes performance next)
+
+1. **Parsing / graph construction, ~90% of wall time.** The single
+   largest, and untouched by F5. `scan-performance`'s own notes already
+   identify a shared per-scan source-index cache between `buildCallGraph`
+   and the module-load closure as worth ~35% of the closure's added cost;
+   the other ~65% is irreducible by design (VT-307c-fix-3).
+2. **`ts.resolveModuleName` without a resolution cache** — 1.1%, real but
+   small, and it touches resolution semantics.
+3. **The closure's `findClosureWideningConstructs` whole-file scan** —
+   deliberately duplicated work, load-bearing for soundness.
+
+**Performance is not solved.** F5 removed one multiplier and left the
+dominant cost exactly where it was.
+
+### Remaining limitations
+
+1. **Corpus scale.** 15 fixtures, largest graph 690 nodes, at most 2
+   findings each. That is enough to measure the redundancy RATIO
+   decisively (94–98%) and not enough to show the multiplier in
+   milliseconds. A project with thousands of nodes and dozens of findings
+   is where this matters, and none is vendored here.
+2. **The staleness guard is a node COUNT.** A node mutated in place after
+   the index is taken is undetected. This is the F4 transitive-mutability
+   debt; F5 adds a check where there was none and does not close it.
+3. **Failure memoization is refused, not optimized.** A project where
+   `realpath` consistently fails gets no canonicalization memo at all.
+   That is the deliberate trade: correctness over a case that does not
+   arise for roots the analyzer itself just discovered.
+4. **Wall-clock improvement is not demonstrated.** The honest claim is a
+   non-regression plus a large operation-count reduction plus a scaling
+   guard. Anyone quoting a percentage speed-up from this work is quoting
+   noise.
+5. **No cross-scan or global cache, by rule.** A repeated scan of the same
+   project re-does everything. That was out of scope and remains so.
