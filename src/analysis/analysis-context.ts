@@ -198,7 +198,25 @@ export interface AnalysisProofContextInput {
   readonly entrypoints: readonly Entrypoint[];
   readonly knownPackageRoots?: KnownPackageRoots;
   readonly graph: CallGraph;
-  readonly graphTruncated?: boolean;
+  /**
+   * REQUIRED (FOUNDATION-F2/F2-B, § "other fail-open defaults").
+   *
+   * This was optional, defaulted to `false` -- i.e. a caller that said
+   * nothing about its graph's coverage was recorded as having asserted the
+   * graph was COMPLETE, which is the strongest possible claim and the one
+   * VT-202 gates both call-graph-derived proofs on. Production
+   * (`cli/scan.ts`) has always passed it explicitly, so no real scan ever
+   * took that default; it was a hole waiting for a second production
+   * caller, of exactly the "missing information treated as proof-safe"
+   * class as the absent-closure defect this task exists to fix.
+   *
+   * Making it required is a compile-time fix rather than a new runtime
+   * branch: there is now no way to construct a context without stating
+   * coverage. Tests that genuinely do not care still say `false`, but they
+   * say it. See `buildFindingForTest`, which keeps a documented
+   * test-side default so test ergonomics do not pay for this.
+   */
+  readonly graphTruncated: boolean;
   readonly moduleLoadClosure?: ModuleLoadClosure;
 }
 
@@ -227,7 +245,7 @@ export function createAnalysisProofContext(
     entrypoints,
     knownPackageRoots: input.knownPackageRoots,
     graph: input.graph,
-    graphTruncated: input.graphTruncated ?? false,
+    graphTruncated: input.graphTruncated,
     // The closure is kept only if it and the graph BOTH belong to these
     // entrypoints. Either check alone is defeatable: binding the closure to
     // the entrypoints lets a caller swap the pair together, and binding the

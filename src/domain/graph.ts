@@ -234,9 +234,39 @@ export type DynamicCallReason =
  * NOT be changed silently: every current consumer
  * (`resolveTargetNodes`'s `confirmedAbsentInstance` guard, src/analysis
  * /verdict.ts) treats it as a soundness boundary, not a precision knob.
- * The exhaustive `switch` (no `default` case) is deliberate: adding a new
- * `DynamicCallReason` value without updating this function is a compile
- * error, not a silent misclassification.
+ *
+ * EXHAUSTIVENESS AND FAIL-CLOSED BEHAVIOR (FOUNDATION-F2/F2-B).
+ *
+ * Two separate guarantees, which were previously conflated:
+ *
+ * 1. COMPILE TIME. Adding a `DynamicCallReason` without classifying it
+ *    here is a build error. This already held -- a `switch` with no
+ *    `default` and a declared `: boolean` return made an unhandled value
+ *    fall off the end, which `strict` rejects ("Function lacks ending
+ *    return statement"). It is now carried by an explicit
+ *    {@link unclassifiedReasonFailsClosed} call taking `never`, which
+ *    holds the same line but reports the ACTUAL offending value
+ *    ("Argument of type '\"my_new_reason\"' is not assignable to
+ *    parameter of type 'never'") instead of pointing at the closing brace.
+ *
+ * 2. RUNTIME. An unrecognized value at runtime is treated as WIDENING.
+ *    This did NOT hold before. Falling off the end of the old `switch`
+ *    returned `undefined`, which is falsy, so an unknown reason was
+ *    silently classified NON-widening -- fail-OPEN in both consumers:
+ *    `findClosureWideningConstructs` (loader-constructs.ts) skips
+ *    recording a construct it considers non-widening, leaving the closure
+ *    `complete`, and `hasReachableClosureWideningBlocker` (verdict.ts)
+ *    finds no blocker among the unresolved edges. Either one lets a
+ *    negative proof through on the strength of a construct nobody
+ *    classified. Verified directly before the fix:
+ *    `isClosureWideningReason("<unknown>")` returned `undefined`.
+ *
+ * The runtime half is defence in depth rather than a reachable production
+ * path today: `DynamicCallReason` is internal and type-closed, produced
+ * only by call-graph.ts and loader-constructs.ts, and no deserialization
+ * boundary (the OSV cache included) carries one. That is a property of
+ * today's code, not a guarantee about tomorrow's, and it costs one branch
+ * to stop depending on it.
  */
 export function isClosureWideningReason(reason: DynamicCallReason): boolean {
   switch (reason) {
@@ -262,7 +292,34 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "unresolved_target": {
       return false;
     }
+    default:
+      return unclassifiedReasonFailsClosed(reason);
   }
+}
+
+/**
+ * The fail-closed floor for {@link isClosureWideningReason}
+ * (FOUNDATION-F2/F2-B).
+ *
+ * Takes `never`, so it only typechecks when every `DynamicCallReason` has
+ * already been classified -- adding one without a `case` makes THIS call
+ * the compile error, naming the unclassified value.
+ *
+ * Returns `true` at runtime, where no static guarantee applies. An
+ * unrecognized reason is one nobody has reasoned about, and the only safe
+ * assumption about an unreasoned-about construct is that it can widen the
+ * module-load closure: that answer withdraws a negative proof, which costs
+ * precision, where `false` would grant one on no evidence, which costs
+ * soundness. Deliberately does NOT throw -- these consumers run inside a
+ * scan whose contract is that uncertainty becomes UNKNOWN rather than an
+ * exception (the same rule `buildFinding` follows for an untrusted
+ * `AnalysisProofContext`), and crashing an end user's scan over an
+ * internal enum slip would be strictly worse than the conservative verdict
+ * the analyzer already knows how to produce.
+ */
+function unclassifiedReasonFailsClosed(reason: never): boolean {
+  void reason;
+  return true;
 }
 
 /**
