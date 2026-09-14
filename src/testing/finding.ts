@@ -78,6 +78,13 @@ export interface BuildFindingForTestOptions extends Omit<
    * build a real closure through the default path above, which is strictly
    * more faithful to production than what they did before F2-A (no
    * closure at all).
+   *
+   * FOUNDATION-F4 § 24: it may also not be combined with a
+   * `packageInstance` unless the caller supplies its own
+   * `moduleLoadClosure` (or declares
+   * {@link BuildFindingForTestOptions.moduleLoadClosureUnavailable}). The
+   * synthesized closure is vacuously complete with no loaded instances,
+   * which would prove ANY instance absent; see `defaultTestClosure`.
    */
   readonly syntheticGraphHasNoRealFiles?: boolean;
   /**
@@ -118,6 +125,7 @@ export async function buildFindingForTest(
         resolver,
         knownPackageRoots,
         syntheticGraphHasNoRealFiles,
+        packageInstance: finding.packageInstance,
       })));
 
   return buildFinding({
@@ -138,6 +146,21 @@ export async function buildFindingForTest(
 }
 
 /**
+ * The message a package-instance-sensitive synthetic closure is refused
+ * with. Exported so the harness's own regression can assert on it without
+ * re-typing the prose (FOUNDATION-F4 § 24).
+ */
+export const VACUOUS_SYNTHETIC_CLOSURE_REFUSAL =
+  "buildFindingForTest: refusing to synthesize a default module-load closure " +
+  "for a finding that carries a packageInstance. " +
+  "`syntheticGraphHasNoRealFiles` produces a closure with " +
+  "`complete: true` and an EMPTY `loadedPackageInstances`, which proves " +
+  "every package instance absent and would hand this finding an unearned " +
+  "proof-family-A NOT_AFFECTED. Supply `moduleLoadClosure` explicitly (a " +
+  "truthful one for this instance), or set `moduleLoadClosureUnavailable: " +
+  "true` if the test's subject is closure absence.";
+
+/**
  * The closure a test gets when it did not supply one: a REAL one wherever
  * that is possible, and an explicitly-declared synthetic one where it is
  * not (see {@link BuildFindingForTestOptions.syntheticGraphHasNoRealFiles}).
@@ -145,12 +168,41 @@ export async function buildFindingForTest(
  * `undefined` is still returned for the genuinely-absent cases -- no
  * entrypoints at all, or a construction failure -- so the tests that exist
  * to prove absence fails closed still see absence.
+ *
+ * FOUNDATION-F4 § 24 -- THE VACUOUS-COMPLETE HAZARD, MADE STRUCTURAL.
+ *
+ * The synthetic branch below fabricates `complete: true` with an EMPTY
+ * `loadedPackageInstances`. Read by proof family A's gate, that is a
+ * closure which proves EVERY installed instance unloadable: the gate's
+ * conjuncts are `complete`, non-empty roots, and the finding's exact
+ * instance NOT being in the loaded set -- and an empty set satisfies the
+ * last one for every instance there could ever be.
+ *
+ * F2's own audit noticed this and concluded it was safe, correctly, for a
+ * reason that was entirely accidental: the suites that pass this flag
+ * happened not to pass `packageInstance`, and family A's gate is
+ * unreachable without one. That is a property of today's call sites, not
+ * an invariant -- a single new synthetic test that added a
+ * `packageInstance` would have silently minted a false NOT_AFFECTED, with
+ * every production guard intact and a test harness supplying the forged
+ * evidence.
+ *
+ * So the accident becomes a rule. A synthesized default closure and a
+ * `packageInstance` may not coexist: the caller must supply a truthful
+ * closure, or declare absence. It FAILS LOUDLY rather than silently
+ * deriving something, because there is nothing truthful to derive -- the
+ * files these graphs describe do not exist, so no traversal can establish
+ * what such an instance loads. This is test-harness hardening only; no
+ * production behavior changes, and every existing call site already
+ * satisfies it (verified: all 18 `packageInstance`-carrying synthetic call
+ * sites supply a closure or declare it unavailable).
  */
 async function defaultTestClosure(input: {
   readonly entrypoints: readonly Entrypoint[];
   readonly resolver: ModuleResolver;
   readonly knownPackageRoots?: KnownPackageRoots;
   readonly syntheticGraphHasNoRealFiles: boolean;
+  readonly packageInstance: string | undefined;
 }): Promise<ModuleLoadClosure | undefined> {
   const rootFiles = [...new Set(input.entrypoints.map((e) => e.filePath))];
   if (rootFiles.length === 0) {
@@ -158,6 +210,9 @@ async function defaultTestClosure(input: {
   }
 
   if (input.syntheticGraphHasNoRealFiles) {
+    if (input.packageInstance !== undefined) {
+      throw new Error(VACUOUS_SYNTHETIC_CLOSURE_REFUSAL);
+    }
     return {
       rootFiles,
       loadedFiles: rootFiles,
