@@ -72,10 +72,43 @@ function providerFor(
   };
 }
 
+interface ScanFindingShape {
+  readonly verdict: string;
+  readonly package: string;
+  readonly vulnerability: string;
+  readonly version?: string;
+  readonly packageInstance?: string;
+  readonly unknownReasons?: { readonly reason: string }[];
+}
+
 interface ScanOutputShape {
-  readonly findings: { readonly verdict: string; readonly package: string }[];
+  readonly findings: ScanFindingShape[];
   readonly diagnostics: { readonly source: string; readonly message: string }[];
   readonly unreportedCandidates: UnreportedCandidate[];
+}
+
+/**
+ * A provider that RECORDS every query it is asked to make.
+ *
+ * The recording is the point. "No advisory was evaluated against this
+ * instance" is only half the contract; the other half is that the scan did
+ * not invent or borrow a version in order to ask about it, and the only
+ * way to see that is to look at what was actually asked.
+ */
+function recordingProvider(advisories: readonly RawVulnerability[]): {
+  readonly provider: VulnerabilityProvider;
+  readonly queries: string[];
+} {
+  const queries: string[] = [];
+  return {
+    queries,
+    provider: {
+      queryPackage: (query): Promise<readonly RawVulnerability[]> => {
+        queries.push(`${query.name}@${query.version ?? "(no version)"}`);
+        return Promise.resolve(advisories);
+      },
+    },
+  };
 }
 
 function project(files: Readonly<Record<string, string>>): string {
@@ -463,6 +496,219 @@ describe("F3 § 27: unreportedCandidates ordering is deterministic", () => {
       order.indexOf(entry.stage),
     );
     expect([...seen].sort((a, b) => a - b)).toEqual(seen);
+  });
+});
+
+describe("F3 § 4 / F-1: an instance whose version was never established", () => {
+  /**
+   * THE PATH THIS PROTECTS, and why it needs its own regression.
+   *
+   * `advisoryQueryVersions` contributes no query for an instance with no
+   * established version -- correctly, because there is nothing to ask
+   * about. An instance whose SIBLINGS have versions is still rescued: it
+   * is evaluated against whatever their queries returned and reaches its
+   * own honest UNKNOWN finding (the second describe below pins that).
+   *
+   * But when NO instance of the package name has a version, no query
+   * happens at all, no advisory is ever surfaced, and before F3 the
+   * instance produced no finding and no note -- it simply vanished from
+   * the report. "This package has no known advisories" and "nobody could
+   * ask whether this package has advisories" were the same silence.
+   *
+   * This is the only entirely new no-finding path F3 introduced, and the
+   * independent F3 audit found it had no committed coverage: it was
+   * reachable and correct, but nothing guarded it. AGENTS.md requires a
+   * test for every behavior change, so here it is, exercised through the
+   * real `runScanCommand` orchestration rather than through the mapping
+   * helper -- the helper cannot tell anyone whether the orchestration
+   * still reaches it.
+   */
+  const VERSIONLESS_WORKSPACE_PACKAGE: Readonly<Record<string, string>> = {
+    "vulntrace.yml": CONFIG,
+    "rules.yml": "rules: []\n",
+    // A workspace member with a name and NO version is the realistic
+    // shape: a private monorepo package that is never published, so it
+    // has no version to declare. P1-A5/F1 made these enumerable; they are
+    // genuine PackageInstances with genuine identity and no version.
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+    }),
+    "package-lock.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      packages: { "": { name: "app", version: "1.0.0" } },
+    }),
+    "packages/vuln-lib/package.json": JSON.stringify({ name: "vuln-lib" }),
+    "packages/vuln-lib/index.js":
+      "function vulnerable(x){ return x; }\nmodule.exports = { vulnerable };\n",
+    "src/index.js": "module.exports = { main: () => 1 };\n",
+  };
+
+  it("records it as an undetermined candidate instead of dropping it", async () => {
+    const { provider, queries } = recordingProvider([ADVISORY]);
+    const { output } = await scan(
+      project(VERSIONLESS_WORKSPACE_PACKAGE),
+      provider,
+    );
+
+    // NO QUERY AT ALL. Not a query with a borrowed version, not one with a
+    // fabricated version, not one with the package's directory name
+    // standing in for a version.
+    expect(queries).toEqual([]);
+
+    // NO SYNTHETIC FINDING. There is no advisory to name -- the provider
+    // was never asked -- so inventing a finding would be inventing the
+    // very fact this entry exists to say is missing (F3 § 4).
+    expect(output.findings).toEqual([]);
+
+    // Selected by REASON, never by array position (F3 § 27): candidate
+    // ordering is a function of what was unreported, and a positional
+    // assertion would silently start testing something else the day
+    // another entry is added.
+    const entry = output.unreportedCandidates.find(
+      (candidate) => candidate.reason === "installed_version_unavailable",
+    );
+    expect(entry).toBeDefined();
+    expect(entry).toMatchObject({
+      stage: "package_identity",
+      disposition: "undetermined",
+      package: "vuln-lib",
+      // Exact instance identity, not the package name.
+      packageInstance: "packages/vuln-lib",
+      category: "identity_unresolved",
+    });
+    // No version key at all, rather than "" or a placeholder: a consumer
+    // must be able to tell "no version established" from "version is the
+    // empty string".
+    expect(entry?.version).toBeUndefined();
+    // It names no advisory, honestly, because none was ever discovered.
+    expect(entry?.vulnerability).toBeUndefined();
+  });
+
+  it("reaches no confident verdict about it in either direction", async () => {
+    const { provider } = recordingProvider([ADVISORY]);
+    const { output } = await scan(
+      project(VERSIONLESS_WORKSPACE_PACKAGE),
+      provider,
+    );
+
+    // The whole point of the entry is that nothing is claimed. An
+    // AFFECTED would be fabricated; a NOT_AFFECTED would be an unproven
+    // negative, which is the failure AGENTS.md forbids outright.
+    expect(output.findings.filter((f) => f.verdict === "AFFECTED")).toEqual([]);
+    expect(output.findings.filter((f) => f.verdict === "NOT_AFFECTED")).toEqual(
+      [],
+    );
+    // And it is emphatically not the out-of-range conclusion: no installed
+    // version was ever compared against any range.
+    expect(
+      output.unreportedCandidates.filter(
+        (c) => c.reason === "advisory_not_applicable_to_installed_version",
+      ),
+    ).toEqual([]);
+  });
+});
+
+describe("F3 § 4 / F-1 control: a sibling's version is never borrowed", () => {
+  /**
+   * The other half of the contract, and the one that would break silently.
+   *
+   * Instance A has no version. Instance B shares A's ownership name and
+   * has a concrete one. B's version legitimately drives the provider
+   * query -- that is how the advisory is discovered at all -- and the
+   * danger is that A then gets evaluated against a range using B's
+   * version, which would be a statement about a different physical
+   * install.
+   *
+   * What must happen instead: A is evaluated against the advisory with its
+   * OWN (absent) version, which is `indeterminate`, so A reaches an honest
+   * UNKNOWN finding. F3 § 4 requires that existing rescue to be preserved,
+   * which also means A must NOT appear as an unreported candidate here --
+   * the two representations are mutually exclusive, and this pins that
+   * boundary from the other side.
+   */
+  const TWO_INSTANCES: Readonly<Record<string, string>> = {
+    "vulntrace.yml": CONFIG,
+    "rules.yml": "rules: []\n",
+    "package.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+      dependencies: { "vuln-lib": "^1.0.0" },
+    }),
+    "package-lock.json": JSON.stringify({
+      name: "app",
+      version: "1.0.0",
+      lockfileVersion: 3,
+      packages: {
+        "": {
+          name: "app",
+          version: "1.0.0",
+          dependencies: { "vuln-lib": "^1.0.0" },
+        },
+        "node_modules/vuln-lib": { version: "1.0.0" },
+      },
+    }),
+    // A: versionless.
+    "packages/vuln-lib/package.json": JSON.stringify({ name: "vuln-lib" }),
+    "packages/vuln-lib/index.js":
+      "function vulnerable(x){ return x; }\nmodule.exports = { vulnerable };\n",
+    // B: same ownership name, concrete version.
+    "node_modules/vuln-lib/package.json": JSON.stringify({
+      name: "vuln-lib",
+      version: "1.0.0",
+    }),
+    "node_modules/vuln-lib/index.js":
+      "function vulnerable(x){ return x; }\nmodule.exports = { vulnerable };\n",
+    "src/index.js": "module.exports = { main: () => 1 };\n",
+  };
+
+  it("queries only the sibling's real version, never one invented for A", async () => {
+    const { provider, queries } = recordingProvider([ADVISORY]);
+    await scan(project(TWO_INSTANCES), provider);
+
+    // Exactly one query, carrying B's own version. One query per distinct
+    // installed VERSION -- never one per instance -- so A contributes
+    // none, and no query is ever made on A's behalf.
+    expect(queries).toEqual(["vuln-lib@1.0.0"]);
+  });
+
+  it("gives A its own instance-local UNKNOWN rather than B's version", async () => {
+    const { provider } = recordingProvider([ADVISORY]);
+    const { output } = await scan(project(TWO_INSTANCES), provider);
+
+    const a = output.findings.find(
+      (f) => f.packageInstance === "packages/vuln-lib",
+    );
+    const b = output.findings.find(
+      (f) => f.packageInstance === "node_modules/vuln-lib",
+    );
+
+    // A exists as a finding -- F3 § 4's "preserve that behavior" -- and
+    // therefore NOT as an unreported candidate.
+    expect(a).toBeDefined();
+    expect(output.unreportedCandidates).toEqual([]);
+
+    // THE ASSERTION THIS FILE EXISTS FOR: A carries no version. If it ever
+    // borrowed B's, this would read "1.0.0" and the report would be making
+    // a claim about a different physical install.
+    expect(a?.version).toBeUndefined();
+    expect(b?.version).toBe("1.0.0");
+
+    // A's uncertainty is about ITS OWN applicability, not about B.
+    expect(a?.verdict).toBe("UNKNOWN");
+    expect(a?.unknownReasons?.map((r) => r.reason)).toEqual([
+      "advisory_version_applicability_indeterminate",
+    ]);
+
+    // Neither instance acquires a confident verdict from the other.
+    expect(output.findings.filter((f) => f.verdict === "AFFECTED")).toEqual([]);
+    expect(output.findings.filter((f) => f.verdict === "NOT_AFFECTED")).toEqual(
+      [],
+    );
   });
 });
 
