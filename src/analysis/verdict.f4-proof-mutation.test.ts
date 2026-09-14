@@ -1516,21 +1516,23 @@ describe("F4 AnalysisProofContext mutations: every mismatch fails closed", () =>
     expect(outcome.family).toBe("C");
   });
 
-  it("the NESTED closure object is mutable, and that is contained rather than exploitable", async () => {
+  it("the NESTED closure object is mutable, and that is contained by lifetime rather than by structure", async () => {
     // Honest statement of the residual (F4 § 12): `Object.freeze` is
     // shallow, so the ModuleLoadClosure the context holds is still a
-    // mutable object. Whether that is a vulnerability depends on reach,
-    // and the reach is the point: the closure is built by the scan,
-    // handed to the context, and never exposed on the Finding, so there
-    // is no route from an analyzed PROJECT's contents to a write on it.
-    // The only writer is code inside the process that already holds the
-    // context -- i.e. code that could call `buildFinding` with anything it
-    // liked in the first place.
+    // mutable object -- and so are the graph, the KnownPackageRoots map
+    // and the entrypoint OBJECTS inside the frozen entrypoints array.
+    // The constructor passes the caller's own references through, so a
+    // write is possible through ANY retained alias to an input, not only
+    // through the context.
+    //
+    // What contains it is ownership and lifetime, not structure: there is
+    // one production caller, it retains no alias after binding, and no
+    // production code mutates a closure, a graph or those roots at all.
     //
     // Recorded as a test, not redesigned: a deep freeze would copy every
-    // closure on every scan to close a hole nothing can reach through.
-    // What IS asserted is that such a write cannot go unnoticed -- it
-    // changes the verdict, in the safe direction.
+    // closure on every scan, and F4's scope requires a concrete exploit
+    // before touching production. What IS asserted is that such a write
+    // cannot go unnoticed -- it changes the verdict, in the safe direction.
     const context = contextFor(familyC.inputs);
     const closure = context.moduleLoadClosure!;
     expect(Object.isFrozen(closure)).toBe(false);
@@ -1558,16 +1560,15 @@ describe("F4 AnalysisProofContext mutations: every mismatch fails closed", () =>
     // The answer is YES, it changes the verdict. That is what shallow
     // freezing means, demonstrated instead of assumed.
     //
-    // It is NOT fixed here, and the reason is reach rather than
-    // convenience. This write has no attacker. The closure is constructed
-    // by the scan, handed to the context, and never published on a
-    // `Finding`, so nothing an analyzed PROJECT contains -- which is the
-    // only untrusted input VulnTrace has -- can reach it. The sole party
-    // able to perform this write is code already holding the context,
-    // which could equally have called `buildFinding` with a fabricated
-    // closure to begin with. A deep freeze would copy every closure on
-    // every scan to close a door that opens onto nothing, and F4's scope
-    // is explicit that production changes need a concrete exploit.
+    // It is NOT fixed here, and the reason is LIFETIME rather than the
+    // absence of a hostile attacker -- those are different claims and only
+    // the first one is load-bearing. The write is reachable through any
+    // retained alias to the input, including the caller's own; what makes
+    // it unreachable in production is that `cli/scan.ts` is the single
+    // caller, retains no such alias after binding, and that no production
+    // code mutates a closure anywhere. A deep freeze would copy every
+    // closure on every scan, and F4's scope is explicit that a production
+    // change needs a concrete exploit.
     //
     // What this test buys is that the situation cannot change silently:
     // if a future change ever DOES expose the closure to untrusted input,

@@ -9760,28 +9760,55 @@ make **genuinely different claims**. Family A says an instance cannot
 LOAD. Family C says a resolved symbol is never CALLED. A mutation that
 destroys A's premise need not touch C's.
 
-Three such takeovers occur, and each is audited individually rather than
-counted as a pass:
+**Takeover accounting.** The metric counts **5** ledgered takeovers. They
+are NOT equivalent evidence, and are separated here by what the resulting
+state would mean in production:
 
-1. **A + `traversal_truncated` → C.** The single documented exclusion in
-   `invalidatesCallGraphNegativeProof`. A needs `complete` and loses it; C
-   is governed by `graphTruncated`, which is still `false`. The audit also
-   pins the boundary: the same closure truncated AND carrying any other
-   reason blocks C too.
-2. **A + closure-says-loaded → C.** A's claim is destroyed; C's is not.
-   The audit asserts C's own guards independently, and — because this
-   mutation manufactures a state (closure says loaded, graph has no node)
-   that no real project reaches by this route — a second test builds the
-   REAL construct that produces that pair (an ESM `export * from`
-   re-export, which call-graph discovery does not follow) and pins that
-   production reaches **UNKNOWN** there, because the hidden call leaves an
-   unresolved edge in the reachable subgraph. The takeover is a property
-   of the synthetic input, not a claim about production.
-3. **C + instance mismatch → B.** The finding's instance is changed, so
-   the target no longer belongs to it and C is withdrawn. What answers is
-   a family-B absence proof **about the mutated path**. The decisive
-   assertion is identity: the replacement names the mutated instance and
-   never borrows the baseline's.
+| # | ledger row | → | class |
+| - | ---------- | - | ----- |
+| 1 | `A\|closure_reports_this_exact_instance_as_loaded` | C | **synthetic-only** |
+| 2 | `A\|package_instance_withdrawn_entirely` | C | supported-API shape |
+| 3 | `B\|graph_absence_claim_is_no_longer_true` | C | production-representative state |
+| 4 | `C\|target_ownership_withdrawn_via_instance_mismatch` | B | **ghost-instance-backed** |
+| 5 | `C\|composite:wrong instance + lookalike target node` | B | **ghost-instance-backed** |
+
+1. **Synthetic-only.** A's claim is destroyed; C's is not, and the audit
+   asserts C's own guards independently. But the mutation manufactures a
+   state — closure says loaded, graph has no node of the package — that no
+   real project reaches by this route. A second test builds the REAL
+   construct that produces that pair (an ESM `export * from` re-export,
+   which call-graph discovery does not follow) and pins that production
+   reaches **UNKNOWN** there, because the hidden call leaves an unresolved
+   edge in the reachable subgraph. This takeover is a property of the
+   synthetic input and is not evidence about production.
+2. **Supported-API shape.** With no `packageInstance` there is no instance
+   for family A's gate to be about, and Site B's ownership check is
+   explicitly skipped for such callers (pre-VT-212 compatibility). Family C
+   then answers, soundly — its claim is about the target. `cli/scan.ts`
+   always supplies an instance, so this shape is part of the supported
+   `buildFinding` contract rather than of the shipped scan path.
+3. **Production-representative state, synthetically constructed.** A graph
+   that HAS traversed the instance is an ordinary production state; the row
+   reaches it by inserting a node rather than by writing a project that
+   produces one. Family B's "never traversed" premise becomes false and B
+   correctly goes; family C answers about the target.
+4 & 5. **Ghost-instance-backed — excluded from production-soundness
+   claims.** The finding's instance is changed to a path where nothing is
+   installed. Family C is correctly withdrawn (the target does not belong
+   to that instance), and what answers is a family-B absence proof about
+   the ghost path — TRUE, but vacuously so. The decisive property still
+   holds and is asserted: the replacement names the mutated instance and
+   never borrows the baseline's identity. What these two rows do NOT
+   establish is anything about production, which cannot construct the
+   input — see the ghost-instance section below.
+
+A **sixth** takeover, **A + `traversal_truncated` → C**, is asserted by its
+own audit test and is deliberately NOT in the ledger (it is not a matrix
+row, so it is not counted in the 49). It is the single documented exclusion
+in `invalidatesCallGraphNegativeProof`: A needs `complete` and loses it; C
+is governed by `graphTruncated`, which is still `false`. The same test pins
+the boundary — the same closure truncated AND carrying any other reason
+blocks C too.
 
 The invariant the harness actually enforces is narrower and true:
 
@@ -9847,8 +9874,8 @@ Every row is classified, not pass/failed:
 | `reachable_subgraph_no_longer_complete` | invalidated | UNKNOWN / `unsupported_construct` |
 | `widening_construct_reachable_from_an_entrypoint` | invalidated | UNKNOWN / `dynamic_require` |
 | `authoritative_target_node_removed` | invalidated | UNKNOWN / `vulnerable_target_unresolved` |
-| `target_ownership_withdrawn_via_instance_mismatch` | invalidated | **takeover → B** (audited) |
-| `entrypoint_roots_mismatched` | invalidated | UNKNOWN |
+| `target_ownership_withdrawn_via_instance_mismatch` | invalidated | **takeover → B** (audited, ghost-backed — see below) |
+| `entrypoint_roots_mismatched` | invalidated | **AFFECTED** (positive takeover — see below) |
 | `root_coverage_lost_entirely` | invalidated | UNKNOWN / `no_entrypoints_available` |
 | `package_instance_withdrawn_entirely` | **control** | C stands — C's claim is about the TARGET |
 | `closure_incomplete_traversal_truncated_only` | **control** | C stands — the documented exclusion, from C's side |
@@ -9862,6 +9889,48 @@ unresolved edge, which isolates `reachableSubgraphComplete` from both
 VT-300's widening guard and `graphTruncated`: that construct could not load
 a new module and no limit was hit — the search simply met something it
 could not resolve, which is precisely what the field denies.
+
+**`entrypoint_roots_mismatched` on family C is AFFECTED, and is NOT an
+isolation test.** Its two siblings (families A and B) reach UNKNOWN because
+the context binding drops a closure whose `rootFiles` are no longer these
+entrypoints. Family C's row does not stop there: repointing the roots at
+`node_modules/vuln-lib/index.js` also makes the vulnerable library file
+ITSELF the reachability root, from which `vulnerable` genuinely is
+reachable — so `buildFinding` returns AFFECTED from the positive branch,
+which sits ahead of every closure check. That is correct (declare a
+library's own file as your entrypoint and its exported vulnerable symbol
+really is reachable from it) and it is a sound outcome: family C's proof is
+gone, and what replaces it is a positively reproduced path, not a surviving
+negative.
+
+But one input change here produces TWO semantic effects — closure unbinding
+AND a new reachability root set — and for family C the second dominates.
+The independent audit confirmed this by disabling the context-binding
+guard: families A and B's `entrypoint_roots_mismatched` rows failed, and
+family C's did not. The row therefore proves the invariant it asserts (the
+original proof does not survive) but does NOT attribute that to the guard
+its name suggests. Kept under its current name with this caveat rather than
+renamed, because the row's assertion is unchanged and renaming it would
+edit the matrix this remediation is scoped out of.
+
+**Three invalidating rows use a closure state no builder emits.**
+`loader_blocker_recorded_on_the_closure` (family B),
+`loader_hook_blocker_recorded_on_the_closure` and
+`declaration_only_blocker_recorded_on_the_closure` (family C) add an
+`incompleteness` record while leaving `complete: true`. The real builder
+derives `complete` FROM `incompleteness`, so it never produces that pair;
+these are **synthetic proof-domain tests**, not production-reachable
+scenarios. Their value is that they isolate which closure FIELD each guard
+reads: `callGraphNegativeProofBlockers` acts on `incompleteness` alone,
+without leaning on `complete`, which makes the row strictly stricter than
+the production shape. Their limitation is the other half of that: they are
+evidence about guard behavior under inconsistent inputs, and must NOT be
+read as evidence that production can construct such a closure. The
+production-shaped equivalents (`complete: false` WITH the blocker) are
+covered by the `closure_incomplete_*` rows, and by the real in-source
+`require.extensions` project used in the mutation-check below. The family A
+control `incompleteness_recorded_without_clearing_complete` uses the same
+synthetic state for the same reason.
 
 ### PackageInstance isolation (F4 § 13)
 
@@ -9898,33 +9967,85 @@ a stale same-project context over a different root set, a mutated
 THAWED spread of a real context (which loses the non-enumerable mark) —
 **all eight fail closed to UNKNOWN with no proof object.**
 
-Immutability is asserted as OBSERVED behavior: the context is frozen,
-writes to `graphTruncated` and `moduleLoadClosure` throw, and
-`entrypoints` is frozen too.
+**What is actually frozen, stated precisely.** The context WRAPPER is
+frozen: writes to `graphTruncated` and `moduleLoadClosure` throw. The
+`entrypoints` ARRAY is snapshotted (copied) and frozen, so the root SET
+cannot be extended after binding. Nothing else is.
 
-The nested closure object **is** still mutable — `Object.freeze` is
-shallow — and F4 states that as a measured result rather than a caveat.
-The sharp form is the task's attack G: not "could the evidence be
-weakened" but "could a blocker be DELETED after the context was built".
+The independent audit measured the full surface. After
+`createAnalysisProofContext` returns:
 
-Reproduced: a scan whose closure genuinely recorded `loader_hook_mutation`
-answers UNKNOWN; deleting that record in place through the frozen context
-(`incompleteness = []`, `complete = true`) turns the same context into a
-family C `NOT_AFFECTED`. **The write does change the answer.**
+| input | snapshot? | frozen? |
+| ----- | --------- | ------- |
+| `projectRoot`, `graphTruncated` | primitives | effectively yes |
+| `entrypoints` (the array) | copied | **yes** |
+| `entrypoints[i]` (the objects) | shared identity | **no** |
+| `moduleLoadClosure` | same object | **no** |
+| `graph` | same object | **no** |
+| `knownPackageRoots` (a `Map`) | same object | **no** |
 
-Not fixed here, and the reason is reach rather than convenience. **This
-write has no attacker.** The closure is constructed by the scan, handed to
-the context, and never published on a `Finding`, so nothing an analyzed
-project CONTAINS — the only untrusted input VulnTrace has — can reach it.
-The sole party able to perform the write is code already holding the
-context, which could equally have called `buildFinding` with a fabricated
-closure to begin with. A deep freeze would copy every closure on every scan
-to close a door that opens onto nothing, and F4's scope is explicit that a
-production change needs a concrete exploit. There is none.
+So the accurate statement is NOT "the proof context is immutable" and NOT
+"the entrypoints are frozen" without qualification. It is: **the wrapper is
+frozen and the entrypoint array container is snapshotted and frozen, but
+several referenced proof inputs — and the entrypoint objects themselves —
+are neither snapshotted nor transitively frozen.** The context binds
+IDENTITIES of live objects; it does not certify immutable proof facts.
 
-What the test buys is that this cannot change silently: if some future
-change ever exposes the closure to untrusted input, that assertion is
-already the statement of what it would then mean.
+**The attack, and how it is reached.** The sharp form is the task's attack
+G: not "could the evidence be weakened" but "could a blocker be DELETED
+after the context was built". Reproduced: a scan whose closure genuinely
+recorded `loader_hook_mutation` answers UNKNOWN; emptying `incompleteness`
+and setting `complete = true` turns the same context into a family C
+`NOT_AFFECTED`. **The write does change the answer.**
+
+The access path matters and an earlier draft of this record got it wrong.
+It is NOT that some third party must already hold the context. The audit
+performed the same write through **the caller's own retained alias to the
+input** — the `moduleLoadClosure` variable the caller passed in — never
+touching the context object at all. Post-binding mutation is possible
+through **any retained alias to a referenced proof input**, and the
+constructor hands the caller's own references straight through. The audit
+demonstrated the same class of write through the `graph` alias and through
+an `entrypoints[i]` object, both of which also moved the verdict.
+
+**Why it is nonetheless unreachable in production today**, which is a
+lifetime argument and not an "no hostile attacker" argument:
+
+- there is exactly ONE production caller of
+  `createAnalysisProofContext` (`cli/scan.ts:631`);
+- after that line, no production code references `moduleLoadClosure`,
+  `graph` or `knownPackageRoots` again — the only later occurrence is a
+  comment;
+- no production code anywhere writes to a `ModuleLoadClosure` field;
+- graph edges are pushed only during `buildCallGraph`'s own construction,
+  before any context exists;
+- `knownPackageRoots` is never `set`/`delete`d after it is built;
+- nothing caches or persists a graph or a closure — the only cache in the
+  tree is the OSV advisory cache.
+
+**Judgment (independent audit): NON-BLOCKING HARDENING.** Mutable aliases
+exist, and mutating them does change a verdict; current production
+ownership and lifetime retain no writer after context binding, and no
+production mutation path was found; but the invariant rests on that
+lifetime rather than on anything structural — `readonly` is erased at
+runtime and the freeze is shallow. Deliberately NOT fixed in F4, whose
+scope requires a concrete exploit before touching production.
+
+**Flagged for future Foundation work.** Possible approaches, none chosen or
+designed here: snapshot or deep-freeze the proof-critical inputs at binding
+time; make the `CallGraph` and `ModuleLoadClosure` structures immutable
+after construction; or enforce single-owner lifetime more strongly so a
+retained alias cannot exist. Each has a real cost (copying every closure
+and graph per scan, or a wider type change), which is why this is recorded
+as a decision to be made rather than made in passing.
+
+One more documentation defect, noted and NOT fixed here because it is
+pre-existing production prose rather than anything F4 added:
+`analysis/analysis-context.ts` describes the context as "ONE immutable
+object" and "Immutable and created once per scan". Per the measurement
+above that overstates what the constructor delivers, and should be narrowed
+to the wrapper-frozen / references-live statement when that file is next
+touched. F4 changed no production file and does not change it here.
 
 ### Monotonicity (F4 § 19) and restoration (F4 § 20)
 
@@ -9987,19 +10108,37 @@ explicit, and already were.
 ### Mutation-check results (F4 § 26)
 
 Each guard was disabled in production source, the F4 suite re-run, and the
-source restored. All six produced failures, and in every case the § 28
-metric test caught it independently of the individual rows:
+source restored. Every one produced failures, and in every case the § 28
+metric test caught it independently of the individual rows.
+
+Counts below are the ones the INDEPENDENT AUDIT re-measured against the
+final 89-test suite. An earlier figure of 10 for the absent-closure guard
+was measured before the suite grew by three tests and is superseded:
 
 | guard disabled | how | F4 tests failed |
 | -------------- | --- | --------------- |
-| absent closure fails closed | `callGraphNegativeProofBlockers(undefined)` → `[]` | **10** |
+| absent closure fails closed | `callGraphNegativeProofBlockers(undefined)` → `[]` | **11** |
 | `graphTruncated` (VT-202) | `buildFinding`'s branch made unreachable | **6** |
 | family A exact-instance ownership | dropped the `identifyModule(...) === packageInstance` conjunct | **3** |
 | `reachableSubgraphComplete` | reachability `unknown` treated as `unreachable` | **5** |
 | `AnalysisProofContext` closure binding | closure kept unconditionally | **8** |
+| family B closure corroboration | the `complete` + not-contained conjunction forced true | **5** |
 | F4's own § 24 harness rule | the refusal removed | **1** |
 
-`git diff` confirmed clean source afterwards.
+The family-B corroboration guard was added by the independent audit, which
+observed it was the one B-specific guard the original check set omitted.
+Disabling it fails exactly the four rows whose labels name closure
+corroboration (`closure_absent`, `closure_incomplete_parse_failure`,
+`closure_incomplete_traversal_truncated`,
+`closure_reports_this_exact_instance_as_loaded`) plus the metric.
+
+**Scope.** These are CAUSAL SENSITIVITY checks for selected guards, not an
+exhaustive enumeration of every guard in the proof path. What each row
+establishes is that the matrix rows naming a guard fail when that guard is
+removed — i.e. the tests are not passing for some unrelated reason.
+
+`git diff` confirmed clean source afterwards, on both the original run and
+the audit's re-measurement.
 
 ### Mutation summary metric (F4 § 28)
 
@@ -10016,6 +10155,22 @@ UNSAFE ORIGINAL PROOF SURVIVED:    0
 The metric is asserted, not printed: `unsafe_survival` must be 0, and the
 ledger must be non-trivially populated across all three families — an
 empty ledger would otherwise make every per-row check vacuous.
+
+**What this metric is, and is not.** It is a BOUNDED REGRESSION METRIC over
+selected proof prerequisites, evaluated against a mixture of
+production-like and deliberately synthetic states. It establishes that no
+invalidated proof survived any of these 49 mutations.
+
+It is NOT:
+
+- exhaustive proof of global soundness — it covers the prerequisites the
+  code reads, not the value space, and not prerequisites nobody thought to
+  mutate;
+- evidence that all 49 states are production-reachable — three invalidating
+  rows use a closure shape no builder emits, and two of the five takeovers
+  are backed by a `packageInstance` production cannot enumerate;
+- evidence that transitive immutability holds — it does not (see the
+  immutability section).
 
 ### Contracts under mutation (F4 § 9, § 10)
 
@@ -10080,9 +10235,24 @@ report a diff there and be wrong about what it meant.
 Positive authority untouched: wrong-instance Site B, same-version twins,
 forwarding, cross-package re-export, coincidental export names, alias and
 scoped identity, local package identity, and multi-instance scan all pass
-unchanged. **0 new false AFFECTED.** The one AFFECTED the mutation suite
-produces is a deliberate positive takeover — the reached twin genuinely
-calls the vulnerable export.
+unchanged. **0 new false AFFECTED.**
+
+The mutation suite itself produces **two** AFFECTED outcomes, matching the
+metric's `invalidated_to_affected: 2`. Both are positive takeovers: the
+original negative proof is invalidated, and what replaces it is a
+positively reproduced path rather than a surviving negative.
+
+- **`B|package_instance_swapped_to_the_REACHED_twin`.** The finding is
+  repointed at the other same-name/same-version install — the one the
+  entrypoint actually requires and calls. Family B's "never traversed"
+  premise is false for it, and the evidence path lies inside the REACHED
+  instance (asserted: no path step under the nested twin), so nothing is
+  borrowed from the baseline's instance.
+- **`C|entrypoint_roots_mismatched`.** Repointing the roots at the library
+  file makes that file the reachability root, from which `vulnerable` is
+  genuinely reachable. Family C's proof is gone and AFFECTED is the honest
+  answer for that root set. See the family C matrix note for why this row
+  is not an isolation test.
 
 ### Performance (F4 § 31)
 
@@ -10133,13 +10303,36 @@ the Family A/B/C design and the uncertainty taxonomy are all unchanged.
    the real construct that produces the same pair, which reaches UNKNOWN.
    A source-level mutation harness is a different and larger instrument.
 2. **A `packageInstance` naming no real install yields a vacuously true
-   family-B proof.** Reproduced by mutation. It is TRUE (nothing is
-   installed there, so nothing traversed it) and it is unreachable in
-   production, where `packageInstance` comes from the dependency graph's
-   own install locations. The property that matters — no identity
-   borrowing — holds: the proof names the path it was asked about.
-3. **Nested closure mutability.** Recorded above; contained, not
-   exploitable, not redesigned.
+   family-B proof ("ghost instance").** Reproduced independently by the
+   audit. Precisely:
+   - production **cannot** construct it — `packageInstance` is enumerated
+     from the dependency graph's own install locations via the instance
+     registry, and the audit confirmed the ghost path is absent from
+     `KnownPackageRoots`;
+   - the **harness can** fabricate it, by handing `buildFinding` a literal
+     path string;
+   - family B then gives a **vacuous** absence proof: absence from
+     `loadedPackageInstances` is trivially true for something never
+     installed, and family B's contract presupposes a real enumerated
+     install;
+   - **2 of the 5 proof-family takeovers are backed by such ghost
+     instances** (rows 4 and 5 in the takeover table above).
+
+   This is acceptable as a proof-domain test — it is exactly where the
+   no-identity-borrowing property is checked, and that property holds: the
+   proof names the path it was asked about and never the baseline's. Those
+   two takeovers are nonetheless **excluded from any claim about
+   production-reachable soundness.** The production-shaped version of the
+   same property is the same-version twins case, which uses two real
+   installs.
+3. **Transitive mutability of referenced proof inputs.** The context
+   wrapper is frozen and the entrypoint array is snapshotted, but the
+   closure, the graph, `knownPackageRoots` and the entrypoint objects are
+   live aliases; mutating any of them after binding changes the verdict.
+   Classified by the independent audit as NON-BLOCKING HARDENING —
+   production-unreachable today by ownership and lifetime, not enforced
+   structurally. See the immutability section for the evidence and the
+   future-hardening options.
 4. **Coverage is per-prerequisite, not per-input-value.** 49 mutations over
    the prerequisites the code actually reads, not a fuzz over the value
    space. A prerequisite that exists but is read nowhere would not be
