@@ -1757,10 +1757,21 @@ export async function buildFinding(
   // `graphTruncated` just above. See that function for the per-reason
   // justification.
   //
-  // Residual, accepted risk: an ABSENT closure contributes no blockers, so
-  // a scan whose closure construction failed keeps exactly its
-  // pre-VT-307d behavior here rather than degrading every finding. That is
-  // the status quo, not a new exposure.
+  // An ABSENT closure now FAILS CLOSED here (FOUNDATION-F2/F2-A).
+  //
+  // This used to be a documented residual risk: `undefined` contributed no
+  // blockers, so a scan whose closure was missing or rejected kept its
+  // pre-VT-307d behavior instead of degrading. That was unsound, and
+  // demonstrably so. Both conditions listed above -- a syntax error in a
+  // loaded member, and a non-call loader mutation -- are conditions ONLY
+  // the closure can see, and both were reproduced reaching NOT_AFFECTED
+  // with the closure absent and everything else unchanged. A guard whose
+  // evidence is missing is not a guard that passed.
+  //
+  // `callGraphNegativeProofBlockers` therefore reports
+  // `module_load_closure_unavailable` for an absent closure, and it flows
+  // through this same branch: one guard, one message shape, one place
+  // where a call-graph-derived negative can be withdrawn.
   const callGraphProofBlockers =
     callGraphNegativeProofBlockers(moduleLoadClosure);
   if (callGraphProofBlockers.length > 0) {
@@ -1771,7 +1782,9 @@ export async function buildFinding(
       evidence: {
         path: [],
         reasons: [
-          `call-graph-derived non-reachability cannot be confirmed: the module-load closure recorded ${callGraphProofBlockers.join(", ")}, which can hide a call path to the target or the loading of this instance`,
+          moduleLoadClosure === undefined
+            ? "call-graph-derived non-reachability cannot be confirmed: no module-load closure was available for this scan (module_load_closure_unavailable), so the loader, syntax-validity and execution-capability preconditions it establishes are unverified -- a syntax error in a loaded member, or a loader mutation in a non-call position, would both be invisible to the call graph alone"
+            : `call-graph-derived non-reachability cannot be confirmed: the module-load closure recorded ${callGraphProofBlockers.join(", ")}, which can hide a call path to the target or the loading of this instance`,
         ],
       },
     };

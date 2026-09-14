@@ -522,20 +522,74 @@ export function invalidatesCallGraphNegativeProof(
 }
 
 /**
- * The distinct closure conditions that forbid a call-graph-derived
- * NOT_AFFECTED for this scan (VT-307e), or `[]` when none do.
+ * The blocker that stands for "there was no {@link ModuleLoadClosure} at
+ * all" (FOUNDATION-F2/F2-A).
  *
- * An ABSENT closure yields `[]`, deliberately: `undefined` means no
- * module-load information was available at all (no entrypoints, or a
- * construction failure), which is the pre-VT-307d status quo for these
- * two proofs and is not itself evidence of a blocker. See
- * `buildFinding`'s own note on the residual risk that leaves.
+ * Deliberately NOT a member of {@link ClosureIncompletenessReason}. That
+ * type is the vocabulary of causes a REAL closure emits while traversing,
+ * and every one of its values is paired with a
+ * {@link ClosureIncompleteness} record naming the member it happened in.
+ * Closure ABSENCE has no such member -- there is no traversal, so there is
+ * nothing to point at -- and modelling it as an incompleteness reason
+ * would require inventing a fake `importer` for a walk that never ran.
+ * Keeping it in a separate, wider blocker vocabulary lets the guard say
+ * "this proof is unavailable" without ever claiming a closure observed
+ * something it did not.
+ */
+export type ModuleLoadClosureUnavailableBlocker =
+  "module_load_closure_unavailable";
+
+/**
+ * A condition that forbids a call-graph-derived NOT_AFFECTED: either a
+ * real closure observed something disqualifying, or there was no closure
+ * to observe with.
+ */
+export type CallGraphNegativeProofBlocker =
+  ClosureIncompletenessReason | ModuleLoadClosureUnavailableBlocker;
+
+/**
+ * The distinct conditions that forbid a call-graph-derived NOT_AFFECTED
+ * for this scan (VT-307e), or `[]` when none do.
+ *
+ * An ABSENT closure FAILS CLOSED (FOUNDATION-F2/F2-A): it yields
+ * `["module_load_closure_unavailable"]`, never `[]`.
+ *
+ * It used to yield `[]`, on the reasoning that `undefined` merely
+ * reproduced the pre-VT-307d status quo for these two proofs and was "not
+ * itself evidence of a blocker". That reasoning confused two different
+ * things. The guard below does not ask "did the closure see a problem?";
+ * it asks "has the loader/syntax/capability precondition been
+ * ESTABLISHED?" -- and an absent closure establishes nothing. Returning
+ * `[]` answered a question about missing information as though it were an
+ * affirmative all-clear, which is exactly the "absence of evidence treated
+ * as evidence" AGENTS.md forbids.
+ *
+ * It is not hypothetical. Two conditions that a present closure blocks on
+ * were reproduced end-to-end reaching NOT_AFFECTED with the closure absent
+ * and every other precondition unchanged -- a syntax error in a loaded
+ * member (`parse_failure`), and a non-call loader mutation
+ * (`require.extensions['.js'] = hook`, `loader_hook_mutation`). Both are
+ * conditions the CALL GRAPH structurally cannot catch on its own: it does
+ * not check `hasSyntaxErrors`, and an assignment produces no call edge for
+ * VT-300's unresolved-edge guard to inspect. The closure's whole-file scan
+ * is the ONLY thing that sees either one, so when it is missing, the proof
+ * that depends on it is missing too. See the F2-A regression suite.
+ *
+ * Cost of failing closed here: a scan with no closure can no longer reach
+ * a call-graph-derived NOT_AFFECTED at all. That is intended. In
+ * production a closure is absent only when there were no entrypoints
+ * (nothing was analyzable in the first place), when construction threw
+ * (cli/scan.ts records a diagnostic and continues), or when the context
+ * binding REJECTED it for not belonging to these entrypoints and this
+ * graph (analysis/analysis-context.ts) -- an integrity failure. Declining
+ * to certify a negative in all three is the correct answer, not a
+ * precision regression.
  */
 export function callGraphNegativeProofBlockers(
   closure: ModuleLoadClosure | undefined,
-): readonly ClosureIncompletenessReason[] {
+): readonly CallGraphNegativeProofBlocker[] {
   if (closure === undefined) {
-    return [];
+    return ["module_load_closure_unavailable"];
   }
   return [...new Set(closure.incompleteness.map((i) => i.reason))].filter(
     invalidatesCallGraphNegativeProof,
