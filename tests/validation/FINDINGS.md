@@ -9157,3 +9157,409 @@ build, history-validator all clean. No timeout waivers.
 5. **No generalized proof-mutation harness.** The mutation-like tests here
    withhold one hardened prerequisite at a time; the general framework
    remains F4's.
+
+---
+
+## RWF-036 (FOUNDATION F3) — Uncertainty was a wall of prose, and a candidate that produced no finding said nothing at all
+
+Foundation's third task. It adds no verdict, changes no proof rule, and
+moves no verdict anywhere in the corpus. What it adds is the ability to
+ANSWER TWO QUESTIONS a machine previously could not ask.
+
+Central rule being enforced: *every uncertainty must be representable as
+data, and "no finding" must never be confusable with "proved safe".*
+
+### F2 handoff
+
+Base: `074fc6c` (`test/docs: harden proof-guard invariants, and record
+RWF-035`), certified before editing — clean tree, identical to
+`origin/main`, F2's three commits present, `module_load_closure_unavailable`
+live in production. Focused baseline of 679 tests across 9 files (verdict,
+negative proofs, module-load absence, F2 proof guards, Family B/C,
+`AnalysisProofContext`, `ModuleLoadClosure`, widening exhaustiveness) plus
+154 tests across 8 CLI/diagnostics files, all passing. Validation suite
+baseline: **6 failed / 17 passed**, the documented set (VAL-002, VAL-003,
+RWB-03, RWB-05, RWB-09b, and one hermeticity assertion).
+
+### F3-A — the defect: uncertainty nothing could count
+
+An UNKNOWN carried an untyped `string[]`:
+
+```
+"unsupported_construct at node_modules/qs/lib/parse.js:112"
+"could not resolve module \"qs\": ..."
+```
+
+and **two of the eight UNKNOWN routes carried nothing whatsoever** — the
+HTML report literally rendered *"The scan result records no reason for this
+UNKNOWN finding"* and then GUESSED, in prose, which of two causes had
+produced it.
+
+So the question that has to be answered before any frontend-completeness
+work is scheduled — *how much of our UNKNOWN surface is a coverage gap we
+could close, versus an `eval` nobody can ever close?* — could only be
+answered by reading scan output by hand. That is the question P1-B is
+prioritized from and the question RWF-002 needs data for.
+
+### F3-A — the taxonomy, and why it has six classes and not five
+
+F3 proposed five and said to audit semantics before forcing internal
+reasons into them. The audit found three that fit none of the five
+honestly.
+
+Each class names a **different kind of work**, which is the only property
+that makes a taxonomy worth having:
+
+| Category | What it means | What closes it |
+| --- | --- | --- |
+| `unmodeled_construct` | the analyzer saw the construct and has not implemented it | frontend work — **this is the class P1-B is prioritized from** |
+| `value_uncertainty` | the construct IS modeled; the value/destination is not statically unique | value analysis, never syntax support |
+| `capability_escape` | the runtime can reach outside bounded static reasoning | largely nothing — a property of the language |
+| `identity_unresolved` | a package/instance/version/entry/target identity fact was never established | metadata and resolution work |
+| `analysis_precondition_unmet` | something the decision DEPENDS ON was never established at all | varies; never a syntax gap |
+| `budget_exceeded` | a CONFIGURED bound stopped the work | changing a limit, and nothing else |
+
+The sixth class exists because `parse_failure`,
+`declaration_only_resolution` and `module_load_closure_unavailable` share
+one nature — a precondition was never established — and fit nothing else:
+
+- Filing them under `unmodeled_construct` was the mechanical answer and
+  would have **corrupted the one measurement this task exists to produce**.
+  None of the three is a syntax a frontend could learn, and all three would
+  have sat in the P1-B ranking as work nobody can do.
+- Filing them under `budget_exceeded` would have claimed a configured limit
+  stopped work no limit touched.
+
+`declaration_only_resolution` is the sharpest case: resolution SUCCEEDED,
+onto a `.d.ts`. Identity is established; executable source was never
+obtained. That is why it is not `identity_unresolved`.
+
+### F3-A — orthogonality, stated as a test rather than as a comment
+
+`isClosureWideningReason` (domain/graph.ts) answers a **different question**
+— can this construct load a module the graph never discovered? — and is a
+SOUNDNESS boundary the proof rules consume. The category is an explanation.
+
+Neither is derived from the other, and `domain/uncertainty.test.ts` proves
+it by exhibiting both cross-pairs rather than asserting the intent:
+
+| | widening | non-widening |
+| --- | --- | --- |
+| `capability_escape` | `eval` | — |
+| `identity_unresolved` | `unresolved_module` | `unresolved_target` |
+| `analysis_precondition_unmet` | `declaration_only_resolution` | — |
+| `unmodeled_construct` | — | `unsupported_construct` |
+| `value_uncertainty` | — | `dynamic_member_access` |
+
+If the two axes were one fact, the widening set and the escape set would be
+equal. They are not, and that is asserted directly.
+
+### F3-A — exhaustiveness is a compile error, verified by breaking it
+
+Four sites, all compile-enforced:
+
+1. `Record<UncertaintyReason, UncertaintyCategory>` — the mapping table;
+2. `Record<DynamicCallReason, UncertaintyCategory>` — every edge reason is
+   classified;
+3. `AssertIsUncertaintyReason<ClosureIncompletenessReason>`;
+4. `AssertIsUncertaintyReason<ModuleLoadClosureUnavailableBlocker>`.
+
+Verified by adding a probe member `"f3_probe_new_reason"` to
+`DynamicCallReason` and confirming **all four fail to build** (plus F2's own
+`never` floor, which also fires). The probe was then reverted; `git diff`
+on `domain/graph.ts` is empty.
+
+An initial version of (3) used
+`Object.fromEntries(...) as Record<...>`, which **typechecks regardless** —
+the cast defeats the very check it appears to perform. Replaced with a type
+constraint, which cannot be cast around.
+
+At RUNTIME an unrecognized value is **never dropped** (F3 § 28): it is
+reported as `unclassified_uncertainty_reason` under `capability_escape`,
+the most severe class, mirroring `isClosureWideningReason`'s own
+fail-closed floor. Dropping would understate uncertainty, the one direction
+this analyzer must never err in. Unreachable today — the unions are
+type-closed and no deserialization boundary carries one — and that is a
+property of today's code, not a guarantee about tomorrow's.
+
+### F3-B — the second defect: no-finding said nothing
+
+Two completely different states reached a consumer as **identical bytes**:
+
+```
+"this advisory confidently does not apply to this instance"
+"nobody could determine whether this advisory applies"
+```
+
+`ScanOutput.unreportedCandidates` separates them. It is **not findings**:
+no `verdict`, no `evidence`, no `confidence`, its own top-level array, and
+no code path converts one into a `JsonFinding`.
+
+The required `disposition` field is the whole design:
+
+- **`not_applicable`** — the installed version is outside every affected
+  range. Real information, arrived at with certainty. It carries **no
+  `category` at all**, structurally, so a consumer summing categories
+  cannot count patched packages as analysis gaps.
+- **`undetermined`** — applicability could not be established.
+
+**Neither is a `NOT_AFFECTED`.** A `not_applicable` entry is a statement
+about version ranges and nothing else: no reachability analysis ran, so no
+negative proof exists and nothing may promote it to one. The entry's own
+`detail` says so in words, and the HTML section repeats it where a reader
+skimming headings will see it.
+
+Four `undetermined` sources — three previously stderr-only, one **entirely
+invisible**:
+
+| Source | Before F3 | Category |
+| --- | --- | --- |
+| workspace enumeration truncated | `diagnostics` only | `budget_exceeded` |
+| workspace declaration uninterpretable | `diagnostics` only | `identity_unresolved` |
+| unsupported pattern / pnpm-only layout | `diagnostics` only | `unmodeled_construct` |
+| version conflict / untrusted manifest | `diagnostics` only | `identity_unresolved` |
+| **versionless instance, no advisory surfaced for the name** | **nothing at all** | `identity_unresolved` |
+
+The last one is a genuine hole this task found. `advisoryQueryVersions`
+correctly contributes no query for an instance with no established version.
+An instance whose SIBLINGS have versions is still rescued into its own
+honest UNKNOWN (F3 § 4 says to preserve that, and it is preserved). But
+when nothing surfaced for the package NAME, the instance was evaluated
+against nothing, produced no finding, and vanished. It is now recorded —
+and deliberately **not** given a fabricated advisory finding, because there
+is no advisory to name (F3 § 4, self-review attack K).
+
+### F3-B — the diagnostics boundary
+
+`diagnostics` is **unchanged**: same source, same words, same count. It is
+the operational channel a human reads. `unreportedCandidates` is the
+analysis-semantics channel a machine aggregates.
+
+Where one condition appears in both, they carry the **same sentence** — the
+structured entry's `detail` is byte-identical to the diagnostic's `message`
+— so the two can never word one fact differently (self-review attack L).
+Asserted, not intended: `scan.f3-no-finding.test.ts` compares them directly.
+
+Workspace reasons had to become typed for this, because the four of them
+map onto **three different categories**. One English sentence cannot be
+aggregated into that.
+
+### Schema: additive, no version bump
+
+`unknownReasons` (per finding) and `unreportedCandidates` (top level) are
+new OPTIONAL properties. Nothing gained a `required` entry; the schema
+declares no `additionalProperties` constraint anywhere, so there was none
+to violate. **A result produced before F3 still validates.** AFFECTED and
+NOT_AFFECTED findings serialize byte-identically to before — `unknownReasons`
+is omitted, not written as `[]`.
+
+`unreportedCandidates` is optional in the schema and always emitted by the
+producer, so a consumer never has to tell "nothing was unreported" from
+"this scan predates the field".
+
+### THE MEASUREMENT (F3 § 30–§ 32)
+
+Run over the 17-case real-world validation corpus via
+`scripts/measure-uncertainty.mjs`, which copies each fixture to a temp
+directory first (VT-302) and drives the real CLI against the live OSV API,
+exactly as `validation.test.ts` does.
+
+```
+findings:              85
+UNKNOWN findings:      70
+  ...with reasons:     70   (every one; none reasonless)
+unreported candidates:  4
+  not_applicable:       4
+  undetermined:         0
+```
+
+By category, in **occurrences**:
+
+| Category | Occurrences |
+| --- | --- |
+| `analysis_precondition_unmet` | 65 |
+| `unmodeled_construct` | 42 |
+| `identity_unresolved` | 41 |
+| `value_uncertainty` | 5 |
+| `capability_escape` | **0** |
+| `budget_exceeded` | **0** |
+
+**This table is misleading unless read with the next paragraph, and saying
+so is the point of recording it.**
+
+`analysis_precondition_unmet`'s 65 occurrences are **entirely
+`no_vulnerable_symbol_rule`, and they are a CORPUS ARTIFACT, not an
+analyzer gap.** Each fixture configures exactly ONE rule — the advisory
+under test — so every other advisory the live OSV API returns for the same
+installed packages produces an UNKNOWN meaning "this benchmark has no rule
+for that advisory". Verified by reading the fixtures' `rules.yml`. It says
+nothing about VulnTrace's capability and must not be reported as though it
+did.
+
+Excluding it, the corpus's analyzer-attributable uncertainty is **5 UNKNOWN
+findings**:
+
+| Finding | Blockers |
+| --- | --- |
+| VAL-002, VAL-003, RWB-03, RWB-10 (one each) | `vulnerable_target_unresolved` — `identity_unresolved` |
+| RWB-05's `qs` finding | `unsupported_construct` ×42, `unresolved_target` ×37, `dynamic_member_access` ×5 |
+
+### RWF-002 blocker distribution (F3 § 31)
+
+RWB-05 stays `UNKNOWN`. Its precision was not improved and was not
+attempted. What is now visible is **what prevents Family C**:
+
+| Category | Reason | Occurrences |
+| --- | --- | --- |
+| `unmodeled_construct` | `unsupported_construct` | 42 |
+| `identity_unresolved` | `unresolved_target` | 37 |
+| `value_uncertainty` | `dynamic_member_access` | 5 |
+| `capability_escape` | — | **0** |
+
+The headline for P2: **not one of RWB-05's 84 blocker occurrences is a
+capability escape.** Nothing about that UNKNOWN is a fundamental limit of
+static analysis; all of it is closeable work, split roughly half frontend
+coverage and half target/export resolution. That is a materially different
+conclusion from "real code contains `eval`, so UNKNOWN is inevitable", and
+it could not be drawn from the prose before.
+
+### Top unmodeled constructs (F3 § 32) — and why the signal is not yet actionable
+
+Ranked, as requested:
+
+| Reason | Occurrences | Findings blocked |
+| --- | --- | --- |
+| `unsupported_construct` | 42 | 1 |
+
+That is the **whole** ranking, and it is the most important limitation this
+task surfaces. `unsupported_construct` is the call graph's own
+undifferentiated catch-all for "a callee expression shape I have no rule
+for". Knowing there are 42 of them does not tell anyone which syntax to
+implement.
+
+**So P1-B's actual first step is not to implement a construct — it is to
+SPLIT `unsupported_construct` by syntactic shape.** F3 deliberately does
+not do that (it would be a frontend change, which this task forbids), but
+the taxonomy is built to absorb it: new tokens drop into
+`UNCERTAINTY_REASONS` under the same category, and the compile-time
+exhaustiveness checks force each one to be classified.
+
+### Soundness: no verdict moved
+
+The acceptance condition (F3 § 24). Classification is observational — every
+entry is derived from the same blockers the verdict rules already acted on,
+AFTER those rules ran. No branch condition was touched and no branch reads a
+classification. Removing the field would change no verdict anywhere.
+
+Validation suite after F3: **6 failed / 17 passed — identical IDs, identical
+expected/actual pairs, identical counts to the baseline.**
+
+| Case | Baseline | After F3 |
+| --- | --- | --- |
+| VAL-002 | expected AFFECTED, got UNKNOWN | unchanged |
+| VAL-003 | expected NOT_AFFECTED, got UNKNOWN | unchanged |
+| RWB-03 | expected AFFECTED, got UNKNOWN | unchanged |
+| RWB-05 | expected NOT_AFFECTED, got UNKNOWN | unchanged |
+| RWB-09b | expected NOT_AFFECTED, got NO_FINDING | unchanged |
+| 17 others | pass | pass |
+
+0 new false AFFECTED; 0 new runtime-reachable false NOT_AFFECTED
+(adversarial 124 passed, unchanged). An `AFFECTED` carries no
+`unknownReasons` at all, and neither does a `NOT_AFFECTED` — asserted
+structurally, because attaching a reason to a finding that has a reproduced
+path or a positive proof would invite "how sure are we about this
+AFFECTED?", a question this analyzer does not answer.
+
+### RWB-09b, clarified without being forced
+
+RWB-09b is **not** forced to `NOT_AFFECTED`, and its verdict is unchanged.
+What changed is that the state is now explicit:
+
+```json
+{
+  "stage": "advisory_applicability",
+  "disposition": "not_applicable",
+  "vulnerability": "GHSA-c2qf-rxjj-qqgw",
+  "package": "semver",
+  "packageInstance": "node_modules/semver",
+  "version": "7.5.2",
+  "reason": "advisory_not_applicable_to_installed_version",
+  "detail": "installed version 7.5.2 is outside every affected range declared by GHSA-c2qf-rxjj-qqgw, so this advisory does not apply to this instance; no reachability analysis was performed and this is not a proof of non-reachability"
+}
+```
+
+The benchmark can now decide how to score it against a fact rather than
+against a silence. The oracle is left exactly as it was — F3 does not
+adjust an oracle to match the tool.
+
+The same mechanism fires for RWB-09a's patched sibling and for both
+`url-parse` instances in RWB-11: 4 entries across the corpus, each naming
+its exact instance.
+
+### Performance (F3 § 35)
+
+Reason mapping is a `Map` lookup per blocker and one sort per finding.
+Measured A/B on `rwb-05-qs-unused-api`, the heaviest UNKNOWN case in the
+corpus (84 blocker occurrences aggregated into 3 entries), 7 runs each,
+base `074fc6c` rebuilt in place versus F3:
+
+| Build | median wall | median reported `totalMs` | wall range |
+| --- | --- | --- | --- |
+| `074fc6c` | 12728 ms | 10627 ms | 12533–12838 |
+| F3 | 12653 ms | 10547 ms | 12486–12770 |
+
+The ranges overlap and F3 measures marginally faster, so the overhead is
+**below this harness's noise floor** — not "small", but unmeasurable at the
+scale the corpus reaches. No optimization was attempted or needed.
+
+### Verification
+
+F3 focused suites: `domain/uncertainty.test.ts` 33, verdict taxonomy matrix
+19, no-finding matrix 11, HTML 10. Full suite **3833 passed / 0 failed**
+across 158 files. Adversarial 124 passed. Validation identical to baseline.
+Performance 2 passed. Typecheck, lint, prettier, build, history-validator
+all clean. No timeout waivers.
+
+Two of the new tests were **wrong on first write and were fixed rather than
+weakened**, both worth recording because both were asserting something
+false about the system:
+
+1. The category-ordering test asserted `eval` sorts before
+   `unsupported_construct`. It does not — `unmodeled_construct` is declared
+   first. Rewritten to a case where count order and declaration order
+   genuinely DISAGREE (20 × `eval` versus 1 × `unsupported_construct`), so
+   it now proves what it claimed to.
+2. The capability-escape test asserted a `new Function(src)()` finding has
+   no `unmodeled_construct` anywhere. It legitimately does: the call on the
+   constructed function is a second, separate `unsupported_construct` edge,
+   and that edge IS a real coverage gap. Asserting the blanket negative
+   would have been asserting that F3 COLLAPSES co-occurring blockers — the
+   opposite of what § 19 requires. Narrowed to assert the escape's own
+   entry.
+
+### Remaining limitations
+
+1. **`unsupported_construct` is one undifferentiated bucket.** The P1-B
+   signal this task was asked to produce is real but not yet actionable;
+   splitting that token by syntactic shape is the genuine next step, and it
+   is frontend work this task is forbidden to do.
+2. **The corpus cannot measure `capability_escape` or `budget_exceeded`.**
+   Both are 0 occurrences — no fixture contains an `eval` on a reachable
+   path, and no fixture is large enough to hit a limit. Both are covered by
+   unit and integration tests, so the classification is exercised; what is
+   missing is real-world FREQUENCY data for them. Any claim that real
+   projects are mostly blocked by escapes is, on this evidence, unsupported
+   in either direction.
+3. **65 of 70 corpus UNKNOWNs are a benchmark artifact.** Until the
+   fixtures carry rules for every advisory OSV returns, corpus-level
+   category totals are dominated by `no_vulnerable_symbol_rule` and must
+   always be reported with it excluded. F7's scorecard should exclude it at
+   the source.
+4. **RWF-002 is untouched** and remains open. F3 measured it; it did not
+   move it.
+5. **`unreportedCandidates` does not enumerate packages that were never
+   discovered.** A workspace entry says an unknown NUMBER of candidates may
+   be missing; it cannot say which, because nothing enumerated them. That
+   is honest rather than complete, and no mechanism here can improve it.
+6. **No VEX, and no fourth verdict.** The verdict set is still exactly
+   `AFFECTED` / `NOT_AFFECTED` / `UNKNOWN`.
