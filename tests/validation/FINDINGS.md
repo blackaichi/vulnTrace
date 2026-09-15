@@ -10614,11 +10614,21 @@ structural rather than a limit that had to be imposed:
 | `canonicalPaths` | distinct canonical package root | 21 |
 | `manifestNames` | distinct canonical package root | 19 |
 | `byPackageName` | distinct package name in the graph | small |
-| `publicEntries` | distinct (instance, specifier) pair asked | 14 |
+| `publicEntries` | distinct (instance, specifier) pair asked | 2 |
+
+The `publicEntries` figure is the per-scan maximum (rwb-09), corrected
+from an earlier 14 that was the corpus TOTAL across all fifteen scans —
+every other row in this table is already a per-scan maximum, so the
+mismatched one overstated the bound. Corrected per the independent audit's
+own measurement.
 
 Nothing is keyed by anything an advisory, a rule, a package name or any
 other attacker-influenced string contributes, so no input can grow these
-beyond the file set the analyzer already holds in memory. Values are
+beyond the file set the analyzer already holds in memory. The one key with
+any rule influence is `publicEntries`' specifier half, which comes from a
+rule target's own `module` field and is bounded by the loaded ruleset
+times the instances actually analyzed — never by untrusted input, and only
+populated for work the scan already performed. Values are
 strings and small objects already referenced elsewhere. A bounds test
 asserts the exact entry counts for a 20-package / 40-file project (40 / 20
 / 20).
@@ -10726,8 +10736,21 @@ reached through its `node_modules` symlink produces exactly ONE finding
 
 ### Concurrency and cross-scan isolation
 
-There is no module-scope mutable state to leak through — confirmed by
-inspection and by test. Two scans of DIFFERENT projects that install the
+No mutable cross-scan cache state affects a cached analysis result —
+confirmed by inspection and by test.
+
+Stated that precisely, rather than as "there is no module-scope mutable
+state", because the independent audit found the stronger phrasing is
+false: `scan-caches.ts` holds one module-scope `Map`, `EMPTY_INSTANCES`.
+It is a permanently-empty SENTINEL — the answer returned for a package
+name the graph contains no instance of — never written by any code in this
+repository, and every reference that escapes is typed `ReadonlyMap`, so
+poisoning it would take a deliberate cast. It carries no scan data, so it
+cannot carry data between scans. The claim that matters is therefore the
+one above: no cache state that participates in an analysis answer is
+shared across scans.
+
+Two scans of DIFFERENT projects that install the
 same package name and version at the same RELATIVE path, run
 **concurrently** via `Promise.all`, produce results identical to running
 each alone, and neither's findings reference the other's root. A unit test
@@ -10774,6 +10797,39 @@ and all three negative-proof families:
 An all-UNKNOWN corpus would have proved nothing: the negative proofs are
 exactly what a caching defect would fabricate, and they are present,
 unchanged, and produced through the caches on the branch side.
+
+**Where this differential is NOT non-vacuous, stated plainly.** The
+independent audit measured the comparison surface and found two classes
+where "identical" is true but carries no information:
+
+- **`unreportedCandidates`: all fifteen fixtures produce ZERO.** Nothing
+  was compared. Every candidate class F3 defines — `workspace_discovery`,
+  `package_identity` / `installed_version_unavailable`,
+  `advisory_applicability` — is absent from this corpus.
+- **`diagnostics`: all 2,240 come from a single source, `call-graph`.**
+  The classes a caching defect would most plausibly suppress — workspace
+  truncation, pnpm-only layouts, malformed manifests, version-conflict
+  provenance — are not represented at all.
+
+So the earlier sentence "`unreportedCandidates` ... are all compared
+verbatim" is true of the mechanism and misleading about the evidence. The
+actual F5 safety argument for those classes is not the differential; it is
+that **their producing code is untouched and receives no F5 cache**:
+`dependencies/workspaces.ts`, `dependencies/package-instances.ts`,
+`domain/uncertainty.ts` and `analysis/uncertainty.ts` are byte-identical
+to `d3dd220`, and `cli/scan.ts`'s entire change is four effective lines
+that create the identity memo and pass it to the closure and the context —
+`discoverWorkspacePackages` and `buildPackageInstanceRegistry` are called
+exactly as before and are handed no cache. That is a stronger argument
+than a differential over a corpus that never exercises them, but it is a
+DIFFERENT argument, and the record should not have let the differential
+appear to cover ground it does not.
+
+The behavioural coverage for those classes comes from the focused suites
+instead, which do run on this branch and do exercise them:
+`scan.workspace-uncertainty`, `workspaces.uncertainty`,
+`workspaces.truncation`, `scan.metadata-uncertainty`, `scan.f3-no-finding`
+and `package-instances.differential-oracle`.
 
 ### Verification
 
@@ -10860,6 +10916,82 @@ movement.
 
 **Performance is not solved.** F5 removed one multiplier and left the
 dominant cost exactly where it was.
+
+### CI gate remediation — the wall-clock ratio was worse than flaky
+
+F5's first multiplier guard timed two scans (4 advisories vs 32) and
+required the ratio under 4x. CI failed it at **4.07** (134ms vs 546ms).
+
+The reflex fix is to raise the threshold. That was not done, because
+measuring first showed the gate did not own the property it claimed to:
+
+| | ratios observed | fails at 4.0 |
+| - | --- | ---: |
+| F5 **intact**, 10 local runs | 1.88 / **3.32 median** / 5.88 | **1 / 10** |
+| graph index **entirely disabled**, 4 runs | 2.71 / **3.15 median** / 3.24 | **0 / 4** |
+
+It failed on correct code and passed on the exact regression it existed to
+catch. Both halves have one cause: restoring the per-advisory graph walk
+costs ~3,900 in-memory identity lookups instead of ~160, and map reads are
+invisible beside parsing and graph construction — while ordinary variance
+on a ~200ms denominator is not. **No choice of threshold separates those
+two**, so raising it would have preserved a gate with no discriminating
+power and merely stopped it complaining. The comment claiming the expected
+ratio was "near 1" was also wrong: the median is 3.3, because 32 advisories
+genuinely do 8x the per-finding work — real work F5 neither removes nor
+should.
+
+**The replacement measures operations, not time.** An intact scan's
+verdict-phase identity requests are exactly:
+
+```
+identityRequests = graphNodes + advisories + 6
+```
+
+verified exactly at graphNodes ∈ {33, 123, 243} × advisories ∈ {1, 4, 8,
+16, 32}, byte-identical across repeated runs. One graph pass, plus one
+ownership check per finding, plus a small fixed public-entry cost. The
+pre-F5 shape is `graphNodes × advisories`.
+
+The gate asserts the SLOPE — identity requests added per additional
+advisory — bounded at 4:
+
+| | per-advisory identity requests |
+| - | ---: |
+| F5 intact | **1** |
+| graph index disabled | **124** (= one per graph node) |
+
+with an absolute restatement (`≤ graphNodes + 4 × advisories`) so the
+bound survives someone changing the advisory counts. Two further
+deterministic assertions cover the other F5 reuse claims: the verdict
+phase performs **zero** `realpath` and **zero** manifest reads (the
+per-scan memo already paid for them during closure construction), and the
+public-entry memo holds **one** key for all 32 advisories (they share an
+instance and a specifier, differing only in exported symbol).
+
+**Mutation-checked, both directions.** Disabling the graph index in source
+fails the gate with `identity requests per advisory: 124 ... expected 124
+to be less than or equal to 4` — 31x over the bound. Under that same
+mutation the entire wall-clock suite still passes 3/3, which is the
+clearest statement of what was actually wrong with the old gate. The
+zero-filesystem assertion carries its own in-test control: withholding the
+scan's memo makes the counters non-zero while leaving the findings
+identical, so `toBe(0)` is not vacuously true.
+
+**What the stopwatch is still for.** A single generous absolute ceiling
+(10,000ms, ~9x the slowest of ten local samples and ~18x CI's) remains in
+`scan-performance.test.ts` as a catastrophic-regression smoke. It is
+documented there as NOT a multiplier guard — it demonstrably does not
+catch one — and the existing 5,000ms and 20,000ms thresholds were not
+touched. The deterministic gate runs in the default `npm test` suite,
+where it costs ~8s and needs no isolation from parallelism, because
+nothing it asserts is a clock reading.
+
+Alternatives considered and rejected: raising 4.0 → 4.5 (preserves a gate
+with no discriminating power); repeated medians (reduces variance, still
+measures the wrong quantity — the regression barely moves the clock);
+larger workloads (more wall time, same conflation). Deterministic counters
+were preferred because they encode the eliminated multiplier directly.
 
 ### Remaining limitations
 
