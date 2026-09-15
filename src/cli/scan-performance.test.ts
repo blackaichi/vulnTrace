@@ -383,44 +383,57 @@ describe("performance baseline: single large file with many local declarations/c
 });
 
 /**
- * FOUNDATION F5 — the verdict-phase multiplier.
+ * FOUNDATION F5 — coarse runtime smoke for the many-findings workload.
  *
- * The two guards above measure GRAPH CONSTRUCTION, which the F5 baseline
- * profile confirmed is where ~90% of a scan's wall time goes. Neither of
- * them reaches the cost F5 exists to remove, for a structural reason:
- * both use a provider that returns no advisory, so no finding is ever
- * built and `checkReachability` never runs. The cost F5 removes is paid
- * only per FINDING.
+ * The two guards above measure GRAPH CONSTRUCTION with a provider that
+ * returns no advisory, so no finding is ever built and `checkReachability`
+ * never runs. This one exercises the opposite half: many advisories
+ * against one installed package, so the verdict phase actually runs at
+ * scale.
  *
- * That cost was `findings × targets × graph nodes`, with one `realpath`
- * and one `package.json` read per node: `resolveTargetNodes` re-derived
- * "which instances of this package does the graph contain" from scratch
- * for every advisory target. This fixture makes that multiplier visible —
- * many advisories against one package whose graph has many nodes — and
- * guards it as a SCALING property rather than an absolute time.
+ * WHAT THIS DOES **NOT** GUARD, AND WHY THAT MATTERS.
  *
- * The assertion is deliberately a ratio, not a millisecond count. An
- * absolute threshold on a verdict phase this small would measure the
- * machine (see this file's own history of raising one). A ratio between
- * two runs of the SAME work at different advisory counts survives a slow
- * runner, because a slow runner slows both sides.
+ * This was originally a scaling RATIO — time 4 advisories, time 32, and
+ * require the ratio to stay under 4x. That gate was removed rather than
+ * re-tuned, because measurement showed it did not own the property it
+ * claimed to:
+ *
+ * - With F5 intact, ten local runs measured ratios 1.88 / 3.32 median /
+ *   5.88 — **1 in 10 failed** — and CI failed at 4.07 (134ms vs 546ms).
+ * - With the graph index **entirely disabled**, four runs measured
+ *   2.71 / 3.15 median / 3.24 — **0 in 4 failed**.
+ *
+ * It failed on correct code and passed on regressed code. The cause is
+ * structural, not a bad threshold: restoring the per-advisory graph walk
+ * costs ~3,900 in-memory identity lookups instead of ~160, which is
+ * invisible beside parsing and graph construction, while ordinary variance
+ * on a ~200ms denominator is not. No ratio could separate those.
+ *
+ * The multiplier invariant therefore lives in
+ * `analysis/scan-caches.f5-multiplier.test.ts`, as exact operation counts
+ * that move by ~25x when the optimization is removed. What remains here is
+ * only a catastrophic-regression smoke: a single generous absolute ceiling
+ * that says nothing about the multiplier and is not expected to catch it.
  */
 describe("performance baseline: many findings over one package (F5)", () => {
   /**
-   * With the per-scan index, scaling the advisory count by 8x adds only
-   * the per-advisory verdict work — the graph is indexed once, whatever
-   * the advisory count. Before F5 each advisory re-walked every graph
-   * node, so total work grew with the PRODUCT and this ratio tracked the
-   * advisory multiplier itself.
+   * Sized from measurement, per this file's standing rule that a threshold
+   * is raised (or set) deliberately with its basis recorded. Ten local
+   * samples of this exact 32-advisory scan: 681, 685, 729, 744, 751, 771,
+   * 783, 936, 936, 1118ms — median ~760ms, slowest 1118ms. CI measured
+   * 546ms.
    *
-   * Bounded at 4x rather than something tight: the fixed cost (parsing,
-   * graph construction, closure) dominates both runs, so the honest
-   * expectation is a ratio near 1, and the headroom is for runner noise.
-   * A restored `findings × nodes` walk pushes this to ~8x on this
-   * fixture and fails clearly.
+   * 10,000ms is ~9x the slowest local sample and ~18x the CI sample. That
+   * is deliberately loose: this guard's only job is to catch a
+   * catastrophic, order-of-magnitude regression (a quadratic blowup in
+   * parsing or resolution), and a tight bound here buys nothing while
+   * reintroducing exactly the flakiness that made the previous gate
+   * worthless. Precision belongs to the operation-count gate, which has it
+   * exactly and for free.
    */
-  const MAX_SCALING_RATIO = 4;
+  const CATASTROPHIC_REGRESSION_CEILING_MS = 10_000;
   const PACKAGE_FILE_COUNT = 40;
+  const ADVISORY_COUNT = 32;
 
   let tmpDirs: string[] = [];
 
@@ -534,42 +547,36 @@ describe("performance baseline: many findings over one package (F5)", () => {
     return { root, provider };
   }
 
-  async function timeScan(advisoryCount: number): Promise<number> {
-    const { root, provider } = buildProject(advisoryCount);
-    const { io, stdout } = fakeIo();
-    const start = Date.now();
-    const exitCode = await runScanCommand({
-      projectPathArg: root,
-      configPathOverride: path.join(root, "vulntrace.yml"),
-      provider,
-      noCache: true,
-      io,
-    });
-    const elapsed = Date.now() - start;
-    // 1, not 0: this fixture deliberately produces findings, and that is
-    // the exit code a scan that reported findings returns.
-    expect(exitCode).toBe(1);
-    // The workload must genuinely produce the findings it claims to —
-    // a scan that silently produced none would make this guard vacuous.
-    expect(
-      (JSON.parse(stdout.join("")) as { findings: unknown[] }).findings.length,
-    ).toBe(advisoryCount);
-    return elapsed;
-  }
+  it(
+    `completes ${ADVISORY_COUNT} findings within the ${CATASTROPHIC_REGRESSION_CEILING_MS}ms ceiling`,
+    async () => {
+      const { root, provider } = buildProject(ADVISORY_COUNT);
+      const { io, stdout } = fakeIo();
 
-  it(`scales sub-linearly in advisory count (ratio < ${MAX_SCALING_RATIO}x for 8x the advisories)`, async () => {
-    // Warm the process (module loading, JIT) so the first measured run
-    // is not paying for both.
-    await timeScan(1);
+      const start = Date.now();
+      const exitCode = await runScanCommand({
+        projectPathArg: root,
+        configPathOverride: path.join(root, "vulntrace.yml"),
+        provider,
+        noCache: true,
+        io,
+      });
+      const wallClockMs = Date.now() - start;
 
-    const few = await timeScan(4);
-    const many = await timeScan(32);
-
-    // Guard against a degenerate denominator on a very fast machine.
-    const ratio = many / Math.max(few, 1);
-    expect(
-      ratio,
-      `4 advisories: ${few}ms, 32 advisories: ${many}ms (ratio ${ratio.toFixed(2)}x)`,
-    ).toBeLessThan(MAX_SCALING_RATIO);
-  }, 120_000);
+      // 1, not 0: this fixture deliberately produces findings, and that is
+      // the exit code a scan that reported findings returns.
+      expect(exitCode).toBe(1);
+      // The workload must genuinely produce the findings it claims to — a
+      // scan that silently produced none would make this guard vacuous.
+      expect(
+        (JSON.parse(stdout.join("")) as { findings: unknown[] }).findings
+          .length,
+      ).toBe(ADVISORY_COUNT);
+      expect(
+        wallClockMs,
+        `${ADVISORY_COUNT} advisories took ${wallClockMs}ms`,
+      ).toBeLessThan(CATASTROPHIC_REGRESSION_CEILING_MS);
+    },
+    CATASTROPHIC_REGRESSION_CEILING_MS + 5_000,
+  );
 });
