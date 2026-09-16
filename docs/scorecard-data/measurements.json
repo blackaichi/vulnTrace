@@ -1,0 +1,192 @@
+{
+  "$comment": [
+    "FOUNDATION F7 -- results that had to be OBTAINED BY RUNNING SOMETHING.",
+    "",
+    "Everything else in docs/SCORECARD.md is derived from committed source",
+    "and is re-derived on every --check. These values cannot be: they are",
+    "the output of a command, so each one records the exact command, the",
+    "commit it was taken at, and the date. `--check` proves the scorecard",
+    "matches THIS file; only re-running the command proves THIS file is",
+    "still true.",
+    "",
+    "`deterministic: false` marks a value that a rerun can legitimately",
+    "change without anything in this repository changing -- a live",
+    "advisory-database query, or a wall-clock reading on a busy machine.",
+    "Do not quote such a value as a fixed property of the analyzer.",
+    "",
+    "TO UPDATE: run the command in the row, put the result here, then",
+    "`node scripts/generate-scorecard.mjs`.",
+    "",
+    "COMMIT. Values below were measured on branch",
+    "foundation-f7-docs-scorecard, whose base is dcb5da1 and whose only",
+    "change under src/ is one ADDED test file (docs-contract.test.ts).",
+    "The F7 baseline at dcb5da1 itself was: foundation 29 files / 1,356",
+    "tests; npm test 168 files / 4,192 tests; adversarial 124; perf 3 --",
+    "i.e. identical apart from that one added file's 6 tests."
+  ],
+
+  "foundationGate": {
+    "command": "npm run test:foundation",
+    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
+    "measuredAt": "2026-09-16",
+    "deterministic": true,
+    "status": "PASS",
+    "files": 29,
+    "tests": 1356,
+    "durationSeconds": 46.69
+  },
+
+  "fullSuite": {
+    "command": "npm test",
+    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
+    "measuredAt": "2026-09-16",
+    "deterministic": false,
+    "status": "PASS",
+    "files": 169,
+    "tests": 4198,
+    "durationSeconds": 207.6
+  },
+
+  "adversarial": {
+    "command": "npm run test:adversarial",
+    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
+    "measuredAt": "2026-09-16",
+    "deterministic": true,
+    "status": "PASS",
+    "files": 2,
+    "tests": 124
+  },
+
+  "performance": {
+    "command": "npm run test:performance",
+    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
+    "measuredAt": "2026-09-16",
+    "deterministic": false,
+    "status": "PASS",
+    "files": 1,
+    "tests": 3
+  },
+
+  "proofMutation": {
+    "$comment": "Printed by the F4 harness inside the Foundation gate run.",
+    "command": "npm run test:foundation",
+    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
+    "measuredAt": "2026-09-16",
+    "deterministic": true,
+    "total": 49,
+    "unsafeSurvival": 0,
+    "invalidatedToUnknown": 31,
+    "invalidatedByTakeover": 5,
+    "invalidatedToAffected": 2,
+    "notAPrerequisite": 11
+  },
+
+  "differential": {
+    "$comment": [
+      "The offline semantic differential asserts its own non-vacuity: every",
+      "class it claims to cover must actually occur in the corpus, so these",
+      "are proven present rather than hoped for."
+    ],
+    "command": "npm run test:foundation",
+    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
+    "measuredAt": "2026-09-16",
+    "deterministic": true,
+    "verdicts": ["AFFECTED", "NOT_AFFECTED", "UNKNOWN"],
+    "proofFamilies": ["A", "B", "C"]
+  },
+
+  "instanceOracle": {
+    "command": "npm run test:foundation",
+    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
+    "measuredAt": "2026-09-16",
+    "deterministic": true,
+    "status": "PASS -- enumerates exactly the physical instance real Node loads, for every case"
+  },
+
+  "liveValidation": {
+    "$comment": [
+      "LIVE. Reproduced in tests/validation/REPORT.md, which the suite",
+      "regenerates on every run. The committed REPORT.md was last written",
+      "at 0e7ec1c (2026-09-12); F7 re-ran the suite at its own base and the",
+      "regenerated report was BYTE-IDENTICAL, so the committed record is",
+      "confirmed current rather than merely old.",
+      "",
+      "Five failures are KNOWN and kept deliberately red -- see",
+      "docs/OPEN-DEBTS.md D-09. Zero unexpected failures."
+    ],
+    "command": "npm run test:validation",
+    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
+    "measuredAt": "2026-09-16",
+    "deterministic": false,
+    "status": "12 passed / 5 failed (all known)",
+    "total": 17,
+    "passed": 12,
+    "failed": 5,
+    "knownFailures": 5,
+    "unexpected": 0
+  },
+
+  "uncertaintyDistribution": {
+    "$comment": [
+      "LIVE, and the most easily misread table in the project.",
+      "",
+      "Measured over the 17-case real-world corpus by",
+      "scripts/measure-uncertainty.mjs, which drives the real CLI against",
+      "the live OSV API exactly as the validation suite does. Recorded in",
+      "tests/validation/FINDINGS.md under RWF-036 (Foundation F3), at",
+      "commit 72a925b.",
+      "",
+      "`byDomain` is the REMEDIATION-OWNERSHIP dimension -- reporting",
+      "metadata, not a seventh uncertainty category. Occurrences are",
+      "occurrences, NOT work items: they collapse into a handful of",
+      "distinct reasons, one change can discharge many, and target-relevant",
+      "completeness may discharge most without modeling any of them."
+    ],
+    "command": "node scripts/measure-uncertainty.mjs",
+    "commit": "72a925b",
+    "measuredAt": "2026-09-14",
+    "deterministic": false,
+    "findings": 85,
+    "unknownFindings": 70,
+    "analyzerAttributableFindings": 5,
+    "targetIntelligenceOccurrences": 65,
+    "byDomain": [
+      {
+        "domain": "target intelligence",
+        "occurrences": 65,
+        "interpretation": "Entirely `no_vulnerable_symbol_rule`: this scan had no rule describing the advisory's vulnerable symbol.",
+        "limitation": "**A corpus/config artifact, not an analyzer gap.** Each fixture configures exactly one rule, so every other advisory OSV returns produces one of these. It is not evidence the frontend could not understand the code — the frontend was never asked."
+      },
+      {
+        "domain": "frontend",
+        "occurrences": 42,
+        "interpretation": "`unsupported_construct` — the call graph saw a callee shape it has no rule for. The class P1-B is prioritized from.",
+        "limitation": "One undifferentiated token. Knowing there are 42 does not tell anyone which syntax to implement — see `docs/OPEN-DEBTS.md` D-07."
+      },
+      {
+        "domain": "target / identity resolution",
+        "occurrences": 41,
+        "interpretation": "37 `unresolved_target` call-graph edges plus 4 `vulnerable_target_unresolved` findings: an identity or attribution fact was never established.",
+        "limitation": "Splits across two remediation owners (export attribution and target intelligence) that this dimension does not separate."
+      },
+      {
+        "domain": "value precision",
+        "occurrences": 5,
+        "interpretation": "`dynamic_member_access` — the construct is modeled; the destination is not statically unique.",
+        "limitation": "Closeable only by value/alias analysis, never by adding syntax support."
+      },
+      {
+        "domain": "unsupported capability",
+        "occurrences": 0,
+        "interpretation": "**Zero.** Not one blocker in the corpus is a construct that can load or execute code the graph never discovered.",
+        "limitation": "Zero in THIS corpus. Real applications do contain `eval`; the corpus is a shape corpus, not a sample."
+      },
+      {
+        "domain": "budget",
+        "occurrences": 0,
+        "interpretation": "No configured bound stopped any work in this corpus.",
+        "limitation": "Says nothing about a project large enough to hit one."
+      }
+    ]
+  }
+}
