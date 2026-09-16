@@ -32,6 +32,13 @@ import {
  * behavior change in instance selection.
  */
 
+/** What one `buildFinding` run produced, reduced to the proof facts. */
+interface TwinOutcome {
+  readonly verdict: string | undefined;
+  readonly family: "A" | "B" | "C" | "NONE";
+  readonly proofInstance: string | undefined;
+}
+
 const dirs: string[] = [];
 
 afterAll(() => {
@@ -631,5 +638,302 @@ describe("F5 graph package-instance index: a refusal falls back to the walk", ()
         `  expected:  no confirmedAbsentInstance evidence\n` +
         `  actual:    ${JSON.stringify(result.proofAfter)}`,
     ).toBeUndefined();
+  }, 120_000);
+});
+
+/**
+ * FOUNDATION F6 REMEDIATION — the case that DISCRIMINATES, found by
+ * independent audit.
+ *
+ * The block above asserts that a refusal does not change the answer when
+ * the finding's own instance is REACHED. That case cannot fail, and the
+ * audit showed why: when the instance is reached and its target is
+ * called, Site A and Site B agree. Site B's independent resolution lands
+ * on the very same instance and finds the very same target, so the
+ * verdict is `AFFECTED` whether the index answered or not. A test built
+ * only on that case reports coverage of the fallback contract while being
+ * incapable of detecting its loss.
+ *
+ * THE STATE THAT DISCRIMINATES is a finding about an UNREACHED TWIN.
+ *
+ * `resolveTargetNodes` has two structurally different "target not found"
+ * sites (VT-301B, documented on that function):
+ *
+ * - **Site A** runs when `instances.size > 0`. Only here does the
+ *   analyzer know "the graph holds other instances of this package name
+ *   but never traversed THIS one" — and that sentence is the entire
+ *   premise of a family-B `confirmedAbsentInstance` proof. It is the ONLY
+ *   place in `verdict.ts` that returns one.
+ * - **Site B** runs when `instances.size === 0`. It performs an
+ *   independent, instance-blind re-resolution from the reference file. It
+ *   has no knowledge of which instances the graph contains, so it cannot
+ *   conclude family B at all.
+ *
+ * So reading a refusal as an empty answer does not merely lose speed: it
+ * skips Site A entirely, discards the knowledge family B is made of, and
+ * the independent resolution lands on the REACHED twin instead — a
+ * different instance from the finding's own, which the proof guards then
+ * correctly refuse to certify. The verdict degrades to `UNKNOWN`.
+ *
+ * MEASURED, on this exact fixture:
+ *
+ * | source | verdict | proof |
+ * | ------ | ------- | ----- |
+ * | clean | `NOT_AFFECTED` | family B, naming the unreached twin |
+ * | refusal read as absence | `UNKNOWN` | none |
+ *
+ * That is a CONSERVATIVE change — a proof is lost, never fabricated — so
+ * it is a precision regression rather than a soundness one, and normal
+ * production does not enter the stale-index state that reaches it. It is
+ * nonetheless observable production semantics, which is why it is gated
+ * here rather than argued away.
+ */
+describe("F5 graph package-instance index: a refusal preserves the family-B proof", () => {
+  /**
+   * Two installs of ONE name at ONE version. The top-level twin is
+   * required and called; the nested twin is the finding's subject and is
+   * never traversed.
+   */
+  async function unreachedTwinAcrossIndexRefusal(): Promise<{
+    readonly before: TwinOutcome;
+    readonly after: TwinOutcome;
+    readonly refused: boolean;
+    readonly unreachedTwin: string;
+    readonly reachedTwin: string;
+  }> {
+    const { buildDependencyGraph } =
+      await import("../dependencies/dependency-graph.js");
+    const { loadPackageJsonFile } =
+      await import("../dependencies/package-json.js");
+    const { loadPackageLockFile } =
+      await import("../dependencies/package-lock.js");
+    const { buildCallGraph } =
+      await import("../code-intelligence/call-graph.js");
+    const { createModuleResolver } =
+      await import("../code-intelligence/module-resolver.js");
+    const { loadTsProject } =
+      await import("../code-intelligence/ts-project.js");
+    const { buildKnownPackageRoots } =
+      await import("../domain/resolved-target.js");
+    const { discoverEntrypoints } = await import("./entrypoints.js");
+    const { buildGateEligibleModuleLoadClosure } =
+      await import("./module-load-closure.js");
+    const { createAnalysisProofContext } =
+      await import("./analysis-context.js");
+    const { buildFinding } = await import("./verdict.js");
+
+    const lib =
+      "function danger(x) { return x; }\nfunction safe(x) { return x; }\n" +
+      "module.exports = { danger, safe };\n";
+
+    const root = project({
+      "package.json": JSON.stringify({
+        name: "twin-refusal-fixture",
+        version: "1.0.0",
+        dependencies: { "vuln-lib": "1.0.0", host: "1.0.0" },
+      }),
+      "package-lock.json": JSON.stringify({
+        name: "twin-refusal-fixture",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "twin-refusal-fixture", version: "1.0.0" },
+          "node_modules/vuln-lib": { version: "1.0.0" },
+          "node_modules/host": { version: "1.0.0" },
+          "node_modules/host/node_modules/vuln-lib": { version: "1.0.0" },
+        },
+      }),
+      "node_modules/vuln-lib/package.json": manifest("vuln-lib", "1.0.0"),
+      "node_modules/vuln-lib/index.js": lib,
+      "node_modules/host/package.json": manifest("host", "1.0.0"),
+      "node_modules/host/index.js":
+        "function idle() { return 1; }\nmodule.exports = { idle };\n",
+      // SAME name, SAME version, different root. Nothing imports it.
+      "node_modules/host/node_modules/vuln-lib/package.json": manifest(
+        "vuln-lib",
+        "1.0.0",
+      ),
+      "node_modules/host/node_modules/vuln-lib/index.js": lib,
+      "src/index.js":
+        'const { danger } = require("vuln-lib");\n' +
+        "function main(x) { return danger(x); }\n" +
+        "module.exports = { main };\n",
+    });
+
+    const dependencyNodes = buildDependencyGraph(
+      loadPackageJsonFile(path.join(root, "package.json")),
+      loadPackageLockFile(path.join(root, "package-lock.json")),
+    );
+    const knownPackageRoots = buildKnownPackageRoots(dependencyNodes, root, []);
+    const identity = createScanModuleIdentityCache(knownPackageRoots);
+    const tsProject = loadTsProject(root);
+    const resolver = createModuleResolver(tsProject);
+    const entrypointsResult = await discoverEntrypoints({
+      projectRoot: root,
+      resolver,
+      configuredEntrypoints: ["src/index.js"],
+    });
+    const graph = await buildCallGraph({
+      entryFiles: entrypointsResult.entrypoints.map((entry) => entry.filePath),
+      resolver,
+      maxFiles: 2_000,
+      maxGraphNodes: 50_000,
+      maxAnalysisSeconds: 120,
+      project: tsProject,
+      knownPackageRoots,
+    });
+    const moduleLoadClosure = await buildGateEligibleModuleLoadClosure({
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      maxFiles: 2_000,
+      knownPackageRoots,
+      moduleIdentityCache: identity,
+    });
+    const context = createAnalysisProofContext({
+      projectRoot: root,
+      resolver,
+      entrypoints: entrypointsResult.entrypoints,
+      knownPackageRoots,
+      graph,
+      graphTruncated: false,
+      moduleLoadClosure,
+      moduleIdentityCache: identity,
+    });
+
+    const reachedTwin = path.join(root, "node_modules", "vuln-lib");
+    const unreachedTwin = path.join(
+      root,
+      "node_modules",
+      "host",
+      "node_modules",
+      "vuln-lib",
+    );
+
+    // THE FINDING IS ABOUT THE UNREACHED TWIN.
+    const input = {
+      vulnerability: {
+        id: "GHSA-f6-twin-refusal",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      packageInstance: unreachedTwin,
+      matchResult: "affected",
+      rule: {
+        id: "GHSA-f6-twin-refusal",
+        package: { name: "vuln-lib" },
+        targets: [
+          {
+            module: "vuln-lib",
+            export: "danger",
+            kind: "function",
+            confidence: 1,
+          },
+        ],
+      },
+      context,
+    } as unknown as Parameters<typeof buildFinding>[0];
+
+    const describeOutcome = (
+      finding: Awaited<ReturnType<typeof buildFinding>>,
+    ): TwinOutcome => {
+      const evidence = finding?.evidence;
+      const family = evidence?.confirmedAbsentFromModuleLoadClosure
+        ? "A"
+        : evidence?.confirmedAbsentInstance
+          ? "B"
+          : evidence?.confirmedUnreachableTarget
+            ? "C"
+            : "NONE";
+      return {
+        verdict: finding?.verdict,
+        family,
+        proofInstance: evidence?.confirmedAbsentInstance?.packageInstance,
+      };
+    };
+
+    // FIRST run: the index answers, and is built -- which records the node
+    // count the refusal below depends on.
+    const before = describeOutcome(await buildFinding(input));
+
+    // Make the index unable to answer for this analysis. This changes the
+    // ANALYSIS, never the production code, and is the state a stale index
+    // really would be in.
+    (graph.nodes as GraphNode[]).push({
+      id: "n-appended",
+      kind: "function",
+      module: path.join(root, "src", "index.js"),
+      name: "appended",
+    });
+    const refused =
+      graphPackageInstancesByName(
+        context.caches,
+        graph,
+        knownPackageRoots,
+        "vuln-lib",
+      ) === undefined;
+
+    const after = describeOutcome(await buildFinding(input));
+    return { before, after, refused, unreachedTwin, reachedTwin };
+  }
+
+  it("keeps NOT_AFFECTED family B, naming the exact unreached twin", async () => {
+    const result = await unreachedTwinAcrossIndexRefusal();
+
+    // Non-vacuity first: without a real refusal this case proves nothing,
+    // and would pass against the very defect it exists to catch.
+    expect(
+      result.refused,
+      "the index did not refuse, so the fallback was never reached and this " +
+        "case asserts nothing",
+    ).toBe(true);
+
+    // The baseline has to be the interesting answer, or the assertion
+    // below is about the wrong thing.
+    expect(result.before.verdict).toBe("NOT_AFFECTED");
+    expect(result.before.family).toBe("B");
+    expect(result.before.proofInstance).toBe(result.unreachedTwin);
+
+    // THE INVARIANT. The authoritative walk still knows the graph holds
+    // the OTHER twin and never this one -- which is precisely what a
+    // family-B proof asserts. An index that cannot answer must not cost
+    // the analyzer that knowledge.
+    expect(
+      result.after.verdict,
+      `GRAPH-INDEX FALLBACK: FAMILY-B PRECISION REGRESSION\n` +
+        `  invariant: a refusal falls back to the authoritative walk, so the\n` +
+        `             proof a full walk would establish is still established\n` +
+        `  case:      same-name/same-version twins; the finding is about the\n` +
+        `             UNREACHED twin; the index is stale and refuses\n` +
+        `  expected:  NOT_AFFECTED (family B, naming the unreached twin)\n` +
+        `  actual:    ${result.after.verdict} (family ${result.after.family})\n` +
+        `  Reading the refusal as "no instances" skips Site A, which is the\n` +
+        `  ONLY place a family-B proof is produced, and routes to Site B's\n` +
+        `  instance-blind re-resolution instead.`,
+    ).toBe("NOT_AFFECTED");
+
+    expect(
+      result.after.family,
+      `the refusal cost the finding its negative proof (family ` +
+        `${result.after.family} after refusal, B before)`,
+    ).toBe("B");
+
+    // EXACT instance identity, not merely "some family B proof": the
+    // proof must name the twin the finding is about, never its sibling.
+    expect(
+      result.after.proofInstance,
+      `PROOF NAMES THE WRONG TWIN\n` +
+        `  expected:  ${result.unreachedTwin}\n` +
+        `  actual:    ${result.after.proofInstance}`,
+    ).toBe(result.unreachedTwin);
+    expect(result.after.proofInstance).not.toBe(result.reachedTwin);
+
+    // ...and the refusal changed nothing at all.
+    expect(result.after).toEqual(result.before);
   }, 120_000);
 });
