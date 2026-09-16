@@ -1027,7 +1027,7 @@ describe("buildCallGraph: loader-shaped constructs are closure-widening (VT-307b
     );
   });
 
-  it("still classifies an ordinary unsupported call as unsupported_construct, never widened merely because it's unsupported (control)", async () => {
+  it("still classifies an ordinary unsupported call as a non-widening unsupported_* gap, never widened merely because it's unsupported (control)", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -1042,7 +1042,7 @@ describe("buildCallGraph: loader-shaped constructs are closure-widening (VT-307b
       expect.objectContaining({
         resolution: {
           kind: "unknown",
-          reason: "unsupported_construct",
+          reason: "unsupported_receiver_binding",
           potentialTargets: [],
         },
       }),
@@ -1995,7 +1995,7 @@ describe("buildCallGraph: completeness invariant (VT-201)", () => {
       (e) => e.from === mainNode?.id && e.type === "method",
     );
     expect(methodCallEdge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_receiver_binding" },
     });
   });
 
@@ -2077,7 +2077,7 @@ describe("buildCallGraph: completeness invariant (VT-201)", () => {
     const constructorEdge = graph.edges.find((e) => e.from === mainNode?.id);
     expect(constructorEdge).toMatchObject({
       type: "constructor",
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_callee_binding" },
     });
   });
 
@@ -2166,7 +2166,7 @@ describe("buildCallGraph: instance method resolution via the type checker (VT-20
     });
   });
 
-  it("still falls back to unsupported_construct when the receiver's type can't be resolved to a class", async () => {
+  it("still falls back to unsupported_receiver_binding when the receiver's type can't be resolved to a class", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -2181,11 +2181,11 @@ describe("buildCallGraph: instance method resolution via the type checker (VT-20
       (e) => e.from === mainNode?.id && e.type === "method",
     );
     expect(methodEdge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_receiver_binding" },
     });
   });
 
-  it("still produces the pre-VT-208 unsupported_construct edge when no project is supplied", async () => {
+  it("still produces the pre-VT-208 unsupported_receiver_binding edge when no project is supplied", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -2202,7 +2202,7 @@ describe("buildCallGraph: instance method resolution via the type checker (VT-20
       (e) => e.from === mainNode?.id && e.type === "method",
     );
     expect(methodEdge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_receiver_binding" },
     });
   });
 });
@@ -2296,7 +2296,7 @@ describe("buildCallGraph: inherited method resolution (VT-216)", () => {
     });
   });
 
-  it("still falls back to unsupported_construct for a receiver whose type is a union of classes", async () => {
+  it("still falls back to unsupported_receiver_binding for a receiver whose type is a union of classes", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -2316,7 +2316,7 @@ describe("buildCallGraph: inherited method resolution (VT-216)", () => {
       (e) => e.from === mainNode?.id && e.type === "method",
     );
     expect(methodEdge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_receiver_binding" },
     });
   });
 });
@@ -2497,7 +2497,7 @@ describe("buildCallGraph: higher-order call value flow (VT-210)", () => {
     });
   });
 
-  it("still falls back to unsupported_construct when the enclosing function is never called with a resolvable argument", async () => {
+  it("still falls back to unsupported_callee_binding when the enclosing function is never called with a resolvable argument", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -2511,11 +2511,11 @@ describe("buildCallGraph: higher-order call value flow (VT-210)", () => {
     const invokeNode = findNode(graph, (n) => n.name === "invoke");
     const edge = graph.edges.find((e) => e.from === invokeNode?.id);
     expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_callee_binding" },
     });
   });
 
-  it("still falls back to unsupported_construct when the enclosing function is anonymous", async () => {
+  it("still falls back to unsupported_callee_binding when the enclosing function is anonymous", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -2532,7 +2532,7 @@ describe("buildCallGraph: higher-order call value flow (VT-210)", () => {
 
     const edge = graph.edges.find((e) => e.from === invokeNode?.id);
     expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_callee_binding" },
     });
   });
 });
@@ -2758,7 +2758,7 @@ describe("buildCallGraph: inline callback-argument invocation (VT-213)", () => {
     });
   });
 
-  it("still falls back to unsupported_construct for a NAMED callback reference (not an inline literal)", async () => {
+  it("still falls back to unsupported_literal_receiver for a NAMED callback reference (not an inline literal)", async () => {
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
     const entry = write(
@@ -2773,11 +2773,11 @@ describe("buildCallGraph: inline callback-argument invocation (VT-213)", () => {
     const mainNode = findNode(graph, (n) => n.name === "main");
     const edge = graph.edges.find((e) => e.from === mainNode?.id);
     expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_literal_receiver" },
     });
   });
 
-  it("still falls back to unsupported_construct when more than one inline callback argument is present", async () => {
+  it("still falls back to unsupported_receiver_binding when more than one inline callback argument is present", async () => {
     const root = tempProject();
     write(
       root,
@@ -2801,7 +2801,7 @@ describe("buildCallGraph: inline callback-argument invocation (VT-213)", () => {
     const mainNode = findNode(graph, (n) => n.name === "main");
     const edge = graph.edges.find((e) => e.from === mainNode?.id);
     expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_receiver_binding" },
     });
   });
 });
@@ -2898,7 +2898,7 @@ describe("buildCallGraph: local reference aliasing (VT-214)", () => {
     });
   });
 
-  it("still falls back to unsupported_construct when the alias is declared with let (reassignment not tracked)", async () => {
+  it("still falls back to unsupported_callee_binding when the alias is declared with let (reassignment not tracked)", async () => {
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
     const entry = write(
@@ -2916,11 +2916,11 @@ describe("buildCallGraph: local reference aliasing (VT-214)", () => {
     const mainNode = findNode(graph, (n) => n.name === "main");
     const edge = graph.edges.find((e) => e.from === mainNode?.id);
     expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_callee_binding" },
     });
   });
 
-  it("still falls back to unsupported_construct when the alias value is itself unresolvable", async () => {
+  it("still falls back to unsupported_callee_binding when the alias value is itself unresolvable", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -2936,7 +2936,7 @@ describe("buildCallGraph: local reference aliasing (VT-214)", () => {
     const mainNode = findNode(graph, (n) => n.name === "main");
     const edge = graph.edges.find((e) => e.from === mainNode?.id);
     expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_callee_binding" },
     });
   });
 });
@@ -3063,7 +3063,7 @@ describe("buildCallGraph: implicit constructor resolution (VT-215)", () => {
       expect(edge.resolution.target).not.toBe(constructorNode?.id);
     } else {
       expect(edge).toMatchObject({
-        resolution: { kind: "unknown", reason: "unsupported_construct" },
+        resolution: { kind: "unknown", reason: "unsupported_receiver_binding" },
       });
     }
   });
@@ -3172,7 +3172,7 @@ describe("buildCallGraph: constant computed-key evaluation (VT-217)", () => {
     });
   });
 
-  it("still falls back to unsupported_construct when the element access key is not statically resolvable", async () => {
+  it("still falls back to unsupported_callee_binding when the element access key is not statically resolvable", async () => {
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
     const entry = write(
@@ -3190,11 +3190,11 @@ describe("buildCallGraph: constant computed-key evaluation (VT-217)", () => {
     const mainNode = findNode(graph, (n) => n.name === "main");
     const edge = graph.edges.find((e) => e.from === mainNode?.id);
     expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_callee_binding" },
     });
   });
 
-  it("still falls back to unsupported_construct when the key is a let (reassignment not tracked)", async () => {
+  it("still falls back to unsupported_callee_binding when the key is a let (reassignment not tracked)", async () => {
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
     const entry = write(
@@ -3213,7 +3213,7 @@ describe("buildCallGraph: constant computed-key evaluation (VT-217)", () => {
     const mainNode = findNode(graph, (n) => n.name === "main");
     const edge = graph.edges.find((e) => e.from === mainNode?.id);
     expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_construct" },
+      resolution: { kind: "unknown", reason: "unsupported_callee_binding" },
     });
   });
 });

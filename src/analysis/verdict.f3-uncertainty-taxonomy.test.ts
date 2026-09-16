@@ -169,6 +169,11 @@ describe("F3 test matrix: each construct reaches its own category", () => {
    * NON-widening (whatever it reaches was already in scope, in a module
    * already loaded), which is exactly what makes it a bounded, closeable
    * coverage gap rather than an escape.
+   *
+   * Since P1-B1 the row also pins WHICH gap: the callee here is the result
+   * of a call, so it is an `unsupported_computed_callee`. Asserting the
+   * category alone would keep passing if every shape collapsed back into
+   * one bucket, which is the regression this matrix exists to catch.
    */
   it("A: an unsupported construct is unmodeled_construct", async () => {
     const finding = await run({
@@ -187,7 +192,7 @@ describe("F3 test matrix: each construct reaches its own category", () => {
 
     expect(finding?.verdict).toBe("UNKNOWN");
     expect(categoriesOf(finding)).toContain("unmodeled_construct");
-    expect(reasonsOf(finding)).toContain("unsupported_construct");
+    expect(reasonsOf(finding)).toContain("unsupported_computed_callee");
   });
 
   /**
