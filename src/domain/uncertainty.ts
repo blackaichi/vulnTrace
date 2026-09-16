@@ -109,6 +109,25 @@ export const UNCERTAINTY_REASONS = [
   "unresolved_module",
   "unresolved_target",
   "unsupported_construct",
+
+  // --- The frontend gap subtypes of `unsupported_construct` (P1-B1) ---
+  //
+  // Declaration order here is the canonical OUTPUT order within
+  // `unmodeled_construct`, so it is fixed deliberately and STRUCTURALLY:
+  // the callee-position gap first, then the receiver-provenance gaps in
+  // the order `unsupported-construct.ts` itself tests them. It is
+  // explicitly NOT sorted by measured frequency -- frequency is a property
+  // of whichever corpus was last run (RWF-041 § 6), and baking it into
+  // output order would make a scan's bytes depend on a measurement, and
+  // invite the ordering to be read as a priority claim. No rule reads it.
+  "unsupported_callee_binding",
+  "unsupported_receiver_binding",
+  "unsupported_this_receiver",
+  "unsupported_indexed_receiver",
+  "unsupported_call_result_receiver",
+  "unsupported_literal_receiver",
+  "unsupported_expression_receiver",
+  "unsupported_computed_callee",
   "declaration_only_resolution",
   "aliased_require",
   "create_require",
@@ -172,7 +191,45 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // reaches is already in scope, in a module already loaded), which is
   // precisely why it is a coverage gap rather than an escape: the work to
   // close it is bounded and local.
+  // Since P1-B1 it is also the FLOOR of a family rather than the whole
+  // family: the eight subtypes below name the specific gap each occurrence
+  // actually is, measured from the corpora rather than invented (see
+  // code-intelligence/unsupported-construct.ts). They are all classified
+  // here, identically, for one reason -- the split is OBSERVATIONAL. Every
+  // one of them is the same kind of work (`unmodeled_construct`) and the
+  // same soundness class (non-widening) as the token they refine, so no
+  // proof, verdict or category count moves when one is emitted instead of
+  // another. Only the explanation gets more specific.
   unsupported_construct: "unmodeled_construct",
+  // The callee is a bare name that could not be attributed to any import,
+  // declaration, parameter, builtin or known global -- `isArray()`,
+  // `new Ctor()`.
+  unsupported_callee_binding: "unmodeled_construct",
+  // A member call whose RECEIVER is a name whose value could not be
+  // traced -- `stack.set()`, `options.decoder()`.
+  unsupported_receiver_binding: "unmodeled_construct",
+  // A member call on `this`/`super`: no class-instance receiver model
+  // exists, and there is no binding in scope to look up instead.
+  unsupported_this_receiver: "unmodeled_construct",
+  // The receiver came out of an index the binder cannot read --
+  // `funcs[index].apply()`. Distinct from `dynamic_member_access`,
+  // where the dynamic property IS the callee; see
+  // unsupported-construct.ts for why that one is not re-used here.
+  unsupported_indexed_receiver: "unmodeled_construct",
+  // The receiver is whatever a call returned -- `f().m()`. Closeable
+  // only by interprocedural return modeling.
+  unsupported_call_result_receiver: "unmodeled_construct",
+  // The receiver is constructed inline, so its value IS known and only
+  // its members are not -- `/re/.test()`, `[a, b].join()`. The only
+  // receiver subtype that is not a provenance problem.
+  unsupported_literal_receiver: "unmodeled_construct",
+  // The receiver is produced by an operator the analyzer does not
+  // evaluate -- `(a || b).m()`, `(c ? x : y).m()`.
+  unsupported_expression_receiver: "unmodeled_construct",
+  // The callee is not a name or a member access at all -- an IIFE, a
+  // returned function invoked directly (`f()()`), or one chosen by an
+  // operator (`(Map || ListCache)()`).
+  unsupported_computed_callee: "unmodeled_construct",
   // Both workspace shapes are genuine, closeable frontend gaps: a `pkg-*`
   // or brace pattern is documented npm workspace syntax this analyzer
   // declines to interpret, and a `pnpm-workspace.yaml` layout is a file it

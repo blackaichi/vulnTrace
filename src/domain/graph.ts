@@ -63,6 +63,23 @@ export type DynamicCallReason =
   | "unresolved_module"
   | "unresolved_target"
   | "unsupported_construct"
+  /**
+   * P1-B1 -- the eight measured frontend gaps that `unsupported_construct`
+   * used to carry undifferentiated, plus the token itself, retained as
+   * their runtime floor. Every one of them is NON-WIDENING and
+   * `unmodeled_construct`, exactly as the single token was: the split
+   * explains an UNKNOWN and moves no soundness boundary. See
+   * `code-intelligence/unsupported-construct.ts` for what each one means
+   * and how an occurrence is assigned to one.
+   */
+  | "unsupported_callee_binding"
+  | "unsupported_receiver_binding"
+  | "unsupported_this_receiver"
+  | "unsupported_indexed_receiver"
+  | "unsupported_call_result_receiver"
+  | "unsupported_literal_receiver"
+  | "unsupported_expression_receiver"
+  | "unsupported_computed_callee"
   | "declaration_only_resolution"
   | "aliased_require"
   | "create_require"
@@ -287,7 +304,23 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "loader_hook_mutation":
     case "loader_capability_escape":
       return true;
+    // P1-B1: every `unsupported_*` subtype is non-widening for exactly the
+    // reason the undifferentiated token was -- each one names a value that
+    // is already in scope, in a module the graph already loaded, so none of
+    // them can introduce a module graph construction never discovered.
+    // Listed individually rather than matched by prefix deliberately: the
+    // `never` floor below only stays load-bearing while every reason is
+    // named, and a prefix test would silently absorb a future
+    // `unsupported_*` token that nobody had classified.
     case "unsupported_construct":
+    case "unsupported_callee_binding":
+    case "unsupported_receiver_binding":
+    case "unsupported_this_receiver":
+    case "unsupported_indexed_receiver":
+    case "unsupported_call_result_receiver":
+    case "unsupported_literal_receiver":
+    case "unsupported_expression_receiver":
+    case "unsupported_computed_callee":
     case "dynamic_member_access":
     case "unresolved_target": {
       return false;
