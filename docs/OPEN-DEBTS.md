@@ -153,16 +153,30 @@ discovered.
 **F7 does not plan its remediation**, and this document does not schedule
 it.
 
-### D-07 — `unsupported_construct` is too coarse
+### D-07 — `unsupported_construct` was too coarse — CLOSED by P1-B1
 
-**What.** `unsupported_construct` is the call graph's undifferentiated
-catch-all for "a callee expression shape I have no rule for". It is the
-whole of the corpus's top unmodeled-construct ranking.
+**What it was.** `unsupported_construct` was the call graph's
+undifferentiated catch-all for "a callee expression shape I have no rule
+for", and the whole of the corpus's top unmodeled-construct ranking.
+Knowing there were 42 occurrences of it told nobody which syntax to
+implement.
 
-**Why it matters.** Knowing there are 42 occurrences of it does not tell
-anyone which syntax to implement. The measurement F3 exists to produce is
-currently blocked on this one token, which is why decomposing it is P1-B's
-first step (§ 4).
+**What closed it.** P1-B1 (`tests/validation/FINDINGS.md` RWF-041) measured every
+occurrence in the real-world and adversarial corpora and split the token
+into **eight** subtypes named for the modeling gap behind each one, with
+`unsupported_construct` retained as their runtime floor. Every occurrence
+in the measured corpus now carries a specific token and the floor's count
+is **zero**. The distribution is in [`SCORECARD.md` § 7.1](SCORECARD.md),
+reproducible with `node scripts/measure-frontend-gaps.mjs`.
+
+**What it did NOT do, and this matters.** Coverage is unchanged: the
+analyzer models exactly what it modelled before, no verdict moved, and the
+corpus's UNKNOWN count is identical. Splitting a reason is an
+observability change, never a capability one.
+
+**What replaced it.** Not a debt but a caution, carried forward into D-12:
+occurrence counts are still not work items, and the corpus's *blocking*
+occurrences all come from a single case.
 
 ### D-08 — Parsing and graph construction remain the dominant cost
 
@@ -228,12 +242,35 @@ is reconstructed or invented; only the citation is accounted for.
 
 **What.** After excluding benchmark target-intelligence and configuration
 artifacts, the analyzer-attributable `UNKNOWN` pressure in the real-world
-corpus is concentrated in **frontend and modeling uncertainty**, and is
-dominated by the single coarse token in D-07.
+corpus is concentrated in **frontend and modeling uncertainty**. Since
+P1-B1 closed D-07 it is no longer dominated by one opaque token: it is
+dominated by two named gaps, `unsupported_receiver_binding` and
+`unsupported_callee_binding`, which together are 75% of the corpus's
+graph-wide frontend occurrences and 90% of the ones that actually block a
+verdict.
 
 **This is a strategic signal, not a defect.** It is the evidence P1-B is
-prioritized from. See [`SCORECARD.md` § 7](SCORECARD.md) for the
-measurement, and § 2 below for the distinction it rests on.
+prioritized from. See [`SCORECARD.md` § 7.1](SCORECARD.md) for the
+per-subtype measurement, and § 2 below for the distinction it rests on.
+
+### D-12 — The frontend-gap ranking rests on one blocking case
+
+**What.** Every one of the 42 frontend occurrences that actually blocks a
+verdict in the real-world corpus comes from **a single case** (RWB-05),
+where they collapse into 19 distinct call sites in 13 functions. The
+graph-wide distribution spans 17 projects and 25 packages and is a far
+broader sample, but it measures constructs the analyzer *meets*, not
+constructs that *cost a verdict*.
+
+**Why it matters.** The two columns rank the subtypes differently, and a
+reader who takes either one alone as a work plan will be wrong in a
+different direction. Worse, RWB-05's blockers sit in `qs`'s *stringify*
+path while its vulnerable target is in the *parse* path — so RWF-002
+reachability scoping could discharge all 42 without modeling anything.
+
+**Not closeable by measurement.** It closes by the corpus gaining more
+cases whose vulnerable target is genuinely behind a frontend gap, not by
+re-reading the numbers already taken.
 
 ## 2. Target intelligence is not analyzer uncertainty
 

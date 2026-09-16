@@ -12024,3 +12024,474 @@ limitation rather than solving it.
 that F7 touches remains the added `src/testing/docs-contract.test.ts`, and
 `tsconfig.build.json` excludes both `src/**/*.test.ts` and `src/testing/**`,
 so the shipped artifact cannot be affected by it — 296 files, unchanged.
+
+---
+
+## RWF-041 (P1-B1 / P1-B2) — The frontend gap was measurable in aggregate and unactionable in detail, so P1-B had nothing to prioritize from
+
+The first task of P1-B, and deliberately not a capability. It adds no
+frontend support, resolves no additional call, moves no verdict anywhere in
+either corpus, and closes no known failure. What it changes is what the
+analyzer can *say* about the code it already fails to model.
+
+Central rule being enforced: *a number that names no mechanism is not
+evidence, and splitting a reason is never the same thing as closing a gap.*
+
+### F7 handoff
+
+Base: `094b4b9` (`docs: close the remaining F7 audit findings, and record
+the remediation`), certified before editing — clean tree, identical to
+`origin/main`, F7/RWF-040 present. Baseline at that commit, all green:
+
+| gate | result |
+| --- | --- |
+| `npm run test:foundation` | 29 files / 1,356 tests, 45.98s |
+| `npm test` | 169 files / 4,198 tests, 267.96s |
+| `npm run test:adversarial` | 2 files / 124 tests, 55.02s |
+| `npm run test:performance` | 1 file / 3 tests |
+| `node scripts/measure-uncertainty.mjs` (LIVE) | reproduced `docs/SCORECARD.md` § 7 exactly: 42 frontend, 65 target-intelligence, 41 identity, 5 value |
+
+### 1. The defect: one token, eight different jobs
+
+`docs/SCORECARD.md` § 7 could say the real-world corpus contained **42
+`unsupported_construct` occurrences** and nothing more. That number names
+no syntax, no mechanism and no owner. It cannot distinguish "we do not
+track what a local variable holds" from "we have no class-instance model"
+from "we do not evaluate `a || b`" — three different pieces of work, with
+three different owners and three different risk profiles, reported as one
+bucket. `docs/OPEN-DEBTS.md` D-07 recorded this as the blocker on P1-B's
+own prioritization; this record closes it.
+
+The rule the decomposition had to respect is the one that makes the F3
+taxonomy worth having at all: **the six UNCERTAINTY CATEGORIES ARE
+UNCHANGED**. Nothing here is a seventh category. The new detail lives one
+level below `unmodeled_construct`, at the reason level, and it explains an
+`UNKNOWN` that the proof rules had already decided on their own.
+
+### 2. Emitter inventory
+
+Every production path that emits `unsupported_construct` was traced before
+anything was edited. There are exactly **two**, and they are the same
+construct twice:
+
+| # | Site | Function | Shape available | Consumer | Category | Target relevance known here? |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1 | `src/code-intelligence/call-graph.ts` (`classifyCall`, terminal fallback) | call expression | the callee `ts.Expression`, the whole `SourceFile`, the file's `ModuleModel` | `CallEdge.resolution.reason` → reachability blockers → `unknownReasons`, `evidence.reasons`, `diagnostics` | `unmodeled_construct` | **No.** The graph is built before any advisory target is resolved. |
+| 2 | `src/code-intelligence/call-graph.ts` (`classifyNew`, terminal fallback) | `new` expression | same | same | `unmodeled_construct` | **No**, same reason. |
+
+Both are reached only after every resolution path has already failed —
+loader classification, `bindCallee`, re-export chasing, local function
+lookup, known-global and builtin checks, VT-208 instance-method
+type-checking, VT-210 higher-order flow, VT-214 aliasing, VT-213 inline
+callbacks. That ordering is why the family is a *residue* rather than a
+category: it is, by construction, whatever is left.
+
+The fact that **target relevance is unknowable at both sites** is load
+bearing for § 8 below. A subtype can never mean "this matters".
+
+### 3. Raw shapes, measured before any name was chosen
+
+Both emitters were temporarily instrumented (a throwaway probe, never
+committed) to record the callee's `SyntaxKind`, its receiver chain, the
+containing file and the source text, then run over both corpora:
+
+- the 17-case real-world corpus (`tests/validation`, live OSV) — **2,351** occurrences;
+- the 124-test adversarial corpora (`tests/adversarial` v1 + v2) — **11** occurrences.
+
+**2,362 raw occurrences, 21 distinct raw `(site, calleeKind, rootKind,
+depth)` shapes.** Ranked:
+
+| raw shape | n |
+| --- | --- |
+| `call` PropertyAccess, root Identifier, depth 1 | 1,105 |
+| `call` Identifier | 543 |
+| `call` PropertyAccess, root CallExpression | 176 |
+| `call` PropertyAccess, root Identifier, depth 2 | 122 |
+| `call` PropertyAccess, root `this`, depth 1 | 114 |
+| `call` PropertyAccess, root `this`, depth 2 | 76 |
+| `call` PropertyAccess, root RegExp literal | 47 |
+| `new` Identifier | 28 |
+| `call` FunctionExpression (IIFE) | 24 |
+| `call` PropertyAccess, root Parenthesized | 24 |
+| `call` PropertyAccess, root NewExpression | 23 |
+| `call` PropertyAccess, root ArrayLiteral | 20 |
+| `call` ElementAccess, root Identifier | 18 |
+| `call` CallExpression (`f()()`) | 10 |
+| …7 more, ≤ 6 each | 27 |
+
+The raw table is exactly why the vocabulary is **not** one reason per
+`SyntaxKind`. Three readings decided the design:
+
+1. `a.b()` and `a['b']()` are the *same* failure — `symbol-binder.ts`
+   reads a string-literal key statically and fails on both identically.
+   Separate `SyntaxKind`s, one gap.
+2. `x.m()` and `this.m()` share a `SyntaxKind` and are *different*
+   failures — one is a binding you could look up, the other has no binding
+   to look up at all.
+3. Parentheses, `!`, `as` and `satisfies` appeared as "shapes" purely
+   because the probe did not unwrap them. They are spellings, not
+   semantics.
+
+### 4. The final vocabulary
+
+The organizing question is always **where did the value being called come
+from?** — never what the parser called the node.
+
+| Subtype | Means | Example |
+| --- | --- | --- |
+| `unsupported_callee_binding` | a bare name attributable to no import, declaration, parameter, builtin or global | `isArray(x)`, `new Ctor(o)` |
+| `unsupported_receiver_binding` | member call whose receiver is a name whose value was never traced | `stack.set(k, v)`, `stack['delete'](k)` |
+| `unsupported_this_receiver` | member call on `this`/`super`; no class-instance receiver model | `this.parse(text)` |
+| `unsupported_indexed_receiver` | the receiver came out of an index the binder cannot read | `funcs[index].apply(...)` |
+| `unsupported_call_result_receiver` | the receiver is whatever a call returned | `makeRe().test(v)` |
+| `unsupported_literal_receiver` | the receiver is constructed inline — value known, members not modelled | `/re/.exec(v)`, `[a, b].join('\|')` |
+| `unsupported_expression_receiver` | the receiver is produced by an operator the analyzer does not evaluate | `(value \|\| '').trim()` |
+| `unsupported_computed_callee` | the callee is not a name or member access at all | `(function () {})()`, `f()()` |
+| `unsupported_construct` | **retained**, as the runtime floor | anything unmeasured or future |
+
+Eight subtypes from 21 raw shapes. Each satisfies the design rules: it
+describes an observable frontend condition, is derivable from the callee
+alone, is deterministic, and implies nothing about relevance,
+exploitability or any commitment to implement it.
+
+**Deviation from the task's § 11, stated deliberately.** The task names the
+fallback `unsupported_construct_other`. The fallback is instead the
+existing `unsupported_construct` token. Introducing a new name would have
+*removed* a value from a published schema enum, whereas retaining it keeps
+the change strictly additive (§ 9) and keeps the floor's meaning exactly
+what it always was. The requirement — an explicitly retained, reported,
+justified fallback — is met; only the spelling differs.
+
+### 5. Mapping rules, and the one precedence decision
+
+Classification (`src/code-intelligence/unsupported-construct.ts`) unwraps
+parentheses/`!`/`as`/`satisfies`, then peels every member step whose
+property name is statically readable, then names whatever the receiver
+turned out to be.
+
+The only non-obvious rule is **precedence**, and it is stated as one
+sentence so two readers cannot order it differently: *when a callee has
+more than one unmodeled step, the step nearest the call wins.*
+`this[LRU_LIST].toArray()` is an `unsupported_indexed_receiver`, not an
+`unsupported_this_receiver` — modeling `this` alone would still not
+attribute the value whose member is being called.
+
+**Exhaustiveness is deliberately NOT compiler-enforced here**, unlike
+`isClosureWideningReason`'s `never` floor. A `never` check would turn a
+future TypeScript syntax addition into a build break; this function must
+instead return the generic floor for anything it has not been taught, so a
+new construct degrades to `UNKNOWN` rather than crashing a scan or — far
+worse — resolving into a negative proof. Exhaustiveness *is* enforced in
+the two places where it protects soundness: `DynamicCallReason` →
+`isClosureWideningReason` (a `never` parameter) and `UncertaintyReason` →
+`UNCERTAINTY_REASON_CATEGORY` (a total `Record`). Adding a subtype without
+classifying it in both is a compile error naming the token.
+
+### 6. The corpus distribution
+
+Reproducible: `node scripts/measure-frontend-gaps.mjs`. Rendered into
+`docs/SCORECARD.md` § 7.1 from `docs/scorecard-data/measurements.json`.
+
+**Two counts per subtype, and confusing them is the whole trap.**
+*Graph-wide* is every unresolved edge anywhere the builder walked, across
+all 17 projects — the shape of real JavaScript, not a work queue.
+*Blocking* is the subset a search for a real vulnerable target actually
+traversed — the occurrences that cost a verdict.
+
+| Subtype | Graph-wide | Blocking | Projects | Packages | Distinct sites | Domain |
+| --- | --- | --- | --- | --- | --- | --- |
+| `unsupported_receiver_binding` | 1,185 | 10 | 16 | 25 | 612 | value-flow |
+| `unsupported_callee_binding` | 571 | 28 | 11 | 21 | 352 | value-flow |
+| `unsupported_this_receiver` | 190 | 0 | 5 | 5 | 88 | frontend syntax/modeling |
+| `unsupported_call_result_receiver` | 176 | 0 | 13 | 12 | 127 | call graph |
+| `unsupported_literal_receiver` | 98 | 0 | 13 | 13 | 61 | frontend syntax/modeling |
+| `unsupported_indexed_receiver` | 68 | 0 | 12 | 11 | 57 | value-flow |
+| `unsupported_computed_callee` | 42 | 4 | 10 | 11 | 26 | call graph |
+| `unsupported_expression_receiver` | 21 | 0 | 10 | 9 | 16 | value-flow |
+| `unsupported_construct` (floor) | **0** | **0** | 0 | 0 | 0 | — |
+| **total** | **2,351** | **42** | | | | |
+
+**Mapping coverage is complete.** Every measured occurrence carries a
+specific subtype; the retained floor's count is **zero** in both corpora.
+The floor is kept anyway — see § 5 — and is proven reachable by a focused
+test (`super()`, a shape no corpus occurrence exercised and which therefore
+deliberately got no subtype of its own).
+
+**Before/after reconciliation:**
+
+```
+BEFORE   unsupported_construct .............. 42
+AFTER    unsupported_callee_binding ......... 28
+         unsupported_receiver_binding ....... 10
+         unsupported_computed_callee ........  4
+         unsupported_construct (floor) ......  0
+                                             ---
+                                              42
+```
+
+Every other reason count in the corpus is unchanged: 65
+`no_vulnerable_symbol_rule`, 37 `unresolved_target`, 5
+`dynamic_member_access`, 4 `vulnerable_target_unresolved`. 85 findings, 70
+`UNKNOWN`. **The UNKNOWN count did not move, and it was not supposed to.**
+
+### 7. Concentration, and the trap in it
+
+Graph-wide: top-1 share **50.4%** (`unsupported_receiver_binding`), top-3
+**82.8%**, long tail (5 subtypes) **17.2%**. Blocking: top-1 **66.7%**
+(`unsupported_callee_binding`), top-2 **90.5%**.
+
+**The two columns rank the subtypes differently, and that disagreement is
+the most useful thing in the measurement.** The most common construct in
+real JavaScript is not the one that most often costs a verdict.
+
+Project concentration cuts the other way for each:
+`unsupported_receiver_binding` appears in **16 of 17** projects and **25**
+packages — it is a property of JavaScript, not of one library.
+`unsupported_this_receiver`, third by graph-wide count, appears in only
+**5** projects and **5** packages (`fast-xml-parser`, `lodash`, `semver`,
+`semver-vulnerable`, `yallist`) — class-heavy libraries. Ranking it third
+on occurrences alone would have been exactly the § 23 mistake.
+
+**Occurrences are not distinct gaps.** 2,351 occurrences collapse into
+1,349 distinct call sites; the 42 blocking occurrences collapse into **19
+distinct sites in 13 functions**, 13 of them at a single site
+(`qs/lib/stringify.js#stringify@58:17`).
+
+### 8. Target relevance, sampled honestly
+
+All 42 blocking occurrences come from **one case**, RWB-05, across five
+packages (`qs` 27, `get-intrinsic` 12, `object-inspect` 1, `call-bound` 1,
+`es-define-property` 1).
+
+Reading the actual sites: they lie in `qs`'s **`stringify`** path and in
+the `get-intrinsic`/`call-bound` intrinsic-lookup helpers it pulls in. The
+vulnerable target for `GHSA-hrpp-h998-j3pp` is in `qs`'s **`parse`** path.
+
+- *clearly irrelevant to the target*: **none provable** — the current
+  architecture cannot prove a blocker irrelevant, which is RWF-002 itself.
+- *likely on a target-relevant path*: **none**. Nothing in the sample is on
+  the `parse` path.
+- *unknown relevance*: **all 42**.
+
+They block the verdict today only because the family-C exhaustive-search
+proof is unscoped: any unresolved edge in the reachable subgraph forces
+`UNKNOWN`. **So the one target-relevant sample available is a case where
+frontend modeling may be the wrong lever entirely** — RWF-002 reachability
+scoping could discharge all 42 without modeling a single construct.
+
+This is recorded, not resolved. **RWF-002 remains open**, and its
+occurrence data is used here for measurement only.
+
+### 9. What moved in production, and what did not
+
+Production change is confined to making the decomposition observable:
+
+- `src/code-intelligence/unsupported-construct.ts` — new, the classifier.
+- `src/code-intelligence/call-graph.ts` — the two fallbacks call it.
+  Nothing else: same edge, same `type`, same `from`, same location, same
+  `unknown` resolution.
+- `src/domain/graph.ts` — eight tokens added to `DynamicCallReason`, each
+  classified **non-widening**, exactly as the token they refine.
+- `src/domain/uncertainty.ts` — eight tokens added, each classified
+  **`unmodeled_construct`**, exactly as the token they refine.
+- `schemas/result.schema.json` — both reason enums extended.
+
+**Schema compatibility is additive.** No value was removed and no value
+changed meaning. All nine share `unmodeled_construct`, so a consumer
+aggregating by category is unaffected. A consumer matching the literal
+string `unsupported_construct` will see fewer of them; the schema
+description now says so and tells such a consumer to match the
+`unsupported_` prefix or aggregate by category instead.
+
+### 10. Differential: base vs branch, whole real-world corpus
+
+Both builds were run over identical copies of all 17 fixtures and compared
+field by field (`scan`, `coverage`, `diagnostics`, `unreportedCandidates`,
+and every field of every finding).
+
+**Disallowed differences: 0.** Identical across all 17 cases: finding
+count, vulnerability identity, package, **version**, **`packageInstance`**,
+target, **verdict**, confidence, evidence path,
+`confirmedAbsentFromModuleLoadClosure`, `confirmedAbsentInstance`,
+`unreportedCandidates` disposition and reason, coverage, and the provider
+query set.
+
+**No new `NOT_AFFECTED`. No new `AFFECTED`.** Verdicts are byte-identical.
+
+Intended deltas, and only these:
+
+- **`unknownReasons`**, on exactly one finding (RWB-05 / `qs@6.10.1` /
+  `node_modules/qs`), reconciling 84 → 84 occurrences.
+- **`diagnostics`**, 2,351 entries relabelled. Verified element by element:
+  same count, same order, same `source`, and **same site** — only the
+  leading reason token differs, and only from `unsupported_construct` to an
+  `unsupported_*` subtype.
+- `evidence.reasons`, same count, same sites, same token change.
+
+### 11. Mutation checks
+
+**Ownership (§ 41).** Re-pointing `unsupported_receiver_binding`'s branch
+at `unsupported_this_receiver` fails **5** focused tests. The vocabulary is
+genuinely gated; no test passes merely because the category is right.
+
+**Observational-only (§ 42).** Re-pointing the same branch at the generic
+`unsupported_construct` floor changes the reason detail as expected (10
+occurrences move to the floor in RWB-05) and produces **0 disallowed
+differences** in the full differential — verdicts, proofs, evidence,
+targets, `packageInstance` and provider queries all still identical to
+base, and the totals still reconcile at 84. A subtype can be moved
+anywhere inside the family without moving anything a consumer decides on.
+That is the proof that this is a reporting change.
+
+### 12. Overlap with `DynamicCallReason`, deliberately not absorbed
+
+`dynamic_member_access` already names a precise construct: a dynamic
+property **in callee position** (`obj[key]()`). `symbol-binder.ts` emits it
+before the fallback is reached, it stays `value_uncertainty`, and this work
+does not touch it — proven by a focused test.
+
+The near neighbour is `unsupported_indexed_receiver`, where the dynamic
+index produced the **receiver** and the call itself is an ordinary named
+member access (`funcs[index].apply()`). These 68 occurrences were *not*
+re-routed onto the existing token, on purpose: re-routing would move them
+to a different uncertainty **category**, which would stop the before/after
+totals reconciling and would be a semantic change, not the observability
+change this task is scoped to. Whether they *should* be re-routed is a
+real question and is left open rather than answered silently here.
+
+### 13. Candidate capability blocks (P1-B2)
+
+Grouped by shared mechanism, shared code path and shared fail-closed
+boundary — not by popularity.
+
+| Block | Subtypes | Graph-wide | Blocking | Mechanism |
+| --- | --- | --- | --- | --- |
+| **A — named binding attribution** | `callee_binding`, `receiver_binding` | 1,756 (74.7%) | 38 (90.5%) | resolve a NAME (callee or receiver) to the value it was bound to |
+| **B — receiver provenance from expressions** | `call_result_receiver`, `literal_receiver`, `indexed_receiver`, `expression_receiver` | 363 (15.4%) | 0 | evaluate a receiver EXPRESSION to a value |
+| **C — class-instance / `this` model** | `this_receiver` | 190 (8.1%) | 0 | model the receiver a method body runs against |
+| **D — computed callee** | `computed_callee` | 42 (1.8%) | 4 | the callee is an expression, not a name |
+
+Block B is the weakest as a block: its four subtypes share a *position*
+but not a mechanism (interprocedural returns, builtin prototypes, index
+evaluation and operator folding are four different jobs). It is listed as
+one candidate because a reader will otherwise assemble it themselves; it
+should be split before anyone implements it.
+
+### 14. Recommended block #1 — A, named binding attribution
+
+**Evidence.** The only recommendation both measurements agree on. Block A
+is **74.7%** of graph-wide occurrences and **90.5%** of blocking ones; it
+appears in **16 of 17** projects and **25** packages, so it is not one
+library's idiom; and its two subtypes share one mechanism — attributing a
+name to the value it was bound to — differing only in whether the name sits
+in callee or receiver position.
+
+**Architectural hotspots** (recorded, deliberately not refactored):
+`bindCallee`/`analyzeCalleeShape` (`src/code-intelligence/symbol-binder.ts`),
+and in `src/code-intelligence/call-graph.ts` the existing partial machinery
+this gap is the documented fallback of — `resolveLocalAlias` (VT-214),
+`resolveHigherOrderCallTarget` (VT-210), `resolveInlineCallbackArgument`
+(VT-213), `findLocalFunctionNodeId`, plus `resolveSingleAssignmentValue`
+(`local-values.ts`). The dominant real shape is the module-scope capture —
+`var isArray = Array.isArray; … isArray(x)` and the
+`callBound('Array.prototype.join')` idiom — which today falls through every
+one of those.
+
+**Expected uncertainty reduction: unknown, and deliberately not
+estimated.** Occurrences are not work items and blockers are not tasks.
+The honest statement is that Block A is where the *evidence* concentrates,
+not that closing it removes 1,756 UNKNOWNs — and the RWB-05 reading in § 8
+is a live warning that scoping, not modeling, may be what discharges the
+blocking ones.
+
+**Soundness risks, in priority order.** Every one of these is a risk of
+*fabricating a resolved edge*, which is the only kind of mistake that can
+manufacture a false `NOT_AFFECTED`:
+
+1. **Reassignment.** A binding traced to one value that is later reassigned
+   must not resolve. `let`/`var` and any captured binding assigned more
+   than once must stay `UNKNOWN` (VT-214 already draws this line for `const`
+   and must not be widened casually).
+2. **Shadowing.** An inner binding with the same name is a different value.
+3. **Conditional initialization.** `var f = a ? g : h` is two values; one
+   must not be picked.
+4. **Cross-module capture.** A name bound to an imported value must go
+   through the existing resolution path, not a new parallel one.
+5. **Non-widening must be preserved.** If a newly-resolvable binding can
+   name a *module*, it is a loader construct and belongs to
+   `loader-constructs.ts`, not here.
+
+### 15. Recommended block #2 — C, the class-instance / `this` model
+
+**Evidence.** After Block A, C is the largest single coherent mechanism
+(190 occurrences, 88 distinct sites) and the only remaining subtype that is
+one mechanism rather than a position. It also has an existing
+architectural home: VT-208/VT-216 already resolve instance methods through
+the TypeScript type checker for *named* receivers, and `this` is the case
+they do not cover.
+
+**Stated honestly: C is weaker evidence than A.** It is concentrated in
+**5 of 17** projects and 5 packages, all class-heavy, and it blocks
+**nothing** in the corpus today. Block B has more occurrences (363) and
+wider spread (13 projects) but is not one mechanism; if B is split, its
+`call_result_receiver` half (176, 13 projects, 12 packages) is a legitimate
+rival to C for the #2 slot, and the choice between them should be re-made
+against a corpus that has more than one blocking case.
+
+### 16. Parallelization judgment — SEQUENTIAL
+
+Blocks A and C **should not be implemented in parallel.** The
+independence was looked for and is not there:
+
+- **Shared code path.** Both land in the same fallback ladder in
+  `classifyCall`. A and C both insert resolution attempts into it, and the
+  ladder's ORDER is semantically load-bearing (VT-305's builtin check is
+  explicitly ordered after VT-213 for a reason recorded in its own comment).
+  Two concurrent edits to that ordering cannot be reviewed independently.
+- **Shared resolver.** C's natural implementation extends
+  `resolveInstanceMethod`, which is reached only after A's paths fail;
+  changing which calls A resolves changes which calls C ever sees.
+- **Shared differential.** Both change the edge set of the same corpus.
+  Merged concurrently, a verdict change could not be attributed to either
+  one, and verdict changes are exactly what must be attributable.
+- **Shared fixtures.** Both would extend `call-graph.test.ts`'s fallback
+  cases, which are now pinned to specific subtypes.
+
+Default was sequential; nothing displaced it. **B3 then B4, in series.**
+
+### 17. What this task explicitly did not do
+
+- **Coverage is unchanged.** Not one additional call resolves. The corpus's
+  UNKNOWN count is identical, and if it had dropped that would have been a
+  defect in this work, not a win.
+- **RWF-002 remains open**, untouched, and is the single largest caveat on
+  the blocking column.
+- No framework callbacks, no new built-in modeling, no negative-proof
+  change, no relaxation of `UNKNOWN`.
+- The `unsupported_` family is still, by construction, the *residue* of the
+  resolution ladder. A subtype is a better name for a residue, not a
+  smaller one.
+
+### 18. Limitations
+
+1. **The blocking column has a sample size of one project.** Recorded as
+   `docs/OPEN-DEBTS.md` D-12. It closes by adding corpus cases whose
+   vulnerable target is genuinely behind a frontend gap, not by re-reading
+   these numbers.
+2. **Graph-wide counts over-weight large dependencies.** `lodash` alone is
+   1,106 of the 2,351. Distinct-site and distinct-project columns are given
+   for exactly this reason and should be read first.
+3. **The remediation-domain tags in § 6 are judgments, not measurements.**
+   They are reporting metadata and no rule reads them.
+4. **`unsupported_indexed_receiver`'s relationship to
+   `dynamic_member_access` is unresolved** — see § 12.
+5. **`unsupported_literal_receiver` groups two arguably different jobs.**
+   `/re/.test(v)` needs builtin-prototype knowledge; `new Parser().parse(v)`
+   (23 of the 98) needs class-member resolution, which is VT-208's
+   territory. They are grouped because both are "the value is known right
+   here and its members are not modelled" — a provenance-free lookup, not a
+   tracing problem — but this is a judgment, and if Block B is ever split
+   the `new`-rooted half may belong with block C instead.
+6. **The measurement is live.** It queries the real OSV API, so a rerun can
+   differ because the advisory database moved rather than because this
+   repository changed.

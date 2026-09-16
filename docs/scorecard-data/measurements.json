@@ -17,56 +17,52 @@
     "TO UPDATE: run the command in the row, put the result here, then",
     "`node scripts/generate-scorecard.mjs`.",
     "",
-    "COMMIT. Values below were measured on branch",
-    "foundation-f7-docs-scorecard, whose base is dcb5da1 and whose only",
-    "change under src/ is one ADDED test file (docs-contract.test.ts).",
-    "The F7 baseline at dcb5da1 itself was: foundation 29 files / 1,356",
-    "tests; npm test 168 files / 4,192 tests; adversarial 124; perf 3 --",
-    "i.e. identical apart from that one added file's 6 tests."
+    "COMMIT. The gate rows below were re-measured on branch",
+    "p1-b1-unsupported-construct-decomposition, base 094b4b9. Against that",
+    "base (29 files / 1,356 tests foundation; 169 files / 4,198 tests for",
+    "npm test; 124 adversarial; 3 perf) the only movement is npm test's",
+    "+1 file / +23 tests, which is P1-B1's added",
+    "src/code-intelligence/unsupported-construct.test.ts. No gate changed",
+    "status and no existing test was removed."
   ],
-
   "foundationGate": {
     "command": "npm run test:foundation",
-    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
-    "measuredAt": "2026-09-16",
+    "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
+    "measuredAt": "2026-09-17",
     "deterministic": true,
     "status": "PASS",
     "files": 29,
     "tests": 1356,
-    "durationSeconds": 46.69
+    "durationSeconds": 44.78
   },
-
   "fullSuite": {
     "command": "npm test",
-    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
-    "measuredAt": "2026-09-16",
+    "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
+    "measuredAt": "2026-09-17",
     "deterministic": false,
     "status": "PASS",
-    "files": 169,
-    "tests": 4198,
-    "durationSeconds": 207.6
+    "files": 170,
+    "tests": 4221,
+    "durationSeconds": 204.97
   },
-
   "adversarial": {
     "command": "npm run test:adversarial",
-    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
-    "measuredAt": "2026-09-16",
+    "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
+    "measuredAt": "2026-09-17",
     "deterministic": true,
     "status": "PASS",
     "files": 2,
     "tests": 124
   },
-
   "performance": {
     "command": "npm run test:performance",
-    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
-    "measuredAt": "2026-09-16",
+    "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
+    "measuredAt": "2026-09-17",
     "deterministic": false,
     "status": "PASS",
     "files": 1,
     "tests": 3
   },
-
   "proofMutation": {
     "$comment": "Printed by the F4 harness inside the Foundation gate run.",
     "command": "npm run test:foundation",
@@ -80,7 +76,6 @@
     "invalidatedToAffected": 2,
     "notAPrerequisite": 11
   },
-
   "differential": {
     "$comment": [
       "The offline semantic differential asserts its own non-vacuity: every",
@@ -91,10 +86,17 @@
     "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
     "measuredAt": "2026-09-16",
     "deterministic": true,
-    "verdicts": ["AFFECTED", "NOT_AFFECTED", "UNKNOWN"],
-    "proofFamilies": ["A", "B", "C"]
+    "verdicts": [
+      "AFFECTED",
+      "NOT_AFFECTED",
+      "UNKNOWN"
+    ],
+    "proofFamilies": [
+      "A",
+      "B",
+      "C"
+    ]
   },
-
   "instanceOracle": {
     "command": "npm run test:foundation",
     "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
@@ -102,7 +104,6 @@
     "deterministic": true,
     "status": "PASS -- enumerates exactly the physical instance real Node loads, for every case"
   },
-
   "liveValidation": {
     "$comment": [
       "LIVE. Reproduced in tests/validation/REPORT.md, which the suite",
@@ -116,7 +117,7 @@
     ],
     "command": "npm run test:validation",
     "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
-    "measuredAt": "2026-09-16",
+    "measuredAt": "2026-09-17",
     "deterministic": false,
     "status": "12 passed / 5 failed (all known)",
     "total": 17,
@@ -125,7 +126,6 @@
     "knownFailures": 5,
     "unexpected": 0
   },
-
   "uncertaintyDistribution": {
     "$comment": [
       "LIVE, and the most easily misread table in the project.",
@@ -133,8 +133,10 @@
       "Measured over the 17-case real-world corpus by",
       "scripts/measure-uncertainty.mjs, which drives the real CLI against",
       "the live OSV API exactly as the validation suite does. Recorded in",
-      "tests/validation/FINDINGS.md under RWF-036 (Foundation F3), at",
-      "commit 72a925b.",
+      "tests/validation/FINDINGS.md under RWF-036 (Foundation F3), and",
+      "re-measured at P1-B1 (RWF-041), which reproduced every value below",
+      "unchanged -- P1-B1 split the frontend row's token into subtypes and",
+      "moved no count.",
       "",
       "`byDomain` is the REMEDIATION-OWNERSHIP dimension -- reporting",
       "metadata, not a seventh uncertainty category. Occurrences are",
@@ -143,8 +145,8 @@
       "completeness may discharge most without modeling any of them."
     ],
     "command": "node scripts/measure-uncertainty.mjs",
-    "commit": "72a925b",
-    "measuredAt": "2026-09-14",
+    "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
+    "measuredAt": "2026-09-16",
     "deterministic": false,
     "findings": 85,
     "unknownFindings": 70,
@@ -160,8 +162,8 @@
       {
         "domain": "frontend",
         "occurrences": 42,
-        "interpretation": "`unsupported_construct` — the call graph saw a callee shape it has no rule for. The class P1-B is prioritized from.",
-        "limitation": "One undifferentiated token. Knowing there are 42 does not tell anyone which syntax to implement — see `docs/OPEN-DEBTS.md` D-07."
+        "interpretation": "The `unsupported_*` family — the call graph saw a callee shape it has no rule for. The class P1-B is prioritized from. Since P1-B1 the 42 are broken out by specific gap in § 7.1.",
+        "limitation": "Still one number for eight different gaps, and all 42 come from a SINGLE case (RWB-05). Read § 7.1, not this row, before prioritizing anything."
       },
       {
         "domain": "target / identity resolution",
@@ -186,6 +188,129 @@
         "occurrences": 0,
         "interpretation": "No configured bound stopped any work in this corpus.",
         "limitation": "Says nothing about a project large enough to hit one."
+      }
+    ]
+  },
+  "frontendGapDistribution": {
+    "$comment": [
+      "P1-B1/P1-B2 (RWF-041) -- the decomposition of the `frontend` row",
+      "above into the specific modeling gap behind each occurrence.",
+      "",
+      "TWO COUNTS PER SUBTYPE, AND THEY ARE NOT INTERCHANGEABLE:",
+      "",
+      "`occurrences` is GRAPH-WIDE -- every unresolved edge anywhere the",
+      "graph builder walked, across all 17 projects. It describes the",
+      "shape of real JavaScript, and it is NOT a work queue.",
+      "",
+      "`blocking` is the subset a reachability search for a real",
+      "vulnerable target actually traversed, i.e. the occurrences that",
+      "cost a verdict. In this corpus every one of them comes from ONE",
+      "case (RWB-05), so the blocking column has a sample size of one",
+      "project and must not be read as a ranking on its own.",
+      "",
+      "The two columns rank the subtypes DIFFERENTLY. That disagreement",
+      "is the single most useful thing in this table.",
+      "",
+      "TO UPDATE: node scripts/measure-frontend-gaps.mjs"
+    ],
+    "command": "node scripts/measure-frontend-gaps.mjs",
+    "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
+    "measuredAt": "2026-09-16",
+    "deterministic": false,
+    "graphWideOccurrences": 2351,
+    "blockingOccurrences": 42,
+    "genericFallbackOccurrences": 0,
+    "blockingCases": 1,
+    "bySubtype": [
+      {
+        "reason": "unsupported_receiver_binding",
+        "occurrences": 1185,
+        "blocking": 10,
+        "distinctFixtures": 16,
+        "distinctPackages": 25,
+        "distinctSites": 612,
+        "domain": "value-flow",
+        "example": "`stack.set(k, v)` — the receiver is a name whose value was never traced."
+      },
+      {
+        "reason": "unsupported_callee_binding",
+        "occurrences": 571,
+        "blocking": 28,
+        "distinctFixtures": 11,
+        "distinctPackages": 21,
+        "distinctSites": 352,
+        "domain": "value-flow",
+        "example": "`isArray(x)`, `new Ctor(o)` — a bare name bound to no declaration the binder reads."
+      },
+      {
+        "reason": "unsupported_this_receiver",
+        "occurrences": 190,
+        "blocking": 0,
+        "distinctFixtures": 5,
+        "distinctPackages": 5,
+        "distinctSites": 88,
+        "domain": "frontend syntax/modeling",
+        "example": "`this.parse(text)` — no class-instance receiver model."
+      },
+      {
+        "reason": "unsupported_call_result_receiver",
+        "occurrences": 176,
+        "blocking": 0,
+        "distinctFixtures": 13,
+        "distinctPackages": 12,
+        "distinctSites": 127,
+        "domain": "call graph",
+        "example": "`makeRe().test(v)` — needs interprocedural return modeling."
+      },
+      {
+        "reason": "unsupported_literal_receiver",
+        "occurrences": 98,
+        "blocking": 0,
+        "distinctFixtures": 13,
+        "distinctPackages": 13,
+        "distinctSites": 61,
+        "domain": "frontend syntax/modeling",
+        "example": "`/re/.exec(v)`, `[a, b].join('|')` — value known, members not modeled."
+      },
+      {
+        "reason": "unsupported_indexed_receiver",
+        "occurrences": 68,
+        "blocking": 0,
+        "distinctFixtures": 12,
+        "distinctPackages": 11,
+        "distinctSites": 57,
+        "domain": "value-flow",
+        "example": "`funcs[index].apply(...)` — the receiver came out of an unread index."
+      },
+      {
+        "reason": "unsupported_computed_callee",
+        "occurrences": 42,
+        "blocking": 4,
+        "distinctFixtures": 10,
+        "distinctPackages": 11,
+        "distinctSites": 26,
+        "domain": "call graph",
+        "example": "`(function () {})()`, `f()()` — the callee is not a name at all."
+      },
+      {
+        "reason": "unsupported_expression_receiver",
+        "occurrences": 21,
+        "blocking": 0,
+        "distinctFixtures": 10,
+        "distinctPackages": 9,
+        "distinctSites": 16,
+        "domain": "value-flow",
+        "example": "`(value || '').trim()` — receiver produced by an unevaluated operator."
+      },
+      {
+        "reason": "unsupported_construct",
+        "occurrences": 0,
+        "blocking": 0,
+        "distinctFixtures": 0,
+        "distinctPackages": 0,
+        "distinctSites": 0,
+        "domain": "n/a — retained runtime floor",
+        "example": "The generic token, kept so an unmeasured or future construct fails safe. Zero in this corpus."
       }
     ]
   }
