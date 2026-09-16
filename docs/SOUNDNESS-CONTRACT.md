@@ -187,6 +187,21 @@ even one unresolved edge along the way. This is why it is not merely "the
 search finished" — a search that meets a dynamic construct also finishes,
 and proves nothing.
 
+**Two further preconditions are enforced by `buildFinding` before this
+proof is ever constructed**, and are therefore not restated as fields on
+the evidence object:
+
+| Precondition | What it rules out |
+| --- | --- |
+| `graphTruncated === false` | Call-graph construction hit a configured resource limit (`analysis.limits`), so the untraversed region might have contained the very path being searched for. A truncated graph returns `UNKNOWN` and withdraws every proof that depends on graph completeness (VT-202). |
+| Entrypoint reachability roots fully derived | If a configured entrypoint's root could not be materialized, the subgraph was searched from an incomplete set of roots — "searched to exhaustion" would be true and useless. This returns `UNKNOWN` with `entrypoint_root_incomplete` (P0-Z). |
+
+`graphTruncated === false` says only that the traversal did not hit a
+resource limit. **It is not a claim that the call graph is complete** — the
+same distinction family B's own field draws — and family C does not need
+one: nodes outside the enumerated reachable subgraph are never inspected
+and are irrelevant to the conclusion.
+
 ### No misleading whole-program completeness
 
 Families B and C both once emitted a field named `callGraphComplete`. It
