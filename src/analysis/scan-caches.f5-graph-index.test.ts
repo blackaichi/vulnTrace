@@ -398,3 +398,238 @@ describe("F5 graph package-instance index: operation counts", () => {
     expect(index.graph).toBe(graph);
   });
 });
+
+/**
+ * FOUNDATION F6 — the CONSUMER's half of "refusal is not absence".
+ *
+ * Every case above asserts that `graphPackageInstancesByName` RETURNS
+ * `undefined` when it cannot answer for an analysis. None of them asserts
+ * what `verdict.ts` then DOES with that answer, and those are different
+ * properties: the signal can be perfectly correct while the code reading it
+ * treats `undefined` as "this package has no instances in the graph".
+ *
+ * The gap was found by mutation-checking F6's own gates, and what it
+ * turned up is worth recording precisely, because it is NOT a latent
+ * soundness bug. Replacing `graphPackageInstances`'s fallback with
+ *
+ *     return indexed ?? new Map();
+ *
+ * -- reading a refusal as "this package has no instances" -- passes the
+ * entire Foundation gate AND the full `npm test` run. It is an EQUIVALENT
+ * mutant, and the reason is structural: `resolveTargetNodes` concludes a
+ * family-B absence only inside `if (instances.size > 0)`, from "the graph
+ * holds other instances of this name but not this one". An EMPTY answer
+ * never reaches that conclusion; it falls through to the more conservative
+ * instance-anchored resolution. So the defence against a refusal becoming
+ * a fabricated `confirmedAbsentInstance` is doubled: the index refuses,
+ * and the consumer could not manufacture the proof from an empty answer
+ * even if it did not.
+ *
+ * What was genuinely missing is coverage, not safety. Every case above
+ * stops at the index's return value, so nothing exercised the fallback
+ * end to end, and an unreachable branch is one the next refactor is free
+ * to break silently. This drives a real refusal through the REAL
+ * production composition and pins the contract that matters: a stale
+ * index costs time and changes no answer. It is a REGRESSION guard for a
+ * property that currently holds, which is what a gate is for.
+ */
+describe("F5 graph package-instance index: a refusal falls back to the walk", () => {
+  /** The real pipeline, run against one project before and after a refusal. */
+  async function verdictsAcrossIndexRefusal(): Promise<{
+    readonly before: string | undefined;
+    readonly after: string | undefined;
+    readonly proofAfter: unknown;
+    readonly refused: boolean;
+  }> {
+    const { buildDependencyGraph } =
+      await import("../dependencies/dependency-graph.js");
+    const { loadPackageJsonFile } =
+      await import("../dependencies/package-json.js");
+    const { loadPackageLockFile } =
+      await import("../dependencies/package-lock.js");
+    const { buildCallGraph } =
+      await import("../code-intelligence/call-graph.js");
+    const { createModuleResolver } =
+      await import("../code-intelligence/module-resolver.js");
+    const { loadTsProject } =
+      await import("../code-intelligence/ts-project.js");
+    const { buildKnownPackageRoots } =
+      await import("../domain/resolved-target.js");
+    const { discoverEntrypoints } = await import("./entrypoints.js");
+    const { buildGateEligibleModuleLoadClosure } =
+      await import("./module-load-closure.js");
+    const { createAnalysisProofContext } =
+      await import("./analysis-context.js");
+    const { buildFinding } = await import("./verdict.js");
+
+    const root = project({
+      "package.json": JSON.stringify({
+        name: "refusal-fixture",
+        version: "1.0.0",
+        dependencies: { "vuln-lib": "1.0.0" },
+      }),
+      "package-lock.json": JSON.stringify({
+        name: "refusal-fixture",
+        version: "1.0.0",
+        lockfileVersion: 3,
+        packages: {
+          "": { name: "refusal-fixture", version: "1.0.0" },
+          "node_modules/vuln-lib": { version: "1.0.0" },
+        },
+      }),
+      "node_modules/vuln-lib/package.json": JSON.stringify({
+        name: "vuln-lib",
+        version: "1.0.0",
+        main: "index.js",
+      }),
+      "node_modules/vuln-lib/index.js":
+        "function danger(x) { return x; }\nmodule.exports = { danger };\n",
+      // The instance IS loaded and the vulnerable export IS called, so the
+      // sound answer is AFFECTED under every configuration below.
+      "src/index.js":
+        'const { danger } = require("vuln-lib");\n' +
+        "function main(x) { return danger(x); }\n" +
+        "module.exports = { main };\n",
+    });
+
+    const dependencyNodes = buildDependencyGraph(
+      loadPackageJsonFile(path.join(root, "package.json")),
+      loadPackageLockFile(path.join(root, "package-lock.json")),
+    );
+    const knownPackageRoots = buildKnownPackageRoots(dependencyNodes, root, []);
+    const identity = createScanModuleIdentityCache(knownPackageRoots);
+    const tsProject = loadTsProject(root);
+    const resolver = createModuleResolver(tsProject);
+    const entrypointsResult = await discoverEntrypoints({
+      projectRoot: root,
+      resolver,
+      configuredEntrypoints: ["src/index.js"],
+    });
+    const graph = await buildCallGraph({
+      entryFiles: entrypointsResult.entrypoints.map((entry) => entry.filePath),
+      resolver,
+      maxFiles: 2_000,
+      maxGraphNodes: 50_000,
+      maxAnalysisSeconds: 120,
+      project: tsProject,
+      knownPackageRoots,
+    });
+    const moduleLoadClosure = await buildGateEligibleModuleLoadClosure({
+      entrypoints: entrypointsResult.entrypoints,
+      resolver,
+      maxFiles: 2_000,
+      knownPackageRoots,
+      moduleIdentityCache: identity,
+    });
+    const context = createAnalysisProofContext({
+      projectRoot: root,
+      resolver,
+      entrypoints: entrypointsResult.entrypoints,
+      knownPackageRoots,
+      graph,
+      graphTruncated: false,
+      moduleLoadClosure,
+      moduleIdentityCache: identity,
+    });
+
+    const input = {
+      vulnerability: {
+        id: "GHSA-f6-refusal",
+        aliases: [],
+        package: "vuln-lib",
+        ecosystem: "npm",
+        affectedVersions: [{ introduced: "0" }],
+        fixedVersions: [],
+        references: [],
+      },
+      packageName: "vuln-lib",
+      packageVersion: "1.0.0",
+      packageInstance: path.join(root, "node_modules", "vuln-lib"),
+      matchResult: "affected",
+      rule: {
+        id: "GHSA-f6-refusal",
+        package: { name: "vuln-lib" },
+        targets: [
+          {
+            module: "vuln-lib",
+            export: "danger",
+            kind: "function",
+            confidence: 1,
+          },
+        ],
+      },
+      context,
+    } as unknown as Parameters<typeof buildFinding>[0];
+
+    // FIRST run: the index answers, and also gets BUILT -- which is what
+    // records the node count the refusal below depends on.
+    const before = await buildFinding(input);
+
+    // Now make the index unable to answer for this analysis, using the
+    // same condition the unit cases above cover: the graph's node list is
+    // no longer the one the index was built at. This changes the ANALYSIS
+    // rather than the production code, and it is the state a stale index
+    // really would be in.
+    (graph.nodes as GraphNode[]).push({
+      id: "n-appended",
+      kind: "function",
+      module: path.join(root, "src", "index.js"),
+      name: "appended",
+    });
+    const refused =
+      graphPackageInstancesByName(
+        context.caches,
+        graph,
+        knownPackageRoots,
+        "vuln-lib",
+      ) === undefined;
+
+    const after = await buildFinding(input);
+
+    return {
+      before: before?.verdict,
+      after: after?.verdict,
+      proofAfter: after?.evidence?.confirmedAbsentInstance,
+      refused,
+    };
+  }
+
+  it("still finds the instance the graph contains, and forges no absence proof", async () => {
+    const result = await verdictsAcrossIndexRefusal();
+
+    // The setup has to have actually produced a refusal, or the assertion
+    // below is vacuous -- it would pass against the very defect it exists
+    // to catch.
+    expect(
+      result.refused,
+      "the index did not refuse, so this case never reached the fallback and " +
+        "asserts nothing",
+    ).toBe(true);
+
+    expect(
+      result.before,
+      "baseline: the vulnerable export is called, so this is AFFECTED",
+    ).toBe("AFFECTED");
+
+    expect(
+      result.after,
+      `INDEX REFUSAL CHANGED THE ANSWER\n` +
+        `  invariant: an index that cannot answer means "ask the walk", so a\n` +
+        `             refusal costs time and changes no verdict\n` +
+        `  case:      the index is stale; the instance IS in the call graph\n` +
+        `  expected:  AFFECTED (unchanged -- the index is an accelerator,\n` +
+        `             never an authority)\n` +
+        `  actual:    ${result.after}`,
+    ).toBe("AFFECTED");
+
+    expect(
+      result.proofAfter,
+      `NEGATIVE PROOF FORGED FROM A REFUSAL\n` +
+        `  invariant: a refusal never becomes a family-B absence proof\n` +
+        `  case:      the index is stale; the call graph demonstrably contains\n` +
+        `             this instance\n` +
+        `  expected:  no confirmedAbsentInstance evidence\n` +
+        `  actual:    ${JSON.stringify(result.proofAfter)}`,
+    ).toBeUndefined();
+  }, 120_000);
+});
