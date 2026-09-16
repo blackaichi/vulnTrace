@@ -99,12 +99,12 @@ appears in no output, and no proof rule reads it.
 
 | Remediation domain | Occurrences | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| target intelligence | 65 | measured (LIVE) — `node scripts/measure-uncertainty.mjs`, 2026-09-14 | Entirely `no_vulnerable_symbol_rule`: this scan had no rule describing the advisory's vulnerable symbol. | **A corpus/config artifact, not an analyzer gap.** Each fixture configures exactly one rule, so every other advisory OSV returns produces one of these. It is not evidence the frontend could not understand the code — the frontend was never asked. |
-| frontend | 42 | measured (LIVE) — `node scripts/measure-uncertainty.mjs`, 2026-09-14 | `unsupported_construct` — the call graph saw a callee shape it has no rule for. The class P1-B is prioritized from. | One undifferentiated token. Knowing there are 42 does not tell anyone which syntax to implement — see `docs/OPEN-DEBTS.md` D-07. |
-| target / identity resolution | 41 | measured (LIVE) — `node scripts/measure-uncertainty.mjs`, 2026-09-14 | 37 `unresolved_target` call-graph edges plus 4 `vulnerable_target_unresolved` findings: an identity or attribution fact was never established. | Splits across two remediation owners (export attribution and target intelligence) that this dimension does not separate. |
-| value precision | 5 | measured (LIVE) — `node scripts/measure-uncertainty.mjs`, 2026-09-14 | `dynamic_member_access` — the construct is modeled; the destination is not statically unique. | Closeable only by value/alias analysis, never by adding syntax support. |
-| unsupported capability | 0 | measured (LIVE) — `node scripts/measure-uncertainty.mjs`, 2026-09-14 | **Zero.** Not one blocker in the corpus is a construct that can load or execute code the graph never discovered. | Zero in THIS corpus. Real applications do contain `eval`; the corpus is a shape corpus, not a sample. |
-| budget | 0 | measured (LIVE) — `node scripts/measure-uncertainty.mjs`, 2026-09-14 | No configured bound stopped any work in this corpus. | Says nothing about a project large enough to hit one. |
+| target intelligence | 65 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | Entirely `no_vulnerable_symbol_rule`: this scan had no rule describing the advisory's vulnerable symbol. | **A corpus/config artifact, not an analyzer gap.** Each fixture configures exactly one rule, so every other advisory OSV returns produces one of these. It is not evidence the frontend could not understand the code — the frontend was never asked. |
+| frontend | 42 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | `unsupported_construct` — the call graph saw a callee shape it has no rule for. The class P1-B is prioritized from. | One undifferentiated token. Knowing there are 42 does not tell anyone which syntax to implement — see `docs/OPEN-DEBTS.md` D-07. |
+| target / identity resolution | 41 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | 37 `unresolved_target` call-graph edges plus 4 `vulnerable_target_unresolved` findings: an identity or attribution fact was never established. | Splits across two remediation owners (export attribution and target intelligence) that this dimension does not separate. |
+| value precision | 5 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | `dynamic_member_access` — the construct is modeled; the destination is not statically unique. | Closeable only by value/alias analysis, never by adding syntax support. |
+| unsupported capability | 0 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | **Zero.** Not one blocker in the corpus is a construct that can load or execute code the graph never discovered. | Zero in THIS corpus. Real applications do contain `eval`; the corpus is a shape corpus, not a sample. |
+| budget | 0 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | No configured bound stopped any work in this corpus. | Says nothing about a project large enough to hit one. |
 
 The single most misread row is **target intelligence**:
 `no_vulnerable_symbol_rule` accounts for 65 of the
@@ -127,7 +127,7 @@ inevitable", and it is why P1-B is worth doing at all.
 of the uncertainty, not the cost of removing it: occurrences collapse
 into a handful of distinct reasons, one change can discharge many at
 once, and target-relevant completeness may discharge most of them
-without modeling a single construct. See `docs/OPEN-DEBTS.md` § RWF-002.
+without modeling a single construct. See `docs/OPEN-DEBTS.md` D-06.
 
 ## 8. Known defect register (RWF)
 

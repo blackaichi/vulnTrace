@@ -339,7 +339,12 @@ async function build() {
       row([
         entry.domain,
         entry.occurrences,
-        `measured (LIVE) — \`${measured.uncertaintyDistribution.command}\`, ${measured.uncertaintyDistribution.measuredAt}`,
+        // Same provenance shape as every other measured row: command,
+        // commit and date. This is the OLDEST measurement in the file —
+        // taken at a different commit from the gate runs — so omitting
+        // its commit here would leave the one value most likely to be
+        // stale as the one whose provenance was hardest to check.
+        `measured (LIVE) — \`${measured.uncertaintyDistribution.command}\` at \`${measured.uncertaintyDistribution.commit}\`, ${measured.uncertaintyDistribution.measuredAt}`,
         entry.interpretation,
         entry.limitation,
       ]),
@@ -366,7 +371,7 @@ async function build() {
     "of the uncertainty, not the cost of removing it: occurrences collapse",
     "into a handful of distinct reasons, one change can discharge many at",
     "once, and target-relevant completeness may discharge most of them",
-    "without modeling a single construct. See `docs/OPEN-DEBTS.md` § RWF-002.",
+    "without modeling a single construct. See `docs/OPEN-DEBTS.md` D-06.",
     "",
   );
 
