@@ -296,6 +296,22 @@ describe("commit metadata policy: prose and source are not in scope", () => {
       body: "docs: link the CLI docs at https://claude.com/claude-code",
     },
     {
+      // REGRESSION. The first version of the claude.ai rule matched the
+      // bare domain anywhere, and the very first commit it was run
+      // against -- the one INTRODUCING this policy, whose message has to
+      // name the host it forbids -- was rejected by it. A rule that a
+      // commit explaining the rule cannot pass is a rule nobody can
+      // document.
+      label: "a message that DESCRIBES the policy, naming the forbidden host",
+      body: [
+        "fix: harden commit metadata validation",
+        "",
+        "One merged commit carries a Claude-Session trailer holding a",
+        "claude.ai session URL, and a model name in Co-Authored-By. Both",
+        "are now rejected for commits added after the F6 base.",
+      ].join("\n"),
+    },
+    {
       label: "prose using the word generated",
       body: [
         "test: compare the generated report against the fixture",

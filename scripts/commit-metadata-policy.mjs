@@ -104,7 +104,12 @@ const TELEMETRY_PATTERNS = [
   },
   {
     id: "claude_ai_url",
-    pattern: /\bclaude\.ai\b/i,
+    // A URL, not a bare mention of the domain. The telemetry form is
+    // always `https://claude.ai/...`, while a commit message explaining
+    // THIS policy has to be able to name the host it forbids -- which is
+    // not hypothetical: the commit that introduced this file was itself
+    // flagged by the first, laxer version of this rule.
+    pattern: /\b(?:https?:\/\/)?claude\.ai\//i,
     describe: "a claude.ai URL",
   },
   {
@@ -183,6 +188,7 @@ export function checkCommitMetadata(commit) {
           rule: rule.id,
           scope: `${trailer.key} trailer (message line ${trailer.line})`,
           detail: `identity trailer names ${rule.describe}`,
+          expected: `an identity trailer naming a person or agent, not ${rule.describe}`,
           evidence: `${trailer.key}: ${trailer.value}`,
         });
       }
@@ -203,6 +209,7 @@ export function checkCommitMetadata(commit) {
           rule: rule.id,
           scope: `${field} name`,
           detail: `${field} identity names ${rule.describe}`,
+          expected: `a ${field} identity naming a person or agent, not ${rule.describe}`,
           evidence: name,
         });
       }
@@ -217,6 +224,7 @@ export function checkCommitMetadata(commit) {
         rule: rule.id,
         scope: "commit message",
         detail: `commit message contains ${rule.describe}`,
+        expected: `no ${rule.describe.replace(/^an? /, "")} anywhere in the commit message`,
         evidence: match[0].trim(),
       });
     }
@@ -239,7 +247,7 @@ export function formatViolations(commit, violations) {
       `  invariant: commit metadata carries no model name or session telemetry`,
       `  rule:      ${violation.rule}`,
       `  where:     ${violation.scope}`,
-      `  expected:  ${violation.detail.replace(/^.*?names /, "no ").replace(/^commit message contains /, "no ")}`,
+      `  expected:  ${violation.expected}`,
       `  actual:    ${violation.evidence}`,
       "",
     );

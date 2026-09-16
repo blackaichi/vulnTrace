@@ -24,6 +24,8 @@ export interface MetadataViolation {
   /** Where it was found: a named trailer, an identity field, or the message. */
   readonly scope: string;
   readonly detail: string;
+  /** What the gate required instead, phrased for a failure message. */
+  readonly expected: string;
   /** The offending text, quoted back. */
   readonly evidence: string;
 }
