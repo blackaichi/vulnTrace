@@ -357,15 +357,51 @@ a different registry by reference, or a `graph.nodes.length` that no longer
 matches the indexed count. An absent package name, by contrast, returns a
 **defined, empty map**.
 
-The distinction is load-bearing because an empty result reads as
-`confirmedAbsentInstance` downstream, which **is** positive evidence.
-Conflating the two would manufacture family-B proofs out of a cache miss.
-A refusal must fall back to the authoritative walk or fail closed; it must
-never fabricate an empty authoritative set.
+The distinction is load-bearing in **two different directions**, and F6's
+mutation study measured them separately. They are different defects with
+opposite risk profiles, and collapsing them into one warning is how a
+reader ends up believing the safe failure was the dangerous one.
 
-This is not hypothetical. F6's Mutation C regression exercised exactly this
-path — the fallback the gates had never actually executed — and it is now
-owned by `src/analysis/scan-caches.f5-graph-index.test.ts`.
+**Mutation C — a refusal read as absence. A precision regression.**
+Replacing the fallback with `return indexed ?? new Map()` makes *"the
+index cannot answer"* mean *"this package has no instances"*. An empty map
+fails `resolveTargetNodes`'s `instances.size > 0` test, so the analyzer
+skips **Site A** — the only site that knows "the graph holds other
+instances of this name but never traversed THIS one", which is the entire
+premise of a family-B proof — and falls through to **Site B**, an
+instance-blind re-resolution that cannot conclude family B at all.
+
+Measured on the discriminating fixture (same-name/same-version twins, a
+finding about the unreached twin, the index forced to refuse):
+
+| source | verdict | proof |
+| --- | --- | --- |
+| clean | `NOT_AFFECTED` | family B, naming the unreached twin |
+| refusal read as absence | **`UNKNOWN`** | **none** |
+
+F6 classifies this as a **conservative precision regression**. It claims
+*less*, which is the safe direction, and it does **not** fabricate a
+negative proof. It is still a real defect — semantically observable in
+production output, silently costing correct `NOT_AFFECTED` answers — which
+is why it is deterministically gated rather than argued away. It was first
+recorded as an equivalent mutant; an independent audit disproved that.
+
+**Mutation C′ — a stale index treated as authoritative. The unsafe one.**
+This is where the fabrication warning belongs. If the staleness guard stops
+firing, an index that no longer describes the graph is consulted *as
+authority* instead of refusing. A stale but **non-empty** answer passes
+`instances.size > 0` and can omit the very instance the graph really did
+traverse — so Site A concludes `confirmedAbsentInstance` for an instance
+that was in fact reached, and that **is** positive evidence. A performance
+accelerator would then be manufacturing a family-B proof it has no
+standing to make. That is the cached-absence defect a performance layer
+must never introduce, and it is why a refusal must fall back to the
+authoritative walk or fail closed, and must never present a derived set as
+an authoritative one.
+
+Both are owned by `src/analysis/scan-caches.f5-graph-index.test.ts`, and
+both assert that the refusal actually occurred before asserting anything
+about its consequences, so neither can pass vacuously.
 
 ### 9.2 Staleness: what the node-count guard does and does not catch
 
