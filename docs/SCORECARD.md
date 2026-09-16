@@ -163,8 +163,9 @@ exactly with the `frontend` row in §7 — the decomposition moved no
 count, it only named them.
 
 **Sample-size warning.** All 42 blocking occurrences come from
-**1 case** (RWB-05), and they collapse into 19 distinct call
-sites in 13 functions, not 42 independent gaps. They are also the
+**1 case** (RWB-05), and they collapse into 19 distinct
+(subtype, site) pairs across 14 containing functions — not 42
+independent gaps. They are also the
 same occurrences RWF-002 is about: they sit in `qs`'s *stringify*
 path while the vulnerable target is in its *parse* path, so
 reachability scoping might discharge every one of them without
