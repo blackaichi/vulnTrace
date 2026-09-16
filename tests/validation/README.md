@@ -113,7 +113,7 @@ outside the repository tree, never in place under `fixtures/` — see
 
 Three real-world benchmark cases (`RWB-06`, `RWB-09`) were originally
 cause-confounded — testing more than one independent mechanism at once
-(see `docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md` and VT-303). Rather than
+(see `docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md` (a document that has never been committed to this repository — its findings are reproduced in `tests/validation/FINDINGS.md`; see `docs/OPEN-DEBTS.md` D-10) and VT-303). Rather than
 rewriting them, each got a clean, single-cause sibling case added instead,
 keeping the original as its own (differently-scoped) exhibit:
 

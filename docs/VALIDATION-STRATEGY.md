@@ -140,7 +140,7 @@ fact. This risk is accepted, not yet mitigated; see the proposed
 A vendored `node_modules/` alone is not sufficient for reproducibility,
 because dependency resolution can still walk *up* past the fixture into
 whatever the fixture happens to be nested inside (see VT-302,
-docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 9.3's RWF-010: RWB-09's `semver`
+`docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md` (a document that has never been committed to this repository — its findings are reproduced in `tests/validation/FINDINGS.md`; see `docs/OPEN-DEBTS.md` D-10) § 9.3's RWF-010: RWB-09's `semver`
 specifier resolved into VulnTrace's own repository `node_modules` — a
 devDependency of the analyzer itself, not the fixture — purely because the
 fixture happened to be scanned in place under `tests/validation/fixtures/`,
