@@ -11072,7 +11072,7 @@ Two findings from the inventory itself, both corrected here:
 
 ### 2. Invariant ownership map
 
-`src/testing/foundation-invariants.ts`. Twenty-two invariants across 28 owner files, each with
+`src/testing/foundation-invariants.ts`. Twenty-two invariants across 29 owner files, each with
 its deterministic owner(s) and a note saying why those owners and not
 others.
 
@@ -11158,7 +11158,12 @@ than as a paragraph nobody reads: the three ceilings are pinned in
 to make CI green is therefore a deliberate two-file edit, and the failure
 message names the record where the measurement and justification must go.
 
-### 12. A coverage gap the mutation-check found, and what it was not
+### 12. The graph-index refusal gap — first misdiagnosed, then closed
+
+**This section originally claimed the mutation below was an equivalent
+mutant. That claim was wrong, and an independent audit disproved it. The
+corrected account follows; the error is left visible because how it was
+reached is the useful part.**
 
 Mutating `graphPackageInstances`'s refusal fallback to
 
@@ -11167,29 +11172,72 @@ return indexed ?? new Map();
 ```
 
 — reading "the index cannot answer" as "this package has no instances" —
-passed the entire Foundation gate **and** the full `npm test` run: 167
-files, 4,177 tests, zero failures.
+passes the entire Foundation gate **and** the full `npm test` run: 167
+files, 4,177 tests, zero failures. That much was correctly measured.
 
-It is an **equivalent mutant**, and the reason was verified in the source
-rather than assumed. `resolveTargetNodes` concludes a family-B absence
-only inside `if (instances.size > 0)` — from "the graph holds other
-instances of this name but not this one". `confirmedAbsentInstance: true`
-appears exactly once in `verdict.ts`, inside that block. An empty answer
-cannot reach it; it falls through to the conservative instance-anchored
-resolution. So the defence is doubled: the index refuses, and the consumer
-could not forge the proof from an empty answer even if it did not.
+**The equivalence argument was wrong.** It ran: `resolveTargetNodes`
+concludes a family-B absence only inside `if (instances.size > 0)`, and
+`confirmedAbsentInstance: true` appears exactly once in `verdict.ts`
+inside that block, so an empty answer cannot reach it. Every clause of
+that is true. The conclusion drawn from it — that the mutation therefore
+has no effect — does not follow, and inverts what the guard means. That
+guard is not why an empty answer is *safe*; it is why an empty answer
+*loses the proof*.
 
-What was genuinely missing was **coverage**. Every existing case stopped
-at the index's return value; nothing exercised the fallback end to end,
-because every proof context builds its caches from its own graph, so the
-index always answered and the branch was never taken. An unreachable
-safety branch is not a safe one, it is an untested one.
+`resolveTargetNodes` has two structurally different sites (VT-301B):
 
-`scan-caches.f5-graph-index.test.ts` now drives a real refusal — a stale
-index, reached by changing the analysis rather than the production code —
-through the real production composition, and asserts a stale index costs
-time and changes no verdict. It asserts the refusal actually happened
-first, so it cannot pass vacuously.
+- **Site A** (`instances.size > 0`) is the only place the analyzer knows
+  "the graph holds other instances of this name but never traversed THIS
+  one" — which is the entire premise of a family-B proof.
+- **Site B** (`instances.size === 0`) performs an independent,
+  instance-blind re-resolution. It has no knowledge of which instances the
+  graph contains and so cannot conclude family B at all.
+
+So the mutation skips Site A, discards the knowledge family B is made of,
+and the independent resolution lands on a *different* instance than the
+finding's own — which the proof guards then correctly refuse to certify.
+
+**The discriminating state**, which the audit constructed and which is now
+a gate: same-name/same-version twins, the finding about the UNREACHED
+twin, the index forced to refuse. Measured on that fixture:
+
+| source | verdict | proof |
+| ------ | ------- | ----- |
+| clean | `NOT_AFFECTED` | family B, naming the unreached twin |
+| refusal read as absence | **`UNKNOWN`** | **none** |
+
+**Why the first replacement test did not catch it.** It used a finding
+whose instance IS reached and whose target IS called. In that state Site A
+and Site B agree — Site B's independent resolution lands on the same
+instance and finds the same target, so the answer is `AFFECTED` either
+way. The case could not fail. It reported coverage of the fallback
+contract while being structurally incapable of detecting its loss, which
+is the same failure mode F6 was built to eliminate, reproduced inside F6's
+own remediation.
+
+**Final classification of mutation C.** Not equivalent. It is a
+**conservative precision regression**: `NOT_AFFECTED` (family B) →
+`UNKNOWN`, in a graph-index-refusal/staleness state only.
+
+- It does **not** fabricate a negative proof. The direction is toward
+  claiming less, which is the safe direction under AGENTS.md.
+- It **is** semantically observable in production output.
+- Normal production does not currently enter the stale-index refusal
+  state, because every proof context builds its caches from its own graph.
+- The fallback contract is nonetheless now deterministically gated, rather
+  than argued away.
+
+`scan-caches.f5-graph-index.test.ts` now owns both halves, and they are
+different contracts, deliberately kept apart:
+
+- *a refusal falls back to the walk* — the reached/`AFFECTED` case. A
+  stale index costs time and changes no answer.
+- *a refusal preserves the family-B proof* — the unreached-twin case. The
+  walk still establishes the proof the index's absence would have cost,
+  naming the exact twin the finding is about and not its sibling.
+
+Both assert the refusal actually occurred before asserting anything about
+it, so neither can pass vacuously.
 
 ### 13. The offline semantic differential
 
@@ -11416,7 +11464,7 @@ URL with a path; the historical offender is still caught.
 
 ### 25–27. Command, fast/full split, failure messages
 
-`npm run test:foundation` — 28 files, 1,335 tests, ~45s. A **subset** of
+`npm run test:foundation` — 29 files, 1,356 tests, ~45s. A **subset** of
 `npm test`, asserted structurally to be one, so the two cannot disagree
 and CI does not run the full suite twice. The fast/full split is
 documented in README.md as a table.
@@ -11434,14 +11482,19 @@ Every mutation applied to a clean tree and reverted after.
 | - | -------- | --------- | ------ |
 | A | absent module-load closure read as a satisfied guard | `verdict.f2-proof-guards`, `verdict.module-load-absence` | **4 tests fail** |
 | B | identity memo keyed by basename, collapsing twins | `resolved-target.f5-identity-cache`, **offline differential** | **17 tests fail**; differential reports `VERDICT SET CHANGED` |
-| C | index refusal read as absence | *nothing* — **equivalent mutant**, see § 12 | full suite passes; analysed and coverage added |
+| C | index refusal read as absence | `scan-caches.f5-graph-index` (the unreached-twin case, added in remediation) | **fails**: `FAMILY-B PRECISION REGRESSION`, NOT_AFFECTED/B -> UNKNOWN. Originally misdiagnosed as an equivalent mutant; see § 12 |
 | C′ | stale index treated as authoritative | `scan-caches.f5-graph-index` (both the unit case and the new fallback case) | **2 tests fail**; the non-vacuity guard reports the refusal stopped happening |
 | D | graph index disabled | `scan-caches.f5-multiplier` | **fails**: 124 identity requests per advisory against a bound of 4 |
 | E | `not_applicable` candidate dropped | **offline differential** (×3), `scan.f3-no-finding` | **4 tests fail** |
 | F | real commit with model name + session trailer | `validate:commit-metadata` | **exit 1**, all four rules reported with invariant/expected/actual |
 
-C is recorded as a negative result rather than quietly dropped. It is the
-most informative row in the table: it says where the real defence is.
+C is the most informative row, though not for the reason first recorded.
+It was reported as an equivalent mutant; an independent audit disproved
+that by constructing the unreached-twin state, and it is now gated. The
+lesson it carries is about the mutation-check itself: a mutation that
+survives is evidence of missing coverage until proven otherwise, and
+"proven otherwise" means a discriminating experiment, not a source-reading
+argument.
 
 ### 29. Repeated-run stability
 
@@ -11450,13 +11503,13 @@ machine:
 
 | run | result | wall |
 | --- | ------ | ---: |
-| 1 | 28 files / 1,337 passed | 46s |
-| 2 | 28 files / 1,337 passed | 47s |
-| 3 | 28 files / 1,337 passed | 45s |
-| 4 | 28 files / 1,337 passed | 46s |
-| 5 | 28 files / 1,337 passed | 46s |
+| 1 | 29 files / 1,356 passed | 48s |
+| 2 | 29 files / 1,356 passed | 46s |
+| 3 | 29 files / 1,356 passed | 45s |
+| 4 | 29 files / 1,356 passed | 46s |
+| 5 | 29 files / 1,356 passed | 47s |
 
-**Semantic result identical 5/5.** Wall clock varied by 2s (45-47s), which
+**Semantic result identical 5/5.** Wall clock varied by 3s (45-48s), which
 is reported separately and is not a failure: nothing in this gate asserts
 on elapsed time, which is the property that makes the 5/5 meaningful
 rather than lucky.
@@ -11483,7 +11536,12 @@ from the build), is empty. The compiler sees byte-identical input, so the
 artifact is necessarily identical — a stronger statement than comparing
 hashes of two builds.
 
-Everything F6 changed is tests, scripts, config or docs:
+Everything F6 changed is tests, scripts, config or docs. The listing below
+is the code/config diff; it deliberately excludes this record's own file,
+`tests/validation/FINDINGS.md`, which the remediation commits also change
+— an independent audit noted that stating "15 files" while writing into a
+16th reads as an omission, so the scope is named explicitly here rather
+than implied by the list:
 
 ```
  .github/workflows/ci.yml                        |   22 +
@@ -11510,18 +11568,18 @@ performance threshold relaxed.**
 
 | gate | result | runtime |
 | ---- | ------ | ------: |
-| `test:foundation` (new) | **28 files / 1,337 passed** | 45-47s |
-| `npm test` | **167 files / 4,178 passed** (base: 164 / 3,982) | 200s |
+| `test:foundation` (new) | **29 files / 1,356 passed** | 45-48s |
+| `npm test` | **168 files / 4,192 passed** (base: 164 / 3,982) | 200s |
 | `test:adversarial` | **124 passed** — v1 34/34, v2 88/88; identical to base | 50s |
-| `test:performance` | **3 passed** — 2,453/5,000ms; 8,258/20,000ms; 2,014/10,000ms | 20s |
+| `test:performance` | **3 passed** — 2,362/5,000ms; 8,231/20,000ms; 2,048/10,000ms | 19s |
 | `typecheck` | clean | 23s |
 | `lint` | clean | 19s |
 | `prettier --check .` | clean | 24s |
 | `build` | clean | 13s |
-| `validate:history` | clean — archive intact; 5 commits after the base carry no model names or session telemetry | <1s |
+| `validate:history` | clean — archive intact; commits after the base carry no model names or session telemetry | <1s |
 
 Every wall-clock guard passed **further inside** its ceiling than the
-baseline did (2,453 vs 2,521; 8,258 vs 8,705; 2,014 vs 2,080), which is
+baseline did (2,362 vs 2,521; 8,231 vs 8,705; 2,048 vs 2,080), which is
 run-to-run noise and is recorded only to show nothing was relaxed to make
 them pass.
 
@@ -11571,5 +11629,83 @@ Specifically:
   multiplier it owns.
 - **Performance is still not solved.** F5 removed one multiplier; F6 adds
   no optimization and measures no new hotspot.
+- **The invariant map checks names, not meanings.** Its consistency tests
+  assert that every owner EXISTS and is GATED, and that the gate runs
+  nothing unmapped. They cannot assert that a named file actually tests
+  the invariant it is named for — an independent audit found exactly one
+  such misattribution (§ 34 B). Reviewing a map entry still requires
+  reading the owner.
 - **RWF-002 is untouched**, as is P1-B. F6 changes no analyzer verdict
   semantics and adds no analyzer capability.
+
+### 34. Independent audit, and what it changed
+
+F6 was submitted for independent gate-adequacy audit, which returned
+**BLOCKED** on three defects. The audit's central method is the one worth
+recording: it did not re-run the gates and check they were green, it
+deliberately broke invariants and asked whether the gate that CLAIMS to
+own each one actually fails. Three times, the answer was no.
+
+**A. Mutation C was misclassified as an equivalent mutant.** Disproved by
+constructing the discriminating state (unreached twin + forced index
+refusal), which moves the verdict from `NOT_AFFECTED`/family B to
+`UNKNOWN`. § 12 above carries the corrected account and the final
+classification. Closed by a new deterministic case in
+`scan-caches.f5-graph-index.test.ts` that asserts the verdict, the proof
+family, and the exact twin the proof names; applying mutation C now fails
+`test:foundation` with `FAMILY-B PRECISION REGRESSION`.
+
+**B. `schema-additivity` was mapped to an owner that does not test it.**
+The map named `cli/result-schema.negative-proof.test.ts`, whose five
+describes are all VT-CONTRACT-01/02 negative-proof shape tests; it
+contains no additivity case at all. The real assertions lived in
+`cli/output.test.ts`, which the Foundation gate did not run. This is the
+precise failure the map exists to prevent — coverage claimed on paper —
+and the map's own consistency tests could not catch it, because they check
+that an owner EXISTS and is GATED, never that it tests the invariant it is
+named for. That limitation is inherent to the mechanism and is now stated
+in § 33.
+
+Closed by extracting the additivity assertions wholesale into
+`cli/result-schema.additivity.test.ts` — moved, not duplicated, so the
+assertions are the same ones that have run since F3 — gating it, and
+re-owning the invariant. Mutation-checked: making
+`findings[].unknownReasons` required in `schemas/result.schema.json` (the
+exact non-additive change that would retroactively invalidate archived
+results) fails the mapped owner on both legacy-acceptance cases.
+
+**C. The offline differential omitted `confidence` and `target`.** Both
+are `JsonFinding` fields; neither was projected, so a change moving every
+confidence or retargeting every finding left the differential green.
+
+Closed, and the first attempt at closing it is instructive: merely adding
+the fields to the projection did NOT catch a confidence mutation, because
+the differential's comparisons are run-against-run, so a global move
+shifts both sides equally and stays equal. The fields had to be pinned to
+EXPECTED VALUES — the target every fixture's `rules.yml` declares, and
+confidence tracking the verdict (present on `AFFECTED`, absent otherwise).
+Mutation-checked both ways: halving confidence fails with `CONFIDENCE
+CHANGED`, altering the resolved symbol fails with `TARGET CHANGED`.
+
+**D/E, non-blocking.** Stale test counts in this record corrected. The
+`npm test` live-OSV dependency is now documented in README.md rather than
+only here: one suite inside the default run queries the live API
+unconditionally, so a provider outage can redden CI. It predates F6 and
+isolating it remains a follow-up; `test:foundation` contains no network
+access, verified by running it with the network disabled.
+
+**What the audit also confirmed**, by independent reproduction rather than
+by reading this record: the build artifact is byte-identical to the base
+(`ba9e5c7b…`, 296 files, both revisions built and hashed); the 28 files
+the gate ran were exactly the 28 the map named; removing an owner from
+either the map or the config fails; mutations A, B, D, E and F all fail
+the intended gate with specific messages; the threshold-ratchet guard
+fails on a one-file threshold change; grandfathering is three exact SHAs
+with no date or pattern rule, and a bad base SHA fails the suite while
+making the CLI scan more rather than less.
+
+One environmental caveat the audit surfaced and F6 does not fix: running
+the gate inside a user namespace (`unshare -r`) maps the process to root,
+which defeats the `chmod 000` in a pre-existing F5 identity-cache case and
+fails it. That is root-sensitivity in a test that predates F6, not a
+network dependency, and not something this task changed.

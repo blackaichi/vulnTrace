@@ -224,6 +224,15 @@ separately:
   is integration evidence and a provider-movement detector, not a
   correctness oracle — advisory-database movement must not be able to make
   core CI flaky.
+- **`npm test` is not itself fully offline.** One suite inside it,
+  `src/vulnerabilities/osv-provider.integration.test.ts`, queries the live
+  OSV API unconditionally, so a provider or network outage can turn the
+  full run — and therefore CI — red for reasons unrelated to any change.
+  This predates the Foundation gate and is recorded rather than fixed
+  here; isolating or stubbing it is a follow-up. `test:foundation`
+  contains no network access at all (verified by running it with the
+  network disabled), which is why it, and not `npm test`, is the
+  deterministic oracle.
 - `npm run test:performance` measures **wall-clock time**. Its thresholds
   are coarse catastrophic-regression ceilings that answer "did something
   explode", never "is the complexity contract intact". The complexity
