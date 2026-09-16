@@ -11013,3 +11013,563 @@ were preferred because they encode the eliminated multiplier directly.
    noise.
 5. **No cross-scan or global cache, by rule.** A repeated scan of the same
    project re-does everything. That was out of scope and remains so.
+
+## RWF-039 (FOUNDATION F6) — The invariants had owners nobody had written down, and the metadata validator was checking something else entirely
+
+Foundation's sixth task. It adds **no proof rule, no verdict, no evidence,
+no proof family, no uncertainty reason, no analyzer capability and no
+change to any production source file**. What it adds is an authoritative
+map from invariant to owning test, one command that runs those owners, an
+offline semantic differential that proves its own coverage, and the commit
+metadata check that `validate:history` was assumed to be and never was.
+
+Central rule being enforced: *a gate should fail because an invariant
+broke, not because the runner happened to be 20 ms slower.*
+
+### F5 handoff
+
+Base: `3286394` (`docs: record the CI gate remediation, and correct three
+audit findings`), certified before editing — clean tree, identical to
+`origin/main`, F5's six commits present (`d286767`..`3286394`), the
+deterministic multiplier gate live.
+
+Full baseline on that SHA, measured rather than assumed:
+
+| gate | result |
+| ---- | ------ |
+| `npm test` | **164 files / 3,982 passed**, 215s |
+| `test:adversarial` | **124 passed**, 51s |
+| `test:performance` | **3 passed** — 2,521/5,000ms; 8,705/20,000ms; 2,080/10,000ms |
+| `validate:history` | passed |
+
+### 1. Gate inventory, and what each one is actually for
+
+| gate | invariant protected | determinism | runtime | CI |
+| ---- | ------------------- | ----------- | ------: | -- |
+| `npm test` | everything below, plus all unit/integration coverage | deterministic, offline | 215s | yes |
+| `test:foundation` *(new)* | the Foundation invariants, as a subset | deterministic, offline | 45s | yes *(new)* |
+| `test:adversarial` | overfitting detection | deterministic, offline | 51s | yes |
+| `test:performance` | catastrophic wall-clock regression | **environmental** | 18s | yes |
+| `test:validation` | real-world CVE behaviour | **network + live OSV** | varies | no |
+| F4 mutation harness | `unsafe_survival === 0` | deterministic | ~12s | via `npm test` |
+| F5 multiplier gate | operation-count complexity contract | deterministic | ~9s | via `npm test` |
+| F5 graph-index suite | refusal ≠ absence | deterministic | ~3s | via `npm test` |
+| VT-CONTRACT-01/02/03 | proof-shape contracts | deterministic | ~2s | via `npm test` |
+| schema suite | `result.schema.json` compatibility | deterministic | ~1s | via `npm test` |
+| fixture integrity | no ignored test input | deterministic (shells to git) | <1s | via `npm test` |
+| differential oracles (4) | analyzer vs **real Node** | deterministic, offline | ~25s | via `npm test` |
+| `validate:history` | bootstrap-kit archive | deterministic | <1s | **was not in CI** |
+| commit metadata *(new)* | no model names / session telemetry | deterministic | <1s | yes *(new)* |
+
+Two findings from the inventory itself, both corrected here:
+
+1. **`validate:history` was never run by CI.** The workflow ran build,
+   typecheck, lint, prettier, `npm test`, performance and adversarial. The
+   script existed and nothing invoked it.
+2. **The four differential oracles are already offline.** They shell out
+   to the real `node` binary for ground truth, never to a network. They
+   needed classifying, not replacing.
+
+### 2. Invariant ownership map
+
+`src/testing/foundation-invariants.ts`. Twenty-two invariants across 28 owner files, each with
+its deterministic owner(s) and a note saying why those owners and not
+others.
+
+It is **data, not prose**, and that is the whole point.
+`foundation-invariants.test.ts` fails if the map names a test that does
+not exist, names one `test:foundation` does not execute, or if the gate
+runs a file the map does not account for. Both directions, so coverage
+cannot be claimed on paper. That assertion earned its place immediately:
+it failed on its first run because the map's own owner was missing from
+it.
+
+Duplicate oracles were avoided deliberately. Where an invariant has more
+than one owner, each owns a different face — `absent-mlc-fails-closed` is
+owned by `verdict.f2-proof-guards` for the fail-closed direction and by
+`verdict.module-load-absence` for the proof that is legitimately produced
+when the closure IS present, which is what stops the first being vacuous.
+
+`LIVE_SIGNALS` classifies what is deliberately NOT an owner, with a reason
+for each, and a test asserts nothing under `tests/` owns an invariant.
+
+### 3. F4 mutation gate
+
+`unsafe_survival === 0` was already the hard gate, and the informational
+distribution counts were already lower bounds rather than frozen values.
+Both left as they are: F6 § 3 explicitly warns against freezing counts
+that may legitimately grow.
+
+One strengthening. `expectExactlyOneProof` asserted a proof COUNT, and a
+count of one is satisfied by a proof object that is present and
+malformed — which is exactly the state a mutation could produce. It now
+asserts VALIDITY: every surviving `NOT_AFFECTED` carries a well-formed
+member of its own family — A/B naming an instance, C naming a target and
+resting on `reachableSubgraphComplete === true` — and every other verdict
+carries none.
+
+### 4–7. PackageInstance, proof contracts, F2, F3
+
+All four were already owned by deterministic suites inside `npm test`;
+none was skipped, optional or conditionally executed. F6's contribution
+is that they are now *named* owners that a single command runs and that a
+test keeps honest.
+
+Specifically checked and confirmed already gated: same-name/version twins,
+distinct roots, symlink convergence, alias semantics, scoped/unscoped
+collision, workspace/installed identity; VT-CONTRACT-01/02/03; absent MLC,
+syntax failure, loader mutation, `graphTruncated`, unknown runtime
+`DynamicCallReason`; exactly three verdicts, structured UNKNOWN reasons,
+no-finding distinct from Finding, `not_applicable` distinct from
+`undetermined`, old-compatible schema output.
+
+### 8. F5 cache / index gate
+
+Already covered: foreign registry refusal, `undefined` ≠ absence, twins
+not colliding, exact-instance public-entry keys, failed filesystem and
+manifest operations never memoized as success, concurrent scans sharing
+no state.
+
+F6 adds the half nobody had reached — see § 12.
+
+As F6 § 8 requires, nothing here asserts "there are no module-scope
+mutable objects", which is false: `EMPTY_INSTANCES` remains, documented,
+as the shared empty sentinel. It is never written to.
+
+### 9. F5 multiplier gate
+
+Left exactly as F5 remediated it: an exact operation-count bound, with no
+wall-clock ratio anywhere. Mutation-checked below; it still catches a
+disabled graph index, by a factor of 31.
+
+### 10. Wall-clock's role
+
+The three remaining ceilings (5,000ms / 20,000ms / 10,000ms) are kept and
+**not tightened**. They are coarse "did something explode" smoke. The
+complexity contract is the operation-count gate, which has no threshold
+to tune. Both facts are now stated in README.md and in the config
+comments rather than living only in a remediation record.
+
+### 11. Threshold-ratchet policy
+
+Implemented as the lightest thing that can actually stop a ratchet rather
+than as a paragraph nobody reads: the three ceilings are pinned in
+`foundation-invariants.test.ts` as well as in the guard file. Raising one
+to make CI green is therefore a deliberate two-file edit, and the failure
+message names the record where the measurement and justification must go.
+
+### 12. A coverage gap the mutation-check found, and what it was not
+
+Mutating `graphPackageInstances`'s refusal fallback to
+
+```
+return indexed ?? new Map();
+```
+
+— reading "the index cannot answer" as "this package has no instances" —
+passed the entire Foundation gate **and** the full `npm test` run: 167
+files, 4,177 tests, zero failures.
+
+It is an **equivalent mutant**, and the reason was verified in the source
+rather than assumed. `resolveTargetNodes` concludes a family-B absence
+only inside `if (instances.size > 0)` — from "the graph holds other
+instances of this name but not this one". `confirmedAbsentInstance: true`
+appears exactly once in `verdict.ts`, inside that block. An empty answer
+cannot reach it; it falls through to the conservative instance-anchored
+resolution. So the defence is doubled: the index refuses, and the consumer
+could not forge the proof from an empty answer even if it did not.
+
+What was genuinely missing was **coverage**. Every existing case stopped
+at the index's return value; nothing exercised the fallback end to end,
+because every proof context builds its caches from its own graph, so the
+index always answered and the branch was never taken. An unreachable
+safety branch is not a safe one, it is an untested one.
+
+`scan-caches.f5-graph-index.test.ts` now drives a real refusal — a stale
+index, reached by changing the analysis rather than the production code —
+through the real production composition, and asserts a stale index costs
+time and changes no verdict. It asserts the refusal actually happened
+first, so it cannot pass vacuously.
+
+### 13. The offline semantic differential
+
+F5's differential compared whole JSON documents byte for byte over 15
+vendored real-package fixtures, as a one-off script outside the suite.
+Its own audit recorded two places where "identical" carried no
+information: **zero** `unreportedCandidates` across all fifteen fixtures,
+and all **2,240** diagnostics from a single source, `call-graph`.
+
+The replacement (`src/testing/foundation-differential.test.ts`, with its
+corpus in `foundation-corpus.ts`) is committed, hermetic, network-free,
+and runs under both `npm test` and the Foundation gate. Nine synthetic
+projects go through the real `runScanCommand` with only the OSV boundary
+stubbed.
+
+**It compares semantics, not snapshots.** A byte diff of a large document
+fails loudly and says nothing; the reader has to work out which of the
+thousands of changed lines mattered. The projection reduces a scan to
+what Foundation protects — which instance got which verdict, which proof
+family answered, which candidate classes and diagnostic sources appeared,
+in what order — so a failure names the invariant. A stored baseline was
+rejected for a second reason: regenerating a snapshot is
+indistinguishable from accepting a regression.
+
+**Coverage, asserted rather than claimed:**
+
+| class | covered by |
+| ----- | ---------- |
+| `AFFECTED` | affected-direct-call, family-b-unreached-twin |
+| `UNKNOWN` | unknown-dynamic-dispatch |
+| `NOT_AFFECTED` family A | family-a-never-loaded |
+| `NOT_AFFECTED` family B | family-b-unreached-twin |
+| `NOT_AFFECTED` family C | family-c-safe-export-only |
+| exact multi-instance identity | family-b-unreached-twin (same name, same version, two roots, two verdicts) |
+| `installed_version_unavailable` | candidate-version-unavailable |
+| `advisory_not_applicable_to_installed_version` | candidate-not-applicable |
+| `installed_manifest_untrusted` | candidate-manifest-untrusted |
+| diagnostic source `call-graph` | several |
+| diagnostic source `dependencies` | candidate-manifest-untrusted |
+| diagnostic source `workspaces` | candidate-workspace-incomplete |
+
+### 14. Non-vacuity
+
+The gate does not merely have fields for these classes; it **asserts each
+one actually occurred**. Every verdict, all three proof families, all
+three required candidate reasons, both dispositions, all three stages,
+three diagnostic sources, more than one distinct `packageInstance`, and at
+least one `AFFECTED` carrying a witness path.
+
+Each of those assertions carries the reason it exists, naming the F5 gap
+it closes, so a future reader deleting one knows what they are deleting.
+
+Verified by mutation: dropping the `not_applicable` candidate from
+`cli/scan.ts` fails the per-case assertion, the required-class assertion
+and the disposition assertion — three independent reports of the same
+defect the F5 corpus could not have seen at all.
+
+### 15. Live validation
+
+`tests/validation/` remains, unchanged and not removed. It is classified
+in `LIVE_SIGNALS` as a **live / environmental integration signal**: real
+network, real OSV, real npm packages. Useful evidence and a
+provider-movement detector; not a deterministic correctness oracle, and
+not the sole oracle for anything. Advisory-database movement cannot make
+core Foundation CI flaky, because no Foundation invariant depends on it —
+asserted structurally, by a test forbidding any `tests/` path from
+appearing as an owner.
+
+### 16. Output determinism
+
+Each corpus case is re-scanned twice: once identically, and once with its
+rules and advisories declared in **reverse order**. Findings, proof
+families, `unknownReasons`, `unreportedCandidates` and diagnostic sources
+must be identical both times. Order-dependence is invisible to a single
+run.
+
+### 17. Path normalization
+
+F6 § 17 warns about an earlier harness that saw `mkdtemp` differences and
+normalized paths. The danger is precise: normalization that collapses
+paths makes `PackageInstance` A and `PackageInstance` B compare EQUAL, so
+the differential would certify exactly the identity defect it exists to
+catch.
+
+The mapping here is **bijective below the root**. Only the temp-root
+prefix is replaced, by a token derived from the case name; every suffix
+survives byte for byte. Three assertions hold it: the twin case requires
+`node_modules/vuln-lib` and `node_modules/host/node_modules/vuln-lib` to
+remain distinct at the same name and version; no output may leak an
+absolute temp path; and a direct unit check of the mapping itself.
+
+Worth recording: `packageInstance` is already emitted project-root-
+relative by `describePackageInstance`, so instance identity never
+depended on this function. Normalization matters for diagnostic messages
+and witness paths, which do embed absolute paths.
+
+### 18. Schema gate
+
+Every corpus output is validated with the **production** validator
+(`validateScanOutput`), not a separately-configured Ajv instance that
+could disagree with the one the CLI enforces — and a disagreement would
+favour passing. A guard asserts the documents put in front of it really
+do carry all three verdicts, all three proof families and populated
+`unreportedCandidates`.
+
+Old-compatible output and explicit rejection cases remain owned by
+`cli/result-schema.negative-proof.test.ts`; duplicating them here would
+be the duplicate oracle § 2 warns against.
+
+### 19. Fixture integrity
+
+`fixtures-are-committed.test.ts` already guards the exact `dist/` shape
+that once passed locally and broke CI, and already asserts that rule is
+still ignored so the check is not vacuous. Kept as-is and named in the
+map.
+
+### 20. Harness invariants
+
+`finding.f4-closure-hardening.test.ts` retained and named as the owner of
+"a package-sensitive default closure cannot be fabricated; an
+intentionally absent closure is explicit; synthetic F4 states are not
+presented as production-reachable evidence."
+
+### 21. The history validator gap
+
+The audit question was why
+
+```
+Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
+```
+
+passed `validate:history`. Read rather than guessed, and the answer is
+not that the rule was weak.
+
+**There was no rule.** `scripts/validate-history.mjs` validates the
+*bootstrap-kit archive*: that `docs/history/tasks/` holds 30 task files
+and that nine kit files exist. It reads no commit, opens no git object,
+and has no concept of a trailer. The gap was total, not partial. The name
+`validate:history` made the connection look plausible; nothing
+implemented it. And CI never ran it either way.
+
+**The premise in the task brief was also incomplete.** It names two F5
+commits. A sweep of all 228 commits found **three** offenders:
+
+| commit | violation |
+| ------ | --------- |
+| `86c8669` (2026-09-08, pre-F5) | model name in `Co-Authored-By`, **plus** a `Claude-Session:` trailer carrying a claude.ai session URL |
+| `26cb448` (F5) | model name in `Co-Authored-By` |
+| `3286394` (F5, the F6 base) | model name in `Co-Authored-By` |
+
+So the practice predates F5 by a week, and one commit carries session
+telemetry as well as a model name.
+
+### 22. The prospective rule
+
+`scripts/commit-metadata-policy.mjs`, a pure function over one commit's
+metadata, separated from the git walk precisely because a rule that can
+only be exercised by making real commits cannot be unit-tested — and an
+untested rule is how this gap arose.
+
+Scoping is the delicate part, since F6 § 22 forbids rejecting ordinary
+prose that mentions a model:
+
+- **Identity trailers** (`Co-Authored-By`, `Signed-off-by`,
+  author/committer names) name a person or agent. A model identifier
+  there is never prose. Model patterns apply in these positions **only**.
+- **Telemetry** — claude.ai URLs, opaque `session_...` handles,
+  `*-Session:` trailers, `Generated-by:` model trailers — has no
+  legitimate prose use, so it is rejected anywhere in the message.
+- **Everything else**, including prose naming a model and the entire
+  contents of the tree, is out of scope. The policy takes a commit record
+  and has no filesystem access at all.
+
+Model patterns require vendor **and** family or version (`Claude Opus 5`,
+`Claude-Opus-5`, `Claude 3 Haiku`, `Claude 5`, `claude-opus-5`,
+`claude-3-5-sonnet-20241022`, `GPT-5.6`, `Gemini 2.5`), never a bare
+family word — `Opus` and `Haiku` are ordinary English, and `Claude` alone
+is the allowed form.
+
+### 23. Historical baseline
+
+Main is **not** rewritten. The three offenders are published and cited by
+RWF-038; rewriting to erase a metadata defect that changes no code would
+invalidate every SHA those records reference.
+
+Primary mechanism: the policy applies to `F6_BASE_SHA..HEAD` only — one
+named commit, not a list, needing no maintenance as history grows.
+
+Secondary mechanism: the three known offenders are also listed
+explicitly, each with its reason. This is not redundancy for its own
+sake. The range alone degrades silently in a **shallow clone**
+(`actions/checkout@v4` fetches depth 1 by default, so there is no base
+commit to compute a range from) and under a **rebase**, which would move
+those commits to new SHAs past the cutoff. CI now checks out full history
+so the primary mechanism works there.
+
+Neither mechanism can hide a new violation: a new commit is not in the
+list, and is in the range.
+
+The grandfathering is held honest by four assertions: each exempted commit
+really does violate the policy; each is an ancestor of the base; each
+carries a stated reason; and — walking all 228 commits of merged history —
+the offenders found are **exactly** the exempted set. A new violation
+merged to main fails there even if nobody ran the gate.
+
+### 24. Metadata mutation-check
+
+33 synthetic cases, hermetic, creating no commits. 17 forbidden forms are
+each asserted rejected **and** matched by the rule that owns them, so a
+rule that stops matching cannot hide behind another that fires. A further
+test asserts every declared rule is exercised by at least one case.
+
+Six kinds of ordinary prose are asserted **accepted**: a subject about a
+GPT-5 provider adapter, a body comparing model families, a body using
+"session" in English, a `claude.com` link, prose using "generated", and a
+message that describes this very policy.
+
+That last one is a regression case, not a hypothetical. The first version
+of the claude.ai rule matched the bare domain anywhere, and it rejected
+the commit introducing the policy — whose message has to name the host it
+forbids in order to explain itself. A rule that a commit documenting the
+rule cannot pass is a rule nobody can document. The pattern now requires a
+URL with a path; the historical offender is still caught.
+
+### 25–27. Command, fast/full split, failure messages
+
+`npm run test:foundation` — 28 files, 1,335 tests, ~45s. A **subset** of
+`npm test`, asserted structurally to be one, so the two cannot disagree
+and CI does not run the full suite twice. The fast/full split is
+documented in README.md as a table.
+
+Failure messages name invariant, case, expected and actual throughout —
+`VERDICT SET CHANGED`, `PROOF BINDING VIOLATED`, `UNREPORTED CANDIDATE
+MISSING`, `NON-VACUITY FAILED`, `INDEX REFUSAL CHANGED THE ANSWER`,
+`WALL-CLOCK THRESHOLD CHANGED`, and the metadata gate's per-rule report.
+
+### 28. Gate mutation-checks
+
+Every mutation applied to a clean tree and reverted after.
+
+| # | mutation | caught by | signal |
+| - | -------- | --------- | ------ |
+| A | absent module-load closure read as a satisfied guard | `verdict.f2-proof-guards`, `verdict.module-load-absence` | **4 tests fail** |
+| B | identity memo keyed by basename, collapsing twins | `resolved-target.f5-identity-cache`, **offline differential** | **17 tests fail**; differential reports `VERDICT SET CHANGED` |
+| C | index refusal read as absence | *nothing* — **equivalent mutant**, see § 12 | full suite passes; analysed and coverage added |
+| C′ | stale index treated as authoritative | `scan-caches.f5-graph-index` (both the unit case and the new fallback case) | **2 tests fail**; the non-vacuity guard reports the refusal stopped happening |
+| D | graph index disabled | `scan-caches.f5-multiplier` | **fails**: 124 identity requests per advisory against a bound of 4 |
+| E | `not_applicable` candidate dropped | **offline differential** (×3), `scan.f3-no-finding` | **4 tests fail** |
+| F | real commit with model name + session trailer | `validate:commit-metadata` | **exit 1**, all four rules reported with invariant/expected/actual |
+
+C is recorded as a negative result rather than quietly dropped. It is the
+most informative row in the table: it says where the real defence is.
+
+### 29. Repeated-run stability
+
+Five consecutive runs of `npm run test:foundation`, same commit, same
+machine:
+
+| run | result | wall |
+| --- | ------ | ---: |
+| 1 | 28 files / 1,337 passed | 46s |
+| 2 | 28 files / 1,337 passed | 47s |
+| 3 | 28 files / 1,337 passed | 45s |
+| 4 | 28 files / 1,337 passed | 46s |
+| 5 | 28 files / 1,337 passed | 46s |
+
+**Semantic result identical 5/5.** Wall clock varied by 2s (45-47s), which
+is reported separately and is not a failure: nothing in this gate asserts
+on elapsed time, which is the property that makes the 5/5 meaningful
+rather than lucky.
+
+### 30. Runtime
+
+| gate | runtime |
+| ---- | ------: |
+| `test:foundation` | ~45s |
+| `npm test` | ~215s |
+| `test:adversarial` | ~51s |
+| `test:performance` | ~18s |
+| typecheck / lint / prettier / build | ~35s combined |
+| `validate:history` | <1s |
+
+The fast gate is ~21% of the full suite's runtime and does not duplicate
+it: CI's total grows by ~45s, not by a second full run.
+
+### 31. Production differential
+
+**Zero build-input changes.** `git diff 3286394..HEAD -- src`, excluding
+`*.test.ts` and `src/testing/**` (which `tsconfig.build.json` excludes
+from the build), is empty. The compiler sees byte-identical input, so the
+artifact is necessarily identical — a stronger statement than comparing
+hashes of two builds.
+
+Everything F6 changed is tests, scripts, config or docs:
+
+```
+ .github/workflows/ci.yml                        |   22 +
+ README.md                                       |   62 ++
+ package.json                                    |    4 +-
+ scripts/commit-metadata-policy.d.mts            |   42 +
+ scripts/commit-metadata-policy.mjs              |  264 +++
+ scripts/validate-commit-metadata.d.mts          |   18 +
+ scripts/validate-commit-metadata.mjs            |  204 +++
+ src/analysis/scan-caches.f5-graph-index.test.ts |  235 +++
+ src/analysis/verdict.f4-proof-mutation.test.ts  |   41 +
+ src/testing/commit-metadata-policy.test.ts      |  451 ++++++
+ src/testing/foundation-corpus.ts                |  487 +++++++
+ src/testing/foundation-differential.test.ts     | 1059 ++++++++++++++
+ src/testing/foundation-invariants.test.ts       |  226 +++
+ src/testing/foundation-invariants.ts            |  402 ++++++
+ vitest.foundation.config.ts                     |   92 ++
+```
+
+### 32. Verification
+
+Every gate run to completion on this branch. **No timeout waivers, and no
+performance threshold relaxed.**
+
+| gate | result | runtime |
+| ---- | ------ | ------: |
+| `test:foundation` (new) | **28 files / 1,337 passed** | 45-47s |
+| `npm test` | **167 files / 4,178 passed** (base: 164 / 3,982) | 200s |
+| `test:adversarial` | **124 passed** — v1 34/34, v2 88/88; identical to base | 50s |
+| `test:performance` | **3 passed** — 2,453/5,000ms; 8,258/20,000ms; 2,014/10,000ms | 20s |
+| `typecheck` | clean | 23s |
+| `lint` | clean | 19s |
+| `prettier --check .` | clean | 24s |
+| `build` | clean | 13s |
+| `validate:history` | clean — archive intact; 5 commits after the base carry no model names or session telemetry | <1s |
+
+Every wall-clock guard passed **further inside** its ceiling than the
+baseline did (2,453 vs 2,521; 8,258 vs 8,705; 2,014 vs 2,080), which is
+run-to-run noise and is recorded only to show nothing was relaxed to make
+them pass.
+
+**Live validation (`test:validation`) was NOT run**, and is reported
+separately by design (§ 15): it needs the network and the live OSV
+database, and its result is integration evidence rather than a gate. Its
+status is therefore *not established by this task*, which is the honest
+statement — the suite is unchanged and no Foundation invariant depends on
+it.
+
+One inherited caveat found while verifying, and left alone because fixing
+it is outside F6's scope: **`npm test` is not itself fully offline.**
+`src/vulnerabilities/osv-provider.integration.test.ts` queries the real
+OSV API inside the default run. It passed here. It means the FULL suite
+carries a network dependency that the Foundation gate does not — the fast
+gate excludes it and is genuinely hermetic — and it is worth someone's
+attention later, since a provider outage can currently fail `npm test`.
+
+### 33. Limitations — what this does NOT establish
+
+**These gates do not prove the analyzer is sound.** They prove a specific,
+enumerated set of Foundation-established distinctions is still drawn, on a
+corpus small enough to reason about. Nothing here is a proof of global
+soundness, and the invariant map is a map of what is *guarded*, not of
+what is *true*.
+
+Specifically:
+
+- **The differential corpus is synthetic and small.** Nine hermetic
+  projects. It covers every class it claims, and it claims only what it
+  covers — but real npm packages are larger and stranger than anything in
+  it. `tests/validation/` and the adversarial suites remain necessary for
+  different reasons, and neither substitutes for the other.
+- **Non-vacuity is per-class, not per-path.** "At least one family B proof
+  occurred" does not mean every way of producing one is exercised.
+- **The metadata policy is heuristic at the edges.** It requires vendor
+  plus family or version, so a model named in an identity trailer in a
+  form nobody has used yet would pass. It is scoped to be conservative in
+  the false-positive direction on purpose, and § 24 records why.
+- **Mutation-checking samples.** Six mutations plus one variant is not a
+  mutation-adequacy score. Mutation C shows the sampling is informative,
+  not that it is complete.
+- **Wall-clock guards remain environmental.** They are kept deliberately
+  generous and are not a complexity contract. A real performance
+  regression smaller than the ceiling will not be caught by them — by
+  design; that is the operation-count gate's job, and only for the one
+  multiplier it owns.
+- **Performance is still not solved.** F5 removed one multiplier; F6 adds
+  no optimization and measures no new hotspot.
+- **RWF-002 is untouched**, as is P1-B. F6 changes no analyzer verdict
+  semantics and adds no analyzer capability.
