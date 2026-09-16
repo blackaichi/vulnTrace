@@ -11927,3 +11927,100 @@ P1-B's first step is **not** to implement a construct. It is to split
 `unsupported_construct` by syntactic and semantic shape, because that
 single undifferentiated token is the entire top of the unmodeled-construct
 ranking, and until it is split the evidence cannot choose the feature work.
+
+### F7 REMEDIATION — the independent audit blocked on a misattributed mutation
+
+The record above stands as written; this section is appended, not merged
+into it. The independent audit of F7 returned **BLOCKED** on one required
+finding, plus one recommended and one strongly-recommended item and four
+minor ones. Still zero production files changed.
+
+**The blocker (F-1): `ARCHITECTURE.md` § 9.1 attributed F6's Mutation C to
+the wrong failure.** The section argued that conflating index refusal with
+absence "would manufacture family-B proofs out of a cache miss" and then
+cited Mutation C as the demonstration. F6 measured the opposite outcome.
+Mutation C — the refusal fallback replaced with `return indexed ?? new
+Map()` — produces an EMPTY map, which fails `resolveTargetNodes`'s
+`instances.size > 0` test, skips Site A (the only site that knows the
+premise of a family-B proof) and falls through to Site B's instance-blind
+re-resolution. Measured: clean `NOT_AFFECTED`/family B, mutated **`UNKNOWN`
+with no proof**. F6 classifies it as a *conservative precision regression*
+that claims LESS and explicitly "does not fabricate a negative proof".
+
+The fabrication warning belongs to **C′**, which F6 lists separately as
+"stale index treated as authoritative": a stale but NON-EMPTY answer
+passes `instances.size > 0` and can omit the very instance the graph did
+traverse, so Site A concludes `confirmedAbsentInstance` for an instance
+that was in fact reached — and that IS positive evidence.
+
+§ 9.1 now documents C and C′ as two defects with opposite risk profiles,
+with the measured verdict/proof table for C and the Site-A mechanism for
+C′. The audit was right that collapsing them is how a reader ends up
+believing the safe failure was the dangerous one. No other authoritative
+document made the same conflation (searched).
+
+**F-2 — family C's guard conditions were incomplete.**
+`SOUNDNESS-CONTRACT.md` § 3 listed only `reachableSubgraphComplete`, while
+`verdict.ts` enforces two further preconditions ahead of the proof:
+`graphTruncated === false` (VT-202, `verdict.ts`'s truncation return) and
+fully-derived entrypoint reachability roots (P0-Z,
+`entrypoint_root_incomplete`). Both are now stated as preconditions
+enforced by `buildFinding` rather than as evidence fields — which is what
+they are — together with the explicit note that `graphTruncated === false`
+is NOT a claim of call-graph completeness. The retired `callGraphComplete`
+name appears nowhere.
+
+**F-3 — the RWF status classifier could drop a row in silence.** The audit
+mutation-tested it: rewording RWF-002's status from "…remains open" to
+"…is still outstanding" put it in NO bucket, leaving 20 + 2 + 0 = 22
+against 23 parsed rows, with no error. The drift check catches the CHANGE
+but a regeneration would then bless a scorecard showing the project's most
+consequential open finding as neither open nor partly open.
+
+Classification is now **total**: an unrecognised status is a hard failure
+naming the row id and its raw text, and a partition assertion requires
+`open + partlyOpen + fixed === rows`. Deliberately not keyed on any RWF
+id — RWF-002 classifies because its wording is recognised, not because it
+is special-cased. Re-verified by mutation: the unrecognised wording now
+fails both `generate-scorecard.mjs` and `--check` with
+
+```
+FINDINGS.md: the status of 1 register row(s) could not be classified as
+open, open-in-part or fixed. ...
+  RWF-002: "**Bypassed for unloaded packages (VT-307d)**; the underlying
+  reachability-scoping tradeoff is still outstanding — see below"
+```
+
+and the restored register still reports 23 / 20 fixed / 2 open / 1
+open-in-part.
+
+**Minor items, batched.** (F-4) The uncertainty-distribution rows rendered
+a date but no commit, so the OLDEST measurement in the file — `72a925b`,
+taken at a different commit from every gate run — had the least checkable
+provenance; they now carry the same command/commit/date shape as every
+other measured row. (F-5) `OPEN-DEBTS.md` D-01 now records that
+`analysis/analysis-context.ts`'s own prose still calls the context "ONE
+immutable object", overstating what the constructor delivers, and that it
+should be narrowed when that file is next touched — the instruction was
+previously carried only in this record. (F-6) `SCORECARD.md` pointed at
+"§ RWF-002", a heading that does not exist; it points at D-06. (F-7) D-10's
+citation of the never-committed benchmark audit passed the link checker
+only because it happened to be written WITHOUT backticks — an exception
+that depends on prose formatting is an accident, not an exception, and
+re-formatting the filename the obvious way would have reddened the suite
+for a correct document. The path is now declared in `KNOWN_MISSING` with
+its reason, the checker reports the count on every run, and it FAILS if the
+file ever appears so the exception cannot outlive the problem. Verified in
+both directions: emptying the exception makes the checker fail on D-10;
+creating the file makes it fail as a stale exception.
+
+The checker's scope is also now stated in its own header: file and path
+references only, **anchors are not validated** (a `#fragment` is stripped
+before the path is checked). The authoritative documents cite sections as
+prose — "§ 9.1" — rather than as anchor links, which sidesteps that
+limitation rather than solving it.
+
+**Still zero production semantic movement.** The only file under `src/`
+that F7 touches remains the added `src/testing/docs-contract.test.ts`, and
+`tsconfig.build.json` excludes both `src/**/*.test.ts` and `src/testing/**`,
+so the shipped artifact cannot be affected by it — 296 files, unchanged.

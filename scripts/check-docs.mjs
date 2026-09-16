@@ -11,9 +11,18 @@
  *    `package.json`?
  * 2. Does every repository path the documentation points at exist?
  *
- * It does NOT lint prose, check external URLs (which would make the run
- * network-dependent, the exact property `test:foundation` exists to avoid)
- * or validate markdown anchors into other people's files.
+ * SCOPE, STATED SO IT IS NOT MISTAKEN FOR MORE. It checks FILE AND PATH
+ * references only. It does **not**:
+ *
+ * - validate markdown ANCHORS — a `#section` fragment is stripped before
+ *   the path is checked, so a link to a heading that does not exist still
+ *   passes. (The authoritative documents cite sections as prose — "§ 9.1"
+ *   — rather than as anchor links, which sidesteps this rather than
+ *   solving it.) Building a real anchor parser is deliberately out of
+ *   scope for a check this small;
+ * - check external URLs, which would make the run network-dependent — the
+ *   exact property `test:foundation` exists to avoid;
+ * - lint prose.
  *
  * WHY THIS EXISTS. `docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md` was cited as
  * a source by six committed files, in four different directories, and had
@@ -50,6 +59,34 @@ const REVIEWED = [
   "docs/SCORECARD.md",
   "docs/OPEN-DEBTS.md",
 ];
+
+/**
+ * References that are KNOWN to be unresolvable, and are cited anyway.
+ *
+ * A document may legitimately need to name something that is not in the
+ * repository — here, a benchmark audit that six committed files cite as a
+ * source and that has never been committed at any point in this
+ * repository's history (`docs/OPEN-DEBTS.md` D-10).
+ *
+ * This list exists so that fact is DECLARED rather than arranged. Before
+ * it, the citation passed only because it happened to be written without
+ * backticks, so the checker never looked at it — meaning a later editor
+ * formatting the filename the obvious way would have turned the suite red
+ * for a document that is correct. An exception that depends on prose
+ * formatting is not an exception; it is an accident.
+ *
+ * Each entry is asserted to STILL be missing (further down), so if the
+ * file is ever supplied this check fails and says to delete the exception,
+ * rather than silently keeping a stale one.
+ */
+const KNOWN_MISSING = new Map([
+  [
+    "docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md",
+    "never committed at any point in this repository's history; its " +
+      "findings are reproduced in tests/validation/FINDINGS.md. See " +
+      "docs/OPEN-DEBTS.md D-10.",
+  ],
+]);
 
 const scripts = new Set(
   Object.keys(
@@ -147,6 +184,9 @@ function checkPaths(file, rawText) {
   }
 
   for (const [candidate, bases] of candidates) {
+    // A declared missing reference is allowed, whatever it is wrapped in.
+    if (KNOWN_MISSING.has(candidate)) continue;
+
     // `src/domain/foo.js` is how TypeScript's own ESM imports spell
     // `src/domain/foo.ts`; accept either.
     const alternatives = bases.flatMap((resolved) => [
@@ -171,6 +211,18 @@ for (const file of REVIEWED) {
   checkPaths(file, text);
 }
 
+// A stale exception is its own defect: it would go on excusing a
+// reference that has since become resolvable, and nobody would notice.
+for (const [missing, why] of KNOWN_MISSING) {
+  if (fs.existsSync(path.join(ROOT, missing))) {
+    problems.push(
+      `${missing} — declared a KNOWN_MISSING reference (${why}) but the ` +
+        "file now exists. Delete the exception in scripts/check-docs.mjs, " +
+        "and update docs/OPEN-DEBTS.md D-10.",
+    );
+  }
+}
+
 if (problems.length > 0) {
   process.stderr.write(`${problems.join("\n")}\n`);
   process.stderr.write(`\n${problems.length} broken reference(s).\n`);
@@ -178,5 +230,8 @@ if (problems.length > 0) {
 }
 
 process.stdout.write(
-  `checked ${REVIEWED.length} documents: every npm script and repository path resolves.\n`,
+  `checked ${REVIEWED.length} documents: every npm script and repository ` +
+    "path resolves (file/path references only — anchors are not " +
+    `validated), with ${KNOWN_MISSING.size} declared missing reference(s): ` +
+    `${[...KNOWN_MISSING.keys()].join(", ")}.\n`,
 );

@@ -33,6 +33,17 @@ afterwards; no production mutation path was found. The invariant rests on
 **ownership and lifetime**, not on structure — `readonly` is erased at
 runtime and `Object.freeze` is shallow.
 
+**The production comment still overstates it.** `src/analysis/analysis-context.ts`
+describes the context as "ONE immutable object" and "Immutable and created
+once per scan". Per the table above that is stronger than what the
+constructor delivers: `Object.freeze` is applied to the wrapper and to the
+copied `entrypoints` array, and to nothing else. F4 recorded this as a
+documentation defect and deliberately did not touch it (F4 changed no
+production file); F7 changed no production file either, so it stands. **It
+should be narrowed to the wrapper-frozen / references-live statement when
+that file is next touched** — this entry exists so that instruction is not
+carried only in a commit message.
+
 **Shape of a fix** (none chosen): snapshot or deep-freeze the
 proof-critical inputs at binding; make `CallGraph` and `ModuleLoadClosure`
 immutable after construction; or enforce single-owner lifetime so a
@@ -191,8 +202,7 @@ instance" expectation), not an analyzer change.
 
 ### D-10 — A benchmark audit document is cited but has never existed
 
-**What.** A file named REAL-WORLD-BENCHMARK-AUDIT-V0.1.md, under `docs/`,
-is cited as a source by
+**What.** `docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md` is cited as a source by
 six committed files across four directories. It has never been committed at
 any point in the repository's history.
 
@@ -206,6 +216,13 @@ fails a test rather than surviving indefinitely, and annotated the
 citations in the authoritative documents. The historical records that cite
 it are **not** edited — they are a record of what was true when written,
 and rewriting a record to hide a broken pointer is worse than the pointer.
+
+The reference is **declared** to the checker rather than hidden from it:
+`KNOWN_MISSING` in `scripts/check-docs.mjs` names this exact path and the
+reason, the checker reports the count of declared missing references on
+every run, and it **fails if the file ever appears** — so the exception
+cannot quietly outlive the problem. Nothing about this document's contents
+is reconstructed or invented; only the citation is accounted for.
 
 ### D-11 — Frontend/modeling uncertainty is where the remaining pressure is
 
