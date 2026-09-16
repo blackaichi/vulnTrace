@@ -178,12 +178,74 @@ is implemented in `src/cli/`; `src/cli.ts` is the thin process entrypoint.
 
 ```bash
 npm test                # run everything above (unit/integration/fixture/e2e/contract/perf)
+npm run test:foundation  # FAST deterministic Foundation gate (subset of npm test)
 npm run test:unit        # unit tests only
 npm run test:integration  # integration tests only
 npm run test:coverage      # run everything with V8 coverage reporting
 npm run test:adversarial   # adversarial suites (v1 + v2); also run in CI
 npm run test:validation    # real-world CVE validation suite
+npm run validate:history   # bootstrap-kit archive + commit metadata policy
 ```
+
+### The Foundation gate
+
+`npm run test:foundation` runs the subset of `npm test` that owns a
+**Foundation invariant** — the soundness properties established by F1–F6.
+It is a *subset*, not a second suite: every file it runs is also run by
+`npm test`, so the two can never disagree, and CI does not execute the full
+suite twice.
+
+The authoritative list of invariants and their owning tests is
+`src/testing/foundation-invariants.ts`. It is data rather than prose so it
+cannot drift: `src/testing/foundation-invariants.test.ts` fails if the map
+names a test that does not exist, names a test the gate does not execute,
+or if the gate runs a file the map does not account for.
+
+| | fast (`test:foundation`, ~45s) | full (CI) |
+| --- | --- | --- |
+| proof contracts (VT-CONTRACT-01/02/03) | ✓ | ✓ |
+| F4 proof-mutation harness (`unsafe_survival === 0`) | ✓ | ✓ |
+| F2 fail-closed guards | ✓ | ✓ |
+| F3 output/uncertainty contract | ✓ | ✓ |
+| `PackageInstance` exact isolation | ✓ | ✓ |
+| F5 caches, graph-index refusal, multiplier | ✓ | ✓ |
+| offline semantic differential | ✓ | ✓ |
+| schema + fixture integrity + commit metadata | ✓ | ✓ |
+| everything else in `npm test` | | ✓ |
+| adversarial suites | | ✓ |
+| wall-clock performance smoke | | ✓ |
+| build / typecheck / lint / prettier / history | | ✓ |
+
+**Deterministic vs. live.** The Foundation gate is entirely deterministic
+and offline. Two signals are deliberately *not* part of it and are reported
+separately:
+
+- `npm run test:validation` hits the **real OSV API over the network**. It
+  is integration evidence and a provider-movement detector, not a
+  correctness oracle — advisory-database movement must not be able to make
+  core CI flaky.
+- `npm run test:performance` measures **wall-clock time**. Its thresholds
+  are coarse catastrophic-regression ceilings that answer "did something
+  explode", never "is the complexity contract intact". The complexity
+  contract is an exact **operation-count** gate
+  (`src/analysis/scan-caches.f5-multiplier.test.ts`), which has no
+  threshold to tune.
+
+**Threshold-ratchet policy.** Performance thresholds must not simply be
+raised to make CI green. The three wall-clock ceilings are pinned in
+`src/testing/foundation-invariants.test.ts` as well as in the guard file, so
+changing one is a deliberate two-file edit; the failure message names the
+record (`tests/validation/FINDINGS.md`) where the measurement and
+justification must go.
+
+**Commit metadata.** `npm run validate:history` checks both the
+bootstrap-kit archive and the commit-metadata policy
+(`scripts/commit-metadata-policy.mjs`): commits added after the F6 base
+carry no model name in an identity trailer and no session telemetry. The
+allowed attribution is `Co-Authored-By: Claude <noreply@anthropic.com>`.
+Three commits merged before F6 violate the policy and are documented
+exceptions rather than history rewrites — see
+`scripts/validate-commit-metadata.mjs`.
 
 Coverage reports are written to `coverage/` (text summary printed to stdout,
 plus `coverage/lcov.info` and an HTML report).

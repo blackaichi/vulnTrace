@@ -23,6 +23,11 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          # Full history: the commit metadata gate validates the range
+          # F6_BASE_SHA..HEAD and needs the base commit present to compute
+          # it. The fixture-integrity check also shells out to git.
+          fetch-depth: 0
 
       - name: Set up Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v4
@@ -45,6 +50,14 @@ jobs:
       - name: Check formatting
         run: npx prettier --check .
 
+      # The fast deterministic Foundation gate, run FIRST and on its own so
+      # that "a Foundation invariant broke" is reported in ~45s rather than
+      # after the ~3.5-minute full suite. Every file it runs is also in
+      # `npm test` below, so this costs one extra short run and can never
+      # disagree with the full one. See vitest.foundation.config.ts.
+      - name: Foundation invariant gate
+        run: npm run test:foundation
+
       - name: Test
         run: npm test
 
@@ -53,3 +66,12 @@ jobs:
 
       - name: Adversarial validation suites
         run: npm run test:adversarial
+
+      # Never ran in CI before F6, which is part of why three commits
+      # carrying forbidden metadata reached main: the archive check existed
+      # and nothing invoked it, and the commit-metadata check did not exist
+      # at all. `fetch-depth: 0` is required so the metadata gate can see
+      # the F6 base commit and compute the range it validates; without it
+      # the gate degrades to checking only what a shallow clone contains.
+      - name: History and commit metadata
+        run: npm run validate:history
