@@ -231,9 +231,22 @@ It is also **orthogonal to closure widening**.
 construct load a module the graph never discovered?" — and is a soundness
 boundary the proof rules do consume. A reason can be widening and
 `capability_escape` (`eval`), widening and `identity_unresolved`
-(`unresolved_module`), or non-widening and `unmodeled_construct`
-(`unsupported_construct`). Neither classification may ever be derived from
+(`unresolved_module`), or non-widening and `unmodeled_construct` (the
+`unsupported_*` family). Neither classification may ever be derived from
 the other.
+
+**Within `unmodeled_construct`, the frontend gap is named specifically.**
+P1-B1 split the call graph's old `unsupported_construct` catch-all into
+eight subtypes describing *where the value being called came from* — an
+unattributable name in callee or receiver position, a `this` receiver, an
+indexed receiver, a call result, an inline-constructed value, an operator
+expression, or a callee that is not a name at all — keeping
+`unsupported_construct` itself as the runtime floor for anything
+unmeasured or newly invented by the parser. This is **detail, not a
+seventh category**: all nine share `unmodeled_construct`, all nine are
+non-widening, and swapping one for another changes an explanation and
+nothing else. The measured distribution is in
+[`SCORECARD.md` § 7.1](SCORECARD.md).
 
 ### 6.2 `unreportedCandidates` — a candidate that produced no finding
 

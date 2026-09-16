@@ -35,16 +35,16 @@ cannot be averaged into one number without destroying both. Read the
 | Distinct owner test files | 29 | structural — the same map | The invariants are spread across independent suites rather than concentrated in one fragile file. | An owner may own more than one invariant; this is not a coverage percentage. |
 | Test files the gate executes | 29 | structural — `vitest.foundation.config.ts` | `npm run test:foundation` is a subset of `npm test`, never a second suite. | Gate files may contain assertions beyond the invariant they own. |
 | Invariants by originating task | F1 1, F2 3, F3 4, F4 4, F5 3, F6 5, VT-CONTRACT 1, P1-A 1 | structural — the same map | Shows which Foundation task each guarantee came from. | A task with fewer invariants did not necessarily do less work. |
-| Gate result | PASS (1356 tests, 29 files) | measured (deterministic) — `npm run test:foundation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-16 | The Foundation block's hard gate. It is offline and contains no network access at all. | Green means no listed invariant broke — not that the analyzer is sound. |
+| Gate result | PASS (1356 tests, 29 files) | measured (deterministic) — `npm run test:foundation` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | The Foundation block's hard gate. It is offline and contains no network access at all. | Green means no listed invariant broke — not that the analyzer is sound. |
 
 ## 2. Test suites
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4198 tests, 169 files | measured (LIVE) — `npm test` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-16 | 169 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
-| `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-16 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
-| `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-16 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
-| `npm run test:validation` | 12 passed / 5 failed (all known) | measured (LIVE) — `npm run test:validation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-16 | Real npm-installed packages against real advisories over the real OSV API. | Integration evidence and a provider-movement detector, never a correctness oracle. Owns no invariant in the map, on purpose. |
+| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 170 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
+| `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
+| `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
+| `npm run test:validation` | 12 passed / 5 failed (all known) | measured (LIVE) — `npm run test:validation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-17 | Real npm-installed packages against real advisories over the real OSV API. | Integration evidence and a provider-movement detector, never a correctness oracle. Owns no invariant in the map, on purpose. |
 
 ## 3. Verdict and proof coverage
 
@@ -69,13 +69,13 @@ cannot be averaged into one number without destroying both. Read the
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
 | Categories | 6 — unmodeled_construct, value_uncertainty, capability_escape, identity_unresolved, analysis_precondition_unmet, budget_exceeded | structural — `src/domain/uncertainty.ts` | Each category names a different KIND of work, which is the only property that makes a taxonomy worth having. | **Observational.** Nothing in the taxonomy authorizes a proof or is read by any branch that decides a verdict. |
-| Specific reasons classified | 39 | structural — the same file, exhaustiveness compile-enforced | Every `DynamicCallReason` appears verbatim and every reason has exactly one category. | `unsupported_construct` is one reason covering many syntactic shapes — see §7. |
+| Specific reasons classified | 47 | structural — the same file, exhaustiveness compile-enforced | Every `DynamicCallReason` appears verbatim and every reason has exactly one category. | Eight of them are the P1-B1 frontend-gap subtypes; `unsupported_construct` survives as their runtime floor, not as a bucket — see §7.1. |
 
 Reasons per category:
 
 | Category | Reasons |
 | --- | --- |
-| `unmodeled_construct` | 3 |
+| `unmodeled_construct` | 11 |
 | `value_uncertainty` | 1 |
 | `capability_escape` | 16 |
 | `identity_unresolved` | 9 |
@@ -89,7 +89,7 @@ Reasons per category:
 | Cases | 17 | structural — `tests/validation/cases/cases.json` | Real, npm-installed packages against real advisories; oracles authored from the advisory and the real source, independently of VulnTrace's output. | 17 cases is a shape corpus, not a statistical sample. No precision/recall figure is claimed from it. |
 | Expected-verdict distribution | AFFECTED 9, NOT_AFFECTED 7, UNKNOWN 1 | structural — the same file | The corpus is deliberately balanced so that 'vulnerable version installed' and 'vulnerable behavior reachable' can disagree. | These are the ORACLES, not the results. |
 | Known failures (kept failing on purpose) | 5 — VAL-002, VAL-003, RWB-03, RWB-05, RWB-09b | structural — `knownFailure: true` in the same file | A disagreement with an independently-researched oracle is recorded and kept red, never silently fixed away or re-scoped to match the tool. | One of them (`RWB-09b`) is a benchmark ORACLE-DESIGN limitation, not an analyzer defect: the correct result is no finding at all, which the case format cannot express. |
-| Last recorded live run | 12 passed / 5 failed (5 known, 0 unexpected) | measured (LIVE) — `npm run test:validation`, 2026-09-16 | Historical measurement, reproduced in `tests/validation/REPORT.md`. | Live. A rerun today can differ because the advisory database moved, not because this repository changed. |
+| Last recorded live run | 12 passed / 5 failed (5 known, 0 unexpected) | measured (LIVE) — `npm run test:validation`, 2026-09-17 | Historical measurement, reproduced in `tests/validation/REPORT.md`. | Live. A rerun today can differ because the advisory database moved, not because this repository changed. |
 
 ## 7. Where the UNKNOWN pressure actually is
 
@@ -99,12 +99,12 @@ appears in no output, and no proof rule reads it.
 
 | Remediation domain | Occurrences | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| target intelligence | 65 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | Entirely `no_vulnerable_symbol_rule`: this scan had no rule describing the advisory's vulnerable symbol. | **A corpus/config artifact, not an analyzer gap.** Each fixture configures exactly one rule, so every other advisory OSV returns produces one of these. It is not evidence the frontend could not understand the code — the frontend was never asked. |
-| frontend | 42 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | `unsupported_construct` — the call graph saw a callee shape it has no rule for. The class P1-B is prioritized from. | One undifferentiated token. Knowing there are 42 does not tell anyone which syntax to implement — see `docs/OPEN-DEBTS.md` D-07. |
-| target / identity resolution | 41 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | 37 `unresolved_target` call-graph edges plus 4 `vulnerable_target_unresolved` findings: an identity or attribution fact was never established. | Splits across two remediation owners (export attribution and target intelligence) that this dimension does not separate. |
-| value precision | 5 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | `dynamic_member_access` — the construct is modeled; the destination is not statically unique. | Closeable only by value/alias analysis, never by adding syntax support. |
-| unsupported capability | 0 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | **Zero.** Not one blocker in the corpus is a construct that can load or execute code the graph never discovered. | Zero in THIS corpus. Real applications do contain `eval`; the corpus is a shape corpus, not a sample. |
-| budget | 0 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `72a925b`, 2026-09-14 | No configured bound stopped any work in this corpus. | Says nothing about a project large enough to hit one. |
+| target intelligence | 65 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-16 | Entirely `no_vulnerable_symbol_rule`: this scan had no rule describing the advisory's vulnerable symbol. | **A corpus/config artifact, not an analyzer gap.** Each fixture configures exactly one rule, so every other advisory OSV returns produces one of these. It is not evidence the frontend could not understand the code — the frontend was never asked. |
+| frontend | 42 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-16 | The `unsupported_*` family — the call graph saw a callee shape it has no rule for. The class P1-B is prioritized from. Since P1-B1 the 42 are broken out by specific gap in § 7.1. | Still one number for eight different gaps, and all 42 come from a SINGLE case (RWB-05). Read § 7.1, not this row, before prioritizing anything. |
+| target / identity resolution | 41 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-16 | 37 `unresolved_target` call-graph edges plus 4 `vulnerable_target_unresolved` findings: an identity or attribution fact was never established. | Splits across two remediation owners (export attribution and target intelligence) that this dimension does not separate. |
+| value precision | 5 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-16 | `dynamic_member_access` — the construct is modeled; the destination is not statically unique. | Closeable only by value/alias analysis, never by adding syntax support. |
+| unsupported capability | 0 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-16 | **Zero.** Not one blocker in the corpus is a construct that can load or execute code the graph never discovered. | Zero in THIS corpus. Real applications do contain `eval`; the corpus is a shape corpus, not a sample. |
+| budget | 0 | measured (LIVE) — `node scripts/measure-uncertainty.mjs` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-16 | No configured bound stopped any work in this corpus. | Says nothing about a project large enough to hit one. |
 
 The single most misread row is **target intelligence**:
 `no_vulnerable_symbol_rule` accounts for 65 of the
@@ -128,6 +128,50 @@ of the uncertainty, not the cost of removing it: occurrences collapse
 into a handful of distinct reasons, one change can discharge many at
 once, and target-relevant completeness may discharge most of them
 without modeling a single construct. See `docs/OPEN-DEBTS.md` D-06.
+
+### 7.1 Which frontend gap, specifically
+
+The `frontend` row above used to be one opaque token. It is now eight
+measured gaps plus a retained floor (P1-B1; `tests/validation/FINDINGS.md` RWF-041).
+**This did not improve coverage** — the analyzer models exactly what it
+modelled before, and the corpus's UNKNOWN count is unchanged. It
+improved OBSERVABILITY: the question 'which capability should P1-B
+build first?' now has evidence behind it instead of intuition.
+
+**Two counts, and confusing them is the whole trap.** *Graph-wide* is
+every unresolved edge anywhere the graph builder walked, across all 17
+projects — the shape of real JavaScript, not a work queue. *Blocking*
+is the subset a search for a real vulnerable target actually traversed
+— the occurrences that cost a verdict. They rank the subtypes
+differently, and that disagreement is the most useful thing here.
+
+| Frontend gap | Graph-wide | Blocking | Projects | Packages | Sites | Likely domain | Example shape |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| `unsupported_receiver_binding` | 1185 | 10 | 16 | 25 | 612 | value-flow | `stack.set(k, v)` — the receiver is a name whose value was never traced. |
+| `unsupported_callee_binding` | 571 | 28 | 11 | 21 | 352 | value-flow | `isArray(x)`, `new Ctor(o)` — a bare name bound to no declaration the binder reads. |
+| `unsupported_this_receiver` | 190 | 0 | 5 | 5 | 88 | frontend syntax/modeling | `this.parse(text)` — no class-instance receiver model. |
+| `unsupported_call_result_receiver` | 176 | 0 | 13 | 12 | 127 | call graph | `makeRe().test(v)` — needs interprocedural return modeling. |
+| `unsupported_literal_receiver` | 98 | 0 | 13 | 13 | 61 | frontend syntax/modeling | `/re/.exec(v)`, `[a, b].join('\|')` — value known, members not modeled. |
+| `unsupported_indexed_receiver` | 68 | 0 | 12 | 11 | 57 | value-flow | `funcs[index].apply(...)` — the receiver came out of an unread index. |
+| `unsupported_computed_callee` | 42 | 4 | 10 | 11 | 26 | call graph | `(function () {})()`, `f()()` — the callee is not a name at all. |
+| `unsupported_expression_receiver` | 21 | 0 | 10 | 9 | 16 | value-flow | `(value \|\| '').trim()` — receiver produced by an unevaluated operator. |
+| `unsupported_construct` | 0 | 0 | 0 | 0 | 0 | n/a — retained runtime floor | The generic token, kept so an unmeasured or future construct fails safe. Zero in this corpus. |
+
+Totals: **2351 graph-wide**, **42 blocking**,
+**0 on the generic floor**. The blocking column reconciles
+exactly with the `frontend` row in §7 — the decomposition moved no
+count, it only named them.
+
+**Sample-size warning.** All 42 blocking occurrences come from
+**1 case** (RWB-05), and they collapse into 19 distinct call
+sites in 13 functions, not 42 independent gaps. They are also the
+same occurrences RWF-002 is about: they sit in `qs`'s *stringify*
+path while the vulnerable target is in its *parse* path, so
+reachability scoping might discharge every one of them without
+modeling a single construct. Do not read this column as a work plan
+on its own.
+
+Provenance for both columns: measured (LIVE) — `node scripts/measure-frontend-gaps.mjs` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-16.
 
 ## 8. Known defect register (RWF)
 

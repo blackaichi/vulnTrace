@@ -275,7 +275,7 @@ async function build() {
       taxonomy.reasons.length,
       "structural — the same file, exhaustiveness compile-enforced",
       "Every `DynamicCallReason` appears verbatim and every reason has exactly one category.",
-      "`unsupported_construct` is one reason covering many syntactic shapes — see §7.",
+      "Eight of them are the P1-B1 frontend-gap subtypes; `unsupported_construct` survives as their runtime floor, not as a bucket — see §7.1.",
     ]),
     "",
     "Reasons per category:",
@@ -372,6 +372,111 @@ async function build() {
     "into a handful of distinct reasons, one change can discharge many at",
     "once, and target-relevant completeness may discharge most of them",
     "without modeling a single construct. See `docs/OPEN-DEBTS.md` D-06.",
+    "",
+  );
+
+  // -- 7.1 The frontend row, decomposed (P1-B1/P1-B2) ---------------------
+  const gaps = measured.frontendGapDistribution;
+
+  // RECONCILIATION, ASSERTED RATHER THAN CLAIMED. The whole value of a
+  // decomposition is that it accounts for exactly what it replaced, so the
+  // two ways of saying it must agree or the scorecard must not be written
+  // at all. Checked here rather than trusted because these are MEASURED
+  // values a human transcribes from a command's output (F7's own
+  // structural/measured split), and a transcription slip that left the
+  // totals disagreeing is precisely the failure this section exists to
+  // rule out.
+  const subtypeOccurrences = gaps.bySubtype.reduce(
+    (total, entry) => total + entry.occurrences,
+    0,
+  );
+  const subtypeBlocking = gaps.bySubtype.reduce(
+    (total, entry) => total + entry.blocking,
+    0,
+  );
+  const frontendDomain = measured.uncertaintyDistribution.byDomain.find(
+    (entry) => entry.domain === "frontend",
+  );
+  if (subtypeOccurrences !== gaps.graphWideOccurrences) {
+    throw new Error(
+      `measurements.json: frontendGapDistribution subtypes sum to ` +
+        `${subtypeOccurrences} graph-wide occurrences, but graphWideOccurrences ` +
+        `is ${gaps.graphWideOccurrences}.`,
+    );
+  }
+  if (subtypeBlocking !== gaps.blockingOccurrences) {
+    throw new Error(
+      `measurements.json: frontendGapDistribution subtypes sum to ` +
+        `${subtypeBlocking} blocking occurrences, but blockingOccurrences is ` +
+        `${gaps.blockingOccurrences}.`,
+    );
+  }
+  if (!frontendDomain || frontendDomain.occurrences !== subtypeBlocking) {
+    throw new Error(
+      `measurements.json: §7's frontend row reports ` +
+        `${frontendDomain ? frontendDomain.occurrences : "no"} occurrences, but ` +
+        `§7.1's subtypes account for ${subtypeBlocking}. The decomposition must ` +
+        "account for exactly what it replaced.",
+    );
+  }
+
+  push(
+    "### 7.1 Which frontend gap, specifically",
+    "",
+    "The `frontend` row above used to be one opaque token. It is now eight",
+    "measured gaps plus a retained floor (P1-B1; `tests/validation/FINDINGS.md` RWF-041).",
+    "**This did not improve coverage** — the analyzer models exactly what it",
+    "modelled before, and the corpus's UNKNOWN count is unchanged. It",
+    "improved OBSERVABILITY: the question 'which capability should P1-B",
+    "build first?' now has evidence behind it instead of intuition.",
+    "",
+    "**Two counts, and confusing them is the whole trap.** *Graph-wide* is",
+    "every unresolved edge anywhere the graph builder walked, across all 17",
+    "projects — the shape of real JavaScript, not a work queue. *Blocking*",
+    "is the subset a search for a real vulnerable target actually traversed",
+    "— the occurrences that cost a verdict. They rank the subtypes",
+    "differently, and that disagreement is the most useful thing here.",
+    "",
+    row([
+      "Frontend gap",
+      "Graph-wide",
+      "Blocking",
+      "Projects",
+      "Packages",
+      "Sites",
+      "Likely domain",
+      "Example shape",
+    ]),
+    row(["---", "---", "---", "---", "---", "---", "---", "---"]),
+    ...gaps.bySubtype.map((entry) =>
+      row([
+        `\`${entry.reason}\``,
+        entry.occurrences,
+        entry.blocking,
+        entry.distinctFixtures,
+        entry.distinctPackages,
+        entry.distinctSites,
+        entry.domain,
+        entry.example,
+      ]),
+    ),
+    "",
+    `Totals: **${gaps.graphWideOccurrences} graph-wide**, **${gaps.blockingOccurrences} blocking**,`,
+    `**${gaps.genericFallbackOccurrences} on the generic floor**. The blocking column reconciles`,
+    "exactly with the `frontend` row in §7 — the decomposition moved no",
+    "count, it only named them.",
+    "",
+    `**Sample-size warning.** All ${gaps.blockingOccurrences} blocking occurrences come from`,
+    `**${gaps.blockingCases} case** (RWB-05), and they collapse into 19 distinct call`,
+    "sites in 13 functions, not 42 independent gaps. They are also the",
+    "same occurrences RWF-002 is about: they sit in `qs`'s *stringify*",
+    "path while the vulnerable target is in its *parse* path, so",
+    "reachability scoping might discharge every one of them without",
+    "modeling a single construct. Do not read this column as a work plan",
+    "on its own.",
+    "",
+    "Provenance for both columns: measured (LIVE) — " +
+      `\`${gaps.command}\` at \`${gaps.commit}\`, ${gaps.measuredAt}.`,
     "",
   );
 
