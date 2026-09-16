@@ -1,7 +1,29 @@
 # VulnTrace Real-World Benchmark v0.1 — Design Document
 
-**Status:** Proposed design. No fixtures, cases, or rules described here exist
-yet. Nothing in this document has been implemented.
+> **STATUS CORRECTION (Foundation F7).** The line below was accurate when
+> this document was written and is **no longer true**: the benchmark was
+> implemented. All ten cases exist, plus the single-cause siblings VT-303
+> added (`RWB-06A`, `RWB-11a`, `RWB-11b`) — see § 9 and
+> `tests/validation/cases/cases.json`.
+>
+> The **body of this document is left exactly as written**, as the design
+> record it is. Do not read its case descriptions as current results.
+>
+> - **Current measured state:** [`SCORECARD.md`](SCORECARD.md) § 6.
+> - **Current results, per case:** `tests/validation/REPORT.md`, regenerated
+>   by every `npm run test:validation` run.
+> - **Known unresolved blockers:** [`OPEN-DEBTS.md`](OPEN-DEBTS.md) D-09,
+>   which also explains why `RWB-09b`'s failure is an oracle-design
+>   limitation of this benchmark rather than an analyzer defect.
+>
+> An independent audit of this benchmark is referred to throughout the
+> repository as REAL-WORLD-BENCHMARK-AUDIT-V0.1.md. **That file has never
+> been committed**; its findings are reproduced in
+> `tests/validation/FINDINGS.md`. See [`OPEN-DEBTS.md`](OPEN-DEBTS.md) D-10.
+
+**Status (as written, now superseded — see above):** Proposed design. No
+fixtures, cases, or rules described here exist yet. Nothing in this
+document has been implemented.
 
 **Relationship to `tests/validation/`:** the three cases already implemented
 (`VAL-001`..`VAL-003`, see `docs/VALIDATION-STRATEGY.md`) are the *current*

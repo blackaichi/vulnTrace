@@ -11709,3 +11709,221 @@ the gate inside a user namespace (`unshare -r`) maps the process to root,
 which defeats the `chmod 000` in a pre-existing F5 identity-cache case and
 fails it. That is root-sensitivity in a test that predates F6, not a
 network dependency, and not something this task changed.
+
+---
+
+## RWF-040 (FOUNDATION F7) — The invariants were real, owned and tested, and a new contributor still had to reconstruct them from commit history
+
+Foundation's seventh and closing task. It adds no verdict, changes no proof
+rule, and moves no verdict anywhere in the corpus. **Zero production files
+changed.**
+
+Central rule being enforced: *a guarantee nobody can find is not a
+guarantee, and a number nobody re-derives is not a measurement.*
+
+### F6 handoff
+
+Base: `dcb5da1` (`docs: correct RWF-039 audit findings`), certified before
+editing — clean tree, identical to `origin/main`, F6/RWF-039 present.
+Baseline at that commit, all green:
+
+| gate | result |
+| --- | --- |
+| `npm run test:foundation` | 29 files / 1,356 tests, 48.35s |
+| `npm test` | 168 files / 4,192 tests, 212.97s |
+| `npm run test:adversarial` | 2 files / 124 tests |
+| `npm run test:performance` | 1 file / 3 tests |
+| `npm run test:validation` (LIVE) | 12 passed / 5 failed, all known, 0 unexpected |
+
+### F7-A — the defect: the truth existed, and it was unfindable
+
+Every Foundation invariant had an owner. Every proof family had a
+precondition. Every cache had a failure policy. **None of it had a home a
+reader could be pointed at.** The authoritative statement of what
+`NOT_AFFECTED` means lived in a 100-line doc comment on a TypeScript
+interface; the `AnalysisProofContext` mutability judgment lived in an RWF
+record 10,000 lines into this file; the cache contracts lived in a
+different one 500 lines further on.
+
+The concrete consequences, all found by looking rather than assumed:
+
+1. **`README.md` positioned VulnTrace as "not a generic SCA scanner"** —
+   true, but stated as a negation, with no statement of what it *is*. The
+   expected workflow (scanner → candidate → per-instance triage) appeared
+   nowhere.
+2. **`docs/REAL-WORLD-BENCHMARK-V0.1.md` still opened with "Nothing in this
+   document has been implemented."** All ten cases plus the three VT-303
+   siblings had been implemented for weeks.
+3. **A source document was cited six times and had never existed.**
+   `docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md` is referenced by four
+   directories' worth of committed files. A history search over every ref,
+   filtered to additions, finds no commit that ever added it.
+4. **The one measurement Foundation exists to produce was three tables deep
+   in a record**, with the warning that makes it readable ("65 of these are
+   a corpus artifact") in a different paragraph from the table itself.
+
+### F7-B — the authoritative document set
+
+Four documents, chosen so that each answers a question a reader actually
+arrives with, rather than mirroring the task structure that produced them:
+
+| Document | Answers |
+| --- | --- |
+| `docs/ARCHITECTURE.md` | "How is this put together, and what are the rules?" — pipeline, `PackageInstance` identity, metadata uncertainty, the `UNKNOWN` taxonomy, `unreportedCandidates`, provider boundary, target authority, cache/index contracts, testing tiers, history policy, user and contributor workflows, the Go boundary |
+| `docs/SOUNDNESS-CONTRACT.md` | "What does this verdict mean, and what is the proof relative to?" — the three verdicts, families A/B/C, VT-CONTRACT-01/02/03, `ModuleLoadClosure`, `AnalysisProofContext`, how to add a family, three worked examples |
+| `docs/SCORECARD.md` | "What is the measured state?" — generated |
+| `docs/OPEN-DEBTS.md` | "What do you know you haven't finished?" — eleven named debts, RWF-002, P1-B entry criteria and initial direction |
+
+`docs/SDD.md` and `docs/adr/` are **kept unchanged** and reclassified as
+historical. Rewriting a design record to match what was later built
+destroys the only artifact that says what was intended; the four documents
+above declare themselves current where they disagree.
+
+### F7-C — three things the documentation was tempted to say, and does not
+
+These are the claims a closing document most wants to make, and each one
+would have been false:
+
+- **NOT** "`AnalysisProofContext` is immutable." The wrapper is frozen and
+  the `entrypoints` array is snapshotted and frozen; `moduleLoadClosure`,
+  `graph`, `knownPackageRoots` and the entrypoint OBJECTS are live aliases.
+  F4's audit moved a verdict through the caller's own retained alias. The
+  documents state the per-field table and call it a hardening debt.
+  (`analysis/analysis-context.ts`'s own prose still says "ONE immutable
+  object" — F4 recorded that as a documentation defect to fix when the file
+  is next touched, and F7 changed no production file, so it stands.)
+- **NOT** "the indexes are immutable." The node-count guard detects growth
+  and shrinkage and does not detect in-place mutation. Nothing does.
+- **NOT** "performance improved." F5 removed one multiplier and established
+  a STRUCTURAL operation-count property. Parsing and graph construction are
+  still ~90% of wall time and were not touched. No wall-clock improvement
+  is claimed anywhere.
+
+### F7-D — the scorecard, and why it is not a score
+
+`docs/SCORECARD.md` is generated by `scripts/generate-scorecard.mjs` from
+the artifacts that own each value: the invariant map, the uncertainty
+taxonomy, the five vitest configs, `cases.json`, `result.schema.json`,
+`package.json` and this file's own status table. TypeScript data modules
+are read by transpiling and importing them, so a count cannot disagree with
+the thing it counts.
+
+**No 0-100 quality score.** Soundness is not a scalar: averaging a gate
+that must never fail with a coverage figure expected to be partial destroys
+the meaning of both. The output is a nine-section table whose columns are
+*Metric, Current, Source, Interpretation, Limitation* — and the
+`Limitation` column is the one a summary would drop, which is why it is
+mandatory.
+
+**Two source kinds, kept apart.** *Structural* values are re-derived on
+every `--check`. *Measured* values are the output of a command and live in
+`docs/scorecard-data/measurements.json`, each carrying its command, commit
+and date, with live ones labelled `LIVE` and non-deterministic. `--check`
+proves the scorecard matches the recording; only re-running proves the
+recording is fresh, and the document says so rather than implying
+otherwise.
+
+**Drift is a test failure**, not a convention:
+`src/testing/docs-contract.test.ts` runs `--check` under `npm test`. It is
+deliberately NOT in the Foundation gate — a stale document is not a
+soundness invariant, and diluting what a red Foundation gate means is worse
+than a stale document.
+
+### F7-E — two generator defects, found by generating
+
+Both were in F7's own new code and are recorded because the first one
+reproduces a misreading this whole task exists to prevent:
+
+1. **The RWF register parser reported RWF-002 as closed.** It classified a
+   row as open only if the status began with "Open". RWF-002's status reads
+   *"Bypassed for unloaded packages (VT-307d); the underlying
+   reachability-scoping tradeoff remains open"* — so the scorecard's first
+   generated output said **2 open**, silently dropping the most consequential
+   open item in the project. Fixed by giving the parser three states; the
+   scorecard now reports `Still open 2` and `Open in part 1 — RWF-002`,
+   with the "not an implementation task count" warning attached to that row.
+2. **Three npm scripts were classified as offline and are not.**
+   `test:coverage` and `test:integration` both run the live
+   `osv-provider.integration.test.ts`. The fix derives the classification
+   from each script's actual command text rather than from a hand-kept list
+   of names, so a new script cannot be silently miscategorised.
+
+### F7-F — the worked examples are generated, not typed
+
+Three examples (`AFFECTED`, `NOT_AFFECTED`, `UNKNOWN`) in
+`docs/SOUNDNESS-CONTRACT.md` § 7 are produced by scanning a real project
+with the real analyzer through `foundation-corpus.ts`, validated against
+`schemas/result.schema.json`, and byte-compared to the document. Only the
+temp root, the scan's random UUID and elapsed milliseconds are normalized —
+**instance paths survive verbatim**, because collapsing them is exactly how
+an example would stop demonstrating the instance exactness it exists to
+show.
+
+The `NOT_AFFECTED` example is deliberately family C, not family A: family
+A's premise is that nothing loads the package, which reads as "the tool
+found nothing" to someone skimming. The family C example shows a package
+that IS loaded and IS called, on its safe export, with a positive
+unreachability proof naming the target and the entrypoint roots.
+
+A first version of the generator embedded the scan's random UUID in the
+committed example, which would have failed the drift check on the very next
+run. Caught by running the check twice.
+
+### F7-G — the link checker, and what it found
+
+`scripts/check-docs.mjs` checks two things across the eight authoritative
+documents: every `npm run <script>` exists, and every repository path
+resolves. It deliberately does not lint prose or fetch external URLs (which
+would make the check network-dependent, the exact property the Foundation
+gate exists to avoid).
+
+It found the phantom audit document immediately. It also, in its first
+version, produced forty false positives by resolving repository paths
+relative to the document's own directory and by demanding that
+ILLUSTRATIVE paths (`pkg/other.js`, `qs/lib/index.js`) exist — both fixed,
+and the second is why backticked paths are only checked when their first
+segment is a real top-level or `src/` directory. A third version had to
+strip fenced code blocks, because `return lib[name](x)` is a line of
+JavaScript and reading it as a markdown link to a file called `x` is how a
+link checker earns its reputation.
+
+The phantom citations in `tests/validation/README.md` and
+`docs/VALIDATION-STRATEGY.md` are **annotated in place** rather than
+deleted. The ones in this file and in `fixtures/*/README.md` are **left
+untouched**: they are records of what was true when written, and rewriting
+a record to hide a broken pointer is worse than the pointer.
+
+### Soundness: no production semantic movement
+
+The acceptance condition (F7 § 43). **No file under `src/` changed except
+one added test** (`src/testing/docs-contract.test.ts`). No analyzer file,
+no schema, no rule, no fixture. Every verdict in the corpus is
+byte-identical to the base, which is what the offline differential and the
+live validation run below assert.
+
+Validation suite after F7: **5 failed / 12 passed — identical IDs,
+identical expected/actual pairs, identical counts to the baseline**, and
+the regenerated `tests/validation/REPORT.md` is byte-identical to the
+committed one, so the record it holds is confirmed current rather than
+merely old.
+
+### Foundation status
+
+**Foundation (F1–F7) is COMPLETE.**
+
+What it delivered: the uncertainty a verdict rests on is machine-readable
+(F1, F3); every proof prerequisite fails closed and is proven load-bearing
+by mutation (F2, F4); per-scan performance state exists and can never
+become proof authority (F5); every invariant has a named, executed,
+non-drifting owner (F6); and all of it is written down, generated and
+checked (F7).
+
+What it explicitly did **not** deliver: any of the eleven debts in
+`docs/OPEN-DEBTS.md`. Foundation's job was to make the guarantees explicit,
+owned and measurable — not total. The entry criteria for P1-B are stated
+there, and they are met.
+
+P1-B's first step is **not** to implement a construct. It is to split
+`unsupported_construct` by syntactic and semantic shape, because that
+single undifferentiated token is the entire top of the unmodeled-construct
+ranking, and until it is split the evidence cannot choose the feature work.
