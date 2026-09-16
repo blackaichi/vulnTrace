@@ -228,22 +228,75 @@ export function readFindingsRegister() {
   }
   if (rows.length === 0) throw new Error("FINDINGS.md: status table is empty");
 
-  // THREE states, not two. A row can be partly discharged and partly open
-  // — RWF-002 is bypassed for unloaded packages while its underlying
-  // reachability-scoping tradeoff remains — and a parser that only looked
-  // for a leading "Open" would silently report it as closed. That is the
-  // single most consequential misreading this register permits.
-  const isOpen = (status) => /^Open/.test(status);
+  // ------------------------------------------------------------------
+  // CLASSIFICATION IS TOTAL. Every row lands in exactly one bucket.
+  //
+  // This is the register's most consequential reading, and it has already
+  // gone wrong once: an earlier version asked only whether a status began
+  // with "Open", and so reported RWF-002 -- whose status reads "Bypassed
+  // for unloaded packages (VT-307d); the underlying reachability-scoping
+  // tradeoff remains open" -- as CLOSED.
+  //
+  // Widening the pattern is not the fix on its own, because the next
+  // honest rewording defeats the next pattern just as quietly. The fix is
+  // to refuse to guess: a status this function cannot classify is an
+  // ERROR naming the row and its text, never a silent omission and never
+  // a default bucket. A row that falls out of every bucket is precisely
+  // how an open finding disappears from the scorecard while the totals
+  // still look plausible.
+  //
+  // Deliberately NOT keyed on any RWF id. RWF-002 classifies because its
+  // status is recognised, not because it is special-cased.
+  // ------------------------------------------------------------------
+
+  /** Partly discharged AND partly outstanding -- both halves must be said. */
   const isPartlyOpen = (status) =>
-    !isOpen(status) && /remains open|remains\b.*\bopen/i.test(status);
-  const open = rows.filter((row) => isOpen(row.status));
-  const partlyOpen = rows.filter((row) => isPartlyOpen(row.status));
-  const fixed = rows.filter(
-    (row) =>
-      /Fixed/.test(row.status) &&
-      !isOpen(row.status) &&
-      !isPartlyOpen(row.status),
-  );
+    /\bremains?\b[^.]*\bopen\b|\bstill\b[^.]*\bopen\b|\bopen\b[^.]*\bremains?\b/i.test(
+      status,
+    ) && /fixed|bypassed|partial|mitigated/i.test(status);
+
+  /** Wholly outstanding. */
+  const isOpen = (status) => /^Open\b/i.test(status) && !isPartlyOpen(status);
+
+  /** Wholly discharged. */
+  const isFixed = (status) =>
+    /\bfixed\b/i.test(status) && !isOpen(status) && !isPartlyOpen(status);
+
+  const open = [];
+  const partlyOpen = [];
+  const fixed = [];
+  const unclassified = [];
+
+  for (const row of rows) {
+    if (isPartlyOpen(row.status)) partlyOpen.push(row);
+    else if (isOpen(row.status)) open.push(row);
+    else if (isFixed(row.status)) fixed.push(row);
+    else unclassified.push(row);
+  }
+
+  if (unclassified.length > 0) {
+    throw new Error(
+      `FINDINGS.md: the status of ${unclassified.length} register row(s) ` +
+        "could not be classified as open, open-in-part or fixed. Classify " +
+        "the row, or teach `readFindingsRegister` the wording -- do not " +
+        "leave it out of the scorecard:\n" +
+        unclassified
+          .map((row) => `  ${row.id}: ${JSON.stringify(row.status)}`)
+          .join("\n"),
+    );
+  }
+
+  // The partition invariant, asserted rather than assumed. If the three
+  // buckets ever stop summing to the parsed row count, the scorecard is
+  // under-reporting the register and must not be generated at all.
+  const classified = open.length + partlyOpen.length + fixed.length;
+  if (classified !== rows.length) {
+    throw new Error(
+      `FINDINGS.md: ${classified} classified rows != ${rows.length} parsed ` +
+        "rows. Every register row must be classified exactly once.",
+    );
+  }
+
   return { rows, open, partlyOpen, fixed };
 }
 
