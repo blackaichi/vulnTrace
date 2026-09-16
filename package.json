@@ -29,10 +29,12 @@
     "test:performance": "vitest run --config vitest.performance.config.ts",
     "test:adversarial": "vitest run --config vitest.adversarial.config.ts",
     "test:validation": "vitest run --config vitest.validation.config.ts",
+    "test:foundation": "vitest run --config vitest.foundation.config.ts",
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
-    "validate:history": "node scripts/validate-history.mjs"
+    "validate:history": "node scripts/validate-history.mjs && node scripts/validate-commit-metadata.mjs",
+    "validate:metadata": "node scripts/validate-commit-metadata.mjs"
   },
   "dependencies": {
     "ajv": "^8.20.0",
