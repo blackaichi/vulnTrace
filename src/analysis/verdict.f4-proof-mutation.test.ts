@@ -206,6 +206,47 @@ function expectExactlyOneProof(outcome: MutationOutcome): void {
     outcome.proofCount,
     `exactly-one-proof contract violated: ${describeOutcome(outcome)}`,
   ).toBe(outcome.verdict === "NOT_AFFECTED" ? 1 : 0);
+
+  // F6 § 3 strengthens the above from a COUNT to a VALIDITY check. A count
+  // of one is satisfied by a proof object that is present and malformed --
+  // a family-A proof naming no instance, a family-C proof that never says
+  // the reachable subgraph was complete -- and a mutation is exactly the
+  // kind of state that could produce one. So the surviving proof must also
+  // be a well-formed member of its own family.
+  if (outcome.verdict !== "NOT_AFFECTED") {
+    expect(
+      outcome.family,
+      `a ${outcome.verdict} carries a negative proof: ${describeOutcome(outcome)}`,
+    ).toBe("NONE");
+    return;
+  }
+
+  expect(
+    ["A", "B", "C"],
+    `a surviving NOT_AFFECTED carries no valid A/B/C family:\n${describeOutcome(outcome)}`,
+  ).toContain(outcome.family);
+
+  const proof = outcome.finding?.evidence;
+  if (outcome.family === "C") {
+    // Family C names a TARGET and rests on the reachable subgraph, and
+    // must not borrow family A/B's instance claim.
+    expect(
+      proof?.confirmedUnreachableTarget?.target,
+      `family C proof names no target:\n${describeOutcome(outcome)}`,
+    ).toBeDefined();
+    expect(
+      proof?.confirmedUnreachableTarget?.reachableSubgraphComplete,
+      `VT-CONTRACT-02: family C proof does not rest on a complete reachable ` +
+        `subgraph:\n${describeOutcome(outcome)}`,
+    ).toBe(true);
+  } else {
+    // Families A and B name the instance the proof is ABOUT, and F4's
+    // binding rule requires it to be the finding's own.
+    expect(
+      outcome.proofPackageInstance,
+      `family ${outcome.family} proof names no package instance:\n${describeOutcome(outcome)}`,
+    ).toBeDefined();
+  }
 }
 
 /**
