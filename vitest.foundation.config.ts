@@ -43,6 +43,7 @@ export default defineConfig({
     include: [
       // -- The proof contracts (VT-CONTRACT-01/02/03) ------------------
       "src/cli/result-schema.negative-proof.test.ts",
+      "src/cli/result-schema.additivity.test.ts",
       "src/analysis/verdict.analysis-context.test.ts",
       "src/cli/scan.analysis-context.test.ts",
 
