@@ -12253,8 +12253,12 @@ packages — it is a property of JavaScript, not of one library.
 on occurrences alone would have been exactly the § 23 mistake.
 
 **Occurrences are not distinct gaps.** 2,351 occurrences collapse into
-1,349 distinct call sites; the 42 blocking occurrences collapse into **19
-distinct sites in 13 functions**, 13 of them at a single site
+**1,339 distinct (subtype, site) pairs** — the sum of the per-subtype
+distinct-site column, which is the figure the tool actually reports; a
+single call-graph node hosting two different subtypes is counted once per
+subtype, so this is an upper bound on distinct nodes, not a count of them.
+The 42 blocking occurrences collapse into **19 such pairs across 14
+containing functions**, 13 of the 42 at a single site
 (`qs/lib/stringify.js#stringify@58:17`).
 
 ### 8. Target relevance, sampled honestly
