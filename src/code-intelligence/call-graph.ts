@@ -15,6 +15,7 @@ import {
   classifyClosureWideningCall,
   isStaticRequireCall,
 } from "./loader-constructs.js";
+import { classifyUnsupportedConstruct } from "./unsupported-construct.js";
 import {
   isConstDeclaration,
   resolveSingleAssignmentValue,
@@ -1407,12 +1408,18 @@ async function classifyCall(
     return undefined;
   }
 
+  // P1-B1: the same fallback edge this has always emitted, with the
+  // specific frontend gap named instead of the catch-all token. Purely
+  // observational -- the edge, its `type`, its `from`, its location and
+  // its `unknown` resolution are unchanged, and every subtype is
+  // classified `unmodeled_construct` and NON-widening exactly as
+  // `unsupported_construct` was (see unsupported-construct.ts).
   return {
     from,
     type: ts.isPropertyAccessExpression(callee) ? "method" : "direct",
     resolution: {
       kind: "unknown",
-      reason: "unsupported_construct",
+      reason: classifyUnsupportedConstruct(callee),
       potentialTargets: [],
     },
     location,
@@ -1585,12 +1592,16 @@ async function classifyNew(
     return undefined;
   }
 
+  // P1-B1: see classifyCall's identical fallback. A construction shares
+  // the call site's subtype vocabulary deliberately -- `new Ctor()` and
+  // `Ctor()` fail to attribute the SAME binding, and this edge's own
+  // `type` already records that it was a construction.
   return {
     from,
     type: "constructor",
     resolution: {
       kind: "unknown",
-      reason: "unsupported_construct",
+      reason: classifyUnsupportedConstruct(callee),
       potentialTargets: [],
     },
     location,

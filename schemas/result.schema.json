@@ -249,6 +249,14 @@
                     "unresolved_module",
                     "unresolved_target",
                     "unsupported_construct",
+                    "unsupported_callee_binding",
+                    "unsupported_receiver_binding",
+                    "unsupported_this_receiver",
+                    "unsupported_indexed_receiver",
+                    "unsupported_call_result_receiver",
+                    "unsupported_literal_receiver",
+                    "unsupported_expression_receiver",
+                    "unsupported_computed_callee",
                     "declaration_only_resolution",
                     "aliased_require",
                     "create_require",
@@ -282,7 +290,7 @@
                     "workspace_layout_unsupported",
                     "unclassified_uncertainty_reason"
                   ],
-                  "description": "The specific reason, one level below category. Every DynamicCallReason appears verbatim, so a token here is the same string the diagnostics prose names."
+                  "description": "The specific reason, one level below category. Every DynamicCallReason appears verbatim, so a token here is the same string the diagnostics prose names. This enum grows ADDITIVELY: P1-B1 added the eight unsupported_* subtypes that decompose unsupported_construct into the specific frontend modeling gap behind each occurrence, and retained unsupported_construct itself as their runtime floor, so no previously emitted token was removed or given a new meaning. All nine share the unmodeled_construct category, so a consumer aggregating by category is unaffected; a consumer matching the exact string unsupported_construct will now see fewer of them and should match the unsupported_ prefix, or aggregate by category, instead."
                 },
                 "count": {
                   "type": "integer",
@@ -515,6 +523,14 @@
               "unresolved_module",
               "unresolved_target",
               "unsupported_construct",
+              "unsupported_callee_binding",
+              "unsupported_receiver_binding",
+              "unsupported_this_receiver",
+              "unsupported_indexed_receiver",
+              "unsupported_call_result_receiver",
+              "unsupported_literal_receiver",
+              "unsupported_expression_receiver",
+              "unsupported_computed_callee",
               "declaration_only_resolution",
               "aliased_require",
               "create_require",
