@@ -225,10 +225,14 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "Output added by later Foundation tasks does not invalidate results a " +
       "pre-F3 consumer would have accepted.",
     foundation: "F3",
-    owners: ["src/cli/result-schema.negative-proof.test.ts"],
+    owners: ["src/cli/result-schema.additivity.test.ts"],
     note:
-      "Owns `schemas/result.schema.json` against both old-compatible and " +
-      "current structured output.",
+      "A DIFFERENT invariant from the negative-proof shape contract, and " +
+      "owned separately for that reason. An independent audit of F6 found " +
+      "this mapped to `result-schema.negative-proof.test.ts`, which tests " +
+      "VT-CONTRACT-01/02 and contains no additivity case at all -- coverage " +
+      "claimed on paper. The assertions were extracted from " +
+      "`cli/output.test.ts` into a focused owner the gate runs.",
   },
 
   // ------------------------------------------------------------------

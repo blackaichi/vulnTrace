@@ -84,6 +84,21 @@ const APP_LOCK = (packages: Readonly<Record<string, unknown>>): string =>
     packages: { "": { name: "app", version: "1.0.0" }, ...packages },
   });
 
+/**
+ * The target every fixture's `rules.yml` declares, via {@link rule}.
+ *
+ * Restated here as the EXPECTED value so a retargeting is caught: the
+ * corpus's own declaration is the oracle, and resolution must reproduce
+ * it exactly rather than substitute a sibling, drop the kind, or rewrite
+ * the rule's confidence.
+ */
+const DECLARED_TARGET = {
+  module: "vuln-lib",
+  symbol: "danger",
+  kind: "function",
+  confidence: 1,
+};
+
 const ADVISORY: StubAdvisory = {
   packageName: "vuln-lib",
   id: "GHSA-f6-0001",
@@ -653,6 +668,42 @@ describe("offline differential: each case produces the semantics it claims", () 
         }
       });
 
+      it("reports the advisory's declared target and a matching confidence", () => {
+        // VALUE assertions, not merely presence. The differential's other
+        // comparisons are run-against-run, so a change that moved EVERY
+        // confidence or retargeted EVERY finding would shift both sides
+        // equally and stay green -- which is exactly what a first attempt
+        // at this coverage did. Pinning the expected values is what makes
+        // the two fields gated rather than merely carried.
+        const result = resultFor(corpusCase.name);
+        for (const finding of result.semantics.findings) {
+          // The target is the one the fixture's own rules.yml declares.
+          // It must survive resolution unchanged: same module specifier,
+          // same exported symbol, same kind, same rule confidence.
+          expect(
+            finding.target,
+            `TARGET CHANGED\n` +
+              `  invariant: a finding reports the advisory target its rule declared\n` +
+              `  case:      ${corpusCase.name} (${finding.vulnerability})\n` +
+              `  expected:  ${JSON.stringify(DECLARED_TARGET)}\n` +
+              `  actual:    ${JSON.stringify(finding.target)}`,
+          ).toEqual(DECLARED_TARGET);
+
+          // Confidence tracks the VERDICT: an AFFECTED is a positive claim
+          // and carries one; a NOT_AFFECTED rests on a negative proof and
+          // an UNKNOWN claims nothing, so neither does.
+          const expected = finding.verdict === "AFFECTED" ? 1 : null;
+          expect(
+            finding.confidence,
+            `CONFIDENCE CHANGED\n` +
+              `  invariant: an AFFECTED carries confidence; other verdicts do not\n` +
+              `  case:      ${corpusCase.name} (${finding.verdict})\n` +
+              `  expected:  ${expected}\n` +
+              `  actual:    ${finding.confidence}`,
+          ).toBe(expected);
+        }
+      });
+
       it("never presents an UNKNOWN without structured reasons", () => {
         const result = resultFor(corpusCase.name);
         for (const finding of result.semantics.findings) {
@@ -861,6 +912,40 @@ describe("offline differential: the corpus is non-vacuous", () => {
         `  expected: more than one distinct packageInstance across the corpus\n` +
         `  actual:   ${[...instances].join(", ")}`,
     ).toBeGreaterThan(1);
+  });
+
+  it("compares a real confidence value, not a column of nulls", () => {
+    // A field added to the projection is only compared if the corpus
+    // actually produces one. This is the same non-vacuity discipline the
+    // candidate and diagnostic assertions apply, turned on the two fields
+    // an independent audit found missing from the comparison entirely.
+    const confidences = all().flatMap((semantics) =>
+      semantics.findings.map((finding) => finding.confidence),
+    );
+    expect(
+      confidences.some((value) => value !== null),
+      `NON-VACUITY FAILED\n` +
+        `  invariant: the differential compares finding confidence\n` +
+        `  expected:  at least one finding carrying a confidence value\n` +
+        `  actual:    ${JSON.stringify(confidences)}`,
+    ).toBe(true);
+  });
+
+  it("compares a real resolved target, not a column of nulls", () => {
+    const targets = all().flatMap((semantics) =>
+      semantics.findings.map((finding) => finding.target),
+    );
+    const named = targets.filter(
+      (target) =>
+        target !== null && target.module !== "" && target.symbol !== "",
+    );
+    expect(
+      named.length,
+      `NON-VACUITY FAILED\n` +
+        `  invariant: the differential compares the finding's own target\n` +
+        `  expected:  at least one finding naming module and symbol\n` +
+        `  actual:    ${JSON.stringify(targets)}`,
+    ).toBeGreaterThan(0);
   });
 
   it("produces at least one AFFECTED carrying a witness path", () => {

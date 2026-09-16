@@ -172,6 +172,22 @@ export function config(entrypoints: readonly string[]): string {
 /** Which negative-proof family answered, or `null` for a non-NOT_AFFECTED. */
 export type ProofFamily = "A" | "B" | "C" | null;
 
+/**
+ * The finding's own resolved target, compared WHOLE.
+ *
+ * Kept as a structure rather than flattened into a string so that no
+ * field can be silently dropped: `module`, `symbol` and `kind` are the
+ * advisory's identity as the report states it, and `confidence` here is
+ * the RULE's confidence in that target, which is a different number from
+ * the finding-level confidence beside it.
+ */
+export interface SemanticTarget {
+  readonly module: string;
+  readonly symbol: string;
+  readonly kind: string | null;
+  readonly confidence: number | null;
+}
+
 export interface SemanticFinding {
   readonly vulnerability: string;
   readonly package: string;
@@ -179,6 +195,17 @@ export interface SemanticFinding {
   /** Project-root-relative, so it is stable across temp roots AND exact. */
   readonly packageInstance: string | null;
   readonly verdict: string;
+  /**
+   * The finding's confidence, compared and NEVER normalized.
+   *
+   * Omitted from this projection until an independent audit pointed out
+   * that `JsonFinding` carries it and nothing here looked at it, so a
+   * change that moved every confidence score would have left the
+   * differential green.
+   */
+  readonly confidence: number | null;
+  /** The finding's own target -- not family C's proof target, which is separate. */
+  readonly target: SemanticTarget | null;
   readonly family: ProofFamily;
   /**
    * The instance the negative proof itself names — families A and B only.
@@ -232,6 +259,13 @@ interface RawFinding {
   readonly version?: string;
   readonly packageInstance?: string;
   readonly verdict: string;
+  readonly confidence?: number;
+  readonly target?: {
+    readonly module: string;
+    readonly symbol: string;
+    readonly kind?: string;
+    readonly confidence?: number;
+  };
   readonly unknownReasons?: readonly {
     readonly reason: string;
     readonly category?: string;
@@ -360,6 +394,16 @@ export function projectSemantics(
       return {
         proofTarget,
         reachableSubgraphComplete,
+        confidence: finding.confidence ?? null,
+        target:
+          finding.target === undefined
+            ? null
+            : {
+                module: finding.target.module,
+                symbol: finding.target.symbol,
+                kind: finding.target.kind ?? null,
+                confidence: finding.target.confidence ?? null,
+              },
         vulnerability: finding.vulnerability,
         package: finding.package,
         version: finding.version ?? null,
