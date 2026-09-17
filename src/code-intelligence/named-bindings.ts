@@ -69,6 +69,14 @@ export interface NamedBindingValue {
   readonly value: ts.Expression;
   /** The declaration the reference ultimately bound to. */
   readonly declaration: ts.VariableDeclaration;
+  /**
+   * The scope that owns that declaration -- the region a caller must
+   * search to decide whether anything else could still change what the
+   * value holds. Needed by the object-literal member check, which has to
+   * ask about writes to a PROPERTY (`obj.m = ...`), a question this
+   * module's own stability rule (writes to the NAME) does not answer.
+   */
+  readonly scope: ts.Node;
 }
 
 /**
@@ -102,6 +110,126 @@ const MAX_ALIAS_CHAIN_HOPS = 8;
 const unresolved = (
   cause: NamedBindingUnresolvedCause,
 ): NamedBindingUnresolved => ({ kind: "unresolved", cause });
+
+/**
+ * A member name no source file can spell, used to record "a write with a
+ * key this analyzer cannot read happened here, so NO member of anything in
+ * this scope is stable any more".
+ */
+const ANY_MEMBER = "\u0000any-member";
+
+type DeclarationIndex = ReadonlyMap<string, ScopeDeclaration[]>;
+
+/**
+ * PER-SCOPE INDEXES, and why they are indexes rather than searches.
+ *
+ * Each of the three questions this module asks about a scope -- which
+ * declarations it owns, which names it assigns to, which members it writes
+ * -- was originally answered by walking the scope's subtree once PER
+ * QUERY. That is correct and it is also quadratic in the shape that
+ * matters: one failed call site asks about one name, and a file like
+ * `lodash.js` has ~1,700 failed call sites inside a single ~16,000-line
+ * function expression, so the same subtree was re-walked ~1,700 times.
+ * Measured on the real fixture, that cost about 45% of scan wall time
+ * (13.6s -> 20.2s), which the P1-B3 audit caught and the first
+ * implementation's record wrongly denied.
+ *
+ * Each index is now built by ONE walk and answered by hash lookup.
+ *
+ * SOUNDNESS OF THE KEY. All three answers depend only on (scope subtree,
+ * name) -- never on the position of the reference asking, which is why
+ * caching them by name alone is safe. The two order-sensitive rules in
+ * this module, the temporal-dead-zone check and the alias-chain visited
+ * set, are computed per reference OUTSIDE these indexes and are
+ * deliberately not cached.
+ *
+ * LIFETIME. Keyed on the scope NODE itself in a `WeakMap`, so an entry
+ * lives exactly as long as the AST it describes and dies with it. Nothing
+ * is keyed by name, path or content, so nothing can survive a file being
+ * re-parsed, and there is no cross-scan state to invalidate. This mirrors
+ * `local-aliases.ts`'s own per-`SourceFile` cache, for the same reason.
+ */
+const declarationIndexByScope = new WeakMap<ts.Node, DeclarationIndex>();
+const assignedNamesByScope = new WeakMap<ts.Node, ReadonlySet<string>>();
+const assignedMembersByScope = new WeakMap<ts.Node, ReadonlySet<string>>();
+
+/**
+ * How many scope subtrees have been walked to build an index, ever.
+ *
+ * INSTRUMENTATION ONLY. Nothing in this module or any caller reads it to
+ * decide anything; it exists so the structural guarantee above can be
+ * TESTED as a structure rather than as a stopwatch. The invariant it makes
+ * checkable is the one that matters: the number of walks is a function of
+ * how many SCOPES were asked about, never of how many QUERIES were asked
+ * -- so a thousand call sites in one function cost one walk, not a
+ * thousand. `named-bindings.performance.test.ts` asserts exactly that, and
+ * deleting the caches above makes it fail.
+ *
+ * It is monotonic and never reset, so a test reads it twice and compares
+ * rather than depending on any starting value.
+ */
+let scopeIndexBuilds = 0;
+
+/** See {@link scopeIndexBuilds}. Instrumentation for tests; never an input to analysis. */
+export function namedBindingScopeIndexBuilds(): number {
+  return scopeIndexBuilds;
+}
+
+/** Every declaration of `name` owned by `scope` (see {@link buildDeclarationIndex}). */
+function declarationsOwnedBy(scope: ts.Node, name: string): ScopeDeclaration[] {
+  let index = declarationIndexByScope.get(scope);
+  if (!index) {
+    index = buildDeclarationIndex(scope);
+    declarationIndexByScope.set(scope, index);
+  }
+  return index.get(name) ?? [];
+}
+
+/** Whether anything anywhere in `scope` assigns to `name` (see {@link buildAssignedNames}). */
+function isAssignedWithin(scope: ts.Node, name: string): boolean {
+  let names = assignedNamesByScope.get(scope);
+  if (!names) {
+    names = buildAssignedNames(scope);
+    assignedNamesByScope.set(scope, names);
+  }
+  return names.has(name);
+}
+
+/**
+ * Whether anything anywhere in `scope` writes the PROPERTY `member` on any
+ * object -- `x.m = v`, `x["m"] = v`, `x.m += v`, `x.m++`, `delete x.m`, or
+ * a write through a key this analyzer cannot read.
+ *
+ * THE RECEIVER IS DELIBERATELY NOT MATCHED. This asks "is this member name
+ * written at all here?", not "is it written on this object?", because the
+ * second question needs object identity and this engine has none: a write
+ * reaches an object through the binding, through any alias of it, through
+ * a parameter it was passed to, or through a property of something else
+ * entirely. Matching the receiver by NAME would be the same
+ * resolve-by-spelling mistake the rest of this module exists to avoid, and
+ * it would miss `const alias = obj; alias.m = safe;` outright.
+ *
+ * So the check is over-approximate in exactly the safe direction: an
+ * unrelated `other.m = v` in the same scope costs a resolution it did not
+ * need to, and no write that could reach the object is ever missed. It is
+ * also ORDER-INSENSITIVE -- a write below the call refuses the call too --
+ * which is the same trade for the same reason: deciding that a later write
+ * cannot affect an earlier call needs execution order across function
+ * boundaries, and a closure makes "later in the text" mean nothing. Both
+ * costs are precision; the alternative costs soundness (RWF-042
+ * remediation § 11-§ 14).
+ */
+export function isMemberAssignedWithin(
+  scope: ts.Node,
+  member: string,
+): boolean {
+  let members = assignedMembersByScope.get(scope);
+  if (!members) {
+    members = buildAssignedMembers(scope);
+    assignedMembersByScope.set(scope, members);
+  }
+  return members.has(member) || members.has(ANY_MEMBER);
+}
 
 /**
  * A scope that `var` and `function` declarations hoist to. `ts.SourceFile`
@@ -227,17 +355,29 @@ function variableKind(
  * which is why the two questions are asked separately rather than by
  * counting depth.
  */
-function declarationsOwnedBy(scope: ts.Node, name: string): ScopeDeclaration[] {
-  const found: ScopeDeclaration[] = [];
+function buildDeclarationIndex(scope: ts.Node): DeclarationIndex {
+  scopeIndexBuilds += 1;
+  const index = new Map<string, ScopeDeclaration[]>();
+  const found = {
+    push(declaration: ScopeDeclaration & { readonly boundName: string }): void {
+      const existing = index.get(declaration.boundName);
+      if (existing) {
+        existing.push(declaration);
+      } else {
+        index.set(declaration.boundName, [declaration]);
+      }
+    },
+  };
 
   // A named function/class expression binds its own name within itself.
   if (
     (ts.isFunctionExpression(scope) || ts.isClassExpression(scope)) &&
-    scope.name?.text === name
+    scope.name
   ) {
     found.push({
       kind: ts.isFunctionExpression(scope) ? "function" : "class",
       node: scope,
+      boundName: scope.name.text,
     });
   }
 
@@ -246,29 +386,59 @@ function declarationsOwnedBy(scope: ts.Node, name: string): ScopeDeclaration[] {
   const ownsLexical = (declaration: ts.Node): boolean =>
     enclosingBlockScope(declaration) === scope;
 
+  /**
+   * Every identifier a binding pattern BINDS, matched against `name`.
+   *
+   * A pattern's bindings are its LOCAL names, never its property names:
+   * `{ source: local }` binds `local` and says nothing about `source`.
+   * Getting that backwards would shadow a name the function never declares
+   * while leaving the one it does declare open to an outer value.
+   *
+   * Rest elements bind (`[first, ...rest]` binds `rest`) and array holes
+   * (`[, a]`) are not binding elements at all, so both are handled by the
+   * same two branches. Nested patterns recurse.
+   */
   function collectFromBindingPattern(
-    declaration: ts.VariableDeclaration,
     pattern: ts.BindingPattern,
+    kind: DeclarationKind,
+    owned: boolean,
   ): void {
     for (const element of pattern.elements) {
       if (!ts.isBindingElement(element)) {
         continue;
       }
       if (ts.isIdentifier(element.name)) {
-        if (element.name.text === name) {
-          const kind = variableKind(declaration);
-          const owned =
-            kind === "var"
-              ? ownsHoisted(declaration)
-              : ownsLexical(declaration);
-          if (owned) {
-            found.push({ kind: "destructuring", node: element });
-          }
+        if (owned) {
+          found.push({ kind, node: element, boundName: element.name.text });
         }
       } else {
-        collectFromBindingPattern(declaration, element.name);
+        collectFromBindingPattern(element.name, kind, owned);
       }
     }
+  }
+
+  /**
+   * A parameter or catch binding, whether it is a plain name or a pattern.
+   *
+   * THE PATTERN CASE IS WHY THIS EXISTS. Before the P1-B3 soundness audit,
+   * only `ts.isIdentifier` parameter names were recorded, so
+   * `function main({ a }) { a(); }` introduced NO declaration, the scope
+   * walk continued outward, and an outer `const a = danger` answered for a
+   * binding that shadows it -- a fabricated call edge (RWF-042
+   * remediation). The binding's VALUE is still not resolved here: it comes
+   * from the caller, so `parameter` is the right refusal. Owning the NAME
+   * is the whole job.
+   */
+  function recordBindingTarget(
+    target: ts.BindingName,
+    kind: DeclarationKind,
+    node: ts.Node,
+  ): void {
+    if (ts.isIdentifier(target)) {
+      found.push({ kind, node, boundName: target.text });
+      return;
+    }
+    collectFromBindingPattern(target, kind, true);
   }
 
   function visit(node: ts.Node): void {
@@ -286,42 +456,44 @@ function declarationsOwnedBy(scope: ts.Node, name: string): ScopeDeclaration[] {
 
   function record(node: ts.Node): void {
     if (ts.isVariableDeclaration(node)) {
+      // A catch clause's binding is a `VariableDeclaration` too, but it is
+      // NOT a `var`/`let`/`const` and belongs to the catch clause alone.
+      // Letting this branch see it would hoist it to the enclosing
+      // function, which is the wrong scope entirely -- the catch branch
+      // below owns it.
+      if (ts.isCatchClause(node.parent)) {
+        return;
+      }
       const kind = variableKind(node);
       const owned = kind === "var" ? ownsHoisted(node) : ownsLexical(node);
       if (ts.isIdentifier(node.name)) {
-        if (node.name.text === name && owned) {
-          found.push({ kind, node, variable: node });
+        if (owned) {
+          found.push({
+            kind,
+            node,
+            variable: node,
+            boundName: node.name.text,
+          });
         }
       } else {
-        collectFromBindingPattern(node, node.name);
+        collectFromBindingPattern(node.name, "destructuring", owned);
       }
     } else if (
       ts.isFunctionDeclaration(node) &&
-      node.name?.text === name &&
+      node.name &&
       ownsHoisted(node)
     ) {
-      found.push({ kind: "function", node });
-    } else if (
-      ts.isClassDeclaration(node) &&
-      node.name?.text === name &&
-      ownsLexical(node)
-    ) {
-      found.push({ kind: "class", node });
-    } else if (
-      ts.isParameter(node) &&
-      node.parent === scope &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name
-    ) {
-      found.push({ kind: "parameter", node });
+      found.push({ kind: "function", node, boundName: node.name.text });
+    } else if (ts.isClassDeclaration(node) && node.name && ownsLexical(node)) {
+      found.push({ kind: "class", node, boundName: node.name.text });
+    } else if (ts.isParameter(node) && node.parent === scope) {
+      recordBindingTarget(node.name, "parameter", node);
     } else if (
       ts.isCatchClause(node) &&
       node === scope &&
-      node.variableDeclaration &&
-      ts.isIdentifier(node.variableDeclaration.name) &&
-      node.variableDeclaration.name.text === name
+      node.variableDeclaration
     ) {
-      found.push({ kind: "parameter", node });
+      recordBindingTarget(node.variableDeclaration.name, "parameter", node);
     } else if (
       ts.isSourceFile(scope) &&
       (ts.isImportSpecifier(node) ||
@@ -329,15 +501,14 @@ function declarationsOwnedBy(scope: ts.Node, name: string): ScopeDeclaration[] {
         ts.isNamespaceImport(node) ||
         ts.isImportEqualsDeclaration(node)) &&
       node.name &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === name
+      ts.isIdentifier(node.name)
     ) {
-      found.push({ kind: "import", node });
+      found.push({ kind: "import", node, boundName: node.name.text });
     }
   }
 
   visit(scope);
-  return found;
+  return index;
 }
 
 /**
@@ -356,26 +527,19 @@ function declarationsOwnedBy(scope: ts.Node, name: string): ScopeDeclaration[] {
  * `for (x of ...)`/`for (x in ...)`, and destructuring assignment targets
  * (`({ x } = v)`, `[x] = v`).
  */
-function isAssignedWithin(scope: ts.Node, name: string): boolean {
-  let assigned = false;
-
-  function isTargetName(expression: ts.Expression): boolean {
-    return ts.isIdentifier(expression) && expression.text === name;
-  }
+function buildAssignedNames(scope: ts.Node): ReadonlySet<string> {
+  scopeIndexBuilds += 1;
+  const assigned = new Set<string>();
 
   function scanAssignmentTarget(target: ts.Node): void {
     if (ts.isIdentifier(target)) {
-      if (target.text === name) {
-        assigned = true;
-      }
+      assigned.add(target.text);
       return;
     }
     if (ts.isObjectLiteralExpression(target)) {
       for (const property of target.properties) {
         if (ts.isShorthandPropertyAssignment(property)) {
-          if (property.name.text === name) {
-            assigned = true;
-          }
+          assigned.add(property.name.text);
         } else if (ts.isPropertyAssignment(property)) {
           scanAssignmentTarget(property.initializer);
         } else if (ts.isSpreadAssignment(property)) {
@@ -402,9 +566,6 @@ function isAssignedWithin(scope: ts.Node, name: string): boolean {
   }
 
   function visit(node: ts.Node): void {
-    if (assigned) {
-      return;
-    }
     if (ts.isBinaryExpression(node)) {
       const operator = node.operatorToken.kind;
       if (
@@ -417,9 +578,9 @@ function isAssignedWithin(scope: ts.Node, name: string): boolean {
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
       (node.operator === ts.SyntaxKind.PlusPlusToken ||
         node.operator === ts.SyntaxKind.MinusMinusToken) &&
-      isTargetName(node.operand)
+      ts.isIdentifier(node.operand)
     ) {
-      assigned = true;
+      assigned.add(node.operand.text);
     } else if (
       (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
       !ts.isVariableDeclarationList(node.initializer)
@@ -439,6 +600,75 @@ function isAssignedWithin(scope: ts.Node, name: string): boolean {
  * `fns` *be* `lib`, not an extra hop, so these must be peeled before an
  * alias hop is counted or a value shape is judged.
  */
+/**
+ * Whether anything anywhere in `scope` writes the PROPERTY `member` on any
+ * object -- `x.m = v`, `x["m"] = v`, `x.m += v`, `x.m++`, `delete x.m`.
+ *
+ * THE RECEIVER IS DELIBERATELY NOT MATCHED. This asks "is this member name
+ * written at all here?", not "is it written on this object?", because the
+ * second question needs object identity and this engine has none: a write
+ * reaches an object through the binding, through any alias of it, through
+ * a parameter it was passed to, or through a property of something else
+ * entirely. Matching the receiver by NAME would be the same
+ * resolve-by-spelling mistake the rest of this module exists to avoid, and
+ * it would miss `const alias = obj; alias.m = safe;` outright.
+ *
+ * So the check is over-approximate in exactly the safe direction: an
+ * unrelated `other.m = v` in the same scope costs a resolution it did not
+ * need to, and no write that could reach the object is ever missed. It is
+ * also ORDER-INSENSITIVE -- a write below the call refuses the call too --
+ * which is the same trade for the same reason: deciding that a later write
+ * cannot affect an earlier call needs execution order across function
+ * boundaries, and a closure makes "later in the text" mean nothing. Both
+ * costs are precision; the alternative costs soundness (RWF-042
+ * remediation § 11-§ 14).
+ */
+function buildAssignedMembers(scope: ts.Node): ReadonlySet<string> {
+  scopeIndexBuilds += 1;
+  const assigned = new Set<string>();
+
+  function addMember(expression: ts.Expression): void {
+    if (ts.isPropertyAccessExpression(expression)) {
+      assigned.add(expression.name.text);
+      return;
+    }
+    if (ts.isElementAccessExpression(expression)) {
+      const argument = expression.argumentExpression;
+      if (ts.isStringLiteralLike(argument)) {
+        assigned.add(argument.text);
+      } else {
+        // A dynamic key could name ANY member, so nothing in this scope
+        // can be called member-stable any more.
+        assigned.add(ANY_MEMBER);
+      }
+    }
+  }
+
+  function visit(node: ts.Node): void {
+    if (ts.isBinaryExpression(node)) {
+      const operator = node.operatorToken.kind;
+      if (
+        operator >= ts.SyntaxKind.FirstAssignment &&
+        operator <= ts.SyntaxKind.LastAssignment
+      ) {
+        addMember(node.left);
+      }
+    } else if (
+      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+      (node.operator === ts.SyntaxKind.PlusPlusToken ||
+        node.operator === ts.SyntaxKind.MinusMinusToken)
+    ) {
+      addMember(node.operand);
+    } else if (ts.isDeleteExpression(node)) {
+      addMember(node.expression);
+    }
+    ts.forEachChild(node, visit);
+  }
+
+  visit(scope);
+  return assigned;
+}
+
 export function unwrapTypeOnly(expression: ts.Expression): ts.Expression {
   let current = expression;
   for (;;) {
@@ -611,7 +841,7 @@ function resolveFrom(
     if (hop.kind === "value") {
       return isUsableValue(hop.value)
         ? hop
-        : { kind: "value", value, declaration: variable };
+        : { kind: "value", value, declaration: variable, scope };
     }
 
     // The hop REFUSED. Handing the name onward anyway is only safe when
@@ -633,7 +863,7 @@ function resolveFrom(
     }
   }
 
-  return { kind: "value", value, declaration: variable };
+  return { kind: "value", value, declaration: variable, scope };
 }
 
 /**

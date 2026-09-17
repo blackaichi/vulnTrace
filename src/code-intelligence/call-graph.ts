@@ -17,7 +17,11 @@ import {
 } from "./loader-constructs.js";
 import { classifyUnsupportedConstruct } from "./unsupported-construct.js";
 import { isConstDeclaration } from "./local-aliases.js";
-import { resolveNamedBinding, type NamedBinding } from "./named-bindings.js";
+import {
+  isMemberAssignedWithin,
+  resolveNamedBinding,
+  type NamedBinding,
+} from "./named-bindings.js";
 import {
   buildModuleModel,
   mapExportsToFunctions,
@@ -581,27 +585,82 @@ async function resolveHigherOrderCallTarget(
   return undefined;
 }
 
-/** The value of an object literal's `propertyName` property (`{ propertyName: value }` or shorthand `{ propertyName }`), or `undefined`. Computed property names are intentionally not evaluated -- see module-model.ts's `unpackObjectLiteralExports` for the identical scoping decision on the export side. */
+/**
+ * The value of an object literal's `propertyName` property, but ONLY when
+ * the literal itself proves that value is the one the property ends up
+ * holding.
+ *
+ * WHAT CHANGED AND WHY (RWF-042 remediation). This used to return the
+ * FIRST property whose name matched. That is not a lookup, it is a guess
+ * that happens to be right most of the time, and an independent soundness
+ * audit found three ways it is wrong -- each one producing a call edge to
+ * a function the object's property does not hold:
+ *
+ * - `{ m: danger, m: safe }` -- JavaScript makes the LAST definition
+ *   authoritative, so first-match names exactly the wrong function;
+ * - `{ m: danger, ...other }` -- a spread can overwrite `m` with anything;
+ * - `{ [KEY]: safe, m: danger }` -- a computed key this analyzer does not
+ *   evaluate could itself be `"m"`.
+ *
+ * The rule is therefore: refuse when anything in the literal could define
+ * a name this analyzer cannot read, and otherwise take the LAST definition
+ * of the name, which is the one JavaScript keeps. Once spreads and
+ * computed keys are excluded the literal's own text fixes the property
+ * order completely, so "last wins" is not an evaluator -- it is simply
+ * reading the same rule the language uses, and it resolves strictly more
+ * than refusing on duplicates would (the `{ bail, bail: safeFn }` shape in
+ * `fixtures/commonjs-invocation-provenance-soundness` is a real one).
+ *
+ * ANY SPREAD REFUSES, including one written before the key
+ * (`{ ...other, m: safe }`, where ordering would in fact make `m`
+ * authoritative). Modeling that correctly means modeling property order
+ * against a value this analyzer cannot see, and the precision it buys is
+ * not worth a second rule that has to be got right; P1-B3 prefers one
+ * rule that is obviously sound (remediation § 9).
+ *
+ * ACCESSORS AND METHODS still COUNT as definitions, so they can overwrite
+ * an earlier value and leave the lookup with nothing: `{ m: danger, m() {} }`
+ * returns `undefined` rather than `danger`, because the method is what the
+ * property ends up holding and this lookup cannot attribute it.
+ */
 function findObjectLiteralPropertyValue(
   obj: ts.ObjectLiteralExpression,
   propertyName: string,
 ): ts.Expression | undefined {
+  let value: ts.Expression | undefined;
+
   for (const property of obj.properties) {
-    if (
-      ts.isPropertyAssignment(property) &&
-      ts.isIdentifier(property.name) &&
-      property.name.text === propertyName
-    ) {
-      return property.initializer;
+    // A spread, or a key this analyzer cannot read, could define or
+    // redefine ANY name -- including this one -- at a position that is not
+    // decidable from the literal's text. Neither can be ruled out, so
+    // neither can be resolved past.
+    if (ts.isSpreadAssignment(property)) {
+      return undefined;
     }
-    if (
-      ts.isShorthandPropertyAssignment(property) &&
-      property.name.text === propertyName
-    ) {
-      return property.name;
+    const name = property.name;
+    if (name && ts.isComputedPropertyName(name)) {
+      return undefined;
     }
+
+    const definesName =
+      name !== undefined &&
+      (ts.isIdentifier(name) || ts.isStringLiteralLike(name)) &&
+      name.text === propertyName;
+    if (!definesName) {
+      continue;
+    }
+
+    // LAST DEFINITION WINS, overwriting whatever an earlier one said --
+    // including overwriting a value with `undefined` when the winner is a
+    // method or accessor this lookup cannot attribute.
+    value = ts.isPropertyAssignment(property)
+      ? property.initializer
+      : ts.isShorthandPropertyAssignment(property)
+        ? property.name
+        : undefined;
   }
-  return undefined;
+
+  return value;
 }
 
 interface DestructuredBindingSource {
@@ -944,6 +1003,16 @@ async function resolveNamedReceiverBinding(
   const receiver = binding.value;
 
   if (ts.isObjectLiteralExpression(receiver)) {
+    // MEMBER STABILITY, the property-level counterpart of the binding
+    // stability named-bindings.ts already proves. A `const` binding to an
+    // object literal is immutable only in the binding; the OBJECT stays
+    // mutable, so `const obj = { m: danger }; obj.m = safe;` leaves the
+    // literal's own text saying `danger` while the program calls `safe`.
+    // The binding-level check cannot see this -- nothing assigns to `obj`
+    // -- which is exactly how the audit's fabricated edge got through.
+    if (isMemberAssignedWithin(binding.scope, callee.name.text)) {
+      return undefined;
+    }
     const propertyValue = findObjectLiteralPropertyValue(
       receiver,
       callee.name.text,
