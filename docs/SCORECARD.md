@@ -145,7 +145,14 @@ is the subset a search for a real vulnerable target actually traversed
 — the occurrences that cost a verdict. They rank the subtypes
 differently, and that disagreement is the most useful thing here.
 
-| Frontend gap | Graph-wide | Blocking | Projects | Packages | Sites | Likely domain | Example shape |
+**`Containing fns` is not a call-site count.** A call-graph diagnostic
+names the graph node an unresolved edge departs *from* — the enclosing
+function — so one node carries one entry per unresolved call inside it
+(`qs/lib/stringify.js#stringify@58:17` alone carries 17). The number of
+distinct call sites is not recoverable from this data and is nowhere
+claimed.
+
+| Frontend gap | Graph-wide | Blocking | Projects | Packages | Containing fns | Likely domain | Example shape |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `unsupported_receiver_binding` | 1185 | 10 | 16 | 25 | 612 | value-flow | `stack.set(k, v)` — the receiver is a name whose value was never traced. |
 | `unsupported_callee_binding` | 571 | 28 | 11 | 21 | 352 | value-flow | `isArray(x)`, `new Ctor(o)` — a bare name bound to no declaration the binder reads. |
@@ -163,8 +170,8 @@ exactly with the `frontend` row in §7 — the decomposition moved no
 count, it only named them.
 
 **Sample-size warning.** All 42 blocking occurrences come from
-**1 case** (RWB-05), and they collapse into 19 distinct
-(subtype, site) pairs across 14 containing functions — not 42
+**1 case** (RWB-05), and they arise in just 14
+containing functions (19 distinct subtype-and-function pairs) — not 42
 independent gaps. They are also the
 same occurrences RWF-002 is about: they sit in `qs`'s *stringify*
 path while the vulnerable target is in its *parse* path, so
