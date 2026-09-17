@@ -236,11 +236,41 @@ describe("RWF-028 fixture: an invocation whose PROVENANCE, not whose callee, was
       entrypoint: VALID_ENTRYPOINT,
     });
 
-    expect(finding?.verdict).toBe("NOT_AFFECTED");
-    expect(finding?.evidence?.confirmedUnreachableTarget).toMatchObject({
-      reachableSubgraphComplete: true,
-      target: { module: "fixture-lib/valid", export: "default" },
-    });
+    // CHANGED BY THE P1-B3 REMEDIATION, and the change is the point.
+    //
+    // This used to assert NOT_AFFECTED with a COMPLETE subgraph. That
+    // completeness was real only because the call graph resolved all three
+    // of `valid.js`'s calls under the banner its own source writes above
+    // them: "object members that must NOT be read".
+    //
+    //   const overwritten = { bail }; overwritten.bail = safeFn; overwritten.bail();
+    //   const duplicated  = { bail, bail: safeFn };              duplicated.bail();
+    //   const escaping    = { bail }; patch(escaping);           escaping.bail();
+    //
+    // In every one of them the property ends up holding `safeFn`, and the
+    // graph resolved all three to the THROWING `bail` -- the first because
+    // a later write was invisible, the second because duplicate keys were
+    // read first-match instead of last, the third because the object
+    // escapes to a mutator. Three fabricated edges, and the Family C proof
+    // below was resting on them: with the fabrications removed, the
+    // reachable subgraph is honestly incomplete and the negative proof is
+    // no longer available.
+    //
+    // UNKNOWN is therefore the correct verdict here now, and the previous
+    // NOT_AFFECTED is recorded as a negative proof this engine should not
+    // have been able to issue (RWF-042 remediation § 5). The change is in
+    // the SAFE direction -- a proof withdrawn, never one invented.
+    //
+    // WHAT THIS CASE STILL CONTROLS. RWF-028's actual property -- that
+    // export authority is not withdrawn for an invocation it cannot prove
+    // abrupt -- is unaffected and still holds; this assertion was already
+    // documented above as insensitive to it ("withdrawing authority would
+    // leave this verdict NOT_AFFECTED all the same"). The per-shape
+    // overreach controls in
+    // module-model.invocation-provenance-soundness.test.ts are the real
+    // guardians of that property and all still pass unchanged.
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
   });
 
   it("keeps a module's export attributable when a wrapper PARAMETER shadows the throwing callable (the audit blocker)", async () => {

@@ -657,10 +657,53 @@ describe("P1-B3 § 18: exact PackageInstance isolation", () => {
     );
   }
 
+  /**
+   * Every INSTALL PATH a resolved edge attributes a `parse` call to.
+   *
+   * Paths, not node ids, because the failure this guards against is a
+   * SUBSTITUTION: two installs of the same name and version publish the
+   * same export, so the only thing that distinguishes the right answer
+   * from the wrong one is where the file lives. A failure message that
+   * prints the borrowed path says what went wrong; `expected false to be
+   * true` does not.
+   */
+  function resolvedParseModules(graph: CallGraph): string[] {
+    return graph.edges
+      .filter((e) => e.resolution.kind === "resolved")
+      .map((e) =>
+        graph.nodes.find(
+          (n) =>
+            e.resolution.kind === "resolved" && n.id === e.resolution.target,
+        ),
+      )
+      .filter((n): n is GraphNode => n?.name === "parse")
+      .map((n) => n.module);
+  }
+
   function expectNestedOnly(graph: CallGraph, root: string): void {
-    const nested = nestedParse(graph, root);
-    expect(nested).toBeDefined();
-    expect(hasResolvedEdgeTo(graph, nested)).toBe(true);
+    const nestedDir =
+      path.join(root, "node_modules", "wrapper", "node_modules", "vuln-pkg") +
+      path.sep;
+    const topDir = path.join(root, "node_modules", "vuln-pkg") + path.sep;
+    const attributed = resolvedParseModules(graph);
+
+    // THE BORROW CHECK COMES FIRST, deliberately. If instance identity is
+    // collapsed, the wrapper's `require("vuln-pkg")` resolves to the
+    // TOP-LEVEL twin and this is the assertion that fires, naming the
+    // sibling path it borrowed from. Asserting the positive first would
+    // mask a borrow behind "the edge I wanted is missing", which is a
+    // different defect and was how an earlier version of this control
+    // reported one (RWF-042 remediation § 26).
+    expect(attributed.filter((m) => m.startsWith(topDir))).toEqual([]);
+
+    // ...and the wrapper's OWN install must genuinely be reached, so the
+    // check above cannot be satisfied by resolving nothing at all.
+    expect(
+      attributed.filter((m) => m.startsWith(nestedDir)).length,
+    ).toBeGreaterThan(0);
+
+    // Redundant with the two above, kept because it names the node.
+    expect(nestedParse(graph, root)).toBeDefined();
     expect(hasResolvedEdgeTo(graph, topLevelParse(graph, root))).toBe(false);
   }
 
