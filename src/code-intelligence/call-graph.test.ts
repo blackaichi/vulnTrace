@@ -2898,7 +2898,7 @@ describe("buildCallGraph: local reference aliasing (VT-214)", () => {
     });
   });
 
-  it("still falls back to unsupported_callee_binding when the alias is declared with let (reassignment not tracked)", async () => {
+  it("resolves a let alias that is assigned exactly once and never reassigned (P1-B3)", async () => {
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
     const entry = write(
@@ -2907,6 +2907,36 @@ describe("buildCallGraph: local reference aliasing (VT-214)", () => {
       'import { vulnerable } from "./lib.js";\n' +
         "function main() {\n" +
         "  let doIt = vulnerable;\n" +
+        "  return doIt();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    // Before P1-B3 this was `unsupported_callee_binding`, because the
+    // alias lookup was `const`-only -- it could not tell a `let` that is
+    // never written again from one that is. Assignment stability is now
+    // established from the binding's own scope, so the declaration keyword
+    // alone no longer decides it.
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("still falls back to unsupported_callee_binding when a let alias is reassigned (P1-B3)", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import { vulnerable } from "./lib.js";\n' +
+        "function other() {}\n" +
+        "function main() {\n" +
+        "  let doIt = vulnerable;\n" +
+        "  doIt = other;\n" +
         "  return doIt();\n" +
         "}\n",
     );
@@ -3194,7 +3224,7 @@ describe("buildCallGraph: constant computed-key evaluation (VT-217)", () => {
     });
   });
 
-  it("still falls back to unsupported_callee_binding when the key is a let (reassignment not tracked)", async () => {
+  it("resolves a computed key held by a let that is never reassigned (P1-B3)", async () => {
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
     const entry = write(
@@ -3202,6 +3232,34 @@ describe("buildCallGraph: constant computed-key evaluation (VT-217)", () => {
       "src/index.ts",
       'import * as lib from "./lib.js";\n' +
         'let KEY = "vulnerable";\n' +
+        "function main() {\n" +
+        "  const fn = lib[KEY];\n" +
+        "  return fn();\n" +
+        "}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    // Same P1-B3 change as the `let` alias above: the key's value is
+    // authoritative because nothing writes `KEY` again, not because it
+    // was spelled `const`.
+    const mainNode = findNode(graph, (n) => n.name === "main");
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edge = graph.edges.find((e) => e.from === mainNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("still falls back to unsupported_callee_binding when the computed key is reassigned (P1-B3)", async () => {
+    const root = tempProject();
+    write(root, "src/lib.ts", "export function vulnerable() {}\n");
+    const entry = write(
+      root,
+      "src/index.ts",
+      'import * as lib from "./lib.js";\n' +
+        'let KEY = "vulnerable";\n' +
+        'KEY = "safe";\n' +
         "function main() {\n" +
         "  const fn = lib[KEY];\n" +
         "  return fn();\n" +
