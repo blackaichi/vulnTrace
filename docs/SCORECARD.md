@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 170 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 171 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (LIVE) — `npm run test:validation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-17 | Real npm-installed packages against real advisories over the real OSV API. | Integration evidence and a provider-movement detector, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -133,10 +133,11 @@ without modeling a single construct. See `docs/OPEN-DEBTS.md` D-06.
 
 The `frontend` row above used to be one opaque token. It is now eight
 measured gaps plus a retained floor (P1-B1; `tests/validation/FINDINGS.md` RWF-041).
-**This did not improve coverage** — the analyzer models exactly what it
-modelled before, and the corpus's UNKNOWN count is unchanged. It
-improved OBSERVABILITY: the question 'which capability should P1-B
-build first?' now has evidence behind it instead of intuition.
+**The decomposition itself did not improve coverage** — it improved
+OBSERVABILITY: the question 'which capability should P1-B build
+first?' gained evidence behind it instead of intuition. The table
+below is the CURRENT measurement, and the baseline that chose the
+work is retained beside it in §7.2 rather than overwritten.
 
 **Two counts, and confusing them is the whole trap.** *Graph-wide* is
 every unresolved edge anywhere the graph builder walked, across all 17
@@ -155,7 +156,7 @@ claimed.
 | Frontend gap | Graph-wide | Blocking | Projects | Packages | Containing fns | Likely domain | Example shape |
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | `unsupported_receiver_binding` | 1185 | 10 | 16 | 25 | 612 | value-flow | `stack.set(k, v)` — the receiver is a name whose value was never traced. |
-| `unsupported_callee_binding` | 571 | 28 | 11 | 21 | 352 | value-flow | `isArray(x)`, `new Ctor(o)` — a bare name bound to no declaration the binder reads. |
+| `unsupported_callee_binding` | 569 | 28 | 11 | 21 | 351 | value-flow | `isArray(x)`, `new Ctor(o)` — a bare name bound to no declaration the binder reads. |
 | `unsupported_this_receiver` | 190 | 0 | 5 | 5 | 88 | frontend syntax/modeling | `this.parse(text)` — no class-instance receiver model. |
 | `unsupported_call_result_receiver` | 176 | 0 | 13 | 12 | 127 | call graph | `makeRe().test(v)` — needs interprocedural return modeling. |
 | `unsupported_literal_receiver` | 98 | 0 | 13 | 13 | 61 | frontend syntax/modeling | `/re/.exec(v)`, `[a, b].join('\|')` — value known, members not modeled. |
@@ -164,7 +165,7 @@ claimed.
 | `unsupported_expression_receiver` | 21 | 0 | 10 | 9 | 16 | value-flow | `(value \|\| '').trim()` — receiver produced by an unevaluated operator. |
 | `unsupported_construct` | 0 | 0 | 0 | 0 | 0 | n/a — retained runtime floor | The generic token, kept so an unmeasured or future construct fails safe. Zero in this corpus. |
 
-Totals: **2351 graph-wide**, **42 blocking**,
+Totals: **2349 graph-wide**, **42 blocking**,
 **0 on the generic floor**. The blocking column reconciles
 exactly with the `frontend` row in §7 — the decomposition moved no
 count, it only named them.
@@ -179,16 +180,51 @@ reachability scoping might discharge every one of them without
 modeling a single construct. Do not read this column as a work plan
 on its own.
 
-Provenance for both columns: measured (LIVE) — `node scripts/measure-frontend-gaps.mjs` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-16.
+Provenance for both columns: measured (LIVE) — `node scripts/measure-frontend-gaps.mjs` at `p1-b3-named-binding-resolution (base ef07321)`, 2026-09-17.
+
+### 7.2 What P1-B3 (Block A — named binding resolution) moved
+
+The first P1-B CAPABILITY block, as distinct from the decomposition
+that ranked it (`tests/validation/FINDINGS.md` RWF-042). Block A —
+`unsupported_callee_binding` + `unsupported_receiver_binding` — ranked
+first on BOTH columns above, which is why it was built first.
+
+| Metric | P1-B1/P1-B2 (RWF-041) | After P1-B3 | Δ |
+| --- | --- | --- | --- |
+| All frontend gaps, graph-wide | 2351 | 2349 | -2 |
+| Blocking a verdict | 42 | 42 | 0 |
+| Generic `unsupported_construct` floor | 0 | 0 | 0 |
+| `unsupported_callee_binding` | 571 | 569 | -2 |
+
+**Every subtype not listed is unchanged to the occurrence.** That is
+the honest reading of the number: the reduction is RESOLUTION, not a
+reason moving to a different label. Both new edges are attributable —
+`qs/lib/parse.js`'s `parseValues` and `parseKeys`, each a binding whose
+value is a NAMED function expression under a different name, so a
+name match could never find it.
+
+**The blocking column did not move, and that is the finding.** Block A
+ranked first and discharged no blocker, because RWB-05's Block A
+blockers are dominated by higher-order PARAMETERS — a value arriving
+from every call site — which is a different mechanism from resolving a
+name. A subtype names the syntax that failed, not the work that fixes
+it. See `docs/OPEN-DEBTS.md` D-12.
+
+P1-B3 also closed two ways the analyzer could FABRICATE a call edge
+(a shadowed binding read through to an outer declaration's value, and
+a call resolved from an initializer written below it) and recorded a
+third it did not close (RWF-043). None is visible in the table above,
+because none of those shapes occurs in this corpus — which is why they
+are pinned by tests rather than by these counts.
 
 ## 8. Known defect register (RWF)
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 23 | structural — the status table in `tests/validation/FINDINGS.md` | Every gap found by scanning real packages is recorded before it is fixed, and stays recorded after. | Counts rows in the register, not distinct defects in the analyzer. |
+| Findings recorded | 25 | structural — the status table in `tests/validation/FINDINGS.md` | Every gap found by scanning real packages is recorded before it is fixed, and stays recorded after. | Counts rows in the register, not distinct defects in the analyzer. |
 | Still open | 2 — RWF-001, RWF-006 | structural — the same table | Each is a precision gap that degrades to UNKNOWN in both directions, never a false verdict. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
-| Open in part | 1 — RWF-002 | structural — the same table | Partly discharged, partly outstanding. RWF-002 is bypassed for unloaded packages; its underlying reachability-scoping tradeoff remains. | **Counting these as closed is the register's single most consequential misreading**, and the blocker counts recorded for RWF-002 are not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
-| Recorded as fixed | 20 | structural — the same table | Every soundness defect found so far has a fixture and a test that keeps it fixed. | A fix is proven for the shapes its fixtures cover. |
+| Open in part | 2 — RWF-002, RWF-043 | structural — the same table | Partly discharged, partly outstanding. RWF-002 is bypassed for unloaded packages; its underlying reachability-scoping tradeoff remains. | **Counting these as closed is the register's single most consequential misreading**, and the blocker counts recorded for RWF-002 are not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
+| Recorded as fixed | 21 | structural — the same table | Every soundness defect found so far has a fixture and a test that keeps it fixed. | A fix is proven for the shapes its fixtures cover. |
 
 ## 9. Commands referenced by the documentation
 

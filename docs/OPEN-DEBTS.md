@@ -272,6 +272,23 @@ reachability scoping could discharge all 42 without modeling anything.
 cases whose vulnerable target is genuinely behind a frontend gap, not by
 re-reading the numbers already taken.
 
+**Update — P1-B3 is direct evidence for this caution (RWF-042).** Block A
+ranked FIRST on both columns and, once built, moved the blocking column by
+**zero**. The reason is now measured rather than suspected: RWB-05's Block
+A blockers concentrate in `qs/lib/stringify.js` (25 of 38) and
+`get-intrinsic` (10), and their dominant shape is a PARAMETER — a value
+arriving from every call site — which is higher-order propagation, not
+named-binding resolution. Across the whole corpus, ~500 of Block A's 1,554
+classifiable occurrences are that same parameter mode and ~600 more are
+bindings that resolve perfectly well onto a value whose CONTENT belongs to
+Block B or Block C.
+
+The debt is therefore **wider than first written**: a subtype's rank does
+not predict what building it will yield, because the subtype names the
+SYNTAX that failed and not the MECHANISM that would fix it. A capability
+block should be scoped from the semantic failure-mode inventory
+(RWF-042 § 2), not from the occurrence table alone.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

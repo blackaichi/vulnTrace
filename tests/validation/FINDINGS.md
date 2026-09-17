@@ -99,6 +99,8 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-030 | any installed package with MORE THAN ONE file exporting the advisory's literal name — i.e. any package whose public entry re-publishes an internal callable under a different public name, or that has an internal module sharing a name with a public one. Measured on the real vendored corpus (RUNTIME files only; a `.d.ts` rival can never contribute a target node): **3** genuine npm instances in `tests/validation/fixtures` — `has-symbols`, `call-bind-apply-helpers`, `yallist` — where authoritative resolution selects a different file than the per-file scan would offer. Counting declaration files too gives 6, but the extra three (`call-bound`, `side-channel`, `side-channel-list`) have only an `index.d.ts` rival and are measurement artifacts, not runtime defects | TARGET attribution asked EVERY graph-discovered file of the `PackageInstance`, independently, whether it exported the advisory's name (`resolveTargetNodes`'s per-file loop over `findExportNodeInFile`). Nothing in that loop asked which file the package actually PUBLISHES, so package MEMBERSHIP became sufficient for target identity when it is only ever necessary. `pkg/other.js` exporting `vulnerable` is not evidence about what `require("pkg").vulnerable` is. Distinct from RWF-011/VT-301B, which closed the bare-NAME fallback: here the sibling genuinely does export the name, so no name-search guard applied. Distinct from RWF-029/P1-A1, which fixed the forwarding RELATION but left it as a fallback that ran only AFTER this loop had already found something — so a sibling shadowed it entirely | **Soundness, BOTH directions** — reproduced byte-identically on the P0 closure base `d36a83c` and on the P1-A1 merge base `4a969b2`. False `AFFECTED`: a dangerous, reachable sibling answers for a package whose public `vulnerable` is safe and never called (`publicsafe-lib`; evidence path ended at `node_modules/publicsafe-lib/other.js:5`, while real `node` proves `pkg.vulnerable === impl.safeImpl`). False `NOT_AFFECTED`: because a found sibling returned before P1-A1's forwarding chase could run, an UNREACHABLE sibling shadowed the genuinely-reached public implementation and the finding received a complete negative proof about a callable the advisory never named (`twinpub-lib`, both twins — real `node` confirms `pkg.vulnerable` IS called) | **Fixed (P1-A2)** — see below |
 | RWF-031 | any installed package that declares BOTH `main` and `exports` where the two name different files (14 of the 49 vendored corpus instances declare both), and any advisory whose `module` names a SUBPATH (`qs/lib/parse`, `@scope/pkg/api`) rather than a package root — `schemas/symbol-rule.schema.json` has always permitted the latter | TWO defects in P1-A2's authoritative-public-entry probe set. (1) That set probed the instance's ABSOLUTE INSTALL PATH (the RWF-009 alias handle), and a path request never consults `exports` in real Node — so for `{"main":"./legacy.js","exports":{".":"./modern.js"}}` it admitted `legacy.js`, a file no importer can reach through the package name, as an authoritative public entry. That is RWF-030's own defect restored through a different door. (2) Installed instances were selected by comparing the advisory's whole module specifier against each instance's package NAME, so `"pkg/parse"` matched nothing, `instances.size` was 0, and resolution fell through to Site B — an instance-blind re-resolution that feeds a PHANTOM into the reachability search | **Soundness, BOTH directions** — reproduced on the P1-A2 merge base `eb128b6` by swapping that commit's `verdict.ts` into the branch; 4 of `fixtures/package-entry`'s 30 cases fail there. False `AFFECTED`: a superseded, reachable, dangerous `main` answered for a package whose public `vulnerable` is safe and uncalled (`expmainsafe-lib`), and an invalid `exports` target fell back to a same-named sibling (`badexports-lib`). False `NOT_AFFECTED`, RUNTIME-REACHABLE: a subpath advisory received a complete family-C negative proof about a phantom while real `node` proves the callable IS executed (`subpathfwd-lib/api`, `twin-lib/api`) | **Fixed (P1-A3)** — see below |
 | RWF-022 | any CommonJS file where a class's `extends` HERITAGE call RETURNS NORMALLY but hands back a value that is not a constructor (`function notAConstructor() { return 1; }` + `class C extends notAConstructor() {}`), above a later export write — the same UMD/feature-detect family as RWF-016/017/018/019/020, and the half of the heritage family RWF-020 explicitly deferred | RWF-020 asks only whether evaluating the heritage CALL completes, and here it does: `notAConstructor()` is not abrupt under `cannotCompleteNormally`, so `isDefinitelyAbruptCall` refuses it and RWF-020's rule never fires. What ends module evaluation is the VALUE: ClassDefinitionEvaluation validates the superclass before it does anything else with the class, and `1` is neither `null` nor a constructor, so the definition throws `TypeError: Class extends value 1 is not a constructor or null`. The same applies, through a second and deliberately separate mechanism, to an `async` or generator CALLEE — whose call provably returns a `Promise` or a generator object, neither of which is a constructor — which RWF-016 must refuse for the opposite reason (calling one cannot throw synchronously) | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken, on all three of the classifier's routes (numeric-literal return, concise-arrow object return, `async` callee); a real Node-executed circular-import fixture ASSERTS that a cyclic consumer retains the bypassed dangerous export by identity and calls the vulnerable sink through it, that the factory returns normally with `1`, that the later safe write never runs, and that re-requiring re-throws — and, in the same process across a 31-row measured table, that returning a class, an ordinary function or `null` genuinely does NOT abort module evaluation | **Fixed (RWF-022)** |
+| RWF-042 | `qs` (`RWB-05`), and any file that shadows a name or calls above its own initializer | The call graph's named-binding paths resolved a name by SPELLING — `resolveSingleAssignmentValue` is whole-file, name-only and first-match-wins — so an inner `const fn = safe` was answered with an outer `const fn = danger`'s value, and a call written above its initializer was answered with that initializer. Separately, a name bound to a NAMED function expression (`var parseValues = function parseQueryStringValues(){}`) was indexed under the expression's own name and so matched nothing | **Soundness, fabricating direction** — both shadowing and order produce a call edge to a function the program does not reach through that name (a false `AFFECTED` risk, never a false `NOT_AFFECTED`); the missed function expressions are precision only | **Fixed (P1-B3)** — see below |
+| RWF-043 | `lodash` (found via the P1-B3 corpus differential); any file with two same-named functions in unrelated scopes | `findLocalFunctionNodeId` attributes a bare-name call to the FIRST same-named function anywhere in the file, at any nesting depth, with no scope check — so `lodash`'s module-scope `var freeParseInt = parseInt` (the ambient global) could be paired with its own `parseInt` declared inside `runInContext` | **Soundness, fabricating direction** — invents a call edge to a function never reached through that name; can produce a false `AFFECTED` and a misleading evidence path, never a false `NOT_AFFECTED`. No such verdict observed in the current corpus | **Partly fixed (P1-B3)** — fixed on the named-binding paths; the direct-call path (`findLocalFunctionNodeId`) still resolves by name and remains open — see below |
 
 ---
 
@@ -12670,3 +12672,445 @@ this document claims:
 The original report was wrong about these seven things and this section
 says so rather than presenting the corrected text as what was always
 written.
+
+---
+
+## RWF-042 (P1-B3) — Named bindings were resolved by spelling, not by scope, so an inner declaration could be answered with an outer declaration's value
+
+The first P1-B capability block, and the first one chosen from measured
+evidence rather than intuition (RWF-041 § 16 ranked Block A —
+`unsupported_callee_binding` + `unsupported_receiver_binding` — first).
+
+It is two pieces of work that turned out to be the same piece of work.
+Block A's *gap* is that too few named bindings resolve. Block A's *defect*,
+found while building the gap's fix, is that the bindings which already
+resolved were resolved **by name**: whole-file, first-match-wins, with no
+notion of scope and no notion of evaluation order. Widening a lookup that
+cannot see shadowing would have widened the wrong thing.
+
+Central rule being enforced: *a name is not a binding. Resolving one
+without the other fabricates edges, and a fabricated edge is the only
+error class that ends in a wrong verdict rather than an honest UNKNOWN.*
+
+### P1-B1/B2 handoff
+
+Base: `ef07321` (`docs: correct the P1-B measurement record after
+independent audit`), certified before editing — clean tree, identical to
+`origin/main`, RWF-041 present. Baseline at that commit, all green:
+
+| gate | result |
+| --- | --- |
+| `npm run test:foundation` | 29 files / 1,356 tests |
+| `npm test` | 170 files / 4,221 tests |
+| `npm run test:adversarial` | 2 files / 124 tests |
+| `npm run test:performance` | 1 file / 3 tests |
+| `node scripts/measure-frontend-gaps.mjs` (LIVE) | reproduced `docs/SCORECARD.md` § 7.1 **exactly**: 2,351 graph-wide, 42 blocking, 0 on the generic floor |
+
+### 1. Block A baseline, re-measured (not taken from RWF-041)
+
+| Block A subtype | Graph-wide | Blocking | Projects | Packages | Containing fns |
+| --- | --- | --- | --- | --- | --- |
+| `unsupported_receiver_binding` | 1,185 | 10 | 16 | 25 | 612 |
+| `unsupported_callee_binding` | 571 | 28 | 11 | 21 | 352 |
+| **Block A total** | **1,756** | **38** | — | — | — |
+
+The remaining 4 of the corpus's 42 blockers are
+`unsupported_computed_callee`, which is not Block A.
+
+### 2. Semantic failure-mode inventory
+
+RWF-041 counted occurrences by SYNTAX. That cannot say which resolution
+STAGE failed, so every Block A occurrence was re-classified by running the
+real analyzer with a temporary probe at the fallback edge, recording each
+call site's callee text, and re-resolving its root name against a
+scope-correct model of the file. 1,554 distinct occurrences were
+classifiable (the remainder are duplicate scans of the same library file):
+
+| Failure mode | Count | Stage | Example |
+| --- | --- | --- | --- |
+| Parameter — value arrives from every call site | 502 | D (higher-order) | `func.call(...)` inside `function apply(func, ...)` |
+| Authoritative binding, value is a member of an ambient global | 309 | G (value shape) | `var funcToString = Function.prototype.toString;` |
+| Use written above its own initializer | 139 | E/I (order) | `isArray(...)` above `var isArray = Array.isArray;` |
+| Authoritative binding, value is a call result | 101 | G → Block B | `var nativeKeys = overArg(...)` |
+| Authoritative binding, value is an operator expression | 88 | G → Block B | `var x = cond ? a : b;` |
+| Reassigned in its own scope | 115 | H (stability) | `var source = ...; source = ...;` |
+| Authoritative binding, value is a literal/array/regex | 107 | G → Block B | `var reIsUint = /^(?:0\|[1-9]\d*)$/;` |
+| Declared without an initializer | 34 | C | `var result; result.push(...)` |
+| Authoritative binding, value is `new X()` | 20 | G → Block C | `const parser = new XMLParser();` |
+| Authoritative binding, value is another NAME | 6 | B (alias) | `var freeParseInt = parseInt;` |
+| **Authoritative binding, value is a function expression** | **2** | **B/G — the resolvable one** | `var parseValues = function parseQueryStringValues() {...}` |
+| Ambiguous / unbound / other | ~131 | A/I | — |
+
+**The inventory is the finding.** Block A is not one gap. Roughly a third
+of it is higher-order parameter flow, which P1-B3 § 12 holds out of scope;
+most of the rest is a binding that resolves perfectly well onto a VALUE
+whose content belongs to Block B or Block C. The part that is genuinely a
+named-binding gap — a name bound to a callable this file already contains
+— is **small**, and saying so is more useful than a percentage.
+
+### 2a. Why the one small row matters anyway
+
+`source-index.ts`'s `extractFunction` names a function expression by its
+OWN name when it has one. So
+
+```js
+var parseValues = function parseQueryStringValues(str, options) { ... };
+```
+
+is indexed as `parseQueryStringValues`, and `findLocalFunctionNodeId`'s
+name match against `parseValues` misses it entirely. In real `qs`, both
+`parseValues` and `parseKeys` are written this way, and both are called
+from `module.exports = function (str, opts)` — the route into that
+package's entire parse implementation.
+
+### 3. The defect: resolution by spelling
+
+`resolveSingleAssignmentValue` (local-aliases.ts) answers *"is there a
+`const <name> = ...` anywhere in this file?"* — whole-file, name-only,
+first-match-wins. The call graph's alias paths used it as though it
+answered *"what does this reference bind to?"*. It does not, and the gap
+between the two questions is observable:
+
+| Construct | Behavior on `ef07321` | Correct |
+| --- | --- | --- |
+| `const fn = danger;` at module scope, `const fn = safe;` inside a function, `fn()` in that function | resolved to **`danger`** | `safe` |
+| `function main() { fn(); }` written ABOVE `const fn = danger;` | resolved to **`danger`** | unresolved (temporal dead zone) |
+
+Both FABRICATE an edge. Neither was caught by the corpus, because neither
+shape occurs in it — which is exactly why they are recorded here rather
+than treated as theoretical: the corpus is not a proof of absence.
+
+### 4. What was built
+
+`src/code-intelligence/named-bindings.ts` — one resolver, one soundness
+rule, stated once:
+
+> A name resolves only when a unique declaration owns it in the innermost
+> scope that declares it, that declaration carries exactly one value,
+> nothing ever assigns to the name again, and the reference is evaluated
+> after that value exists.
+
+Each refusal carries its own cause (`no_declaration`,
+`ambiguous_declarations`, `parameter`, `import_binding`, `destructuring`,
+`no_initializer`, `reassigned`, `used_before_initialized`, `alias_cycle`,
+`alias_chain_too_long`), so the call graph can fall through to the
+machinery that owns a case instead of guessing at it.
+
+**Scope model.** `var`/`function` belong to the nearest enclosing FUNCTION
+scope; `let`/`const`/`class`/parameters are confined to their BLOCK scope;
+imports belong to the source file; a named function expression binds its
+own name only inside itself. The first scope walking outward that owns any
+declaration is the binding scope — an outer declaration is never consulted
+once an inner one exists, and two declarations in that one scope are an
+ambiguity, not a tie to break.
+
+**Assignment stability.** The whole owning scope is searched for any write
+to the name — `=`, every compound assignment, `++`/`--`, `for...of`/`in`
+targets, and destructuring assignment targets. The search is deliberately
+OVER-approximate: it counts a write to a same-named binding that shadows
+this one in a nested scope. That costs resolutions and can never invent
+one. The opposite bias is how RWF-013/013b happened.
+
+**Evaluation order.** A value binding resolves only when the reference
+starts at or after its initializer ends. Function DECLARATIONS are exempt
+and take a separate result kind, because hoisting is complete before any
+statement in the scope runs.
+
+**Alias chains.** Followed one hop at a time through the same resolution,
+so every hop gets the same guarantees, with visited declarations recorded
+so `a = b; b = a;` fails closed. Bounded at 8 hops.
+
+### 5. Callee and receiver stay separate (§ 5)
+
+They are not one path, because what each must prove differs. A callee
+needs one authoritative callable. A receiver needs an authoritative value
+**and** an authoritative member on it — and a resolved receiver whose
+member cannot be read authoritatively resolves to nothing at all, never to
+"call something on this value".
+
+Supported callee forms: a name bound to a local `function` declaration; a
+name bound to a function or arrow EXPRESSION (including a named one under
+a different binding name — § 2a); a name bound to another resolvable
+reference, handed to the existing import machinery; a destructured name,
+handed to the existing destructuring path; any of these through an alias
+chain.
+
+Supported receiver forms: a name bound to an object literal, whose named
+property is read directly; a name bound to a reference (identifier or
+member chain), where appending the member reconstructs an ordinary named
+access — which is what makes `const x = obj; x.m()` behave exactly as
+`obj.m()` does; either through an alias chain.
+
+### 6. Block boundaries held (§ 13, § 14, § 16, § 17)
+
+Nothing became resolvable merely because its root name did. A call-result
+receiver (`const x = factory(); x.m()`) stays Block B; a constructed
+receiver (`const x = new Thing(); x.m()`) stays Block C; literals, regexes,
+arrays and operator expressions stay on their own Block B reasons;
+`obj[key]()` stays `dynamic_member_access` and `obj[key].m()` stays
+`unsupported_indexed_receiver`; `this.m()` stays
+`unsupported_this_receiver`. Each is pinned by a test that asserts the
+REASON, not merely that nothing resolved.
+
+**Reason migration: zero.** Every non-Block-A subtype's count is
+byte-identical before and after (§ 8), so the Block A reduction is
+resolution, not relabelling.
+
+### 7. The fabricated edge the differential caught
+
+The first working build resolved **4** more calls. Three were the intended
+qs/lodash shapes. The fourth was wrong.
+
+`lodash.js` line 413, at module scope:
+
+```js
+var freeParseInt = parseInt;      // the AMBIENT GLOBAL
+```
+
+and, 14,000 lines later, *inside* `runInContext`:
+
+```js
+function parseInt(string, radix, guard) { ... }   // lodash's own, unrelated
+```
+
+The alias chain resolved `freeParseInt` to the bare name `parseInt`, found
+no declaration for it in that file, and handed the name onward anyway —
+where a name-only match paired it with lodash's own `parseInt` and
+attributed `toNumber`'s call to the wrong function entirely.
+
+It surfaced only as `callsResolved` rising by one in two cases, with no
+verdict to make it visible. The resolver now propagates a refusal instead
+of handing a name onward, except when the refusal means another resolver
+owns the name (`import_binding`, `destructuring`). Pinned by a test built
+from the real lodash shape.
+
+**This is the argument for the differential.** A capability task that
+measured only its own wins would have shipped it.
+
+### 8. Measured result — honest, and small
+
+| Metric | Base `ef07321` | P1-B3 | Δ |
+| --- | --- | --- | --- |
+| `unsupported_callee_binding` (graph-wide) | 571 | 569 | **−2** |
+| `unsupported_receiver_binding` (graph-wide) | 1,185 | 1,185 | 0 |
+| **Block A total** | **1,756** | **1,754** | **−2** |
+| Block A blocking a verdict | 38 | 38 | 0 |
+| All frontend gaps (graph-wide) | 2,351 | 2,349 | −2 |
+| Generic `unsupported_construct` floor | 0 | 0 | 0 |
+| Every other subtype | — | — | **all 0** |
+
+**Split as § 21 requires:** 2 resolved to modeled graph behavior, 0 moved
+to another UNKNOWN reason, 1,754 still unresolved.
+
+### 9. Graph differential — every new edge, named
+
+One case in seventeen changes. Nothing else in the corpus moves at all.
+
+| Case | `callsResolved` | `callsDynamic` | Total edges |
+| --- | --- | --- | --- |
+| RWB-05 | 229 → **231** | 264 → **262** | unchanged |
+
+Both new edges leave `qs/lib/parse.js#<anonymous>@239:18` — the
+`module.exports = function (str, opts)` region — and are the calls to
+`parseValues` (line 246) and `parseKeys` (line 254), each a `var` bound to
+a named function expression whose own name differs from the binding's.
+Provenance: § 2a.
+
+**Edges removed: none.** Total edge count is unchanged in every case; the
+two moved from `unknown` to `resolved`. No unexpected removal to
+investigate.
+
+The two soundness fixes (shadowing, order) removed no corpus edge, because
+neither shape occurs in the corpus. They are proven by unit test, not by
+the differential, and § 3 says so rather than claiming corpus evidence
+this task does not have.
+
+### 10. Verdict and proof differential
+
+Compared field by field across all 17 deterministic cases: finding count,
+vulnerability, package, version, `packageInstance`, `target`, `verdict`,
+`confidence`, `evidence.path`, `evidence.reasons`, `negativeProof`,
+`unknownReasons`, `unreportedCandidates`, `coverage`.
+
+| Delta class | Count |
+| --- | --- |
+| Verdict changes | **0** |
+| Confidence changes | **0** |
+| `negativeProof` changes | **0** |
+| New `AFFECTED` | **0** |
+| New `NOT_AFFECTED` | **0** |
+| `packageInstance` / `target` changes | **0** |
+| `unreportedCandidates` changes | **0** |
+| `coverage` changes | 1 case (RWB-05), § 9 |
+
+No proof family (A/B/C) is entered, left or altered anywhere in the
+corpus. There is no proof-delta table below because there are no proof
+deltas — which is the expected shape for a change that only ever converts
+an UNKNOWN edge into a resolved one on a path no negative proof depends on.
+
+### 11. Blocker and target-relevance analysis (§ 23)
+
+Blockers: **38 → 38**. No benchmark blocker was reduced, so there is
+nothing to classify as target-relevant or irrelevant, and nothing is
+claimed.
+
+Why, specifically: RWB-05's Block A blockers concentrate in
+`qs/lib/stringify.js` (25 of 38) and `get-intrinsic` (10), not in
+`parse.js`. Of the 17 in `stringify@58:17` alone, the dominant shape is a
+PARAMETER — `sideChannel.has(...)`, `filter(...)`, `serializeDate(...)`,
+`encoder(...)`, `formatter(...)` — which is higher-order value propagation
+(§ 12, out of scope), and the rest resolve onto ambient globals
+(`var isArray = Array.isArray`) that carry no graph node.
+
+**Block A's blocking contribution is dominated by a mechanism B3 was
+scoped not to build.** That is a real finding about the block's ranking,
+and it belongs to D-12's caution rather than to this task's success
+criteria.
+
+### 12. Mutation controls (§ 30–33)
+
+Each guard was weakened in turn and the suite re-run. All four are
+load-bearing.
+
+| Mutation | Weakening | Tests that fail |
+| --- | --- | --- |
+| Reassignment | drop the `isAssignedWithin` gate | 4 — reassigned binding, branch assignment, loop assignment, reassigned receiver |
+| Shadowing | resolve from the source file instead of the scope chain | 4 — shadowed binding, shadowing binds own value, parameter shadowing, shadowed receiver |
+| Order | allow a later initializer to satisfy an earlier use | 2 — call before initializer, receiver before initializer |
+| Instance | unwrap an alias chain past the last useful NAME | 3 — aliased imported receiver, twin receiver isolation, twin alias chain |
+
+The instance mutation is the informative one: discarding the name `dep` in
+`const dep = require("pkg"); const alias = dep;` discards the only thing
+that identifies WHICH install the value came from, and both same-name
+same-version twin tests fail immediately.
+
+### 13. Exact PackageInstance (§ 18)
+
+Three twin tests: two installs, identical name and identical version, one
+nested under the wrapper that uses it. A callee binding, a receiver
+binding and a three-hop alias chain each resolve to the wrapper's OWN
+install, and the top-level twin receives no resolved edge at all. Every
+assertion checks the target's module PATH — a name check would pass
+against the wrong instance, which is the failure being excluded.
+
+### 14. Performance and cache lifetime (§ 34, § 35)
+
+No new cache, no global mutable state, no new memoization. Resolution is a
+bounded walk up the reference's own scope chain plus a bounded walk of the
+owning scope's subtree, both per call site that has already failed every
+cheaper path, and both over AST nodes already in memory.
+
+`npm run test:performance` passes unchanged (3/3), and the corpus scans
+showed no wall-clock regression. The pre-existing per-file `const` cache in
+local-aliases.ts is untouched and still serves loader-constructs.ts and
+commonjs-reexports.ts, which P1-B3 deliberately does not modify.
+
+### 15. What P1-B3 did NOT do
+
+Not attempted, and each left on its precise UNKNOWN reason: higher-order
+parameter propagation (§ 12 — and the largest single Block A mode);
+`this`/class/prototype modeling (§ 14); call-result value modeling (§ 13);
+webpack/bundle modeling (§ 15, RWF-006); dynamic member access (§ 16);
+`new X()` callee binding in `classifyNew`, which has no alias path at all
+and whose resolution would land on constructor modeling.
+
+`resolveSingleAssignmentValue` itself is UNCHANGED. Its whole-file,
+name-only semantics still serve loader-constructs.ts and
+commonjs-reexports.ts. Only the call graph's named-binding paths were
+moved onto the scope-aware resolver — widening the change to those two
+callers is its own task with its own differential, not a quiet rider on
+this one.
+
+### 16. Implications for B4
+
+1. **Block A is not exhausted, and what remains is not Block A work.**
+   ~500 of its occurrences are higher-order parameter flow and ~600 resolve
+   onto Block B/C value shapes. Building "more Block A" would mostly mean
+   building Block B or higher-order analysis under a Block A label.
+2. **The blocking column still rests on one case** (D-12), and this task
+   is direct evidence for that caution: Block A ranked first on both
+   columns and moved neither.
+3. **A `new X()` receiver is 20 occurrences** including the real
+   `rwb-03-fast-xml-parser-method` fixture's `const parser = new
+   XMLParser(); parser.parse()`. That is a Block C decomposition question,
+   and RWF-041's own § F4 correction already says Block C needs a
+   bundle/prototype/class split before implementation.
+
+---
+
+## RWF-043 — A call to a bare name is attributed to any same-named function in the file, whatever scope it was declared in
+
+**Discovered:** while building P1-B3's corpus differential (RWF-042 § 7).
+Not hypothesized — the first working build emitted a wrong edge in real
+`lodash`, and the mechanism behind it turned out to be wider than the path
+P1-B3 was changing.
+
+**Symptom.** `findLocalFunctionNodeId` (`src/code-intelligence/call-graph
+.ts`) resolves a bare-identifier call by searching the file's indexed
+functions for one whose NAME matches, and taking the first:
+
+```ts
+const match = prepared.index.functions.find((fn) => fn.name === callee.text);
+```
+
+`prepared.index.functions` is every function in the file at every depth, so
+a call at module scope can be attributed to a function declared inside an
+unrelated closure:
+
+```js
+function main() { helper(); }          // no `helper` is in scope here
+function outer() {
+  function helper() {}                 // ...but this one is matched anyway
+  return helper;
+}
+```
+
+Confirmed on `ef07321` and still present: `main`'s call receives a
+`resolved` edge to `outer`'s inner `helper`.
+
+**The real-world shape.** `lodash.js` writes, at module scope:
+
+```js
+var freeParseInt = parseInt;                        // the ambient global
+```
+
+and, ~14,000 lines later inside `runInContext`, its own unrelated
+`function parseInt(string, radix, guard)`. Any route that reaches the name
+`parseInt` and then asks this function pairs the two.
+
+**Impact.** **Soundness, in the fabricating direction.** It invents a call
+edge to a function the program does not reach through that name. An
+invented edge cannot produce a false `NOT_AFFECTED` (it only ever adds
+reachability), but it can produce a **false `AFFECTED`**, and it can make
+an evidence path name a function that was never called. No such verdict
+has been observed in the current corpus — the lodash occurrence changed
+`callsResolved` and no verdict — and absence of an observation is not
+absence of the defect.
+
+**Why the name match exists.** It is the workhorse path for the ordinary
+case (`function a() { b(); } function b() {}`), which is correct far more
+often than not, and it predates any scope model in this engine.
+
+**Status: partly addressed by P1-B3.**
+
+*Closed* on the named-binding paths. `resolveNamedBinding`
+(`named-bindings.ts`) is scope-aware, and it no longer hands a name onward
+to this matcher when the name has no declaration in the file — which is
+what excluded the lodash edge. Pinned by
+`named-bindings.soundness.test.ts`'s ambient-global test, built from the
+real lodash shape.
+
+*Open* on the direct-call path (`classifyCall`'s own
+`findLocalFunctionNodeId` call, and `resolveAliasedValue`'s identifier
+fallback). Closing it means routing direct local-call attribution through
+the same scope model, which is a different capability from named-binding
+resolution — a different set of call sites, a different differential, and
+its own risk of removing edges the corpus currently depends on. P1-B3
+deliberately did not absorb it.
+
+**How to close it.** Give `findLocalFunctionNodeId` the reference NODE
+rather than its text, resolve the name through `resolveNamedBinding`, and
+accept only a function whose declaration the binding actually names —
+falling back to UNKNOWN, never to the first same-named function. Expect
+edge REMOVALS in the corpus differential, and expect each one to need
+explaining rather than celebrating.

@@ -425,10 +425,11 @@ async function build() {
     "",
     "The `frontend` row above used to be one opaque token. It is now eight",
     "measured gaps plus a retained floor (P1-B1; `tests/validation/FINDINGS.md` RWF-041).",
-    "**This did not improve coverage** — the analyzer models exactly what it",
-    "modelled before, and the corpus's UNKNOWN count is unchanged. It",
-    "improved OBSERVABILITY: the question 'which capability should P1-B",
-    "build first?' now has evidence behind it instead of intuition.",
+    "**The decomposition itself did not improve coverage** — it improved",
+    "OBSERVABILITY: the question 'which capability should P1-B build",
+    "first?' gained evidence behind it instead of intuition. The table",
+    "below is the CURRENT measurement, and the baseline that chose the",
+    "work is retained beside it in §7.2 rather than overwritten.",
     "",
     "**Two counts, and confusing them is the whole trap.** *Graph-wide* is",
     "every unresolved edge anywhere the graph builder walked, across all 17",
@@ -485,6 +486,71 @@ async function build() {
     "",
     "Provenance for both columns: measured (LIVE) — " +
       `\`${gaps.command}\` at \`${gaps.commit}\`, ${gaps.measuredAt}.`,
+    "",
+  );
+
+  // -- 7.2 What the first capability block actually moved -----------------
+  const prior = gaps.priorBaseline;
+  const movedSubtypes = gaps.bySubtype.filter(
+    (entry) => entry.baselineOccurrences !== undefined,
+  );
+  push(
+    "### 7.2 What P1-B3 (Block A — named binding resolution) moved",
+    "",
+    "The first P1-B CAPABILITY block, as distinct from the decomposition",
+    "that ranked it (`tests/validation/FINDINGS.md` RWF-042). Block A —",
+    "`unsupported_callee_binding` + `unsupported_receiver_binding` — ranked",
+    "first on BOTH columns above, which is why it was built first.",
+    "",
+    row(["Metric", prior.label, "After P1-B3", "Δ"]),
+    row(["---", "---", "---", "---"]),
+    row([
+      "All frontend gaps, graph-wide",
+      prior.graphWideOccurrences,
+      gaps.graphWideOccurrences,
+      gaps.graphWideOccurrences - prior.graphWideOccurrences,
+    ]),
+    row([
+      "Blocking a verdict",
+      prior.blockingOccurrences,
+      gaps.blockingOccurrences,
+      gaps.blockingOccurrences - prior.blockingOccurrences,
+    ]),
+    row([
+      "Generic `unsupported_construct` floor",
+      prior.genericFallbackOccurrences,
+      gaps.genericFallbackOccurrences,
+      gaps.genericFallbackOccurrences - prior.genericFallbackOccurrences,
+    ]),
+    ...movedSubtypes.map((entry) =>
+      row([
+        `\`${entry.reason}\``,
+        entry.baselineOccurrences,
+        entry.occurrences,
+        entry.occurrences - entry.baselineOccurrences,
+      ]),
+    ),
+    "",
+    "**Every subtype not listed is unchanged to the occurrence.** That is",
+    "the honest reading of the number: the reduction is RESOLUTION, not a",
+    "reason moving to a different label. Both new edges are attributable —",
+    "`qs/lib/parse.js`'s `parseValues` and `parseKeys`, each a binding whose",
+    "value is a NAMED function expression under a different name, so a",
+    "name match could never find it.",
+    "",
+    "**The blocking column did not move, and that is the finding.** Block A",
+    "ranked first and discharged no blocker, because RWB-05's Block A",
+    "blockers are dominated by higher-order PARAMETERS — a value arriving",
+    "from every call site — which is a different mechanism from resolving a",
+    "name. A subtype names the syntax that failed, not the work that fixes",
+    "it. See `docs/OPEN-DEBTS.md` D-12.",
+    "",
+    "P1-B3 also closed two ways the analyzer could FABRICATE a call edge",
+    "(a shadowed binding read through to an outer declaration's value, and",
+    "a call resolved from an initializer written below it) and recorded a",
+    "third it did not close (RWF-043). None is visible in the table above,",
+    "because none of those shapes occurs in this corpus — which is why they",
+    "are pinned by tests rather than by these counts.",
     "",
   );
 
