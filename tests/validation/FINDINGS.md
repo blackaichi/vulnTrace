@@ -13036,6 +13036,194 @@ this one.
    and RWF-041's own § F4 correction already says Block C needs a
    bundle/prototype/class split before implementation.
 
+### 17. REMEDIATION after independent soundness audit (appended, not rewritten)
+
+An independent audit of `28ac5a1` returned
+**P1_B3_NAMED_BINDING_RESOLUTION_BLOCKED**. Everything in § 1-§ 16 above
+stands as written EXCEPT the two claims corrected in § 17.4 and § 17.5,
+which were wrong when they were written and are left in place with their
+corrections beside them rather than edited away.
+
+The audit's verdict was right. The architecture was judged sound; two
+classes of FABRICATED EDGE survived it, both found by probing shapes the
+corpus does not contain.
+
+#### 17.1 Defect A — destructured bindings owned nothing
+
+`declarationsOwnedBy` recognised a parameter only when its name was a
+plain identifier. A binding PATTERN therefore introduced no declaration at
+all, the scope walk continued outward, and an outer binding answered for a
+name that shadows it:
+
+```js
+const a = danger;
+function main({ a }) { a(); }   // resolved to danger; calls the argument
+```
+
+Confirmed for object patterns, array patterns, defaults, renames, nested
+patterns, rest elements, arrow functions and methods — and for receivers
+(`function main({ obj }) { obj.m(); }`) as well as callees. Present on the
+base commit too, so not a regression this task introduced; but § 4's
+"an outer declaration is never consulted once an inner one exists" was
+false as written, and the shadowing matrix never tested a pattern.
+
+**Fixed** by collecting every identifier a binding pattern BINDS, for
+parameters and catch clauses as well as variable declarations. The
+binding's VALUE is still not resolved — it comes from the caller — so the
+refusal stays `parameter`. Owning the NAME was the whole job. A renamed
+pattern binds its LOCAL name and not its property name
+(`{ source: local }` binds `local`), which is asserted in both directions.
+
+#### 17.2 Defect B — object-literal members were not authoritative
+
+Resolving a receiver to an object literal is half a proof; the MEMBER has
+to be authoritative too. The shared `findObjectLiteralPropertyValue` took
+the FIRST matching property, ignored spreads and knew nothing about a
+later `obj.m = ...`. None of that mattered while only a direct `obj.m()`
+could reach it. P1-B3 let an ALIAS reach it, and three fabricated edges
+followed:
+
+| shape | resolved to | the property actually holds |
+| --- | --- | --- |
+| `{ m: danger, m: safe }` | `danger` | `safe` — the LAST definition wins |
+| `{ m: danger, ...other }` | `danger` | whatever the spread supplies |
+| `const obj = { m: danger }; obj.m = safe;` | `danger` | `safe` |
+
+**Fixed** in three parts:
+
+1. **Last definition wins.** Once spreads and computed keys are excluded,
+   the literal's own text fixes property order completely, so reading the
+   last definition is not an evaluator — it is the language's own rule,
+   and it resolves strictly MORE than refusing on duplicates would.
+2. **Any spread refuses**, including one written before the key, where
+   ordering would in fact make the key authoritative. Modeling that needs
+   a value this analyzer cannot see, and one obviously-sound rule beats
+   two rules that each have to be right.
+3. **Any write to that member name in the binding's scope refuses.** The
+   check deliberately does NOT match the receiver: a write reaches an
+   object through the binding, through any alias, or through a parameter
+   it was passed to, and matching the receiver by NAME would be the same
+   resolve-by-spelling mistake this whole block exists to avoid. It is
+   over-approximate (an unrelated `other.m = v` costs a resolution) and
+   order-insensitive (a write below the call refuses the call). Both costs
+   are precision; the alternative costs soundness.
+
+Accessors, method shorthands and computed keys remain fail-closed and were
+not broadened.
+
+#### 17.3 The one verdict this changed, and why it is the safe direction
+
+`fixtures/commonjs-invocation-provenance-soundness`'s `valid.js` writes,
+under its own heading **"object members that must NOT be read"**:
+
+```js
+const overwritten = { bail }; overwritten.bail = safeFn; overwritten.bail();
+const duplicated  = { bail, bail: safeFn };              duplicated.bail();
+const escaping    = { bail }; patch(escaping);           escaping.bail();
+```
+
+In all three the property ends up holding `safeFn`. Base and `28ac5a1`
+resolved all three to the THROWING `bail` — three fabricated edges, in a
+file whose source says they must not be read. With them removed the
+reachable subgraph is honestly incomplete, so the Family C proof that
+`verdict.invocation-provenance-soundness.integration.test.ts` asserted is
+no longer available and that case is now **UNKNOWN**.
+
+**This is a negative proof this engine should not have been able to
+issue.** A proof withdrawn is the safe direction; no proof was invented,
+no AFFECTED appeared, and RWF-028's own property — that export authority
+is not withdrawn for an invocation it cannot prove abrupt — is untouched
+and still asserted by the per-shape matrix in
+`module-model.invocation-provenance-soundness.test.ts`, which passes
+unchanged.
+
+#### 17.4 CORRECTION to § 14 — the performance claim was false
+
+§ 14 said "the corpus scans showed no wall-clock regression". That was
+wrong. Measured on `lodash` (3 runs each, the largest real fixture):
+
+| build | median | vs base |
+| --- | --- | --- |
+| base `ef07321` | 13.6 s | — |
+| `28ac5a1` (audited) | 20.2 s | **+48%** |
+| after remediation | 11.5 s | **−15%** |
+
+The cause was structural, not incidental: every question about a scope was
+answered by walking that scope's subtree once PER QUERY, and `lodash.js`
+asks ~1,700 times inside one ~16,000-line function expression. `qs` and
+`fast-xml-parser` were within noise throughout, which is why a small
+corpus total hid it.
+
+**Fixed, not accepted.** Each of the three questions is now a per-scope
+index built by one walk and answered by hash lookup, keyed on the scope
+NODE in a `WeakMap` — scan-local, dying with the AST, with no cross-scan
+state and nothing keyed by name or path. The two order-sensitive rules
+(the temporal dead zone and the alias-chain visited set) are computed per
+reference OUTSIDE the indexes and deliberately not cached.
+
+`named-bindings.performance.test.ts` pins the property structurally rather
+than by stopwatch: after the first reference in a scope, every later
+reference must cost ZERO additional walks, whatever it asks about.
+Deleting the caches makes it fail — and takes 44 s to do so, which is the
+regression itself, measured.
+
+#### 17.5 CORRECTION to § 4 — the scope-model claim was overstated
+
+§ 4 said "an outer declaration is never consulted once an inner one
+exists". True for every form it had modeled; false for binding patterns,
+which it had not. The accurate statement, and the one now covered by
+tests, is:
+
+> A name is owned by the innermost scope that declares it in ANY of the
+> modeled forms — `var`/`function` hoisted to the function scope,
+> `let`/`const`/`class` in their block, parameters and catch bindings in
+> theirs INCLUDING every identifier a binding pattern binds, imports at
+> the file. Once a scope owns a name, resolution never continues outward
+> for it, and two declarations in that scope fail closed.
+
+#### 17.6 The PackageInstance control was weaker than described
+
+The audit found the twin mutation collapsed the RESOLUTION PATH rather
+than instance sensitivity: the tests failed because the expected edge
+vanished, not because a sibling was borrowed. § 12's description of it was
+therefore wrong about the mechanism.
+
+**Strengthened.** The control now asserts, FIRST, that no resolved edge
+attributes `parse` to a path under the top-level twin, and reports the
+borrowed path when one does. Under a mutation that genuinely collapses
+instance identity — resolving a `require()` from the entry file instead of
+from the importer that wrote it — all three twin tests now fail naming
+`node_modules/vuln-pkg/index.js`, the sibling, instead of `expected false
+to be true`.
+
+#### 17.7 Differential after remediation
+
+| comparison | result |
+| --- | --- |
+| vs audited `28ac5a1`, all 17 cases | **zero deltas** — verdict, confidence, proof, target, PackageInstance, finding count, unknown reasons, unreported candidates, coverage, diagnostics |
+| vs base `ef07321`, all 17 cases | unchanged from § 9/§ 10: only RWB-05, `callsResolved` 229 → 231, zero verdict and zero proof deltas |
+| Block A | **1,756 → 1,754**, unchanged by the remediation |
+| blocking | **42 → 42**, unchanged |
+
+The soundness fixes changed NOTHING in the real-world corpus, because none
+of the fabricated-edge shapes occurs in it. That is the honest reading and
+the reason they are pinned by unit tests: a corpus that does not contain a
+shape is not evidence the shape is handled. The one behavioural change
+lives in a unit fixture (§ 17.3) that was written to contain exactly these
+shapes on purpose.
+
+RWB-05's two authoritative edges (`parseValues`, `parseKeys`) survive
+unchanged, re-verified against source: each declared once, never
+reassigned, not shadowed at the use site, used after its initializer.
+
+#### 17.8 Mutation battery after remediation
+
+Nine controls, each weakening one guard and each breaking the tests that
+own it: reassignment (4), shadowing (8), evaluation order (2),
+destructured-binding ownership (8), duplicate keys (2), spreads (2),
+member writes (4), instance identity (3, by sibling borrow), and the scope
+index (2, structurally).
+
 ---
 
 ## RWF-043 — A call to a bare name is attributed to any same-named function in the file, whatever scope it was declared in
@@ -13107,6 +13295,24 @@ the same scope model, which is a different capability from named-binding
 resolution — a different set of call sites, a different differential, and
 its own risk of removing edges the corpus currently depends on. P1-B3
 deliberately did not absorb it.
+
+**What the audit added, and it matters for reading the scope above.** The
+open matcher can OVERRIDE the named-binding resolver's own guards at a
+shared call site, because the two are alternative paths to the same edge
+and the older one runs first. Measured on the audited commit and still
+true:
+
+| shape | `resolveNamedBinding` says | the edge that is actually emitted |
+| --- | --- | --- |
+| `function main() { fn(); }` above `const fn = () => {};` | refuses — used before initializer | RESOLVED, by name match on the arrow's inferred name |
+| `function main() { helper(); }` with `helper` declared inside another function's block | refuses — not in scope | RESOLVED, by name match |
+| `const outer = function inner() {}; inner();` at module scope | refuses — `inner` binds only inside itself | RESOLVED, by name match |
+
+So B3's scope, order and stability guarantees hold for the resolutions B3
+MAKES; they do not make the call graph as a whole scope-correct while this
+path remains. Nothing in RWF-042 should be read as claiming otherwise, and
+this finding stays **open in part** until the direct-call path is routed
+through the same scope model.
 
 **How to close it.** Give `findLocalFunctionNodeId` the reference NODE
 rather than its text, resolve the name through `resolveNamedBinding`, and
