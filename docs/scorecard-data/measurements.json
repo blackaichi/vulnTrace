@@ -222,13 +222,30 @@
       "TO UPDATE: node scripts/measure-frontend-gaps.mjs"
     ],
     "command": "node scripts/measure-frontend-gaps.mjs",
-    "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
-    "measuredAt": "2026-09-16",
+    "commit": "p1-b3-named-binding-resolution (base ef07321)",
+    "measuredAt": "2026-09-17",
     "deterministic": false,
-    "graphWideOccurrences": 2351,
+    "graphWideOccurrences": 2349,
     "blockingOccurrences": 42,
     "genericFallbackOccurrences": 0,
     "blockingCases": 1,
+    "priorBaseline": {
+      "$comment": [
+        "The P1-B1/P1-B2 (RWF-041) baseline, RETAINED rather than",
+        "overwritten: a capability block's result is only readable against",
+        "the measurement that chose it. Reproduced exactly at P1-B3's base",
+        "commit ef07321 before any code was edited.",
+        "",
+        "TO REPRODUCE: check out ef07321, npm run build,",
+        "node scripts/measure-frontend-gaps.mjs"
+      ],
+      "label": "P1-B1/P1-B2 (RWF-041)",
+      "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
+      "measuredAt": "2026-09-16",
+      "graphWideOccurrences": 2351,
+      "blockingOccurrences": 42,
+      "genericFallbackOccurrences": 0
+    },
     "bySubtype": [
       {
         "reason": "unsupported_receiver_binding",
@@ -242,11 +259,12 @@
       },
       {
         "reason": "unsupported_callee_binding",
-        "occurrences": 571,
+        "occurrences": 569,
+        "baselineOccurrences": 571,
         "blocking": 28,
         "distinctFixtures": 11,
         "distinctPackages": 21,
-        "distinctContainingFunctions": 352,
+        "distinctContainingFunctions": 351,
         "domain": "value-flow",
         "example": "`isArray(x)`, `new Ctor(o)` — a bare name bound to no declaration the binder reads."
       },
