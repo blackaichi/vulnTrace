@@ -211,6 +211,14 @@
       "The two columns rank the subtypes DIFFERENTLY. That disagreement",
       "is the single most useful thing in this table.",
       "",
+      "`distinctContainingFunctions` IS NOT A CALL-SITE COUNT. A call-graph",
+      "diagnostic names the graph node an unresolved edge departs FROM --",
+      "the enclosing function -- so one node carries one entry per",
+      "unresolved call inside it (`qs/lib/stringify.js#stringify@58:17`",
+      "alone carries 17). The number of distinct CALL SITES is not",
+      "recoverable from this data and is nowhere claimed. Corrected after",
+      "independent audit; the values themselves did not change.",
+      "",
       "TO UPDATE: node scripts/measure-frontend-gaps.mjs"
     ],
     "command": "node scripts/measure-frontend-gaps.mjs",
@@ -228,7 +236,7 @@
         "blocking": 10,
         "distinctFixtures": 16,
         "distinctPackages": 25,
-        "distinctSites": 612,
+        "distinctContainingFunctions": 612,
         "domain": "value-flow",
         "example": "`stack.set(k, v)` — the receiver is a name whose value was never traced."
       },
@@ -238,7 +246,7 @@
         "blocking": 28,
         "distinctFixtures": 11,
         "distinctPackages": 21,
-        "distinctSites": 352,
+        "distinctContainingFunctions": 352,
         "domain": "value-flow",
         "example": "`isArray(x)`, `new Ctor(o)` — a bare name bound to no declaration the binder reads."
       },
@@ -248,7 +256,7 @@
         "blocking": 0,
         "distinctFixtures": 5,
         "distinctPackages": 5,
-        "distinctSites": 88,
+        "distinctContainingFunctions": 88,
         "domain": "frontend syntax/modeling",
         "example": "`this.parse(text)` — no class-instance receiver model."
       },
@@ -258,7 +266,7 @@
         "blocking": 0,
         "distinctFixtures": 13,
         "distinctPackages": 12,
-        "distinctSites": 127,
+        "distinctContainingFunctions": 127,
         "domain": "call graph",
         "example": "`makeRe().test(v)` — needs interprocedural return modeling."
       },
@@ -268,7 +276,7 @@
         "blocking": 0,
         "distinctFixtures": 13,
         "distinctPackages": 13,
-        "distinctSites": 61,
+        "distinctContainingFunctions": 61,
         "domain": "frontend syntax/modeling",
         "example": "`/re/.exec(v)`, `[a, b].join('|')` — value known, members not modeled."
       },
@@ -278,7 +286,7 @@
         "blocking": 0,
         "distinctFixtures": 12,
         "distinctPackages": 11,
-        "distinctSites": 57,
+        "distinctContainingFunctions": 57,
         "domain": "value-flow",
         "example": "`funcs[index].apply(...)` — the receiver came out of an unread index."
       },
@@ -288,7 +296,7 @@
         "blocking": 4,
         "distinctFixtures": 10,
         "distinctPackages": 11,
-        "distinctSites": 26,
+        "distinctContainingFunctions": 26,
         "domain": "call graph",
         "example": "`(function () {})()`, `f()()` — the callee is not a name at all."
       },
@@ -298,7 +306,7 @@
         "blocking": 0,
         "distinctFixtures": 10,
         "distinctPackages": 9,
-        "distinctSites": 16,
+        "distinctContainingFunctions": 16,
         "domain": "value-flow",
         "example": "`(value || '').trim()` — receiver produced by an unevaluated operator."
       },
@@ -308,7 +316,7 @@
         "blocking": 0,
         "distinctFixtures": 0,
         "distinctPackages": 0,
-        "distinctSites": 0,
+        "distinctContainingFunctions": 0,
         "domain": "n/a — retained runtime floor",
         "example": "The generic token, kept so an unmeasured or future construct fails safe. Zero in this corpus."
       }

@@ -12098,26 +12098,59 @@ containing file and the source text, then run over both corpora:
 - the 17-case real-world corpus (`tests/validation`, live OSV) — **2,351** occurrences;
 - the 124-test adversarial corpora (`tests/adversarial` v1 + v2) — **11** occurrences.
 
-**2,362 raw occurrences, 21 distinct raw `(site, calleeKind, rootKind,
-depth)` shapes.** Ranked:
+**WHICH TOTAL IS USED WHERE, because the two are adjacent and easy to
+confuse.** **2,362** is the RAW-SHAPE INVENTORY total: both corpora, used
+in this section only, to justify the subtype vocabulary. It came from a
+throwaway probe inside the two emitters and is therefore NOT re-derivable
+from any committed script — the method is recorded here, the numbers are
+not reproducible by running the repository. **2,351** is the GRAPH-WIDE
+PRIORITIZATION total: the real-world corpus alone, and it IS reproducible,
+by `node scripts/measure-frontend-gaps.mjs`. Every count in § 6, § 7, § 13
+and the scorecard is the reproducible 2,351 figure; the 11-occurrence
+difference is exactly the adversarial corpora, which are deliberately
+excluded there because they are synthetic shape fixtures, not real
+projects, and would distort a project-spread measurement.
+
+**2,362 raw occurrences (2,351 + 11), 21 distinct raw `(emitter site,
+calleeKind, receiver-root kind, chain depth)` shapes.** The adversarial
+corpus contributes occurrences but introduces NO shape the real-world
+corpus does not already have, which is why the distinct-shape count is 21
+for either corpus alone and for the two combined.
+
+Combined, every row exact:
 
 | raw shape | n |
 | --- | --- |
-| `call` PropertyAccess, root Identifier, depth 1 | 1,105 |
-| `call` Identifier | 543 |
-| `call` PropertyAccess, root CallExpression | 176 |
+| `call` PropertyAccess, root Identifier, depth 1 | 1,110 |
+| `call` Identifier, depth 0 | 547 |
+| `call` PropertyAccess, root CallExpression, depth 1 | 177 |
 | `call` PropertyAccess, root Identifier, depth 2 | 122 |
 | `call` PropertyAccess, root `this`, depth 1 | 114 |
 | `call` PropertyAccess, root `this`, depth 2 | 76 |
-| `call` PropertyAccess, root RegExp literal | 47 |
-| `new` Identifier | 28 |
-| `call` FunctionExpression (IIFE) | 24 |
-| `call` PropertyAccess, root Parenthesized | 24 |
-| `call` PropertyAccess, root NewExpression | 23 |
-| `call` PropertyAccess, root ArrayLiteral | 20 |
-| `call` ElementAccess, root Identifier | 18 |
-| `call` CallExpression (`f()()`) | 10 |
-| …7 more, ≤ 6 each | 27 |
+| `call` PropertyAccess, root RegExp literal, depth 1 | 47 |
+| `new` Identifier, depth 0 | 28 |
+| `call` FunctionExpression (IIFE), depth 0 | 24 |
+| `call` PropertyAccess, root Parenthesized, depth 1 | 24 |
+| `call` PropertyAccess, root NewExpression, depth 1 | 23 |
+| `call` PropertyAccess, root ArrayLiteral, depth 1 | 20 |
+| `call` ElementAccess, root Identifier, depth 1 | 18 |
+| `call` CallExpression (`f()()`), depth 0 | 11 |
+| `call` PropertyAccess, root `this`, depth 3 | 6 |
+| `call` Parenthesized, depth 0 | 4 |
+| `new` Parenthesized, depth 0 | 4 |
+| `call` PropertyAccess, root FunctionExpression, depth 1 | 2 |
+| `call` PropertyAccess, root StringLiteral, depth 1 | 2 |
+| `call` PropertyAccess, root TemplateExpression, depth 1 | 2 |
+| `call` PropertyAccess, root Identifier, depth 3 | 1 |
+| **total** | **2,362** |
+
+**Reconciliation.** Top 14 rows = 2,341; remaining 7 rows = 21; total
+2,362 = 2,351 real-world + 11 adversarial. *Corrected after independent
+audit* — the table as first published listed REAL-WORLD-ONLY counts under
+the COMBINED total and gave an aggregated tail of 27, which matched
+neither corpus (the real-world tail is 21, for a real-world total of
+2,351). No classification, count or recommendation depended on the error;
+see § 19.
 
 The raw table is exactly why the vocabulary is **not** one reason per
 `SyntaxKind`. Three readings decided the design:
@@ -12198,7 +12231,7 @@ all 17 projects — the shape of real JavaScript, not a work queue.
 *Blocking* is the subset a search for a real vulnerable target actually
 traversed — the occurrences that cost a verdict.
 
-| Subtype | Graph-wide | Blocking | Projects | Packages | Distinct sites | Domain |
+| Subtype | Graph-wide | Blocking | Projects | Packages | Containing fns | Domain |
 | --- | --- | --- | --- | --- | --- | --- |
 | `unsupported_receiver_binding` | 1,185 | 10 | 16 | 25 | 612 | value-flow |
 | `unsupported_callee_binding` | 571 | 28 | 11 | 21 | 352 | value-flow |
@@ -12252,14 +12285,22 @@ packages — it is a property of JavaScript, not of one library.
 `semver-vulnerable`, `yallist`) — class-heavy libraries. Ranking it third
 on occurrences alone would have been exactly the § 23 mistake.
 
-**Occurrences are not distinct gaps.** 2,351 occurrences collapse into
-**1,339 distinct (subtype, site) pairs** — the sum of the per-subtype
-distinct-site column, which is the figure the tool actually reports; a
-single call-graph node hosting two different subtypes is counted once per
-subtype, so this is an upper bound on distinct nodes, not a count of them.
-The 42 blocking occurrences collapse into **19 such pairs across 14
-containing functions**, 13 of the 42 at a single site
-(`qs/lib/stringify.js#stringify@58:17`).
+**Occurrences are not distinct gaps — and the unit here is the CONTAINING
+FUNCTION, not the call site.** A call-graph diagnostic names the graph node
+an unresolved edge departs *from*, i.e. the enclosing function, so one node
+carries one entry per unresolved call inside it. The number of distinct
+call sites is not recoverable from this data and is claimed nowhere.
+
+2,351 occurrences arise in **1,339 distinct subtype-and-containing-function
+pairs** (the sum of the column above; a function carrying two different
+subtypes counts once per subtype, so this is an upper bound on the number
+of distinct functions, not a count of them). The 42 blocking occurrences
+arise in just **14 containing functions** — 19 subtype-and-function pairs —
+with 17 of them inside the single function
+`qs/lib/stringify.js#stringify@58:17`, 13 of those one subtype.
+
+*The unit was labelled "site" when first published; corrected after
+independent audit. The values did not change.*
 
 ### 8. Target relevance, sampled honestly
 
@@ -12372,23 +12413,37 @@ boundary — not by popularity.
 | --- | --- | --- | --- | --- |
 | **A — named binding attribution** | `callee_binding`, `receiver_binding` | 1,756 (74.7%) | 38 (90.5%) | resolve a NAME (callee or receiver) to the value it was bound to |
 | **B — receiver provenance from expressions** | `call_result_receiver`, `literal_receiver`, `indexed_receiver`, `expression_receiver` | 363 (15.4%) | 0 | evaluate a receiver EXPRESSION to a value |
-| **C — class-instance / `this` model** | `this_receiver` | 190 (8.1%) | 0 | model the receiver a method body runs against |
+| **C — receiver/`this` modeling** (candidate, see § 15) | `this_receiver` | 190 (8.1%) | 0 | recover the receiver a method body runs against — **spans ≥2 receiver models; not one mechanism** |
 | **D — computed callee** | `computed_callee` | 42 (1.8%) | 4 | the callee is an expression, not a name |
 
-Block B is the weakest as a block: its four subtypes share a *position*
+Blocks B and C are both weaker than this table's single rows suggest.
+Block B is the weakest: its four subtypes share a *position*
 but not a mechanism (interprocedural returns, builtin prototypes, index
 evaluation and operator folding are four different jobs). It is listed as
 one candidate because a reader will otherwise assemble it themselves; it
-should be split before anyone implements it.
+should be split before anyone implements it. Block C is one *token* but not
+one *mechanism* — § 15 breaks its 190 into bundle, prototype and class
+receiver shapes, and it too needs splitting before implementation.
 
 ### 14. Recommended block #1 — A, named binding attribution
 
 **Evidence.** The only recommendation both measurements agree on. Block A
 is **74.7%** of graph-wide occurrences and **90.5%** of blocking ones; it
 appears in **16 of 17** projects and **25** packages, so it is not one
-library's idiom; and its two subtypes share one mechanism — attributing a
-name to the value it was bound to — differing only in whether the name sits
-in callee or receiver position.
+library's idiom; and its two subtypes share their *first* step — attributing
+a name to the value it was bound to — through the same machinery:
+`analyzeCalleeShape` reads the root identifier and property chain for both
+positions in one function, and `resolveLocalAlias` already attempts both
+(`const doIt = vulnerable; doIt()` and `const o = { run: vulnerable };
+o.run()`).
+
+**They are not symmetric, and the original wording overstated it.**
+`unsupported_callee_binding` needs binding resolution alone: resolve the
+name, and the callable is in hand. `unsupported_receiver_binding` needs
+binding resolution *plus a member lookup on the resolved value*, which is a
+second step with its own failure modes. They belong in one block because
+they share the machinery and the soundness boundary, not because the work
+is identical.
 
 **Architectural hotspots** (recorded, deliberately not refactored):
 `bindCallee`/`analyzeCalleeShape` (`src/code-intelligence/symbol-binder.ts`),
@@ -12396,7 +12451,7 @@ and in `src/code-intelligence/call-graph.ts` the existing partial machinery
 this gap is the documented fallback of — `resolveLocalAlias` (VT-214),
 `resolveHigherOrderCallTarget` (VT-210), `resolveInlineCallbackArgument`
 (VT-213), `findLocalFunctionNodeId`, plus `resolveSingleAssignmentValue`
-(`local-values.ts`). The dominant real shape is the module-scope capture —
+(`src/code-intelligence/local-aliases.ts`). The dominant real shape is the module-scope capture —
 `var isArray = Array.isArray; … isArray(x)` and the
 `callBound('Array.prototype.join')` idiom — which today falls through every
 one of those.
@@ -12425,22 +12480,68 @@ manufacture a false `NOT_AFFECTED`:
    name a *module*, it is a loader construct and belongs to
    `loader-constructs.ts`, not here.
 
-### 15. Recommended block #2 — C, the class-instance / `this` model
+### 15. Block #2 CANDIDATE — C, receiver/`this` modeling (exploration, not yet an implementation block)
 
-**Evidence.** After Block A, C is the largest single coherent mechanism
-(190 occurrences, 88 distinct sites) and the only remaining subtype that is
-one mechanism rather than a position. It also has an existing
-architectural home: VT-208/VT-216 already resolve instance methods through
-the TypeScript type checker for *named* receivers, and `this` is the case
-they do not cover.
+**This section was rewritten after independent audit.** It originally
+called C "the largest single coherent mechanism". That claim was **not
+supported by its own data** and has been withdrawn. What follows is what
+the measurement actually shows.
 
-**Stated honestly: C is weaker evidence than A.** It is concentrated in
-**5 of 17** projects and 5 packages, all class-heavy, and it blocks
-**nothing** in the corpus today. Block B has more occurrences (363) and
-wider spread (13 projects) but is not one mechanism; if B is split, its
-`call_result_receiver` half (176, 13 projects, 12 packages) is a legitimate
-rival to C for the #2 slot, and the choice between them should be re-made
-against a corpus that has more than one blocking case.
+**The counts.** 190 graph-wide occurrences, 88 distinct containing
+functions, **5 of 17** projects, 5 packages, and **0 blocking occurrences**
+— it costs no verdict in this corpus today.
+
+**Concentration (reproducible: `node scripts/measure-frontend-gaps.mjs`,
+`topLibraryFiles`).** Keyed on the library file rather than the install
+path, because `lodash` is installed by two fixtures and keying on the
+absolute path would halve its contribution:
+
+| library file | occurrences | share |
+| --- | --- | --- |
+| `node_modules/fast-xml-parser/lib/fxp.cjs` | 86 | 45.3% |
+| `node_modules/lodash/lodash.js` | 62 | 32.6% |
+| `node_modules/semver-vulnerable/classes/comparator.js` | 12 | 6.3% |
+| rest (semver/yallist, 12 files) | 30 | 15.8% |
+
+**Top file 45.3%, top two files 77.9%.** That is heavier concentration
+than any subtype in Block A, and the project/package spread (5/5) hides it
+entirely — which is exactly the § 23 trap this record warns about
+elsewhere and failed to apply to its own second recommendation.
+
+**At least two different receiver models, possibly three.** `this` is one
+keyword standing for several unrelated modeling problems:
+
+- **86 — `fast-xml-parser/lib/fxp.cjs`**: a webpack-style bundled CJS file.
+  Its receivers are entangled with **RWF-006** (*"a webpack-bundled,
+  `Object.defineProperty`-getter-defined class export isn't recognized as a
+  constructible/method-bearing target"*), which is an **open finding in
+  this same register**. These 86 must NOT be counted as evidence for a
+  simple `this` capability: some or all of them may be discharged by, or
+  blocked on, RWF-006's own bundle-shape work. Which, is unmeasured.
+- **62 — `lodash/lodash.js`**: prototype/UMD-style receivers, where methods
+  are attached by assignment (`LodashWrapper.prototype.x = …`) rather than
+  declared in a class body. Recovering the receiver here is prototype
+  reconstruction, not class-instance resolution.
+- **~40 — `semver`/`semver-vulnerable`/`yallist`**: genuine ES class
+  instance methods, the case VT-208/VT-216 already resolve for *named*
+  receivers and do not cover for `this`. This is the only slice for which
+  "extend the existing instance-method resolution to `this`" is an accurate
+  description of the work.
+
+**Therefore C is a CANDIDATE EXPLORATION BLOCK, not a validated
+implementation block.** Implementation coherence is **not proven**; on
+present evidence it is unlikely to be one change. Before any B4
+implementation, the 190 should be split into bundle-shape, prototype-shape
+and class-shape receivers and each sized separately — a short analysis
+task, not a capability.
+
+**And C is not obviously the right #2 even then.** Block B has more
+occurrences (363) and wider spread (13 projects) but is not one mechanism;
+if B is split, its `call_result_receiver` half (176, 13 projects, 12
+packages, far flatter concentration) is a legitimate rival for the slot.
+With zero blocking occurrences on either side, that choice should be
+re-made against a corpus that has more than one blocking case, not settled
+here.
 
 ### 16. Parallelization judgment — SEQUENTIAL
 
@@ -12461,7 +12562,18 @@ independence was looked for and is not there:
 - **Shared fixtures.** Both would extend `call-graph.test.ts`'s fallback
   cases, which are now pinned to specific subtypes.
 
-Default was sequential; nothing displaced it. **B3 then B4, in series.**
+Default was sequential; nothing displaced it.
+
+**The order, stated explicitly rather than left to be inferred:**
+
+| step | content | status |
+| --- | --- | --- |
+| **P1-B3** | **Block A — named binding resolution** (`unsupported_callee_binding` + `unsupported_receiver_binding`) | recommended, evidence-backed, ready to scope |
+| **P1-B4** | **Block C candidate — receiver/`this` modeling** | **not ready**: needs the bundle/prototype/class split in § 15 first |
+
+B3 comes first. B4 is a candidate, and its own pre-implementation
+decomposition is a prerequisite, not part of it. Nothing here authorizes
+starting either.
 
 ### 17. What this task explicitly did not do
 
@@ -12483,8 +12595,9 @@ Default was sequential; nothing displaced it. **B3 then B4, in series.**
    vulnerable target is genuinely behind a frontend gap, not by re-reading
    these numbers.
 2. **Graph-wide counts over-weight large dependencies.** `lodash` alone is
-   1,106 of the 2,351. Distinct-site and distinct-project columns are given
-   for exactly this reason and should be read first.
+   1,106 of the 2,351. The containing-function and project columns are
+   given for exactly this reason and should be read first — and, as § 15
+   shows, project spread alone can still hide severe file concentration.
 3. **The remediation-domain tags in § 6 are judgments, not measurements.**
    They are reporting metadata and no rule reads them.
 4. **`unsupported_indexed_receiver`'s relationship to
@@ -12499,3 +12612,61 @@ Default was sequential; nothing displaced it. **B3 then B4, in series.**
 6. **The measurement is live.** It queries the real OSV API, so a rerun can
    differ because the advisory database moved rather than because this
    repository changed.
+7. **The raw-shape inventory in § 3 is not reproducible from this
+   repository.** It came from a throwaway probe inside the two emitters;
+   the method is recorded, the numbers are not re-derivable by running any
+   committed script. Everything in § 6 onward is reproducible
+   (`scripts/measure-frontend-gaps.mjs`).
+
+### 20. Audit remediation (post-`9ec4631`)
+
+An independent audit of this record accepted the engineering and rejected
+the record. **No production code, classification rule, schema value or
+measured number changed** in the remediation; the differential against base
+is still zero and the totals are still 2,351 graph-wide / 42 blocking / 0
+on the generic floor, re-run after every edit below. What changed is what
+this document claims:
+
+1. **§ 3 arithmetic (F1).** The ranked raw-shape table listed real-world
+   -only row counts under the combined 2,362 total, with an aggregated tail
+   of 27 that matched neither corpus. Recomputed from the recorded probe
+   data: the table is now the combined corpus, every row exact, tail 21,
+   summing to 2,362, with the reconciliation stated.
+2. **Corpus totals (§ 3).** 2,362 (raw inventory, both corpora, not
+   reproducible) versus 2,351 (graph-wide prioritization, real-world only,
+   reproducible) are now explicitly separated, with which total is used
+   where.
+3. **Unit correction (F2).** What this record and the scorecard called a
+   "site" is the CONTAINING FUNCTION the unresolved edge departs from, not
+   a call site — one function carries many occurrences. Renamed here, in
+   `docs/SCORECARD.md` § 7.1, in `measurements.json`
+   (`distinctContainingFunctions`) and in `scripts/measure-frontend-gaps.mjs`.
+   Values unchanged. The distinct-call-site count is not recoverable from
+   this data and is now claimed nowhere.
+4. **Hotspot path (F3).** `resolveSingleAssignmentValue` was cited in
+   `local-values.ts`, a file that does not exist. It is
+   `src/code-intelligence/local-aliases.ts`. Every other Block A owner was
+   re-verified against source at the same time; all eight exist as cited.
+   (The audit's own suggestion of `symbol-binder.ts` was also wrong — the
+   path was taken from the source, not from either report.)
+5. **Block C rationale (F4).** The claim that C is "the largest single
+   coherent mechanism" is **withdrawn**. Measured: 45.3% of its 190 sit in
+   one webpack-bundled file entangled with the open **RWF-006**, 32.6% are
+   prototype/UMD receivers in `lodash.js`, and only ~40 are the ES-class
+   case the existing VT-208/216 machinery would extend to. C is now a
+   CANDIDATE requiring a bundle/prototype/class split before any B4
+   implementation, and `scripts/measure-frontend-gaps.mjs` now reports
+   `topLibraryFiles` so that concentration is recomputable rather than
+   transcribed.
+6. **Block A symmetry (F5).** "Differing only in whether the name sits in
+   callee or receiver position" overstated the symmetry: the receiver case
+   additionally needs a member lookup on the resolved value. Narrowed.
+   Block A's rank is **unchanged** — the audit independently reproduced its
+   evidence.
+7. **B3/B4 order (§ 16).** Previously inferable only from section
+   headings; now stated as an explicit table. B3 = Block A. B4 = Block C
+   candidate, gated on its own decomposition.
+
+The original report was wrong about these seven things and this section
+says so rather than presenting the corrected text as what was always
+written.

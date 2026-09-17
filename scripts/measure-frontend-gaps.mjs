@@ -80,9 +80,20 @@ function scan(testCase) {
 
 /**
  * A call-graph diagnostic reads `"<reason> at <file>#<symbol>@<line>:<col>"`.
- * Splitting it gives the three granularities § 21/§ 23 require: the
- * occurrence, the distinct SITE it happened at, and the distinct package
- * that site lives in.
+ *
+ * THE NODE IS THE CONTAINING FUNCTION, NOT THE CALL SITE, and the two are
+ * routinely confused. `<symbol>@<line>:<col>` locates the graph node the
+ * unresolved edge departs FROM -- the enclosing function, module region or
+ * method -- so one node accumulates one diagnostic per unresolved call
+ * inside it. In this corpus `qs/lib/stringify.js#stringify@58:17` alone
+ * carries 17 of them. A count of distinct nodes is therefore a count of
+ * distinct CONTAINING FUNCTIONS, an upper bound on nothing and a lower
+ * bound on the number of distinct call sites, which this data cannot
+ * report at all (the diagnostic never carries the callee's own position).
+ *
+ * Splitting the message gives the granularities § 21/§ 23 require: the
+ * occurrence, the distinct containing function it happened in, and the
+ * distinct package that function lives in.
  */
 function parseDiagnostic(message) {
   const at = message.indexOf(" at ");
@@ -92,7 +103,20 @@ function parseDiagnostic(message) {
   const hash = node.indexOf("#");
   const file = hash < 0 ? node : node.slice(0, hash);
   const match = /node_modules\/((?:@[^/]+\/)?[^/]+)\//.exec(file);
-  return { reason, node, file, pkg: match ? match[1] : "<application>" };
+  // The LIBRARY FILE, independent of which fixture installed it: the same
+  // `lodash/lodash.js` lives in two fixtures, so keying concentration on the
+  // absolute path would split one library's contribution in half and
+  // understate exactly the concentration § 23 asks about. Package-instance
+  // identity deliberately still uses the full path elsewhere -- these are
+  // two different questions.
+  const libraryFile = match ? file.slice(file.indexOf(match[0])) : file;
+  return {
+    reason,
+    node,
+    file,
+    libraryFile,
+    pkg: match ? match[1] : "<application>",
+  };
 }
 
 const isFrontendGap = (reason) => reason.startsWith("unsupported_");
@@ -108,8 +132,10 @@ const ensure = (reason) => {
       fixtures: new Set(),
       blockingFixtures: new Set(),
       packages: new Set(),
-      sites: new Set(),
+      containingFunctions: new Set(),
       files: new Set(),
+      fileCounts: new Map(),
+      libraryFileCounts: new Map(),
     };
     subtypes.set(reason, entry);
   }
@@ -137,8 +163,13 @@ for (const testCase of cases) {
     entry.occurrences += 1;
     entry.fixtures.add(testCase.id);
     entry.packages.add(parsed.pkg);
-    entry.sites.add(parsed.node);
+    entry.containingFunctions.add(parsed.node);
     entry.files.add(parsed.file);
+    entry.fileCounts.set(parsed.file, (entry.fileCounts.get(parsed.file) ?? 0) + 1);
+    entry.libraryFileCounts.set(
+      parsed.libraryFile,
+      (entry.libraryFileCounts.get(parsed.libraryFile) ?? 0) + 1,
+    );
     caseOccurrences.set(
       parsed.reason,
       (caseOccurrences.get(parsed.reason) ?? 0) + 1,
@@ -188,8 +219,16 @@ const report = {
     distinctFixtures: r.fixtures.size,
     distinctBlockingFixtures: r.blockingFixtures.size,
     distinctPackages: r.packages.size,
-    distinctSites: r.sites.size,
+    distinctContainingFunctions: r.containingFunctions.size,
     distinctFiles: r.files.size,
+    // § 23's concentration discipline, applied per subtype rather than only
+    // to the corpus as a whole: a gap carried by one bundled file is not the
+    // same evidence as the same count spread over a dozen. Reported here so
+    // the share can be recomputed rather than transcribed.
+    topLibraryFiles: [...r.libraryFileCounts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .slice(0, 3)
+      .map(([file, count]) => ({ file, count })),
     // Named, not just counted: § 23's project-concentration question is
     // "is this one library's idiom or a language-wide one?", and only the
     // names answer it.
@@ -210,9 +249,12 @@ if (emitJson) {
   console.log(
     `generic fallback:       ${report.genericFallbackOccurrences} graph-wide / ${report.genericFallbackBlocking} blocking`,
   );
+  console.log(
+    "\n`fns` = distinct CONTAINING FUNCTIONS (graph nodes an unresolved edge\nleaves from), never call sites: one function can carry many occurrences.",
+  );
 
   console.log(
-    "\nsubtype                            graph-wide  fixtures  pkgs  sites  blocking  blk-fixtures",
+    "\nsubtype                            graph-wide  fixtures  pkgs   fns  blocking  blk-fixtures",
   );
   for (const r of report.subtypes) {
     console.log(
@@ -221,7 +263,7 @@ if (emitJson) {
         String(r.occurrences).padStart(10),
         String(r.distinctFixtures).padStart(9),
         String(r.distinctPackages).padStart(5),
-        String(r.distinctSites).padStart(6),
+        String(r.distinctContainingFunctions).padStart(6),
         String(r.blocking).padStart(9),
         String(r.distinctBlockingFixtures).padStart(13),
       ].join(""),
