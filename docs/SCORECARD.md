@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 171 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 173 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (LIVE) — `npm run test:validation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-17 | Real npm-installed packages against real advisories over the real OSV API. | Integration evidence and a provider-movement detector, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -210,12 +210,21 @@ from every call site — which is a different mechanism from resolving a
 name. A subtype names the syntax that failed, not the work that fixes
 it. See `docs/OPEN-DEBTS.md` D-12.
 
-P1-B3 also closed two ways the analyzer could FABRICATE a call edge
-(a shadowed binding read through to an outer declaration's value, and
-a call resolved from an initializer written below it) and recorded a
-third it did not close (RWF-043). None is visible in the table above,
-because none of those shapes occurs in this corpus — which is why they
-are pinned by tests rather than by these counts.
+P1-B3 closed four ways the analyzer could FABRICATE a call edge — a
+shadowed binding read through to an outer declaration's value, a call
+resolved from an initializer written below it, a destructured
+parameter that owned nothing so an outer binding answered for it, and
+an object-literal member read as though duplicate keys, spreads and
+later `obj.m = ...` writes could not change it. The last two were
+found by an INDEPENDENT AUDIT that blocked the first implementation
+(`tests/validation/FINDINGS.md` RWF-042 § 17); a fifth is recorded and
+still open in part (RWF-043).
+
+**None of the four is visible in the table above**, because none of
+those shapes occurs in this corpus. They are pinned by unit tests, and
+that is the point: a corpus that does not contain a shape is not
+evidence the shape is handled. Reading a soundness fix off these
+counts would find nothing to read.
 
 ## 8. Known defect register (RWF)
 

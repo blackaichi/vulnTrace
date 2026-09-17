@@ -289,6 +289,23 @@ SYNTAX that failed and not the MECHANISM that would fix it. A capability
 block should be scoped from the semantic failure-mode inventory
 (RWF-042 § 2), not from the occurrence table alone.
 
+**Second update — the corpus is not a soundness oracle either (RWF-042
+§ 17).** An independent audit blocked P1-B3's first implementation over
+two classes of fabricated call edge. Both were invisible here: fixing them
+moved the corpus by **zero** — no verdict, no proof, no edge, no
+occurrence. The shapes that exposed them (a destructured parameter
+shadowing an outer binding; an object literal with duplicate keys, a
+spread, or a later `obj.m = ...` write) simply do not appear in these 17
+projects.
+
+This cuts both ways and the second way is the uncomfortable one. A green
+corpus differential says nothing about soundness for shapes the corpus
+lacks, so it can neither confirm nor deny a fabricated edge — and the one
+behaviour that DID change was a negative proof in a unit fixture that
+turned out to have been resting on three such edges. Adversarial unit
+coverage is not a supplement to the benchmark here; for this class of
+defect it is the only instrument that works.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
