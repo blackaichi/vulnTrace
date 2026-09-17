@@ -16,10 +16,8 @@ import {
   isStaticRequireCall,
 } from "./loader-constructs.js";
 import { classifyUnsupportedConstruct } from "./unsupported-construct.js";
-import {
-  isConstDeclaration,
-  resolveSingleAssignmentValue,
-} from "./local-aliases.js";
+import { isConstDeclaration } from "./local-aliases.js";
+import { resolveNamedBinding, type NamedBinding } from "./named-bindings.js";
 import {
   buildModuleModel,
   mapExportsToFunctions,
@@ -670,65 +668,96 @@ function findDestructuredBindingSource(
  */
 function resolveElementAccessKey(
   access: ts.ElementAccessExpression,
-  sourceFile: ts.SourceFile,
 ): string | number | undefined {
   const direct = literalValue(access.argumentExpression);
   if (direct !== undefined) {
     return direct;
   }
   if (ts.isIdentifier(access.argumentExpression)) {
-    const value = resolveSingleAssignmentValue(
-      access.argumentExpression.text,
-      sourceFile,
-    );
+    // P1-B3: scope-aware. A key name is resolved from the declaration
+    // that actually binds it at THIS reference, so an inner
+    // `const KEY = "safe"` shadowing an outer `const KEY = "vulnerable"`
+    // can no longer be read through.
+    const value = authoritativeValueOf(access.argumentExpression);
     return value ? literalValue(value) : undefined;
   }
   return undefined;
 }
 
 /**
- * Unwraps a type assertion (`expr as T`, `expr satisfies T`), non-null
- * assertion (`expr!`), or parenthesization around `expr` (VT-217). None of
- * these have any runtime effect -- `const fns = lib as unknown as X;`
- * makes `fns` and `lib` the exact same value, not a "second alias hop" in
- * any meaningful sense, just type-checker-only decoration erased at
- * compile time (confirmed against the real ADV2-042 fixture,
- * tests/adversarial-v2/, which wraps its own aliased receiver this way).
+ * The single authoritative value a reference to a name denotes, under
+ * named-bindings.ts's soundness rule (P1-B3 § 6) -- or `undefined` when
+ * no such value can be established.
+ *
+ * This is the call graph's ONE entry point for "what does this name
+ * hold?", and it takes the identifier NODE rather than its text on
+ * purpose: shadowing, evaluation order and assignment stability are all
+ * properties of the use site, and were exactly what the whole-file,
+ * first-match-wins `resolveSingleAssignmentValue` this replaces could not
+ * see (it resolved an inner `const fn = safe` to an outer
+ * `const fn = danger`, and a call written above its own initializer to
+ * that initializer's value -- two ways to FABRICATE an edge; see
+ * RWF-042).
  */
-function unwrapTypeOnlyExpression(expr: ts.Expression): ts.Expression {
-  let current = expr;
-  for (;;) {
-    if (ts.isAsExpression(current) || ts.isSatisfiesExpression(current)) {
-      current = current.expression;
-    } else if (ts.isNonNullExpression(current)) {
-      current = current.expression;
-    } else if (ts.isParenthesizedExpression(current)) {
-      current = current.expression;
-    } else {
-      return current;
-    }
+function authoritativeValueOf(
+  reference: ts.Expression,
+): ts.Expression | undefined {
+  if (!ts.isIdentifier(reference)) {
+    return undefined;
   }
+  const binding = resolveNamedBinding(reference);
+  return binding.kind === "value" ? binding.value : undefined;
+}
+
+/**
+ * The graph node of the function a resolved binding denotes, when that
+ * function is written in this same file -- either a hoisted `function`
+ * declaration or a function/arrow EXPRESSION held by a stable binding.
+ *
+ * The expression case is the gap P1-B3 measured and closed. `source-index`
+ * names a function expression by its OWN name when it has one, so
+ * `var parseValues = function parseQueryStringValues() {};` is indexed as
+ * `parseQueryStringValues` and `findLocalFunctionNodeId`'s name match
+ * against `parseValues` misses it entirely -- the single most common
+ * unresolved named callee in the measured corpus (`qs/lib/parse.js` alone
+ * carries `parseValues` and `parseKeys` this way, both on the route into
+ * that package's parse internals). Resolving the BINDING rather than
+ * matching the NAME makes the two agree.
+ */
+function functionNodeIdFor(
+  binding: NamedBinding,
+  prepared: FileGraphData,
+): GraphNodeId | undefined {
+  const declaration =
+    binding.kind === "function"
+      ? binding.declaration
+      : binding.kind === "value" &&
+          (ts.isFunctionExpression(binding.value) ||
+            ts.isArrowFunction(binding.value))
+        ? binding.value
+        : undefined;
+  if (!declaration) {
+    return undefined;
+  }
+  // `source-index.ts`'s `extractFunction` keys a function node on the
+  // whole node's own location, so the same derivation is used here rather
+  // than a second, drift-prone convention.
+  const location = toSourceLocation(prepared.index.sourceFile, declaration);
+  return prepared.functionNodeIdByLocation.get(locationKey(location));
 }
 
 /**
  * Resolves an element/property access's own receiver (`fns` in
- * `fns[KEY]`/`fns.member`) through at most one hop of same-file `const`
- * aliasing, unwrapping any type-only wrapper (see
- * {@link unwrapTypeOnlyExpression}) around the aliased value -- so
- * `const fns = lib as X;` is recognized as `fns` simply *being* `lib`, not
- * a second layer of indirection. Returns `expr` unchanged when it isn't a
- * plain identifier, or resolves to nothing (e.g. it's already the direct
- * import reference itself, which needs no further resolution here).
+ * `fns[KEY]`/`fns.member`) to the value its name authoritatively holds
+ * (P1-B3, see {@link authoritativeValueOf}), with any type-only wrapper
+ * already peeled -- so `const fns = lib as X;` is recognized as `fns`
+ * simply *being* `lib`, not a second layer of indirection. Returns `expr`
+ * unchanged when it isn't a plain identifier, or resolves to nothing
+ * (e.g. it's already the direct import reference itself, which needs no
+ * further resolution here).
  */
-function resolveReceiverExpression(
-  expr: ts.Expression,
-  sourceFile: ts.SourceFile,
-): ts.Expression {
-  if (!ts.isIdentifier(expr)) {
-    return expr;
-  }
-  const value = resolveSingleAssignmentValue(expr.text, sourceFile);
-  return value ? unwrapTypeOnlyExpression(value) : expr;
+function resolveReceiverExpression(expr: ts.Expression): ts.Expression {
+  return authoritativeValueOf(expr) ?? expr;
 }
 
 /**
@@ -739,8 +768,8 @@ function resolveReceiverExpression(
  *
  * An element access with a statically-known key (VT-217, see
  * {@link resolveElementAccessKey}) is first rewritten into the equivalent
- * property access -- `fns[KEY]` where `KEY` is a same-file `const`
- * literal is an ordinary property access written with computed-member
+ * property access -- `fns[KEY]` where `KEY` is a name authoritatively
+ * bound to a literal is an ordinary property access written with computed-member
  * syntax, not a genuinely dynamic lookup -- and resolved the same way
  * from there on, with its own receiver also resolved through
  * {@link resolveReceiverExpression}.
@@ -752,14 +781,11 @@ async function resolveAliasedValue(
 ): Promise<GraphNodeId | undefined> {
   let resolved = value;
   if (ts.isElementAccessExpression(value)) {
-    const key = resolveElementAccessKey(value, prepared.index.sourceFile);
+    const key = resolveElementAccessKey(value);
     if (key === undefined) {
       return undefined;
     }
-    const receiver = resolveReceiverExpression(
-      value.expression,
-      prepared.index.sourceFile,
-    );
+    const receiver = resolveReceiverExpression(value.expression);
     resolved = ts.factory.createPropertyAccessExpression(receiver, String(key));
   }
 
@@ -788,39 +814,138 @@ async function resolveAliasedValue(
 }
 
 /**
- * Resolves a call whose callee is a same-file `const` binding that simply
- * aliases an already-resolvable value, rather than being a genuinely new
+ * Resolves a call whose callee, or whose receiver, is a same-file name
+ * bound to an already-resolvable value rather than being a genuinely new
  * declaration (VT-214, SDD-v0.2.md § 7.1's local-alias-flow follow-on to
- * VT-210): a plain reassignment (`const doIt = vulnerable; doIt();`), an
- * object-literal property holding one
- * (`const o = { run: vulnerable }; o.run();`), or a destructured rename
- * off a namespace/default import (`const { vulnerable: v } = lib; v();`).
+ * VT-210; widened and made scope-correct by P1-B3).
  *
- * Deliberately narrow, matching VT-210's own scope (SDD-v0.2.md § 16):
- * `const`-only (see {@link resolveSingleAssignmentValue}), single-hop (the
- * aliased-to value itself must resolve via an existing mechanism -- never
- * a further level of aliasing), and same-file.
+ * The two halves are kept apart on purpose (P1-B3 § 5) and documented on
+ * their own functions, because what each must prove differs: a callee
+ * needs one authoritative callable, a receiver needs an authoritative
+ * value AND an authoritative member on it.
+ *
+ * Since P1-B3 the binding lookup underneath both is scope-aware,
+ * order-respecting and stability-checked (named-bindings.ts), so it is no
+ * longer `const`-only or single-hop -- but it is also no longer able to
+ * read an inner declaration's name off an outer declaration's value,
+ * which is what the whole-file lookup it replaces did.
  */
 async function resolveLocalAlias(
   callee: ts.Expression,
   prepared: FileGraphData,
   ctx: WalkContext,
 ): Promise<GraphNodeId | undefined> {
-  const sourceFile = prepared.index.sourceFile;
-
   if (ts.isPropertyAccessExpression(callee)) {
-    if (!ts.isIdentifier(callee.expression)) {
-      return undefined;
-    }
-    const receiverValue = resolveSingleAssignmentValue(
-      callee.expression.text,
-      sourceFile,
+    return resolveNamedReceiverBinding(callee, prepared, ctx);
+  }
+  if (!ts.isIdentifier(callee)) {
+    return undefined;
+  }
+  return resolveNamedCalleeBinding(callee, prepared, ctx);
+}
+
+/**
+ * CALLEE BINDING (P1-B3 § 5): resolve the name being CALLED to the one
+ * callable it denotes.
+ *
+ * Three outcomes are authoritative, and nothing else is:
+ *
+ * 1. the name binds to a function written in this file -- a hoisted
+ *    `function` declaration, or a function/arrow expression held by a
+ *    stable binding ({@link functionNodeIdFor});
+ * 2. the name binds to a value that is itself a resolvable reference --
+ *    an import, a member of one, a same-file declaration -- which
+ *    {@link resolveAliasedValue} resolves through the EXISTING import
+ *    machinery rather than a second resolver (P1-B3 § 11);
+ * 3. the name came out of a destructuring, which
+ *    {@link findDestructuredBindingSource} owns.
+ *
+ * Everything else -- a parameter, a reassigned binding, a use above its
+ * own initializer, an alias cycle, two declarations in one scope -- stays
+ * UNKNOWN under the reason it already carried.
+ */
+async function resolveNamedCalleeBinding(
+  callee: ts.Identifier,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<GraphNodeId | undefined> {
+  const binding = resolveNamedBinding(callee);
+
+  const localFunction = functionNodeIdFor(binding, prepared);
+  if (localFunction) {
+    return localFunction;
+  }
+
+  if (binding.kind === "value") {
+    return resolveAliasedValue(binding.value, prepared, ctx);
+  }
+
+  // Only a name with no value binding at all can still be a destructured
+  // one: every other unresolved cause is a REFUSAL (reassigned, ordered
+  // wrongly, ambiguous, cyclic) and must not be routed around.
+  if (binding.kind === "unresolved" && binding.cause === "destructuring") {
+    const destructured = findDestructuredBindingSource(
+      callee.text,
+      prepared.index.sourceFile,
     );
-    if (!receiverValue || !ts.isObjectLiteralExpression(receiverValue)) {
-      return undefined;
+    if (destructured) {
+      const synthetic = ts.factory.createPropertyAccessExpression(
+        destructured.source,
+        destructured.propertyName,
+      );
+      return resolveAliasedValue(synthetic, prepared, ctx);
     }
+  }
+
+  return undefined;
+}
+
+/**
+ * RECEIVER BINDING (P1-B3 § 5): resolve the name whose MEMBER is being
+ * called, then look that member up on the resolved value.
+ *
+ * Deliberately NOT the same code path as a callee, because the soundness
+ * conditions differ: resolving the receiver is only half the work, and
+ * the member lookup that follows must be authoritative in its own right.
+ * A resolved receiver whose member cannot be read authoritatively resolves
+ * to nothing at all -- it is never downgraded into "call something on
+ * this value".
+ *
+ * Two receiver value shapes carry an authoritative member:
+ *
+ * - an object literal, whose named property is read directly (unchanged
+ *   from VT-214, now reached through a scope-correct binding);
+ * - a reference -- an identifier or a member chain -- where appending the
+ *   member reconstructs an ordinary named access that
+ *   {@link resolveAliasedValue} already knows how to resolve, which is
+ *   what makes `const x = obj; x.m()` behave exactly as `obj.m()` does.
+ *
+ * EVERY OTHER SHAPE IS LEFT ALONE, and these exclusions are the block
+ * boundaries, not omissions: a call result (`const x = factory(); x.m()`)
+ * is Block B and needs return modeling P1-B3 § 13 withholds; a `new`
+ * expression is Block C instance modeling (P1-B3 § 14); a literal, a
+ * regex, an array and an operator expression are Block B receiver
+ * families (P1-B3 § 17); an element access is the dynamic-member boundary
+ * P1-B3 § 16 leaves intact. None of them become resolvable here merely
+ * because their root name now does.
+ */
+async function resolveNamedReceiverBinding(
+  callee: ts.PropertyAccessExpression,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<GraphNodeId | undefined> {
+  if (!ts.isIdentifier(callee.expression)) {
+    return undefined;
+  }
+  const binding = resolveNamedBinding(callee.expression);
+  if (binding.kind !== "value") {
+    return undefined;
+  }
+  const receiver = binding.value;
+
+  if (ts.isObjectLiteralExpression(receiver)) {
     const propertyValue = findObjectLiteralPropertyValue(
-      receiverValue,
+      receiver,
       callee.name.text,
     );
     return propertyValue
@@ -828,20 +953,10 @@ async function resolveLocalAlias(
       : undefined;
   }
 
-  if (!ts.isIdentifier(callee)) {
-    return undefined;
-  }
-
-  const directValue = resolveSingleAssignmentValue(callee.text, sourceFile);
-  if (directValue) {
-    return resolveAliasedValue(directValue, prepared, ctx);
-  }
-
-  const destructured = findDestructuredBindingSource(callee.text, sourceFile);
-  if (destructured) {
+  if (ts.isIdentifier(receiver) || ts.isPropertyAccessExpression(receiver)) {
     const synthetic = ts.factory.createPropertyAccessExpression(
-      destructured.source,
-      destructured.propertyName,
+      receiver,
+      callee.name.text,
     );
     return resolveAliasedValue(synthetic, prepared, ctx);
   }
