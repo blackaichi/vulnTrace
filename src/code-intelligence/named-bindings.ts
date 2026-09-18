@@ -90,13 +90,63 @@ export interface NamedBindingFunction {
   readonly declaration: ts.FunctionDeclaration;
 }
 
+/**
+ * The name binds to a named function EXPRESSION's own self-binding, seen
+ * from inside that expression's body (P1-B3b § 13).
+ *
+ * `const outer = function inner(n) { return inner(n - 1); };` binds
+ * `inner` inside the expression and NOWHERE else -- not in the enclosing
+ * scope, not in a sibling function, not after the expression. That is a
+ * real, exactly-locatable declaration, so refusing it costs a resolution
+ * the language guarantees; but it is also the one binding a whole-file
+ * name index gets *backwards*, since the index sees a function literally
+ * named `inner` and happily hands it to any reference to `inner`
+ * anywhere in the file.
+ *
+ * Kept apart from {@link NamedBindingFunction} because the node is a
+ * `FunctionExpression`, not a `FunctionDeclaration`, and coercing one
+ * into the other would let consumers make claims about hoisting that do
+ * not hold. Like a function declaration it needs no order check: the
+ * self-binding exists from the moment the expression is evaluated, which
+ * is necessarily before its own body can run.
+ */
+export interface NamedBindingFunctionExpression {
+  readonly kind: "function-expression";
+  readonly declaration: ts.FunctionExpression;
+}
+
+/**
+ * The name binds to a `class` declaration, or to a named class
+ * EXPRESSION's own self-binding (P1-B3b § 11).
+ *
+ * This is the one authority the same-name matcher held that was
+ * legitimate: `new LocalClass()` really does construct the class
+ * lexically in scope, and nothing else in this module could say so.
+ * Admitting it here rather than in the call graph is the whole point --
+ * a class binding shadows, is reassignable and has a temporal dead zone
+ * exactly as other lexical bindings do, and those rules must be enforced
+ * by the one model that owns them, not re-hand-coded next to the graph
+ * (P1-B3b § 29).
+ *
+ * Deliberately NOT instance or `this`-receiver modeling, which Block C
+ * owns: this says only *which class declaration this name denotes*.
+ */
+export interface NamedBindingClass {
+  readonly kind: "class";
+  readonly declaration: ts.ClassDeclaration | ts.ClassExpression;
+}
+
 export interface NamedBindingUnresolved {
   readonly kind: "unresolved";
   readonly cause: NamedBindingUnresolvedCause;
 }
 
 export type NamedBinding =
-  NamedBindingValue | NamedBindingFunction | NamedBindingUnresolved;
+  | NamedBindingValue
+  | NamedBindingFunction
+  | NamedBindingFunctionExpression
+  | NamedBindingClass
+  | NamedBindingUnresolved;
 
 /**
  * How many `a = b; b = c; ...` hops a chain may take. Not a soundness
@@ -750,18 +800,65 @@ function resolveFrom(
       return unresolved("import_binding");
     case "destructuring":
       return unresolved("destructuring");
-    case "class":
-      // A class binding is constructor/instance modeling, which P1-B3
-      // § 14 holds outside this block deliberately.
-      return unresolved("no_declaration");
+    case "class": {
+      // P1-B3b § 11. P1-B3 left this refusing, because the only consumer
+      // then would have been instance modeling (Block C). The consumer
+      // that exists now asks a strictly smaller question -- `new Name()`,
+      // which class declaration is that? -- and answering it here is what
+      // lets the call graph stop answering it by name.
+      const node = declaration.node;
+      if (!ts.isClassDeclaration(node) && !ts.isClassExpression(node)) {
+        return unresolved("no_declaration");
+      }
+
+      // A class binding is MUTABLE, unlike a function declaration:
+      // `class Thing {}` followed anywhere in the owning scope by
+      // `Thing = other` rebinds the name, and every later `new Thing()`
+      // constructs something this module cannot see. Same stability rule
+      // a `let` gets, for the same reason.
+      if (isAssignedWithin(scope, name)) {
+        return unresolved("reassigned");
+      }
+
+      // A class DECLARATION does not hoist its value: the binding sits in
+      // the temporal dead zone until the definition is evaluated, so a
+      // reference above it throws rather than reading the class. Same
+      // order rule a `const` gets (P1-B3 § 9), and it carries the same
+      // known precision debt for deferred execution (RWF-044).
+      //
+      // A class EXPRESSION's self-name is exempt for the same reason a
+      // function expression's is: the binding exists from the moment the
+      // expression is evaluated, which precedes anything inside it
+      // running.
+      if (ts.isClassDeclaration(node)) {
+        if (reference.getStart(node.getSourceFile()) < node.getEnd()) {
+          return unresolved("used_before_initialized");
+        }
+      }
+      return { kind: "class", declaration: node };
+    }
     case "function": {
       if (ts.isFunctionDeclaration(declaration.node)) {
         return { kind: "function", declaration: declaration.node };
       }
-      // A named function EXPRESSION referring to itself from inside its
-      // own body. There is no variable declaration to read, and the
-      // expression node is not a `FunctionDeclaration`, so this stays
-      // out of the resolved vocabulary rather than being coerced into it.
+      // P1-B3b § 13: a named function EXPRESSION referring to itself from
+      // inside its own body. There is no variable declaration to read and
+      // the node is not a `FunctionDeclaration`, so it gets its own kind
+      // rather than being coerced into one that promises hoisting.
+      if (ts.isFunctionExpression(declaration.node)) {
+        // The self-binding is immutable in strict mode and silently
+        // unassignable outside it, so an assignment to the name inside
+        // the body cannot actually rebind it -- but a file that tries is
+        // a file whose intent this module has misread, and refusing
+        // costs nothing real.
+        if (isAssignedWithin(scope, name)) {
+          return unresolved("reassigned");
+        }
+        return {
+          kind: "function-expression",
+          declaration: declaration.node,
+        };
+      }
       return unresolved("no_declaration");
     }
     default:
@@ -835,7 +932,17 @@ function resolveFrom(
     // representation that still carries identity, and handing it back lets
     // symbol-binder.ts answer the module question it owns (P1-B3 § 11,
     // § 18).
-    if (hop.kind === "function") {
+    // A hop that lands on a DECLARATION -- a function declaration, a
+    // named function expression, a class -- is already the exact node the
+    // chain was chasing; there is nothing further to unwrap and no name
+    // left to preserve. (`const Alias = Thing;` genuinely is `Thing`, and
+    // every hop on the way here passed the same shadowing, stability and
+    // order checks the first one did.)
+    if (
+      hop.kind === "function" ||
+      hop.kind === "function-expression" ||
+      hop.kind === "class"
+    ) {
       return hop;
     }
     if (hop.kind === "value") {
