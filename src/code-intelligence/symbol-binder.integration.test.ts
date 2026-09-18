@@ -3,7 +3,6 @@ import os from "node:os";
 import path from "node:path";
 import ts from "typescript";
 import { afterEach, describe, expect, it } from "vitest";
-import { buildModuleModel } from "./module-model.js";
 import { createModuleResolver } from "./module-resolver.js";
 import { indexSourceFile } from "./source-index.js";
 import { bindCallee } from "./symbol-binder.js";
@@ -101,15 +100,9 @@ describe("bindCallee end-to-end: real files, real resolver, real fixture-lib tar
         scenario.text,
       );
       const index = indexSourceFile(importerFilePath, scenario.text);
-      const model = buildModuleModel(index);
       const callee = findCallee(index.sourceFile, scenario.occurrence);
 
-      const result = await bindCallee(
-        callee,
-        model,
-        resolver,
-        importerFilePath,
-      );
+      const result = await bindCallee(callee, resolver, importerFilePath);
       results.push({ file: scenario.file, result });
     }
 
