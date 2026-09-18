@@ -99,8 +99,9 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-030 | any installed package with MORE THAN ONE file exporting the advisory's literal name — i.e. any package whose public entry re-publishes an internal callable under a different public name, or that has an internal module sharing a name with a public one. Measured on the real vendored corpus (RUNTIME files only; a `.d.ts` rival can never contribute a target node): **3** genuine npm instances in `tests/validation/fixtures` — `has-symbols`, `call-bind-apply-helpers`, `yallist` — where authoritative resolution selects a different file than the per-file scan would offer. Counting declaration files too gives 6, but the extra three (`call-bound`, `side-channel`, `side-channel-list`) have only an `index.d.ts` rival and are measurement artifacts, not runtime defects | TARGET attribution asked EVERY graph-discovered file of the `PackageInstance`, independently, whether it exported the advisory's name (`resolveTargetNodes`'s per-file loop over `findExportNodeInFile`). Nothing in that loop asked which file the package actually PUBLISHES, so package MEMBERSHIP became sufficient for target identity when it is only ever necessary. `pkg/other.js` exporting `vulnerable` is not evidence about what `require("pkg").vulnerable` is. Distinct from RWF-011/VT-301B, which closed the bare-NAME fallback: here the sibling genuinely does export the name, so no name-search guard applied. Distinct from RWF-029/P1-A1, which fixed the forwarding RELATION but left it as a fallback that ran only AFTER this loop had already found something — so a sibling shadowed it entirely | **Soundness, BOTH directions** — reproduced byte-identically on the P0 closure base `d36a83c` and on the P1-A1 merge base `4a969b2`. False `AFFECTED`: a dangerous, reachable sibling answers for a package whose public `vulnerable` is safe and never called (`publicsafe-lib`; evidence path ended at `node_modules/publicsafe-lib/other.js:5`, while real `node` proves `pkg.vulnerable === impl.safeImpl`). False `NOT_AFFECTED`: because a found sibling returned before P1-A1's forwarding chase could run, an UNREACHABLE sibling shadowed the genuinely-reached public implementation and the finding received a complete negative proof about a callable the advisory never named (`twinpub-lib`, both twins — real `node` confirms `pkg.vulnerable` IS called) | **Fixed (P1-A2)** — see below |
 | RWF-031 | any installed package that declares BOTH `main` and `exports` where the two name different files (14 of the 49 vendored corpus instances declare both), and any advisory whose `module` names a SUBPATH (`qs/lib/parse`, `@scope/pkg/api`) rather than a package root — `schemas/symbol-rule.schema.json` has always permitted the latter | TWO defects in P1-A2's authoritative-public-entry probe set. (1) That set probed the instance's ABSOLUTE INSTALL PATH (the RWF-009 alias handle), and a path request never consults `exports` in real Node — so for `{"main":"./legacy.js","exports":{".":"./modern.js"}}` it admitted `legacy.js`, a file no importer can reach through the package name, as an authoritative public entry. That is RWF-030's own defect restored through a different door. (2) Installed instances were selected by comparing the advisory's whole module specifier against each instance's package NAME, so `"pkg/parse"` matched nothing, `instances.size` was 0, and resolution fell through to Site B — an instance-blind re-resolution that feeds a PHANTOM into the reachability search | **Soundness, BOTH directions** — reproduced on the P1-A2 merge base `eb128b6` by swapping that commit's `verdict.ts` into the branch; 4 of `fixtures/package-entry`'s 30 cases fail there. False `AFFECTED`: a superseded, reachable, dangerous `main` answered for a package whose public `vulnerable` is safe and uncalled (`expmainsafe-lib`), and an invalid `exports` target fell back to a same-named sibling (`badexports-lib`). False `NOT_AFFECTED`, RUNTIME-REACHABLE: a subpath advisory received a complete family-C negative proof about a phantom while real `node` proves the callable IS executed (`subpathfwd-lib/api`, `twin-lib/api`) | **Fixed (P1-A3)** — see below |
 | RWF-022 | any CommonJS file where a class's `extends` HERITAGE call RETURNS NORMALLY but hands back a value that is not a constructor (`function notAConstructor() { return 1; }` + `class C extends notAConstructor() {}`), above a later export write — the same UMD/feature-detect family as RWF-016/017/018/019/020, and the half of the heritage family RWF-020 explicitly deferred | RWF-020 asks only whether evaluating the heritage CALL completes, and here it does: `notAConstructor()` is not abrupt under `cannotCompleteNormally`, so `isDefinitelyAbruptCall` refuses it and RWF-020's rule never fires. What ends module evaluation is the VALUE: ClassDefinitionEvaluation validates the superclass before it does anything else with the class, and `1` is neither `null` nor a constructor, so the definition throws `TypeError: Class extends value 1 is not a constructor or null`. The same applies, through a second and deliberately separate mechanism, to an `async` or generator CALLEE — whose call provably returns a `Promise` or a generator object, neither of which is a constructor — which RWF-016 must refuse for the opposite reason (calling one cannot throw synchronously) | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C proof (`confirmedUnreachableTarget`, `reachableSubgraphComplete: true`) over the value the module exports whenever the class's branch is taken, on all three of the classifier's routes (numeric-literal return, concise-arrow object return, `async` callee); a real Node-executed circular-import fixture ASSERTS that a cyclic consumer retains the bypassed dangerous export by identity and calls the vulnerable sink through it, that the factory returns normally with `1`, that the later safe write never runs, and that re-requiring re-throws — and, in the same process across a 31-row measured table, that returning a class, an ordinary function or `null` genuinely does NOT abort module evaluation | **Fixed (RWF-022)** |
-| RWF-042 | `qs` (`RWB-05`), and any file that shadows a name or calls above its own initializer | The call graph's named-binding paths resolved a name by SPELLING — `resolveSingleAssignmentValue` is whole-file, name-only and first-match-wins — so an inner `const fn = safe` was answered with an outer `const fn = danger`'s value, and a call written above its initializer was answered with that initializer. Separately, a name bound to a NAMED function expression (`var parseValues = function parseQueryStringValues(){}`) was indexed under the expression's own name and so matched nothing | **Soundness, fabricating direction** — both shadowing and order produce a call edge to a function the program does not reach through that name (a false `AFFECTED` risk, never a false `NOT_AFFECTED`); the missed function expressions are precision only | **Fixed (P1-B3)** — see below |
-| RWF-043 | `lodash` (found via the P1-B3 corpus differential); any file with two same-named functions in unrelated scopes | `findLocalFunctionNodeId` attributes a bare-name call to the FIRST same-named function anywhere in the file, at any nesting depth, with no scope check — so `lodash`'s module-scope `var freeParseInt = parseInt` (the ambient global) could be paired with its own `parseInt` declared inside `runInContext` | **Soundness, fabricating direction** — invents a call edge to a function never reached through that name; can produce a false `AFFECTED` and a misleading evidence path, never a false `NOT_AFFECTED`. No such verdict observed in the current corpus | **Partly fixed (P1-B3)** — fixed on the named-binding paths; the direct-call path (`findLocalFunctionNodeId`) still resolves by name and remains open — see below |
+| RWF-042 | `qs` (`RWB-05`), and any file that shadows a name or calls above its own initializer | The call graph's named-binding paths resolved a name by SPELLING — `resolveSingleAssignmentValue` is whole-file, name-only and first-match-wins — so an inner `const fn = safe` was answered with an outer `const fn = danger`'s value, and a call written above its initializer was answered with that initializer. Separately, a name bound to a NAMED function expression (`var parseValues = function parseQueryStringValues(){}`) was indexed under the expression's own name and so matched nothing | **Soundness, fabricating direction** — both shadowing and order produce a call edge to a function the program does not reach through that name (a false `AFFECTED` risk, never a false `NOT_AFFECTED` — **this parenthesis is WRONG and is corrected by RWF-043 § 1: a fabricated edge DISPLACES the honest `unknown` blocker, and can therefore produce a false `NOT_AFFECTED`**); the missed function expressions are precision only | **Fixed (P1-B3)** — see below |
+| RWF-043 | `lodash` (found via the P1-B3 corpus differential); any file with two same-named functions in unrelated scopes | `findLocalFunctionNodeId` attributes a bare-name call to the FIRST same-named function anywhere in the file, at any nesting depth, with no scope check — so `lodash`'s module-scope `var freeParseInt = parseInt` (the ambient global) could be paired with its own `parseInt` declared inside `runInContext` | **Soundness, fabricating direction** — invents a call edge to a function never reached through that name; can produce a false `AFFECTED` and a misleading evidence path, ~~never a false `NOT_AFFECTED`~~. **The struck clause is WRONG**: the matcher ran BEFORE every authoritative path, so its edge REPLACED the honest `unknown` one, displacing the blocker that withholds `reachableSubgraphComplete` and yielding a false Family-C `NOT_AFFECTED`. Reproduced end-to-end in P1-B3b — see RWF-043 § 1 | **Fixed (P1-B3b)** — the named-binding paths were closed by P1-B3; the direct-call and construct paths are closed by P1-B3b, which removes the matcher entirely — see below |
+| RWF-044 | `fast-xml-parser`, `lru-cache`, `semver` — any module whose function bodies reference a `const`/`let` callable declared later in the file | B3's evaluation-order rule (P1-B3 § 9) refuses a reference written textually above its initializer. That is right about STATEMENT order and wrong about EXECUTION order for a deferred body: `function f() { later(); }` above `const later = ...` only runs `later()` once something calls `f`, which cannot precede module initialization | **Precision only, never soundness** — every refusal costs an edge that is correct in fact; the failure direction is UNKNOWN. 85 call-graph edges in the corpus. These resolved on `779e219` only because the same-name matcher overrode B3's refusal | Open, deliberately not scoped into P1-B3b — precision only; needs deferred-execution modeling, not a heuristic — see below |
 
 ---
 
@@ -13320,3 +13321,243 @@ accept only a function whose declaration the binding actually names —
 falling back to UNKNOWN, never to the first same-named function. Expect
 edge REMOVALS in the corpus differential, and expect each one to need
 explaining rather than celebrating.
+
+---
+
+## RWF-043 (P1-B3b) — Closed: direct-call attribution now resolves the binding, and the "cannot cause a false NOT_AFFECTED" claim was wrong
+
+**Closed by:** P1-B3b, on base `779e219`.
+
+### 1. The correction that matters most
+
+Both the summary table above and RWF-043's own **Impact** paragraph say
+this:
+
+> An invented edge cannot produce a false `NOT_AFFECTED` (it only ever
+> adds reachability), but it can produce a **false `AFFECTED`**.
+
+**That is false.** It is left in place above because this file preserves
+what was believed at the time; it is corrected here, and it should not be
+repeated anywhere.
+
+The error is in the word *adds*. The matcher did not run alongside the
+honest resolution — it ran **first**, and the edge it produced **replaced**
+the one that would otherwise have been emitted. The honest edge for a call
+this analyzer cannot attribute is `unknown`, and an `unknown` edge inside
+the reachable subgraph is exactly the thing that withholds
+`reachableSubgraphComplete`. So the chain is:
+
+1. a call the analyzer genuinely cannot attribute would emit an `unknown`
+   edge — the blocker;
+2. the same-name matcher resolves it to a borrowed local instead;
+3. the blocker is **displaced**, not joined;
+4. the reachable subgraph now contains no unresolved edge and looks
+   exhaustively searched;
+5. proof family C certifies it;
+6. the verdict is `NOT_AFFECTED` — for a program that really does invoke
+   the vulnerable function.
+
+This is reproduced end to end, through the real module-load closure, the
+real call graph and the real finding builder, in
+`src/analysis/verdict.direct-call-binding-authority.integration.test.ts`:
+
+```js
+const trimNewlines = require('trim-newlines');
+
+function end(x) { return x; }          // innocuous local
+
+function applyFn(end, value) {
+  return end(value);                   // `end` here is the PARAMETER
+}
+
+function normalize(input) {
+  return applyFn(trimNewlines.end, input);   // the real vulnerable path
+}
+```
+
+On `779e219` this scan returns `NOT_AFFECTED`, with
+`confirmedUnreachableTarget.reachableSubgraphComplete: true` and **zero**
+unknown edges in the whole graph. After P1-B3b it returns `UNKNOWN` with
+the blocker intact. `UNKNOWN` is the correct answer: the exposure is real
+but flows through a parameter this analyzer does not model, so there is
+neither a path to assert nor a proof to claim.
+
+The general lesson, which outlives this finding: **a fabricated edge is
+not conservative in either direction.** Reasoning about it as
+"over-approximation" is only valid for an analyzer that ADDS edges to an
+otherwise-complete graph. This one replaces uncertainty with a guess, and
+replacing uncertainty is what destroys a negative proof.
+
+### 2. What was actually wrong
+
+`findLocalFunctionNodeId` matched identifier TEXT against
+`prepared.index.functions` — a flat, whole-file, first-match-wins index of
+every function-like node in the file. That index is not a scope, and it
+carried none of the information the question needs. Every shape below
+fabricated an edge on `779e219`; each is now pinned in
+`src/code-intelligence/call-graph.direct-call-binding-authority.test.ts`.
+
+| # | shape | what the matcher returned |
+| --- | --- | --- |
+| A | `const a = () => {}; function f({ a }) { a(); }` | the outer arrow |
+| B | the same with a function expression | the outer expression |
+| C | `const a = () => {}; function f(a) { a(); }` | the outer arrow |
+| D | a block `let a = param` shadowing `function a() {}` | the outer declaration |
+| E | `const x = function inner() {}; inner();` | the expression, from outside its own body |
+| F | an inner `function a(){}` shadowing an outer one | the OUTER one |
+| G | a function declared inside a sibling scope | that function, never in scope |
+| H | `catch (a) { a(); }` | the outer declaration |
+| I | a bare `helper()` with `helper` only a class METHOD | the method |
+| J | `let a = () => {}` reassigned elsewhere | the initializer's value |
+| K | `class Thing {}; function main(Thing) { new Thing(); }` | the outer class |
+
+Two further classes the pre-implementation review did not identify, both
+found by the corpus differential:
+
+- **the matcher named the wrong same-named function outright.**
+  `yallist.js` line 109 is `push(this, arguments[i])` inside
+  `Yallist.prototype.push = function () {...}`. The flat index names that
+  assigned expression `push` and reaches it first, so the matcher
+  resolved the call to **the method containing it**, inventing
+  self-recursion where the real code calls the module-level
+  `function push (self, item)` 275 lines later. Same shape in `yallist`'s
+  `unshift` and `lru-cache`'s `del`. Three occurrences in the corpus.
+- **the matcher pre-empted VT-210's correct answer.** 22 call sites in
+  `lodash.js` are higher-order (`arrayFilter`'s `predicate(...)`), where
+  VT-210 can resolve the real function passed at the call site. Because
+  the matcher ran first, they were attributed to an unrelated top-level
+  `predicate`/`iteratee` instead. They now resolve, as `callback` edges,
+  to the function actually passed.
+
+### 3. What replaced it
+
+One question, asked of the one lexical model
+(`named-bindings.ts`): *which declaration does this particular reference
+bind to?* Four resolved shapes yield a node and nothing else does — a
+hoisted `function` declaration, a function/arrow expression held by a
+stable binding, a named function expression seen from inside itself, and
+a `class`. Every refusal, for any cause, yields UNKNOWN. **No name-based
+fallback remains anywhere in the call graph**; that fallback was the
+defect, and a fallback that can rescue a refusal is the same defect
+wearing a different position in the ladder.
+
+All four former call sites now route through it: `classifyCall`,
+`classifyNew`, `resolveAliasedValue`'s identifier fallback, and VT-210's
+inline-argument lookup.
+
+The two narrow authorities the matcher held legitimately were moved INTO
+the lexical model rather than re-implemented beside it (there is exactly
+one scope model in this engine, and adding a second would have recreated
+the divergence this finding is about):
+
+- **local class construction.** `new Thing()` resolves to the class the
+  name lexically denotes — its explicit `constructor`, or the synthesized
+  entry VT-215 creates for an implicit one. Scope-aware, refused when the
+  binding is reassigned, refused in the temporal dead zone. 7 occurrences
+  in the corpus, all preserved.
+- **named function-expression self-reference.** `inner` inside
+  `const outer = function inner(n) {...}` resolves to the expression
+  itself, and **only** inside its own body. 7 occurrences, all preserved.
+
+### 4. The measured differential
+
+Over the 15 real-world fixtures in `tests/validation/fixtures/`
+(372 files):
+
+| | count |
+| --- | --- |
+| call/construct sites the matcher resolved | **4364** |
+| of those, where the binding names the identical declaration | **4075** |
+| — via a `function` declaration | 3704 |
+| — via a stable function/arrow binding | 357 |
+| — via a `class` (all `new`) | 7 |
+| — via a function-expression self-name | 7 |
+| sites B3 resolves that the matcher MISSED | 12 |
+
+At the graph level, 234 edges change, and every one is classified:
+
+| class | count | fabricated? |
+| --- | --- | --- |
+| callee is a `parameter` | 76 | yes |
+| binding is `reassigned` | 36 | yes |
+| binding holds a non-callable value | 12 | yes |
+| `used_before_initialized` | 85 | no — precision only, RWF-044 |
+| matcher pre-empted VT-210 | 22 | yes — now resolves to the right target |
+| matcher named the wrong function | 3 | yes — now resolves to the right target |
+
+Packages affected: `lodash` (138), `semver` + `lru-cache` + `yallist`
+(69), `fast-xml-parser` (14), `object-inspect` + `qs` (8). **No verdict
+changes on any of the 17 real-world cases** — all 17 are byte-identical
+to base, including all four surviving `NOT_AFFECTED` proofs and all six
+`AFFECTED` verdicts. No new negative proof is introduced.
+
+That last sentence is the point D-12 draws out: the corpus stayed
+entirely green across a change that removed a live false-`NOT_AFFECTED`
+mechanism. A green corpus differential is not a soundness result.
+
+### 5. Status
+
+**Closed.** No text-only path can decide a call or construct edge. The
+open half named in the original finding — `classifyCall`'s matcher call
+and `resolveAliasedValue`'s identifier fallback — is gone, along with two
+call sites the original finding did not name.
+
+Not closed here, and deliberately: the `used_before_initialized`
+refusals, which are a precision debt recorded separately as **RWF-044**.
+
+---
+
+## RWF-044 — B3's positional order rule refuses legitimate calls in deferred-execution contexts
+
+**Discovered:** P1-B3b's corpus differential (RWF-043 § 4).
+
+**Class: PRECISION, not soundness.** Every refusal here costs an edge
+that is correct in fact. None of them fabricates anything. The failure
+direction is UNKNOWN, which is the direction this engine is allowed to
+fail in.
+
+**Symptom.** B3's evaluation-order rule (P1-B3 § 9) refuses a reference
+written textually above the initializer that would give the name its
+value:
+
+```js
+function forEach(fn) {
+  forEachStep(this, fn);        // refused: `forEachStep` is declared below
+}
+const forEachStep = (self, fn) => { /* ... */ };
+```
+
+The rule is right about the *statement* order and wrong about the
+*execution* order. `forEach`'s body does not run when the module is
+loaded; it runs when something calls `forEach`, which cannot happen
+before the module has finished initializing. So the initializer has
+always completed by the time the reference is evaluated.
+
+**Measured extent.** 85 call-graph edges across the corpus, concentrated
+in `fast-xml-parser`'s `lib/fxp.cjs` (14, a minified single-line bundle)
+and `lru-cache`/`semver`'s class-heavy modules (the remainder). These
+edges existed on `779e219` only because the same-name matcher resolved
+them despite B3's refusal — which is to say the analyzer was getting the
+right answer for the wrong reason, and removing the wrong reason removed
+the answer with it.
+
+**Why it is not fixed in P1-B3b.** Deciding that a reference is only
+evaluated after module initialization means modeling deferred execution:
+which function bodies can run during module load and which cannot. That
+is a real capability with its own soundness burden — a wrong answer in
+this area fabricates edges, which is the direction P1-B3b exists to
+close. Bolting a heuristic onto B3 ("a reference inside a function body
+is exempt from the order check") would be exactly the kind of
+plausible-but-unproven rule this block removed, and it is wrong for an
+IIFE, for a function called during initialization, and for a class static
+initializer.
+
+**How to close it.** Model the set of function bodies reachable from
+module-load execution, and exempt from the positional check only a
+reference whose enclosing body is provably NOT in that set. The
+module-load closure work (RWF-002, VT-307a) already computes a closely
+related thing and is the natural place to start.
+
+**Do not** close it by relaxing the order rule generally. The rule is
+what stops a call above `const fn = danger` being attributed to `danger`,
+and that attribution is a fabricated edge (RWF-042 § 9).
