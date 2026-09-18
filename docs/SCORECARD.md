@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 175 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 177 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (LIVE) — `npm run test:validation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-17 | Real npm-installed packages against real advisories over the real OSV API. | Integration evidence and a provider-movement detector, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -234,8 +234,14 @@ identifier text against a flat, whole-file, first-match-wins index of
 every function in the file (RWF-043). P1-B3b removes that matcher. A
 bare identifier now resolves to a local target only when the analyzer
 can name the exact lexical declaration the reference denotes; every
-refusal is UNKNOWN, and no name-based fallback remains that could
-rescue one.
+refusal is UNKNOWN. An independent audit then found that VT-210,
+the higher-order rescue that runs after it, still matched a callee
+against the enclosing function's parameter list BY SPELLING and
+collected that function's call sites BY NAME -- so a refusal could
+still be overridden, and a same-named function in another scope
+could donate arguments. Both now bind exact declarations, and a
+higher-order parameter resolves only when every authoritative call
+site agrees on one callable.
 
 **The correction this block forced.** RWF-042 and RWF-043 both
 recorded that a fabricated edge can only ADD reachability and so could
@@ -258,14 +264,22 @@ the correction is recorded in full.
 | ...via a function-expression self-name (new, narrow authority) | 7 |
 | Sites the binding resolves that the matcher MISSED | 12 |
 
-| Graph edges changed (234 total) | Count | Fabricated? |
+| Graph edges changed (243 total) | Count | Fabricated? |
 | --- | --- | --- |
 | Callee is a `parameter` | 76 | yes |
 | Binding is `reassigned` | 36 | yes |
 | Binding holds a non-callable value | 12 | yes |
 | `used_before_initialized` | 85 | no — precision only, RWF-044 |
-| Matcher pre-empted VT-210's correct answer | 22 | yes — now retargeted |
+| Matcher pre-empted VT-210 (same target, edge type only) | 6 | no — type changed, target identical |
 | Matcher named the wrong function outright | 3 | yes — now retargeted |
+| VT-210 single-target claim over a multi-valued parameter | 29 | yes — now UNKNOWN |
+| VT-210 refusal falling through to the inline callback | 2 | no — target is the function passed at that call |
+
+The 16 edges an earlier draft counted as "VT-210 retargets" are
+not a separate class: 14 of them are inside the 29 above (VT-210
+was picking one of several real candidates) and the other 2 are the
+inline-callback fall-through. Counting them as corrections was the
+accounting error the audit caught.
 
 **No verdict changes on any of the 17 real-world cases.** All four
 surviving `NOT_AFFECTED` proofs and all six `AFFECTED` findings are
