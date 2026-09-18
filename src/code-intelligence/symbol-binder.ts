@@ -1,7 +1,8 @@
 import ts from "typescript";
 import type { DynamicCallReason } from "../domain/graph.js";
-import type { ModuleModel } from "./module-model.js";
+import type { BindingKind } from "./module-model.js";
 import type { ModuleResolver } from "./module-resolver.js";
+import { resolveImportProvenanceDeclaration } from "./named-bindings.js";
 
 export interface CanonicalSymbolTarget {
   readonly modulePath: string;
@@ -74,14 +75,23 @@ export type SymbolBindingResult =
   | SymbolBindingNotAnImport;
 
 interface CalleeShape {
-  readonly rootIdentifier?: string;
+  /**
+   * The identifier NODE at the root of the callee, never its text
+   * (RWF-046). Everything that decides which module this callee reaches
+   * -- which declaration binds the name, whether an inner one shadows an
+   * outer, whether a write invalidated it -- is a property of where the
+   * name is written, and the text alone cannot carry it. The text is
+   * still read for the export name, but only AFTER the declaration has
+   * been identified.
+   */
+  readonly rootIdentifier?: ts.Identifier;
   readonly propertyChain: readonly string[];
   readonly dynamicReason?: DynamicCallReason;
 }
 
 function analyzeCalleeShape(callee: ts.Expression): CalleeShape {
   if (ts.isIdentifier(callee)) {
-    return { rootIdentifier: callee.text, propertyChain: [] };
+    return { rootIdentifier: callee, propertyChain: [] };
   }
 
   if (ts.isPropertyAccessExpression(callee)) {
@@ -92,7 +102,7 @@ function analyzeCalleeShape(callee: ts.Expression): CalleeShape {
       current = current.expression;
     }
     if (ts.isIdentifier(current)) {
-      return { rootIdentifier: current.text, propertyChain: chain };
+      return { rootIdentifier: current, propertyChain: chain };
     }
     // Root of the chain isn't a plain identifier (e.g. `foo().bar()`) —
     // nothing this binder can attribute to an import.
@@ -106,7 +116,7 @@ function analyzeCalleeShape(callee: ts.Expression): CalleeShape {
     ) {
       // foo["vulnerable"]() — statically known despite bracket syntax.
       return {
-        rootIdentifier: callee.expression.text,
+        rootIdentifier: callee.expression,
         propertyChain: [callee.argumentExpression.text],
       };
     }
@@ -115,6 +125,136 @@ function analyzeCalleeShape(callee: ts.Expression): CalleeShape {
   }
 
   return { propertyChain: [] };
+}
+
+/**
+ * What a reference's OWN declaration says about the module it denotes --
+ * the same three facts an `ImportBinding` row carried, but derived from
+ * the exact declaration that binds this reference rather than looked up
+ * by spelling (RWF-046).
+ */
+interface ResolvedImportBinding {
+  readonly specifier: string;
+  readonly kind: BindingKind;
+  readonly importedName?: string;
+}
+
+/** The ESM module specifier an import binding node was written with, if it is a literal one. */
+function esmSpecifierOf(
+  node:
+    | ts.ImportClause
+    | ts.ImportSpecifier
+    | ts.NamespaceImport
+    | ts.ImportEqualsDeclaration,
+): string | undefined {
+  if (ts.isImportEqualsDeclaration(node)) {
+    // `import lib = require("pkg")`. The entity-name form
+    // (`import q = A.B`) loads no module and is correctly excluded, as
+    // source-index.ts's own extraction already excludes it.
+    if (
+      node.isTypeOnly ||
+      !ts.isExternalModuleReference(node.moduleReference) ||
+      !ts.isStringLiteralLike(node.moduleReference.expression)
+    ) {
+      return undefined;
+    }
+    return node.moduleReference.expression.text;
+  }
+
+  const clause = ts.isImportClause(node)
+    ? node
+    : ts.isNamespaceImport(node)
+      ? node.parent
+      : node.parent.parent;
+  // A type-only import is erased before anything runs and can never be
+  // part of a call path — the same exclusion source-index.ts applies.
+  if (clause.isTypeOnly || (ts.isImportSpecifier(node) && node.isTypeOnly)) {
+    return undefined;
+  }
+  const declaration = clause.parent;
+  return ts.isStringLiteral(declaration.moduleSpecifier)
+    ? declaration.moduleSpecifier.text
+    : undefined;
+}
+
+/**
+ * The import provenance a reference inherits from THE EXACT LEXICAL
+ * DECLARATION that owns it, or `undefined` when no declaration in scope
+ * supplies any (RWF-046).
+ *
+ * This replaced a `moduleModel.imports.find(imp => imp.localName === text)`
+ * whose authority was a file-wide, name-keyed table. `undefined` here is
+ * a genuine "this reference is not an import binding" — a parameter, a
+ * catch binding, a plain local, a reassigned one — and is never a
+ * licence to keep searching by name. Falling through to the table on a
+ * miss is exactly the collapse this closes.
+ */
+function importBindingFor(
+  reference: ts.Identifier,
+): ResolvedImportBinding | undefined {
+  const declaration = resolveImportProvenanceDeclaration(reference);
+
+  if (declaration.kind === "none") {
+    return undefined;
+  }
+
+  if (declaration.kind === "require") {
+    // `const source = require("pkg")` binds the WHOLE module to one name,
+    // which is the same shape `import source from "pkg"` binds — the
+    // convergence module-model.ts's `toImportBinding` already describes.
+    const [specifier] = declaration.call.arguments;
+    return ts.isStringLiteral(specifier as ts.Node)
+      ? { specifier: (specifier as ts.StringLiteral).text, kind: "default" }
+      : undefined;
+  }
+
+  if (declaration.kind === "require-element") {
+    const { element } = declaration;
+    // A rest element (`const { ...rest } = require("pkg")`) binds an
+    // object of the remaining members, not any one export, so it names
+    // nothing this can be authoritative about.
+    if (element.dotDotDotToken || !ts.isIdentifier(element.name)) {
+      return undefined;
+    }
+    const propertyName = element.propertyName ?? element.name;
+    if (
+      !ts.isIdentifier(propertyName) &&
+      !ts.isStringLiteralLike(propertyName)
+    ) {
+      // A computed key (`const { [k]: run } = require("pkg")`) names no
+      // export statically.
+      return undefined;
+    }
+    const [specifier] = declaration.call.arguments;
+    if (!ts.isStringLiteral(specifier as ts.Node)) {
+      return undefined;
+    }
+    return {
+      specifier: (specifier as ts.StringLiteral).text,
+      kind: "named",
+      importedName: propertyName.text,
+    };
+  }
+
+  const specifier = esmSpecifierOf(declaration.node);
+  if (specifier === undefined) {
+    return undefined;
+  }
+  const node = declaration.node;
+  if (ts.isImportSpecifier(node)) {
+    return {
+      specifier,
+      kind: "named",
+      importedName: (node.propertyName ?? node.name).text,
+    };
+  }
+  if (ts.isNamespaceImport(node)) {
+    return { specifier, kind: "namespace" };
+  }
+  // An `ImportClause`'s own name is the DEFAULT import; an
+  // `ImportEqualsDeclaration` binds the whole module, which converges on
+  // the same shape (see module-model.ts's `toImportBinding`).
+  return { specifier, kind: "default" };
 }
 
 /**
@@ -135,10 +275,20 @@ function analyzeCalleeShape(callee: ts.Expression): CalleeShape {
  * imported binding) is full data-flow analysis and explicitly out of MVP
  * scope (docs/SDD.md § 22) — such calls fall through to `"not_an_import"`,
  * not a fabricated target.
+ *
+ * TAKES NO `ModuleModel` (RWF-046). It used to, and used it for exactly
+ * one thing: `imports.find((imp) => imp.localName === calleeText)`. That
+ * table is file-wide and name-keyed, so it could not say WHICH
+ * declaration bound the name, and the first row spelled the same won
+ * every reference in the file — a function-local `require("inner")`
+ * resolved to a file-scope `require("outer")`. The parameter is removed
+ * rather than left unused so no later caller can reach for it as an
+ * authority again. `ModuleModel.imports` remains the right answer to
+ * "what does this FILE load" — a different question, still asked by the
+ * module-load closure and the loader-construct pass.
  */
 export async function bindCallee(
   callee: ts.Expression,
-  moduleModel: ModuleModel,
   resolver: ModuleResolver,
   importerFilePath: string,
 ): Promise<SymbolBindingResult> {
@@ -152,9 +302,7 @@ export async function bindCallee(
     return { kind: "not_an_import" };
   }
 
-  const binding = moduleModel.imports.find(
-    (imp) => imp.localName === shape.rootIdentifier,
-  );
+  const binding = importBindingFor(shape.rootIdentifier);
 
   if (!binding) {
     return { kind: "not_an_import" };
@@ -166,7 +314,7 @@ export async function bindCallee(
     // A trailing property chain here (e.g. `vulnerable.someMethod()`) is a
     // method call on the already-bound export's value, not a reference to
     // a different export — the chain is intentionally not consulted.
-    exportedName = binding.importedName ?? shape.rootIdentifier;
+    exportedName = binding.importedName ?? shape.rootIdentifier.text;
   } else if (binding.kind === "default" || binding.kind === "namespace") {
     const [firstProperty] = shape.propertyChain;
     // No property access at all means the default export / whole module

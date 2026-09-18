@@ -4,8 +4,6 @@ import type {
   ModuleResolutionResult,
   ModuleResolver,
 } from "./module-resolver.js";
-import { buildModuleModel } from "./module-model.js";
-import { indexSourceFile } from "./source-index.js";
 import { bindCallee } from "./symbol-binder.js";
 
 function fakeResolver(
@@ -73,12 +71,8 @@ const resolver = fakeResolver({ foo: "/resolved/foo/index.js" });
 
 describe("bindCallee: converges the four SDD § 17 forms onto the same target", () => {
   it("binds an aliased named ESM import (bare call)", async () => {
-    const model = buildModuleModel(
-      indexSourceFile("a.ts", 'import { vulnerable as v } from "foo";\nv();\n'),
-    );
     const result = await bindCallee(
       findCallee('import { vulnerable as v } from "foo";\nv();\n'),
-      model,
       resolver,
       "a.ts",
     );
@@ -95,15 +89,9 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
 
   it("binds a destructured require() (bare call)", async () => {
     const text = 'const { vulnerable } = require("foo");\nvulnerable();\n';
-    const model = buildModuleModel(indexSourceFile("a.js", text));
     // Occurrence 0 is the require("foo") call itself; occurrence 1 is the
     // actual vulnerable() invocation under test.
-    const result = await bindCallee(
-      findCallee(text, 1),
-      model,
-      resolver,
-      "a.js",
-    );
+    const result = await bindCallee(findCallee(text, 1), resolver, "a.js");
 
     expect(result).toEqual({
       kind: "resolved",
@@ -117,13 +105,7 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
 
   it("binds a whole-module require() with member access", async () => {
     const text = 'const foo = require("foo");\nfoo.vulnerable();\n';
-    const model = buildModuleModel(indexSourceFile("a.js", text));
-    const result = await bindCallee(
-      findCallee(text, 1),
-      model,
-      resolver,
-      "a.js",
-    );
+    const result = await bindCallee(findCallee(text, 1), resolver, "a.js");
 
     expect(result).toEqual({
       kind: "resolved",
@@ -137,8 +119,7 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
 
   it("binds a default ESM import with member access", async () => {
     const text = 'import foo from "foo";\nfoo.vulnerable();\n';
-    const model = buildModuleModel(indexSourceFile("a.ts", text));
-    const result = await bindCallee(findCallee(text), model, resolver, "a.ts");
+    const result = await bindCallee(findCallee(text), resolver, "a.ts");
 
     expect(result).toEqual({
       kind: "resolved",
@@ -154,8 +135,7 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
 describe("bindCallee: additional binding shapes", () => {
   it("binds a namespace import with member access", async () => {
     const text = 'import * as ns from "foo";\nns.vulnerable();\n';
-    const model = buildModuleModel(indexSourceFile("a.ts", text));
-    const result = await bindCallee(findCallee(text), model, resolver, "a.ts");
+    const result = await bindCallee(findCallee(text), resolver, "a.ts");
 
     expect(result).toMatchObject({
       kind: "resolved",
@@ -165,8 +145,7 @@ describe("bindCallee: additional binding shapes", () => {
 
   it("uses 'default' as the exported name when a default import is called directly", async () => {
     const text = 'import foo from "foo";\nfoo();\n';
-    const model = buildModuleModel(indexSourceFile("a.ts", text));
-    const result = await bindCallee(findCallee(text), model, resolver, "a.ts");
+    const result = await bindCallee(findCallee(text), resolver, "a.ts");
 
     expect(result).toMatchObject({
       kind: "resolved",
@@ -176,13 +155,7 @@ describe("bindCallee: additional binding shapes", () => {
 
   it("resolves static bracket-notation member access", async () => {
     const text = 'const foo = require("foo");\nfoo["vulnerable"]();\n';
-    const model = buildModuleModel(indexSourceFile("a.js", text));
-    const result = await bindCallee(
-      findCallee(text, 1),
-      model,
-      resolver,
-      "a.js",
-    );
+    const result = await bindCallee(findCallee(text, 1), resolver, "a.js");
 
     expect(result).toMatchObject({
       kind: "resolved",
@@ -193,8 +166,7 @@ describe("bindCallee: additional binding shapes", () => {
   it("ignores a trailing method chain on an already-bound named import", async () => {
     const text =
       'import { vulnerable } from "foo";\nvulnerable.someMethod();\n';
-    const model = buildModuleModel(indexSourceFile("a.ts", text));
-    const result = await bindCallee(findCallee(text), model, resolver, "a.ts");
+    const result = await bindCallee(findCallee(text), resolver, "a.ts");
 
     expect(result).toMatchObject({
       kind: "resolved",
@@ -207,13 +179,7 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
   it("returns ambiguous for dynamic member access on a known import", async () => {
     const text =
       'const foo = require("foo");\nconst method = "vulnerable";\nfoo[method]();\n';
-    const model = buildModuleModel(indexSourceFile("a.js", text));
-    const result = await bindCallee(
-      findCallee(text, 1),
-      model,
-      resolver,
-      "a.js",
-    );
+    const result = await bindCallee(findCallee(text, 1), resolver, "a.js");
 
     expect(result).toEqual({
       kind: "ambiguous",
@@ -224,8 +190,7 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
   it("returns unresolved_module when the resolver cannot resolve the specifier", async () => {
     const text =
       'import { vulnerable } from "missing-package";\nvulnerable();\n';
-    const model = buildModuleModel(indexSourceFile("a.ts", text));
-    const result = await bindCallee(findCallee(text), model, resolver, "a.ts");
+    const result = await bindCallee(findCallee(text), resolver, "a.ts");
 
     expect(result).toEqual({
       kind: "unresolved_module",
@@ -241,13 +206,7 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
     );
     const text =
       'import { vulnerable } from "types-only-package";\nvulnerable();\n';
-    const model = buildModuleModel(indexSourceFile("a.ts", text));
-    const result = await bindCallee(
-      findCallee(text),
-      model,
-      declOnlyResolver,
-      "a.ts",
-    );
+    const result = await bindCallee(findCallee(text), declOnlyResolver, "a.ts");
 
     expect(result).toEqual({
       kind: "declaration_only",
@@ -259,10 +218,8 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
   it("returns builtin when the resolver classifies the specifier as a Node builtin (VT-305)", async () => {
     const builtinResolver = fakeResolver({}, {}, new Set(["fs"]));
     const text = 'const fs = require("fs");\nfs.readFileSync("x");\n';
-    const model = buildModuleModel(indexSourceFile("a.js", text));
     const result = await bindCallee(
       findCallee(text, 1),
-      model,
       builtinResolver,
       "a.js",
     );
@@ -272,8 +229,7 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
 
   it("returns not_an_import for a call to a locally-defined function", async () => {
     const text = "function local() {}\nlocal();\n";
-    const model = buildModuleModel(indexSourceFile("a.ts", text));
-    const result = await bindCallee(findCallee(text), model, resolver, "a.ts");
+    const result = await bindCallee(findCallee(text), resolver, "a.ts");
 
     expect(result).toEqual({ kind: "not_an_import" });
   });
@@ -284,8 +240,7 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
     // itself; genuine data-flow tracking is out of MVP scope.
     const text =
       'import foo from "foo";\nconst { vulnerable } = foo;\nvulnerable();\n';
-    const model = buildModuleModel(indexSourceFile("a.ts", text));
-    const result = await bindCallee(findCallee(text), model, resolver, "a.ts");
+    const result = await bindCallee(findCallee(text), resolver, "a.ts");
 
     expect(result).toEqual({ kind: "not_an_import" });
   });
