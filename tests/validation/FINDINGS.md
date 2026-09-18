@@ -13722,6 +13722,189 @@ sites, VT-210 parameter identification, VT-210 enclosing-call
 identification and multi-valued provenance all stand as recorded.
 RWF-044 and RWF-045 are unaffected and remain open.
 
+### 9. Post-merge correction: defaulted parameters and omitted arguments (hotfix)
+
+**Found after merge**, by the post-B3b soundness follow-up, continuing
+section 8's sweep of every parameter shape that reaches VT-210. Recorded
+here rather than as a new RWF entry for the same reason section 8 was: it
+is this finding's own displacement mechanism, arriving through a third
+door, and it is completely fixed by the guard below (register convention:
+a post-merge correction to a closed finding appends to its remediation
+history).
+
+**The defect.**
+
+```js
+function fallback() {}
+function actual() {}
+
+function invoke(fn = fallback) {
+  fn();
+}
+
+invoke(actual);
+invoke();
+```
+
+`fn` is `actual` on one path and `fallback` on the other. VT-210 returned
+`actual` as THE unique authoritative target.
+
+The cause is a single skip in `resolveHigherOrderCallTarget`'s provenance
+loop:
+
+```ts
+const arg = site.arguments[paramIndex];
+if (!arg) {
+  continue;
+}
+```
+
+and the comment that justified it — that an omitted argument leaves the
+parameter `undefined`, so `fn()` throws before reaching a callable and the
+site provably contributes no target. That is correct for a plain
+parameter and **false for a defaulted one**: the omitted site does not
+leave the parameter `undefined`, it runs the initializer. Having
+discarded the one site that disagreed, the loop found exactly one
+candidate and called it unique.
+
+**Why section 6 did not catch it, and why section 8 did not either.**
+Section 6 replaced spelling with declaration identity, and is right here
+too — `fn` genuinely is that `ParameterDeclaration`. Section 8 then asked
+what a correctly-identified declaration HOLDS, and found the rest case.
+This one is a third question again: not which declaration, and not what
+that declaration holds on the path the loop looked at, but **whether the
+loop looked at every path**. The uniqueness rule section 6 built is sound
+only if every authoritative call site is accounted for, and this skip
+silently excused one class of site from that accounting.
+
+**The displacement is real and was reproduced end-to-end, not argued.**
+`verdict.direct-call-binding-authority.integration.test.ts` carries a
+second oracle beside RWF-043 § 1's: a `applyFn(fn = end, value)` whose
+default names the vulnerable package export, called once with an
+innocuous local and once with no argument. On merged `d3417c8` the
+analyzer resolved `fn(value)` to the innocuous local, left **no**
+unresolved edge in the reachable subgraph, certified
+`reachableSubgraphComplete`, and returned a **Family C `NOT_AFFECTED`**
+for a vulnerable function the program really does invoke. Measured by
+mutation: reinstating the bare `continue` moves that case from family `-`
+to family `C`. This is the same false-negative-proof class as § 1, so the
+struck "can only add reachability" clause is wrong for a third distinct
+mechanism.
+
+**Pre-existing, not introduced by P1-B3b.** The text matcher section 6
+replaced skipped argument-less sites in exactly the same way, and the
+first-match-wins loop that preceded section 6's uniqueness rule never
+consulted a second site at all. Reproduced on merged `d3417c8` by running
+the new regressions against unmodified production code: 4 of the 11 new
+unit cases and all 3 oracle cases fail there; the 7 control cases already
+pass, and pass unchanged after the fix.
+
+**The minimal sound rule.** If the parameter carries an initializer AND
+any authoritative call site omits the argument at that position, VT-210
+refuses the whole question. It is deliberately **syntactic** and
+deliberately **not** a default-value model:
+
+- it does not resolve the initializer, so `fn = fallback` with only
+  omitted call sites stays UNKNOWN rather than becoming an edge to
+  `fallback`. Naming it would open a second provenance authority
+  (default-value provenance) that the defect never required, and
+  precision is not what was unsound here;
+- it does not try to prove a particular initializer non-callable.
+  `fn = 42` really does throw on the omitted path, so `actual` would in
+  fact be safe to name — but nothing here MODELS the initializer's value,
+  and reading non-callability off a literal's spelling is the inference
+  this analyzer refuses everywhere else. Conservative UNKNOWN, recorded
+  as a known precision cost rather than taken.
+
+**Measured corpus occurrences: ZERO** — and, unlike section 8, *not*
+because the shape is unnatural. An AST-accurate probe (not a regex) over
+all 1,571 committed `.js`/`.cjs`/`.mjs`/`.ts` files — every fixture,
+every vendored real-world benchmark package and all 217 nested fixture
+`node_modules` trees — looking for a named function declaration with a
+non-rest parameter carrying an initializer, that parameter called as a
+bare identifier directly in its owner's body, and same-file call sites of
+the owner, found:
+
+- 4,020 named function declarations;
+- 70 non-rest parameters with a default initializer;
+- **1** of those called bare in its owner's own body —
+  `defaultParamShadow(bail = safeFn)` in
+  `fixtures/commonjs-invocation-provenance-soundness/node_modules/fixture-lib/param-shadow.js:56`,
+  itself a deliberate fixture for this very family;
+- **0** with both an omitted and a provided-identifier call site.
+
+The single match has only an omitted site, so the loop found no candidate
+at all and returned `undefined` before the fix and `undefined` after it —
+identical output, which is why the corpus is inert.
+
+**The shape is nonetheless common in real published JavaScript**, and
+this is worth stating because section 8's zero meant something different.
+The same probe over a 4,550-file sample of real published packages (this
+repository's own installed `node_modules`: `typescript`, `rollup`,
+`vite`) found **15** occurrences of the exact displacement shape,
+including `typescript`'s own
+`contains(array, value, equalityComparer = equateValues)` — 86 same-file
+call sites, 81 of them omitting the comparer and 4 passing one. Before
+this fix VT-210 would have attributed that parameter to whichever
+comparer those 4 sites name, for a function whose overwhelmingly common
+path uses the default. Nothing about the correctness of this fix is
+conditional on the vendored corpus's zero; the runtime hazard is proved
+by the oracle above and the incidence by this sample.
+
+**Differential: byte-identical.** The real-world validation verdict table
+is identical before and after (12 PASS / 5 KNOWN_FAIL / 0 UNEXPECTED / 17
+cases). A full call-graph dump — every edge of all 48 fixture projects
+that carry a `vulntrace.yml` or a `src/` entry, across both fixture
+roots, 3,203 nodes and 6,499 edges — is **byte-identical** between
+`d3417c8` and this branch: zero edges added, zero removed, zero retargeted,
+and so no verdict, proof, `PackageInstance` or target movement.
+
+Confirmed a second way, independently of the dump: the new guard was
+instrumented to log every firing and the entire suite re-run (`npm test`,
+foundation, validation, adversarial). It fired 10 times in total — 9
+inside its own new regressions, and exactly **1** anywhere else, on
+`defaultParamShadow#0` in the fixture named above. That one site has no
+provided-argument call site, so the pre-fix loop ended with no candidate
+and returned `undefined`, which is what the guard now returns directly.
+One firing, no changed answer: the corpus-inertness is measured, not
+assumed.
+
+**The unique-provenance invariant, restated.** A parameter may be given a
+unique callable target only when EVERY authoritative call site is
+accounted for and none of them can leave the parameter holding a
+different or unknown runtime value. Five site shapes, four of which
+refuse: a different target; a value this analyzer cannot name (inline
+function, call result, member expression, reassigned binding); an
+unresolvable import; an omitted argument for a parameter WITH an
+initializer. Only the fifth — an omitted argument for a parameter with NO
+initializer — genuinely contributes nothing, because the value is then
+`undefined` and the call throws before reaching a callable.
+
+**Parameter-shape checklist (read-only audit, no implementation beyond
+the defect above).** Every shape that can reach VT-210 positional
+provenance, its runtime value semantics, its current eligibility and its
+soundness status:
+
+| shape | runtime value at the parameter | VT-210 eligibility | soundness |
+| --- | --- | --- | --- |
+| plain (`fn`) | the argument at that position, or `undefined` when omitted | eligible; unique-provenance rule applies | sound — the omitted case genuinely contributes no callable |
+| default (`fn = expr`) | the argument, or `expr`'s value when omitted or `undefined` | eligible only while no site omits the argument; refused otherwise | sound as of this section; **precision limit**: an omitted site refuses even when `expr` is a resolvable identifier or provably non-callable |
+| rest (`...fn`) | the ARRAY of remaining arguments, never one of them | refused outright (§ 8) | sound |
+| destructured (`{fn}`, `[fn]`, and the `= obj` / `= arr` defaulted forms) | a property/element of the argument object, not the argument | never eligible — the name binds a `BindingElement`, not the `ParameterDeclaration`, so `resolveParameterDeclaration` returns nothing | sound (fail-closed); precision limit, deliberately not broadened — see RWF-045 |
+| TypeScript optional (`fn?: T`) | identical to plain: the argument, or `undefined` | eligible; `questionToken` carries no initializer, so the new guard does not fire | sound — same reasoning as plain |
+
+`fn?: T = expr` is not legal TypeScript, and the grammar forbids an
+initializer on a rest parameter, so no shape can be simultaneously
+defaulted and rest, or defaulted and optional. The two guards therefore
+cannot contend for one declaration; a regression pins that they coexist
+in one signature.
+
+**Sections 7 and 8's closures are otherwise intact.** The four flat-index
+matcher sites, VT-210 parameter identification, VT-210 enclosing-call
+identification, multi-valued provenance and the rest-parameter guard all
+stand as recorded. RWF-044 and RWF-045 are unaffected and remain open;
+neither was touched here.
+
 
 ---
 
