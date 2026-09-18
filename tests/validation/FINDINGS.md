@@ -102,7 +102,8 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-042 | `qs` (`RWB-05`), and any file that shadows a name or calls above its own initializer | The call graph's named-binding paths resolved a name by SPELLING — `resolveSingleAssignmentValue` is whole-file, name-only and first-match-wins — so an inner `const fn = safe` was answered with an outer `const fn = danger`'s value, and a call written above its initializer was answered with that initializer. Separately, a name bound to a NAMED function expression (`var parseValues = function parseQueryStringValues(){}`) was indexed under the expression's own name and so matched nothing | **Soundness, fabricating direction** — both shadowing and order produce a call edge to a function the program does not reach through that name (a false `AFFECTED` risk, never a false `NOT_AFFECTED` — **this parenthesis is WRONG and is corrected by RWF-043 § 1: a fabricated edge DISPLACES the honest `unknown` blocker, and can therefore produce a false `NOT_AFFECTED`**); the missed function expressions are precision only | **Fixed (P1-B3)** — see below |
 | RWF-043 | `lodash` (found via the P1-B3 corpus differential); any file with two same-named functions in unrelated scopes | `findLocalFunctionNodeId` attributes a bare-name call to the FIRST same-named function anywhere in the file, at any nesting depth, with no scope check — so `lodash`'s module-scope `var freeParseInt = parseInt` (the ambient global) could be paired with its own `parseInt` declared inside `runInContext` | **Soundness, fabricating direction** — invents a call edge to a function never reached through that name; can produce a false `AFFECTED` and a misleading evidence path, ~~never a false `NOT_AFFECTED`~~. **The struck clause is WRONG**: the matcher ran BEFORE every authoritative path, so its edge REPLACED the honest `unknown` one, displacing the blocker that withholds `reachableSubgraphComplete` and yielding a false Family-C `NOT_AFFECTED`. Reproduced end-to-end in P1-B3b — see RWF-043 § 1 | **Fixed (P1-B3b)** — the named-binding paths were closed by P1-B3; the direct-call and construct paths are closed by P1-B3b, which removes the matcher entirely — see below |
 | RWF-044 | `fast-xml-parser`, `lru-cache`, `semver` — any module whose function bodies reference a `const`/`let` callable declared later in the file | B3's evaluation-order rule (P1-B3 § 9) refuses a reference written textually above its initializer. That is right about STATEMENT order and wrong about EXECUTION order for a deferred body: `function f() { later(); }` above `const later = ...` only runs `later()` once something calls `f`, which cannot precede module initialization | **Precision only, never soundness** — every refusal costs an edge that is correct in fact; the failure direction is UNKNOWN. 85 call-graph edges in the corpus. These resolved on `779e219` only because the same-name matcher overrode B3's refusal | Open, deliberately not scoped into P1-B3b — precision only; needs deferred-execution modeling, not a heuristic — see below |
-| RWF-045 | any file with two `const { name } = source` patterns binding the SAME name in different scopes | `findDestructuredBindingSource` is reached only once `resolveNamedBinding` has proved the reference binds to a destructuring, but it then locates WHICH pattern by a whole-file, first-match search on the bound name — the same flat-index mistake RWF-043 removed from the direct-call paths, surviving on the destructuring bridge | **Soundness, fabricating direction** — reproduced: `main` destructures `run` from `safeMod` and calls it, and the edge resolves to `danger.js#run`. Identical on the P1-B3 base `779e219`, so pre-existing rather than a P1-B3b regression | Open, not yet scoped as a task — see below |
+| RWF-045 | any file with two `const { name } = source` patterns binding the SAME name in different scopes | `findDestructuredBindingSource` is reached only once `resolveNamedBinding` has proved the reference binds to a destructuring, but it then locates WHICH pattern by a whole-file, first-match search on the bound name — the same flat-index mistake RWF-043 removed from the direct-call paths, surviving on the destructuring bridge | **Soundness, BOTH directions** — reproduced: `main` destructures `run` from `safeMod` and calls it, and the edge resolves to `danger.js#run`. Identical on the P1-B3 base `779e219`, so pre-existing rather than a P1-B3b regression. The record's original "fabricating direction" framing was INCOMPLETE and is corrected below: an end-to-end oracle now reproduces a false `NOT_AFFECTED` carrying a complete Family C proof over a call the program really makes into the vulnerable export, AND a false `AFFECTED` against a program that never calls it | **Fixed (RWF-045)** — see below |
+| RWF-046 | any file with two FUNCTION-LOCAL `require`s binding the same local name to different specifiers — and the non-destructured `const mod = require(...)` form equally | `source-index.ts`'s `extractRequireBindings` keys a require binding on its `localName` in a FILE-level import table, with no scope attached, so a require written inside a function body is registered as though it bound at module scope and two same-named locals collapse onto whichever was indexed first | **Soundness, both directions** — by RWF-043's displacement argument, the wrong resolved edge REPLACES the honest `unknown` one. Reproduced on merged main `b9bb81b`; NOT destructuring-specific, so deliberately outside RWF-045's remediation, which leaves it unchanged | Open, recorded, not scoped as a task — see below |
 
 ---
 
@@ -14030,3 +14031,371 @@ it. Expect a corpus differential, and expect some edges to be withdrawn.
 That would remove legitimate resolutions (a destructured rename off a
 namespace import is a real, common shape) for a defect that is about
 pattern SELECTION, not about the bridge existing.
+
+---
+
+## RWF-045 — REMEDIATED: the destructuring bridge now starts from the binding element
+
+**Branch:** `rwf-045-destructured-binding-source-authority`, based on the
+merged main `b9bb81b` (P1-B3, P1-B3b, the VT-210 rest-parameter hotfix and
+the VT-210 default-parameter hotfix all present).
+
+**Scope.** Pattern SELECTION only. This does not broaden what the
+destructuring bridge supports, does not touch RWF-044's deferred-execution
+precision, and does not move RWF-006/RWF-001/Block C.
+
+### The old mechanism, exactly
+
+`resolveNamedCalleeBinding` routes ONE refusal from `named-bindings.ts`
+onward rather than treating it as final:
+
+```ts
+if (binding.kind === "unresolved" && binding.cause === "destructuring") {
+  const destructured = findDestructuredBindingSource(
+    callee.text,                    // <- TEXT
+    prepared.index.sourceFile,      // <- the WHOLE FILE
+  );
+```
+
+`findDestructuredBindingSource` walked the entire file and returned the
+FIRST `const { <name> } = <identifier>` it met, at any depth, in any
+scope. Its inputs were a STRING and a `SourceFile`; its lookup key was the
+bound name; its search scope was the file; its ordering was source order,
+first match wins, and it returned `{ source, propertyName }` — from which
+the caller synthesized `source.propertyName` and handed it to
+`resolveAliasedValue`, i.e. to the full import/member provenance chain.
+
+The gate in front of it does not save it. `resolveNamedBinding` proves the
+reference binds to *a* destructuring in its innermost declaring scope —
+that much is authoritative — but it names no declaration. The name-keyed
+search that answered "WHICH pattern?" could cross scopes freely.
+Declaration authority stopped one step short of the answer.
+
+**Caller inventory.** `findDestructuredBindingSource` had exactly ONE
+production caller, `resolveNamedCalleeBinding` (call-graph.ts), and one
+doc reference in `named-bindings.ts`'s `destructuring` cause. Both are
+updated. `grep -rn findDestructuredBindingSource src/` now returns
+nothing outside this record.
+
+### Minimal reproduction
+
+```js
+const dangerMod = require('./danger.js');
+const safeMod = require('./safe.js');
+
+function outer() {
+  const { run } = dangerMod;   // first match in the file
+  return run;
+}
+function main() {
+  const { run } = safeMod;     // what `run()` below actually binds to
+  return run();
+}
+```
+
+- reference node: the `run` in `return run()` inside `main`
+- exact BindingElement: `run` in `const { run } = safeMod`
+- owning VariableDeclaration: `{ run } = safeMod`
+- initializer/source: `safeMod`
+- old helper result: `{ source: dangerMod, propertyName: "run" }`
+- wrong target chosen: `danger.js#run`
+- why: `outer`'s pattern is written first, and first-match-by-name wins
+
+### The authoritative replacement
+
+`named-bindings.ts` gains `resolveDestructuredBindingElement(reference)`,
+which reuses the EXISTING shared lexical authority
+(`findBindingDeclaration`) and returns the exact `ts.BindingElement` — the
+same move `resolveParameterDeclaration` makes for VT-210. No second scope
+resolver was introduced; the `ScopeDeclaration` record already carried the
+element node, so the extension is a narrow accessor, not new machinery.
+
+`call-graph.ts`'s `findDestructuredBindingSource(name, sourceFile)` is
+replaced by `resolveDestructuredBindingSource(reference)`. The new flow is:
+
+```
+reference
+  -> resolveDestructuredBindingElement (authoritative lexical lookup)
+  -> exact BindingElement
+  -> element.parent            (the exact ObjectBindingPattern)
+  -> pattern.parent            (the exact VariableDeclaration)
+  -> declaration.initializer   (the exact source identifier)
+  -> resolveAliasedValue       (the EXISTING import/member provenance)
+```
+
+**API design.** The unsound call is now inexpressible: the function takes
+a `ts.Identifier` reference node and there is no name-keyed entry point to
+reach. `findDestructuredBindingSource("run", ...)` does not typecheck and
+does not exist.
+
+**No text-first fallback.** A refusal from the shared binding model is
+never rescued by a file scan. If `resolveDestructuredBindingElement`
+returns nothing, the call stays UNKNOWN. The gate is unchanged and still
+admits ONLY the `destructuring` cause, so `parameter`, `reassigned`,
+`used_before_initialized`, `ambiguous_declarations` and `alias_cycle`
+remain final.
+
+### Behaviour, shape by shape
+
+| shape | result | why |
+| --- | --- | --- |
+| `const { run } = safe; run()` | resolves to `safe.run` | the element's own declaration |
+| `const { run: execute } = safe; execute()` | resolves to `safe.run` | property key read off THIS element, after identity |
+| `const { run: execute } = safe; run()` | UNKNOWN | `run` is not bound; a property key is not a local name |
+| outer/inner same name | each to its OWN source | declaration identity, not source order |
+| sibling scopes | each to its OWN source | neither declaration is in scope at the other's call |
+| parameter shadowing | never the outer source | the gate refuses with cause `parameter` |
+| block shadowing | never the outer source | the block `const` owns the reference |
+| `let {run} = safe; run = other; run()` | UNKNOWN | `const`-only; stale provenance refused |
+| `var { run } = safe` | UNKNOWN | rebindable |
+| `const { run = fallback } = source` | UNKNOWN | two possible runtime values; **changed** — the old helper mapped this to `source.run` unconditionally |
+| `const { api: { run } } = source` | UNKNOWN | nested member path not modeled; no same-name attribution |
+| `const [run] = source` | UNKNOWN | array patterns bind by position |
+| `const { other, ...run } = source` | UNKNOWN | rest holds the remaining properties |
+| `const { run } = require("./safe.js")` | resolves, unchanged | a destructured REQUIRE is an import binding; `source-index.ts` indexes it and the import machinery owns it. The bridge is never consulted |
+
+**Declaration kinds.** `const` only, as before. `let`/`var` are refused
+rather than trusted, which is what makes reassignment fail closed.
+
+**DELIBERATELY NO ORDER RULE.** A reference written textually above its
+own destructuring behaves exactly as it did before this change. The
+temporal-dead-zone question is the deferred-execution debt RWF-044 owns;
+it applies equally to every `const` in the module, and answering it here
+for one binding form only would move that boundary under cover of a
+name-authority fix.
+
+### PackageInstance
+
+Exact install identity is preserved because the source identifier handed
+to `resolveAliasedValue` is now the one written in the declaration the
+reference actually binds to, and that identifier is resolved against its
+OWN file's module model. A twin fixture pins it: two installs of `lib`
+at the same version, one top-level and one nested under `wrapper`, both
+exporting `run`; the destructuring inside `wrapper` resolves to wrapper's
+nested install. Package name, version, local binding name, property key
+and exported member are all identical across the twins, so nothing but
+install identity can satisfy the assertion.
+
+The existing PackageInstance gates (`package-instances.test.ts`,
+`package-instances.differential-oracle.test.ts`,
+`resolved-target.workspace-twins.test.ts`) pass unchanged.
+
+### Corpus prevalence
+
+`scripts/rwf-045-corpus.mjs`, over `fixtures/`,
+`tests/adversarial/v1/fixtures`, `tests/adversarial/v2/fixtures` and
+`tests/validation/fixtures` (1283 files). It gates each call site exactly
+as production does — the bridge is counted only for a `destructuring`
+refusal — and runs the SHIPPING resolver from `dist/` against a verbatim
+copy of the base helper.
+
+| measure | count |
+| --- | --- |
+| files scanned | 1283 |
+| files with bridge call sites | 18 |
+| projects with bridge call sites | 12 |
+| bridge call sites | 54 |
+| old helper hits | 1 |
+| new helper hits | 1 |
+| sites with >1 same-name candidate | 0 |
+
+**This is not a soundness argument.** Prevalence says how often the corpus
+happens to exercise the shape, not whether the old rule was safe. The
+defect is reproduced by construction in the focused suites and by the
+end-to-end oracle; that is the evidence, and D-12's warning applies to the
+zero in the last row.
+
+### Graph differential
+
+Merged main `b9bb81b` vs this branch, every changed edge classified:
+
+| class | count |
+| --- | --- |
+| A. fabricated wrong-source edge removed | 0 |
+| B. wrong target corrected | 0 |
+| C. honest edge retained | 1 |
+| D. conservative UNKNOWN introduced | 0 |
+| E. unexpected | **0** |
+
+The single corpus hit resolves to the identical source identifier and
+property under both rules. **Edge additions: none** — no branch-only edge
+exists to audit. **Edge removals: none** — so there is nothing here to
+celebrate OR to charge as precision loss; the corpus simply does not
+contain the adversarial shape. The behaviour change is real and is pinned
+by construction in the focused suites, not by corpus movement.
+
+### Verdict / proof differential
+
+`npm run test:validation` on `b9bb81b` and on this branch produce
+BYTE-IDENTICAL result tables: 18 passed, the same 5 pre-existing known
+failures (RWB-03, RWB-05, RWB-09b, VAL-002, VAL-003), same expected/actual
+verdicts throughout. No finding, verdict, confidence, target,
+PackageInstance, evidence path, negative proof, unknown reason or
+unreported candidate moved, so no manual audit of a moved verdict is owed.
+
+**No new negative proof appears anywhere**, so RWF-026's manual-audit
+obligation for a new Family C proof is not triggered.
+
+### Family C / AFFECTED impact — both directions
+
+RWF-043 established that a fabricated resolved edge can DISPLACE the
+blocker that withholds `reachableSubgraphComplete`. RWF-045 is the same
+mechanism on the destructuring bridge, and
+`src/analysis/verdict.destructured-binding-source-authority.integration.test.ts`
+reproduces BOTH directions end to end on `b9bb81b`:
+
+- **False `NOT_AFFECTED`.** An innocuous local destructuring of `end` is
+  written first; the function that really destructures `end` off the
+  vulnerable package has its call resolved to the local function instead.
+  The vulnerable target leaves the reachable subgraph, no unresolved edge
+  remains to withhold the proof, Family C certifies it, and the scan
+  reports `NOT_AFFECTED` for a call the program really makes. Confirmed:
+  on base the verdict is `NOT_AFFECTED`; on this branch it is `AFFECTED`.
+- **False `AFFECTED`.** Swap the two destructurings and the innocuous call
+  resolves to the VULNERABLE export, reporting `AFFECTED` against a
+  program that never touches it.
+
+RWF-045 is therefore **not one-directional**, and the original record's
+"fabricating direction" framing is corrected accordingly.
+
+### Text-authority sweep
+
+Every surviving destructuring-related text read in production:
+
+| site | use | classification |
+| --- | --- | --- |
+| `call-graph.ts` `resolveDestructuredBindingSource` — `propertyName ?? name` | selects the member AFTER the element is settled | property selection after identity — **safe** |
+| `call-graph.ts` `findObjectLiteralPropertyValue` — `name.text === propertyName` | reads a property off an ALREADY-authoritative receiver value | property selection after identity — **safe** |
+| `named-bindings.ts` `boundName: element.name.text` | keys the per-SCOPE declaration index | identity lookup, scope-bounded — **safe** |
+| `commonjs-reexports.ts` `candidates.set(element.name.text, …)` | top-level-only, and guarded by `declarationCounts.get(name) === 1` | identity lookup, guarded by a uniqueness refusal — **safe** |
+| `call-graph.ts` `rootIdentifierOf` | only feeds `isKnownGlobalIdentifier` | refusal-only — **safe** |
+| `source-index.ts` `extractRequireBindings` localName | file-scope import table keyed by local name | **unsafe authority — but NOT destructuring-specific**; recorded as RWF-046 below |
+
+No unsafe authority survives in RWF-045's owned path.
+
+### Performance
+
+No index and no new traversal were added. The whole-file walk per query is
+GONE — it is replaced by the existing scope-index lookup plus a fixed
+number of parent-pointer hops (element → pattern → declaration →
+initializer), so the change is strictly cheaper per query, not merely
+bounded. `named-bindings.performance.test.ts` (which counts
+`namedBindingScopeIndexBuilds`) and
+`call-graph.higher-order-index.performance.test.ts` pass unchanged, and
+`npm run test:performance` passes. No structural operation-count test was
+added because no new index or traversal exists to bound.
+
+### Mutation testing
+
+Each mutation was applied to production source and the focused suites
+re-run; every one fails as required.
+
+| mutation | effect | result |
+| --- | --- | --- |
+| restore the whole-file first-same-name scan | 10 tests fail, incl. all 5 oracle tests | **killed** |
+| treat the property key as the local binding name | 2 renaming tests fail | **killed** |
+| ignore shadowing (weaken the gate AND the lookup) | 11 tests fail, incl. parameter shadowing | **killed** |
+| ignore reassignment (drop `const`) | 2 stability tests fail | **killed** |
+| collapse PackageInstance (resolve specifiers from the project root) | the twin test fails | **killed** |
+
+Two of these had to be RETARGETED after a first attempt survived, and the
+survivals are themselves findings worth recording:
+
+- Mutating only `resolveDestructuredBindingSource` could not break
+  shadowing, because shadowing is enforced EARLIER — a shadowed name
+  refuses with cause `parameter`, so the bridge is never reached. The
+  honest mutation weakens the gate too, and then the shadow tests fail.
+- Replacing the source identifier with a fresh same-TEXT identifier did
+  not break instance isolation, because module resolution is per-FILE:
+  within the correct file, the source's text is sufficient. Instance
+  identity is carried by WHICH FILE resolves the specifier, so the real
+  collapse mutation is in `module-resolver.ts`, and that one does fail the
+  twin test.
+
+### Residual limitations
+
+1. Nested patterns, array patterns, defaulted elements, rest elements,
+   non-`const` declarations and non-identifier sources all stay UNKNOWN.
+   These are refusals, not gaps that fabricate.
+2. The defaulted-element refusal is a genuine, deliberate PRECISION LOSS
+   against the base, which resolved `const { run = fallback } = source` to
+   `source.run` unconditionally. Zero corpus sites are affected.
+3. No order rule — see above; RWF-044 owns it.
+4. RWF-046 (below) remains open and can still collapse two function-local
+   requires that bind the same local name.
+
+### Closure
+
+**Closed.** The single production caller is declaration-authoritative, the
+name-keyed entry point no longer exists, and every gate passes. Closure is
+scoped to destructured-binding SOURCE SELECTION and claims nothing about
+RWF-046, RWF-044, RWF-006, RWF-001 or Block C.
+
+### Boundaries
+
+- **RWF-043** (direct/local + higher-order same-name authority) is
+  untouched and its record is not rewritten. RWF-045 is a separate finding
+  on a separate path that happens to share RWF-043's displacement
+  mechanism; sharing a mechanism is not sharing a fix.
+- **RWF-044** (used-before-initialized / deferred execution) — no
+  implementation movement, deliberately, as recorded above.
+- **RWF-006, RWF-001, Block C** (bundle exports, call-result exports,
+  prototype receivers, `this` modeling) — no implementation movement.
+
+---
+
+## RWF-046 — A function-local `require` binds at FILE scope, so two same-named locals collapse
+
+**Discovered:** while auditing RWF-045's import/require interaction
+(RWF-045 § 18). **Not fixed here**, and deliberately so: it is not
+destructuring-specific, so folding it into RWF-045 would both overstate
+that fix and understate this one.
+
+**Mechanism.** `source-index.ts`'s `extractRequireBindings` records a
+`require()` bound to a variable declaration as an `IndexedImport` keyed by
+`localName`, with no scope attached — the import table is a FILE-level
+map. A `require` written inside a function body is therefore registered as
+though it bound at module scope, and two functions that bind the same
+local name to DIFFERENT specifiers collapse onto whichever was indexed
+first.
+
+**Reproduction.** Both calls resolve to `safe.js#run`; `b`'s is wrong.
+
+```js
+function a() {
+  const { run } = require('./safe.js');
+  return run();
+}
+function b() {
+  const { run } = require('./danger.js');
+  return run();
+}
+```
+
+**Not destructuring-specific.** The non-destructured form collapses
+identically, which is what places it outside RWF-045:
+
+```js
+function a() { const mod = require('./safe.js');   return mod.run(); }
+function b() { const mod = require('./danger.js'); return mod.run(); }
+```
+
+**Impact.** Soundness, both directions, by the same displacement argument
+RWF-043 established — a wrong resolved edge replaces the honest `unknown`
+one. Reproduced on merged main `b9bb81b`; pre-existing, and unchanged by
+RWF-045's remediation.
+
+**How to close it.** Give the import table the same treatment RWF-043 gave
+the function index and RWF-045 gives the destructuring bridge: key a
+require binding on its DECLARATION, and resolve a reference to it through
+the shared lexical authority in `named-bindings.ts` rather than by local
+name at file scope. Note that `named-bindings.ts` already refuses such a
+reference with cause `import_binding`, so the fix belongs on the
+symbol-binder side of that refusal, not in a second resolver.
+
+**Do not** close it by scoping the import table heuristically (e.g. "only
+top-level requires count"). That would silently drop the many
+function-local requires that are genuinely unambiguous, trading a
+soundness defect for a large precision loss.
+
+**Status.** Open, recorded, not scoped as a task.
