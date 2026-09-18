@@ -2474,7 +2474,26 @@ describe("buildCallGraph: higher-order call value flow (VT-210)", () => {
     });
   });
 
-  it("resolves to the first call site's argument when the function is called more than once", async () => {
+  /**
+   * P1-B3b REMEDIATION — this test previously asserted the OPPOSITE, under
+   * the name "resolves to the first call site's argument when the function
+   * is called more than once", and the behaviour it pinned was unsound.
+   *
+   * `invoke` is called with `vulnerable` and with `safe`. Both are real,
+   * both reach `fn`, and nothing in the program makes either the answer.
+   * Returning `vulnerable` was not a resolution but a sample that happened
+   * to be written first — and because a RESOLVED edge suppresses the
+   * `unknown` blocker that withholds `reachableSubgraphComplete`, picking
+   * one arbitrarily is the same displacement defect RWF-043 documents,
+   * arriving through the higher-order path instead of the flat name index.
+   * An independent audit found it live in `lodash`, where `arrayMap`'s
+   * `iteratee` is passed `baseToString` at one site and
+   * `castArrayLikeObject` at three others.
+   *
+   * A parameter with two distinct callables is UNKNOWN. The single-target
+   * case immediately below is what keeps VT-210 useful.
+   */
+  it("fails closed when two call sites pass DIFFERENT functions", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -2488,11 +2507,33 @@ describe("buildCallGraph: higher-order call value flow (VT-210)", () => {
     const graph = await graphFor(root, [entry]);
 
     const invokeNode = findNode(graph, (n) => n.name === "invoke");
+    expect(invokeNode).toBeDefined();
+
+    const edge = graph.edges.find((e) => e.from === invokeNode?.id);
+    expect(edge).toMatchObject({
+      resolution: { kind: "unknown", reason: "unsupported_callee_binding" },
+    });
+  });
+
+  it("resolves when every call site passes the SAME function", async () => {
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.ts",
+      "function vulnerable() {}\n" +
+        "function invoke(fn) {\n  fn();\n}\n" +
+        "function main() {\n  invoke(vulnerable);\n  invoke(vulnerable);\n}\n",
+    );
+
+    const graph = await graphFor(root, [entry]);
+
+    const invokeNode = findNode(graph, (n) => n.name === "invoke");
     const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
     expect(invokeNode).toBeDefined();
 
     const edge = graph.edges.find((e) => e.from === invokeNode?.id);
     expect(edge).toMatchObject({
+      type: "callback",
       resolution: { kind: "resolved", target: vulnerableNode?.id },
     });
   });
