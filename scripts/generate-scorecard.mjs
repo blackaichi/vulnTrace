@@ -653,7 +653,7 @@ async function build() {
       "Still open",
       `${register.open.length} — ${register.open.map((entry) => entry.id).join(", ")}`,
       "structural — the same table",
-      "Each is a precision gap that degrades to UNKNOWN in both directions, never a false verdict.",
+      "NOT all of one kind, and the difference matters: RWF-001 and RWF-006 are precision gaps that degrade to UNKNOWN in both directions, RWF-044 is precision-only by construction, but RWF-045 is a SOUNDNESS finding in the fabricating direction (a destructuring pattern selected by name across scopes). Reading this row as 'open precision debt' is the misreading to avoid.",
       "'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`.",
     ]),
     row([

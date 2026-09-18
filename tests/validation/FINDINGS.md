@@ -102,6 +102,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-042 | `qs` (`RWB-05`), and any file that shadows a name or calls above its own initializer | The call graph's named-binding paths resolved a name by SPELLING — `resolveSingleAssignmentValue` is whole-file, name-only and first-match-wins — so an inner `const fn = safe` was answered with an outer `const fn = danger`'s value, and a call written above its initializer was answered with that initializer. Separately, a name bound to a NAMED function expression (`var parseValues = function parseQueryStringValues(){}`) was indexed under the expression's own name and so matched nothing | **Soundness, fabricating direction** — both shadowing and order produce a call edge to a function the program does not reach through that name (a false `AFFECTED` risk, never a false `NOT_AFFECTED` — **this parenthesis is WRONG and is corrected by RWF-043 § 1: a fabricated edge DISPLACES the honest `unknown` blocker, and can therefore produce a false `NOT_AFFECTED`**); the missed function expressions are precision only | **Fixed (P1-B3)** — see below |
 | RWF-043 | `lodash` (found via the P1-B3 corpus differential); any file with two same-named functions in unrelated scopes | `findLocalFunctionNodeId` attributes a bare-name call to the FIRST same-named function anywhere in the file, at any nesting depth, with no scope check — so `lodash`'s module-scope `var freeParseInt = parseInt` (the ambient global) could be paired with its own `parseInt` declared inside `runInContext` | **Soundness, fabricating direction** — invents a call edge to a function never reached through that name; can produce a false `AFFECTED` and a misleading evidence path, ~~never a false `NOT_AFFECTED`~~. **The struck clause is WRONG**: the matcher ran BEFORE every authoritative path, so its edge REPLACED the honest `unknown` one, displacing the blocker that withholds `reachableSubgraphComplete` and yielding a false Family-C `NOT_AFFECTED`. Reproduced end-to-end in P1-B3b — see RWF-043 § 1 | **Fixed (P1-B3b)** — the named-binding paths were closed by P1-B3; the direct-call and construct paths are closed by P1-B3b, which removes the matcher entirely — see below |
 | RWF-044 | `fast-xml-parser`, `lru-cache`, `semver` — any module whose function bodies reference a `const`/`let` callable declared later in the file | B3's evaluation-order rule (P1-B3 § 9) refuses a reference written textually above its initializer. That is right about STATEMENT order and wrong about EXECUTION order for a deferred body: `function f() { later(); }` above `const later = ...` only runs `later()` once something calls `f`, which cannot precede module initialization | **Precision only, never soundness** — every refusal costs an edge that is correct in fact; the failure direction is UNKNOWN. 85 call-graph edges in the corpus. These resolved on `779e219` only because the same-name matcher overrode B3's refusal | Open, deliberately not scoped into P1-B3b — precision only; needs deferred-execution modeling, not a heuristic — see below |
+| RWF-045 | any file with two `const { name } = source` patterns binding the SAME name in different scopes | `findDestructuredBindingSource` is reached only once `resolveNamedBinding` has proved the reference binds to a destructuring, but it then locates WHICH pattern by a whole-file, first-match search on the bound name — the same flat-index mistake RWF-043 removed from the direct-call paths, surviving on the destructuring bridge | **Soundness, fabricating direction** — reproduced: `main` destructures `run` from `safeMod` and calls it, and the edge resolves to `danger.js#run`. Identical on the P1-B3 base `779e219`, so pre-existing rather than a P1-B3b regression | Open, not yet scoped as a task — see below |
 
 ---
 
@@ -13642,14 +13643,25 @@ its parameter by declaration and its call sites by declaration; a
 higher-order parameter resolves only on unique authoritative provenance;
 class authority is construct-only.
 
-No text-only comparison anywhere in direct-call or higher-order
-attribution can now decide a target. What textual comparison remains in
-`call-graph.ts` is export-name mapping across a module boundary (where
-the name IS the key) and refusal-only guards, neither of which can create
-an edge.
+No text-only comparison in the DIRECT-CALL or HIGHER-ORDER paths can now
+decide a target. Three textual comparisons remain in `call-graph.ts`, and
+the audit's lesson is to name them rather than to summarise them away:
 
-Still open, and deliberately: **RWF-044**, the
-`used_before_initialized` precision debt.
+- export-name mapping across a module boundary, where the name genuinely
+  IS the key;
+- `resolvesToUnrelatedConstructor`, a refusal-only guard that can
+  withhold an edge but never create one;
+- `findDestructuredBindingSource`, reached only after this module has
+  already proved the reference binds to a destructuring pattern, but
+  which then picks the pattern by a whole-file first-match on the bound
+  NAME. That one CAN decide a target, and it can decide it wrongly. It
+  is recorded as **RWF-045** rather than fixed here, because it is a
+  pre-existing path (verified identical on the P1-B3 base `779e219`),
+  it is not one of the five items this remediation was scoped to, and
+  it needs its own corpus differential.
+
+Still open, deliberately: **RWF-044** (`used_before_initialized`
+precision debt) and **RWF-045** (the destructuring bridge above).
 
 
 ---
@@ -13708,3 +13720,71 @@ related thing and is the natural place to start.
 **Do not** close it by relaxing the order rule generally. The rule is
 what stops a call above `const fn = danger` being attributed to `danger`,
 and that attribution is a fabricated edge (RWF-042 § 9).
+
+
+---
+
+## RWF-045 — The destructuring bridge still selects its pattern by name
+
+**Discovered:** by the independent audit of P1-B3b's remediation, while
+enumerating every textual comparison left in `call-graph.ts`.
+
+**Not a P1-B3b regression.** Reproduced identically on the P1-B3 base
+`779e219`. P1-B3b removed the flat same-name matcher from the four
+direct-call sites and corrected VT-210; this path was touched by neither.
+
+**Symptom.** `resolveNamedCalleeBinding` asks the binding model about a
+callee, and one refusal — `destructuring` — is deliberately routed
+onward rather than treated as final, because the call graph has its own
+machinery for that shape. But that machinery finds the pattern by name:
+
+```ts
+findDestructuredBindingSource(callee.text, prepared.index.sourceFile)
+```
+
+which walks the whole file and takes the FIRST `const { <name> } = src`
+it meets, at any depth, in any scope.
+
+**Reproduction.**
+
+```js
+const dangerMod = require('./danger.js');
+const safeMod = require('./safe.js');
+
+function outer() {
+  const { run } = dangerMod;   // first match in the file
+  return run;
+}
+function main() {
+  const { run } = safeMod;     // what `run()` below actually binds to
+  return run();
+}
+```
+
+The edge from `main` resolves to `danger.js#run`.
+
+**Why the gate does not save it.** `resolveNamedBinding` proves that this
+reference binds to *a* destructuring in its innermost declaring scope —
+that much is authoritative. It does not say WHICH pattern, and the
+name-keyed search that answers that question can cross scopes freely.
+Declaration authority stops one step short of the answer.
+
+**Impact.** Soundness, fabricating direction, and by RWF-043's own
+corrected reasoning that includes the false-`NOT_AFFECTED` direction: the
+edge REPLACES the honest `unknown` one, so it can displace the blocker
+that withholds `reachableSubgraphComplete`. No such verdict is observed
+in the current corpus, and — exactly as D-12 warns — that is not
+evidence of absence.
+
+**How to close it.** The same move that closed RWF-043: hand the
+reference NODE to the lookup instead of its text, and return the binding
+element the reference actually denotes. `resolveNamedBinding` already
+walks to the owning declaration; the destructuring case should return
+that `BindingElement` the way `resolveParameterDeclaration` now returns
+the exact `ParameterDeclaration`, so the caller never has to search for
+it. Expect a corpus differential, and expect some edges to be withdrawn.
+
+**Do not** close it by treating the `destructuring` refusal as final.
+That would remove legitimate resolutions (a destructured rename off a
+namespace import is a real, common shape) for a defect that is about
+pattern SELECTION, not about the bridge existing.
