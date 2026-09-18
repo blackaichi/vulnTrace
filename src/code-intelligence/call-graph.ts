@@ -20,6 +20,7 @@ import { isConstDeclaration } from "./local-aliases.js";
 import {
   isMemberAssignedWithin,
   resolveNamedBinding,
+  resolveParameterDeclaration,
   type NamedBinding,
 } from "./named-bindings.js";
 import {
@@ -176,6 +177,18 @@ function moduleNodeId(filePath: string): GraphNodeId {
   return `${filePath}#<module>`;
 }
 
+/**
+ * How a resolved binding is about to be INVOKED at the site asking about
+ * it (P1-B3b remediation).
+ *
+ * Kept as an explicit argument rather than left to each caller to filter
+ * afterwards, because "remember to drop class nodes on the call path" is
+ * exactly the kind of rule that gets forgotten at the fifth call site.
+ * Every function-like declaration answers to both (`new Ctor()` on a
+ * `function` is ordinary JavaScript); only a `class` distinguishes them.
+ */
+type BindingUse = "call" | "construct";
+
 interface FileGraphData {
   readonly index: SourceIndex;
   readonly model: ModuleModel;
@@ -275,18 +288,45 @@ function prepareFile(
  * contains -- a hoisted `function`, a function/arrow expression held by a
  * stable binding, a named function expression seen from inside itself, a
  * `class` -- yields a node. Every refusal, for any cause, yields
- * `undefined` and the caller's own UNKNOWN. There is deliberately no
- * name-based fallback left to rescue a refusal: that fallback WAS the
- * defect.
+ * `undefined` and the caller's own UNKNOWN. Nothing downstream of this
+ * function rescues a refusal by name: the higher-order path that once
+ * did (VT-210, which matched a callee against the enclosing function's
+ * parameter list by spelling) was corrected in the same block and now
+ * binds the exact parameter declaration -- see
+ * {@link resolveHigherOrderCallTarget}.
+ *
+ * USE SITE MATTERS (P1-B3b remediation). The two entry points below take
+ * the same binding to different answers, because "what does this name
+ * denote" and "may that thing be invoked THIS way" are separate
+ * questions and merging them let a class answer a plain call.
  */
+function callableNodeIdFor(
+  reference: ts.Expression,
+  prepared: FileGraphData,
+): GraphNodeId | undefined {
+  return localDeclarationNodeId(reference, prepared, "call");
+}
+
+function constructableNodeIdFor(
+  reference: ts.Expression,
+  prepared: FileGraphData,
+): GraphNodeId | undefined {
+  return localDeclarationNodeId(reference, prepared, "construct");
+}
+
 function localDeclarationNodeId(
   reference: ts.Expression,
   prepared: FileGraphData,
+  use: BindingUse,
 ): GraphNodeId | undefined {
   if (!ts.isIdentifier(reference)) {
     return undefined;
   }
-  return nodeIdForBoundDeclaration(resolveNamedBinding(reference), prepared);
+  return nodeIdForBoundDeclaration(
+    resolveNamedBinding(reference),
+    prepared,
+    use,
+  );
 }
 
 /**
@@ -563,69 +603,185 @@ async function resolveHigherOrderCallTarget(
   prepared: FileGraphData,
   ctx: WalkContext,
 ): Promise<GraphNodeId | undefined> {
-  const enclosing = ts.findAncestor(call, isFunctionLike);
-  if (!enclosing || !ts.isFunctionDeclaration(enclosing) || !enclosing.name) {
+  // (1) WHICH PARAMETER, decided by binding rather than by spelling.
+  // `resolveParameterDeclaration` returns the exact declaration node this
+  // reference denotes, so an inner `let`, `function` or catch binding
+  // that merely SHARES a parameter's name resolves to itself (or to
+  // nothing) and never reaches the provenance walk below.
+  const parameter = resolveParameterDeclaration(callee);
+  if (!parameter) {
     return undefined;
   }
 
-  const paramIndex = enclosing.parameters.findIndex(
-    (p) => ts.isIdentifier(p.name) && p.name.text === callee.text,
-  );
+  // VT-210's own scope, deliberately UNCHANGED by this remediation: only
+  // a named function declaration's parameters propagate, and only for a
+  // call written directly in that function's own body.
+  //
+  // The second half is why `call` is still consulted. Deriving the
+  // enclosing function from `parameter.parent` alone would also admit a
+  // call nested inside a closure the function creates
+  // (`function mixin(object) { ... function () { object(x); } ... }`),
+  // which VT-210 has never attempted and which measurably ADDS resolved
+  // edges -- and a resolved edge suppresses the `unknown` blocker. This
+  // block is a tightening; widening higher-order reach is a separate
+  // question with its own soundness burden, so the nearest enclosing
+  // function must BE the parameter's owner.
+  const enclosing = parameter.parent;
+  if (!ts.isFunctionDeclaration(enclosing) || !enclosing.name) {
+    return undefined;
+  }
+  if (ts.findAncestor(call, isFunctionLike) !== enclosing) {
+    return undefined;
+  }
+  const paramIndex = enclosing.parameters.indexOf(parameter);
   if (paramIndex === -1) {
     return undefined;
   }
 
-  const functionName = enclosing.name.text;
-  const candidateArgs: ts.Identifier[] = [];
+  // (2) WHICH CALL SITES, decided by declaration identity rather than by
+  // the enclosing function's NAME. A same-named function in an unrelated
+  // scope is a different function and its arguments say nothing here.
+  const callSites = callSitesOfDeclaration(enclosing, prepared);
 
-  function collectCallSites(node: ts.Node): void {
-    if (
-      ts.isCallExpression(node) &&
-      ts.isIdentifier(node.expression) &&
-      node.expression.text === functionName
-    ) {
-      const arg = node.arguments[paramIndex];
-      if (arg && ts.isIdentifier(arg)) {
-        candidateArgs.push(arg);
-      }
-    }
-    ts.forEachChild(node, collectCallSites);
-  }
-  collectCallSites(prepared.index.sourceFile);
+  // (3) WHAT THE PARAMETER HOLDS -- and it must be ONE thing.
+  //
+  // This used to return the first identifier argument that resolved,
+  // ignoring every other call site. That is not a resolution, it is a
+  // sample: `lodash`'s `arrayMap` is passed `baseToString` at one site
+  // and `castArrayLikeObject` at three others, and the graph claimed
+  // `baseToString` purely because it is written first. Because a
+  // RESOLVED edge suppresses the `unknown` blocker that withholds
+  // `reachableSubgraphComplete`, an arbitrary pick among real candidates
+  // is the same displacement defect RWF-043 is about -- it just arrives
+  // through the higher-order path instead of the flat index.
+  //
+  // So every call site must agree, and any candidate this analyzer
+  // cannot name at all refuses the whole question rather than being
+  // quietly skipped.
+  let unique: GraphNodeId | undefined;
+  for (const site of callSites) {
+    const arg = site.arguments[paramIndex];
 
-  for (const arg of candidateArgs) {
-    const binding = await bindCallee(
-      arg,
-      prepared.model,
-      ctx.resolver,
-      prepared.index.filePath,
-    );
-
-    if (binding.kind === "resolved") {
-      ctx.onDiscoverFile(binding.target.modulePath);
-      const targetFile = ctx.ensurePrepared(binding.target.modulePath);
-      const targetNodeId = targetFile?.exportNameToNodeId.get(
-        binding.target.exportedName,
-      );
-      if (targetNodeId) {
-        return targetNodeId;
-      }
+    // No argument at this position means the parameter is `undefined` on
+    // that path, and calling `undefined` throws before reaching anything.
+    // Such a site provably contributes no callable, so ignoring it cannot
+    // hide a target.
+    if (!arg) {
       continue;
     }
 
-    // P1-B3b § 18. The argument is an identifier written at a real call
-    // site in this file, so the question "which local definition is it?"
-    // is the ordinary lexical one and gets the ordinary lexical answer --
-    // not a name match, which here would have handed `invoke(handler)`
-    // any function in the file called `handler`, including one a
-    // parameter or an inner block shadows at that very position.
-    const local = localDeclarationNodeId(arg, prepared);
-    if (local) {
-      return local;
+    // An inline function, a call result, a member expression: all real
+    // candidate values this path does not model. VT-213 owns inline
+    // callbacks at the site that passes them; what must not happen is
+    // claiming a DIFFERENT site's identifier is the single answer while
+    // this one exists.
+    if (!ts.isIdentifier(arg)) {
+      return undefined;
     }
+
+    const target = await resolveArgumentTarget(arg, prepared, ctx);
+    if (!target) {
+      return undefined;
+    }
+    if (unique !== undefined && unique !== target) {
+      return undefined;
+    }
+    unique = target;
   }
 
-  return undefined;
+  return unique;
+}
+
+/**
+ * The single callable a higher-order ARGUMENT names, through the same
+ * two authorities a callee gets: the import machinery first, then exact
+ * lexical binding for a same-file definition (P1-B3b § 18).
+ *
+ * Returns `undefined` for anything else -- a parameter, a reassigned
+ * binding, an unresolvable import -- which the caller treats as "this
+ * call site's contribution is unknown", never as "skip this call site".
+ */
+async function resolveArgumentTarget(
+  arg: ts.Identifier,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<GraphNodeId | undefined> {
+  const binding = await bindCallee(
+    arg,
+    prepared.model,
+    ctx.resolver,
+    prepared.index.filePath,
+  );
+
+  if (binding.kind === "resolved") {
+    ctx.onDiscoverFile(binding.target.modulePath);
+    const targetFile = ctx.ensurePrepared(binding.target.modulePath);
+    return targetFile?.exportNameToNodeId.get(binding.target.exportedName);
+  }
+
+  return callableNodeIdFor(arg, prepared);
+}
+
+/**
+ * Every call site in this file whose callee authoritatively resolves to
+ * `declaration` -- built once per file and memoized (P1-B3b remediation).
+ *
+ * WHAT THIS REPLACED. A whole-file walk, per query, matching
+ * `node.expression.text === functionName`. Two defects in one line: it
+ * re-walked the file for every higher-order call site, and it matched by
+ * NAME, so a different function of the same name in an unrelated scope
+ * donated its arguments to this one.
+ *
+ * Both are fixed by inverting the work. The file is walked ONCE; every
+ * bare-identifier call in it is resolved through the same lexical model
+ * everything else uses; and the result is bucketed by the DECLARATION the
+ * callee denotes. Later queries are a map lookup, so the new authority is
+ * strictly cheaper than the text scan it replaces despite proving more --
+ * which is the property `higherOrderCallSiteIndexBuilds` lets a test
+ * assert structurally rather than with a stopwatch.
+ */
+function callSitesOfDeclaration(
+  declaration: ts.FunctionDeclaration,
+  prepared: FileGraphData,
+): readonly ts.CallExpression[] {
+  let index = callSiteIndexByFile.get(prepared.index.sourceFile);
+  if (!index) {
+    higherOrderCallSiteIndexBuilds += 1;
+    index = new Map<ts.FunctionDeclaration, ts.CallExpression[]>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isCallExpression(node) && ts.isIdentifier(node.expression)) {
+        const binding = resolveNamedBinding(node.expression);
+        if (binding.kind === "function") {
+          const existing = index?.get(binding.declaration);
+          if (existing) {
+            existing.push(node);
+          } else {
+            index?.set(binding.declaration, [node]);
+          }
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(prepared.index.sourceFile);
+    callSiteIndexByFile.set(prepared.index.sourceFile, index);
+  }
+  return index.get(declaration) ?? [];
+}
+
+const callSiteIndexByFile = new WeakMap<
+  ts.SourceFile,
+  Map<ts.FunctionDeclaration, ts.CallExpression[]>
+>();
+
+let higherOrderCallSiteIndexBuilds = 0;
+
+/**
+ * How many times a file's higher-order call-site index has been built.
+ * Exposed so a test can assert the cost is per FILE, not per query --
+ * see {@link callSitesOfDeclaration}.
+ */
+export function higherOrderCallSiteIndexBuildCount(): number {
+  return higherOrderCallSiteIndexBuilds;
 }
 
 /**
@@ -877,9 +1033,25 @@ function classConstructorNodeIdFor(
 function nodeIdForBoundDeclaration(
   binding: NamedBinding,
   prepared: FileGraphData,
+  use: BindingUse,
 ): GraphNodeId | undefined {
   if (binding.kind === "class") {
-    return classConstructorNodeIdFor(binding.declaration, prepared);
+    // P1-B3b remediation: CONSTRUCT-ONLY. `Thing()` without `new` throws
+    // a TypeError in ClassDefinitionEvaluation's caller, before a single
+    // statement of the constructor body runs, so an edge into that
+    // constructor describes an execution that provably cannot happen.
+    // The pre-B3b matcher emitted it (it matched names and knew nothing
+    // about invocation form) and B3b's first implementation inherited it
+    // by routing both call and construct through one helper; an
+    // independent audit caught that, including through an alias
+    // (`const Alias = Thing; Alias();`) where the pre-B3b behaviour was
+    // an honest UNKNOWN and the regression made it a resolved edge.
+    //
+    // Refusing costs nothing real: no correct program reaches a class
+    // constructor this way.
+    return use === "construct"
+      ? classConstructorNodeIdFor(binding.declaration, prepared)
+      : undefined;
   }
   const declaration =
     binding.kind === "function" || binding.kind === "function-expression"
@@ -962,7 +1134,7 @@ async function resolveAliasedValue(
   // a lexical question about `value`'s own position, and the name match
   // that used to stand here could override a refusal B3 had already
   // issued about that very name one hop earlier.
-  return localDeclarationNodeId(value, prepared);
+  return callableNodeIdFor(value, prepared);
 }
 
 /**
@@ -1024,7 +1196,7 @@ async function resolveNamedCalleeBinding(
 ): Promise<GraphNodeId | undefined> {
   const binding = resolveNamedBinding(callee);
 
-  const localFunction = nodeIdForBoundDeclaration(binding, prepared);
+  const localFunction = nodeIdForBoundDeclaration(binding, prepared, "call");
   if (localFunction) {
     return localFunction;
   }
@@ -1594,7 +1766,7 @@ async function classifyCall(
   // competing -- and the VT-214 alias path below re-asks this very same
   // authority before doing anything else. There is no longer any
   // name-based path anywhere that can answer after B3 has declined.
-  const localTarget = localDeclarationNodeId(callee, prepared);
+  const localTarget = callableNodeIdFor(callee, prepared);
   if (localTarget) {
     return {
       from,
@@ -1874,7 +2046,7 @@ async function classifyNew(
   // nothing more: this says which class is being constructed, never
   // anything about the instance it produces, its prototype or its `this`
   // receiver, all of which remain Block C's.
-  const localTarget = localDeclarationNodeId(callee, prepared);
+  const localTarget = constructableNodeIdFor(callee, prepared);
   if (localTarget) {
     return {
       from,
