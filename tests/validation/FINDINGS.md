@@ -13664,6 +13664,65 @@ Still open, deliberately: **RWF-044** (`used_before_initialized`
 precision debt) and **RWF-045** (the destructuring bridge above).
 
 
+### 8. Post-merge correction: rest parameters (hotfix)
+
+**Found after merge**, by the final focused re-audit of section 6's work,
+while checking every parameter shape that reaches VT-210. Recorded here
+rather than as a new RWF entry because it is the same finding's own
+mechanism and is completely fixed by the one-line guard below (register
+convention: a post-merge correction to a closed finding appends to its
+remediation history).
+
+**The defect.**
+
+```js
+function vulnerable() {}
+function invoke(...fn) {
+  fn();
+}
+invoke(vulnerable);
+```
+
+VT-210 read the argument at the rest parameter's position and attributed
+`fn()` to `vulnerable`. But a rest parameter binds the ARRAY of the
+remaining arguments, never one of them, so `fn` is `[vulnerable]` and
+`fn()` throws. The edge describes an execution that cannot happen.
+
+**Why section 6 did not catch it.** Section 6 replaced spelling with
+declaration identity, and on that axis it is correct here:
+`resolveParameterDeclaration` returns exactly the right declaration,
+because `fn` genuinely IS that `ParameterDeclaration`. The error is one
+step further on — exact binding identity does not by itself tell you what
+the binding HOLDS. It is the same error class as calling a class without
+`new`, which section 6 (d) closed; this shape was simply missed.
+
+**Pre-existing, not introduced by P1-B3b.** The text matcher section 6
+replaced (`p.name.text === callee.text`) matched a rest parameter's name
+just as happily. Reproduced identically on the P1-B3 base `779e219`, on
+the pre-remediation `c46f12a`, and on merged `a6922ff`. P1-B3b's rewrite
+neither created nor widened it; it retained it.
+
+**Measured corpus occurrences: ZERO.** The call-graph differential over
+all 15 real-world fixtures is byte-identical before and after the fix —
+5838 edges either way, no verdict, proof, instance or target movement.
+The shape is rare because calling a rest parameter always throws, so no
+working program contains it.
+
+**The fix.** `resolveHigherOrderCallTarget` refuses a parameter carrying
+`dotDotDotToken` before reading positional provenance. The guard lives in
+that consumer, not in `resolveParameterDeclaration`: the binding lookup's
+answer is correct and other consumers may legitimately want it, so making
+the model deny a binding that exists would be the wrong repair.
+
+An INDEXED read (`fn[0]()`) is deliberately not rescued by this change —
+it is an element access, and the dynamic-member boundary already owns it.
+
+**Section 7's closure is otherwise intact.** The four flat-index matcher
+sites, VT-210 parameter identification, VT-210 enclosing-call
+identification and multi-valued provenance all stand as recorded.
+RWF-044 and RWF-045 are unaffected and remain open.
+
+
 ---
 
 ## RWF-044 — B3's positional order rule refuses legitimate calls in deferred-execution contexts
