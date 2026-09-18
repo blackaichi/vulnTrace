@@ -113,3 +113,91 @@ describe("P1-B3: named-binding scope analysis is indexed, not rescanned", () => 
     expect(largeCost).toBe(smallCost);
   });
 });
+
+/**
+ * P1-B3b — the same guarantee for the two authorities this block added.
+ *
+ * The matcher they replace was an `Array#find` over every function-like
+ * node in the file, run once per call site: linear per query, quadratic
+ * over a file. The replacement must not reintroduce that shape through a
+ * side door, so the class and named-function-expression paths are held to
+ * the same structural contract as every other binding — they read the
+ * SAME per-scope indexes, and asking about them repeatedly must cost
+ * nothing.
+ */
+describe("P1-B3b: class and self-name authority reuse the same indexes", () => {
+  function constructionSites(count: number): ts.Identifier[] {
+    const lines = [
+      "class Thing {",
+      "  constructor() {}",
+      "}",
+      "function main() {",
+    ];
+    for (let i = 0; i < count; i++) {
+      lines.push("  new Thing();");
+    }
+    lines.push("}");
+    const sourceFile = ts.createSourceFile(
+      "ctor.js",
+      lines.join("\n"),
+      ts.ScriptTarget.Latest,
+      /* setParentNodes */ true,
+    );
+    const found: ts.Identifier[] = [];
+    function visit(node: ts.Node): void {
+      if (ts.isNewExpression(node) && ts.isIdentifier(node.expression)) {
+        found.push(node.expression);
+      }
+      ts.forEachChild(node, visit);
+    }
+    visit(sourceFile);
+    return found;
+  }
+
+  it("costs zero additional scope walks per construction site", () => {
+    const references = constructionSites(200);
+    expect(references).toHaveLength(200);
+
+    const first = references[0];
+    expect(first).toBeDefined();
+    if (first) {
+      expect(resolveNamedBinding(first).kind).toBe("class");
+    }
+    const afterFirst = namedBindingScopeIndexBuilds();
+
+    for (const reference of references.slice(1)) {
+      expect(resolveNamedBinding(reference).kind).toBe("class");
+    }
+
+    expect(namedBindingScopeIndexBuilds()).toBe(afterFirst);
+  });
+
+  it("costs zero additional scope walks per self-recursive call", () => {
+    const lines = ["const outer = function inner(n) {"];
+    for (let i = 0; i < 200; i++) {
+      lines.push(`  inner(n - ${i});`);
+    }
+    lines.push("};");
+    const sourceFile = ts.createSourceFile(
+      "self.js",
+      lines.join("\n"),
+      ts.ScriptTarget.Latest,
+      /* setParentNodes */ true,
+    );
+    const references = calleeReferences(sourceFile);
+    expect(references).toHaveLength(200);
+
+    const first = references[0];
+    expect(first).toBeDefined();
+    if (first) {
+      expect(resolveNamedBinding(first).kind).toBe("function-expression");
+    }
+    const afterFirst = namedBindingScopeIndexBuilds();
+
+    for (const reference of references.slice(1)) {
+      expect(resolveNamedBinding(reference).kind).toBe("function-expression");
+    }
+
+    expect(namedBindingScopeIndexBuilds()).toBe(afterFirst);
+  });
+});
