@@ -299,8 +299,8 @@ not on whether it exists.
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 26 | structural — the status table in `tests/validation/FINDINGS.md` | Every gap found by scanning real packages is recorded before it is fixed, and stays recorded after. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 3 — RWF-001, RWF-006, RWF-044 | structural — the same table | Each is a precision gap that degrades to UNKNOWN in both directions, never a false verdict. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Findings recorded | 27 | structural — the status table in `tests/validation/FINDINGS.md` | Every gap found by scanning real packages is recorded before it is fixed, and stays recorded after. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 4 — RWF-001, RWF-006, RWF-044, RWF-045 | structural — the same table | NOT all of one kind, and the difference matters: RWF-001 and RWF-006 are precision gaps that degrade to UNKNOWN in both directions, RWF-044 is precision-only by construction, but RWF-045 is a SOUNDNESS finding in the fabricating direction (a destructuring pattern selected by name across scopes). Reading this row as 'open precision debt' is the misreading to avoid. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 1 — RWF-002 | structural — the same table | Partly discharged, partly outstanding. RWF-002 is bypassed for unloaded packages; its underlying reachability-scoping tradeoff remains. | **Counting these as closed is the register's single most consequential misreading**, and the blocker counts recorded for RWF-002 are not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
 | Recorded as fixed | 22 | structural — the same table | Every soundness defect found so far has a fixture and a test that keeps it fixed. | A fix is proven for the shapes its fixtures cover. |
 
