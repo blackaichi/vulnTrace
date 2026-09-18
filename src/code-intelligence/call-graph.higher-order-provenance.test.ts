@@ -194,6 +194,164 @@ describe("P1-B3b remediation: VT-210 binds the exact parameter declaration", () 
   });
 });
 
+/**
+ * POST-MERGE HOTFIX -- a rest parameter is not its call site's argument.
+ *
+ * Found by the final P1-B3b re-audit, after the block had merged. Every
+ * other shape in this file is about WHICH declaration a name binds to;
+ * this one is about what the declaration it correctly binds to actually
+ * HOLDS at runtime.
+ *
+ * `resolveParameterDeclaration` answers the binding question correctly
+ * for `function invoke(...fn)`: `fn` really is that `ParameterDeclaration`.
+ * But a rest parameter's value is the ARRAY of the remaining arguments,
+ * never one of them, so reading the argument at its position and calling
+ * the result a callable target is a fabrication -- and `fn()` on an array
+ * throws, so the edge describes an execution that cannot happen. It is
+ * the same error class as calling a class without `new`, which P1-B3b's
+ * remediation closed; this shape was simply missed.
+ *
+ * The defect PREDATES P1-B3b: the text matcher it replaced
+ * (`p.name.text === callee.text`) matched a rest parameter's name just as
+ * happily, and the behaviour is identical on 779e219, on c46f12a and on
+ * the merged block. Zero occurrences in the real-world corpus.
+ */
+describe("VT-210 hotfix: a rest parameter is not a positional argument", () => {
+  it("does not resolve a rest parameter to the argument passed at its position", async () => {
+    const graph = await graphForSource(
+      [
+        "function vulnerable() {}",
+        "function invoke(...fn) {",
+        "  fn();",
+        "}",
+        "function main() { invoke(vulnerable); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "vulnerable"));
+  });
+
+  it("does not pick the first of several arguments collected by a rest parameter", async () => {
+    const graph = await graphForSource(
+      [
+        "function a() {}",
+        "function b() {}",
+        "function invoke(...fn) {",
+        "  fn();",
+        "}",
+        "function main() { invoke(a, b); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "a"));
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "b"));
+  });
+
+  it("does not resolve a rest parameter sitting after ordinary ones", async () => {
+    const graph = await graphForSource(
+      [
+        "function a() {}",
+        "function b() {}",
+        "function invoke(first, ...rest) {",
+        "  rest();",
+        "}",
+        "function main() { invoke(a, b); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "b"));
+  });
+
+  it("leaves an INDEXED read of a rest parameter to the rules that own it", async () => {
+    // `fn[0]()` is an element access, not direct parameter provenance.
+    // The point here is that this hotfix does not quietly start
+    // resolving it either -- the dynamic-member boundary still owns it.
+    const graph = await graphForSource(
+      [
+        "function vulnerable() {}",
+        "function invoke(...fn) {",
+        "  fn[0]();",
+        "}",
+        "function main() { invoke(vulnerable); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "vulnerable"));
+  });
+
+  it("an ORDINARY parameter still resolves -- the fix is specific to rest", async () => {
+    const graph = await graphForSource(
+      [
+        "function vulnerable() {}",
+        "function invoke(fn) {",
+        "  fn();",
+        "}",
+        "function main() { invoke(vulnerable); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectResolvedTo(graph, soleNodeNamed(graph, "vulnerable"));
+  });
+
+  it("a default parameter is unaffected by the rest guard", async () => {
+    // Already fail-closed before this hotfix, for its own reason: the
+    // only call site passes no argument at that position, so there is no
+    // authoritative provenance to read. Pinned so the guard cannot
+    // silently change it.
+    const graph = await graphForSource(
+      [
+        "function fallback() {}",
+        "function invoke(fn = fallback) {",
+        "  fn();",
+        "}",
+        "function main() { invoke(); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "fallback"));
+  });
+
+  it("destructured parameters remain fail-closed, unchanged", async () => {
+    const arrayPattern = await graphForSource(
+      [
+        "function vulnerable() {}",
+        "function invoke([fn]) {",
+        "  fn();",
+        "}",
+        "function main() { invoke(vulnerable); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(
+      arrayPattern,
+      soleNodeNamed(arrayPattern, "vulnerable"),
+    );
+
+    const objectPattern = await graphForSource(
+      [
+        "function vulnerable() {}",
+        "function invoke({ fn }) {",
+        "  fn();",
+        "}",
+        "function main() { invoke(vulnerable); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(
+      objectPattern,
+      soleNodeNamed(objectPattern, "vulnerable"),
+    );
+  });
+});
+
 describe("P1-B3b remediation: VT-210 argument provenance must be unique", () => {
   it("one target passed from several call sites still resolves", async () => {
     const graph = await graphForSource(

@@ -613,6 +613,34 @@ async function resolveHigherOrderCallTarget(
     return undefined;
   }
 
+  // A REST parameter binds the ARRAY of the remaining arguments, never
+  // one of them, so the whole positional-provenance walk below asks the
+  // wrong question about it (post-merge hotfix; see RWF-043 § 8).
+  //
+  // `resolveParameterDeclaration` is right to return this declaration --
+  // `fn` in `function invoke(...fn)` genuinely IS that parameter, and the
+  // binding question has a correct answer. What does not follow is that
+  // the value at its position is the argument written there: `fn()` on an
+  // array throws, so any edge from it describes an execution that cannot
+  // happen. Same error class as calling a class without `new`, which is
+  // refused a few lines away in `nodeIdForBoundDeclaration`, and refused
+  // here for the same reason: exact binding identity does not by itself
+  // make a value callable.
+  //
+  // The guard sits HERE rather than in `resolveParameterDeclaration`
+  // because the defect is in this consumer's reading of the declaration,
+  // not in the declaration lookup. Moving it into the binding model would
+  // make that model lie about a binding that really does exist, and would
+  // change the answer for every future consumer that has its own reason
+  // to ask.
+  //
+  // An indexed read (`fn[0]()`) is a different shape entirely and is not
+  // rescued here: it is an element access, which the dynamic-member
+  // boundary already owns.
+  if (parameter.dotDotDotToken) {
+    return undefined;
+  }
+
   // VT-210's own scope, deliberately UNCHANGED by this remediation: only
   // a named function declaration's parameters propagate, and only for a
   // call written directly in that function's own body.
