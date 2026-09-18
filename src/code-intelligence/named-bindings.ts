@@ -49,7 +49,7 @@ export type NamedBindingUnresolvedCause =
   | "parameter"
   /** The name is an import binding: symbol-binder.ts owns it, and B3 must not build a second module resolver (P1-B3 § 11). */
   | "import_binding"
-  /** The name came out of a destructuring pattern; the call graph's own `findDestructuredBindingSource` owns that shape. */
+  /** The name came out of a destructuring pattern; the call graph's own `resolveDestructuredBindingSource` owns that shape, starting from {@link resolveDestructuredBindingElement}. */
   | "destructuring"
   /** `var x;` / `let x;` -- declared, but never given a value here. */
   | "no_initializer"
@@ -804,6 +804,58 @@ export function resolveParameterDeclaration(
     return undefined;
   }
   return ts.isParameter(declaration.node) ? declaration.node : undefined;
+}
+
+/**
+ * The exact BINDING ELEMENT a reference binds to, or `undefined` when the
+ * reference does not bind to a destructuring pattern at all (RWF-045).
+ *
+ * WHY THIS EXISTS. The call graph routes ONE refusal from this module --
+ * `destructuring` -- onward rather than treating it as final, because it
+ * owns its own bridge from a destructured name to the source it was taken
+ * from. That refusal is authoritative about the SCOPE ("this reference
+ * binds to a destructuring declared here") but names no declaration, so
+ * the bridge used to find the pattern itself by spelling:
+ *
+ *     findDestructuredBindingSource(callee.text, sourceFile)
+ *
+ * -- a whole-file, first-match-wins walk for any `const { <name> } = src`,
+ * at any depth, in any scope. That answers a different question -- does
+ * this file CONTAIN a destructuring of this name -- and says yes for a
+ * pattern in a sibling function, an enclosing block the reference never
+ * sees, or a scope shadowed at the use site. An independent audit showed
+ * it attributing a call to `danger.js#run` in a function that destructured
+ * `run` from `safeMod`, purely because an earlier function destructured
+ * the same name from `dangerMod`.
+ *
+ * Returning the NODE rather than a name/source pair is the same move
+ * {@link resolveParameterDeclaration} makes, for the same reason: the
+ * caller needs binding-element IDENTITY (which element, of which pattern,
+ * of which declaration), and identity is the one thing a name cannot
+ * carry. Everything the bridge then needs -- the property key, the owning
+ * pattern, the declaration kind, the initializer -- is reachable from the
+ * element by parent links, so no second search is required and none can
+ * disagree with this one.
+ *
+ * DELIBERATELY UNFILTERED. A rest element, a defaulted element, an array
+ * pattern, a nested pattern and a non-`const` declaration all reach this
+ * function and are all returned: what a given binding element is ALLOWED
+ * to prove is the consumer's policy, not this module's, and folding those
+ * rules in here would make the two disagree the moment either changed.
+ * This answers only "which binding element does this reference denote?"
+ */
+export function resolveDestructuredBindingElement(
+  reference: ts.Identifier,
+): ts.BindingElement | undefined {
+  const found = findBindingDeclaration(reference, reference.text);
+  if ("kind" in found) {
+    return undefined;
+  }
+  const { declaration } = found;
+  if (declaration.kind !== "destructuring") {
+    return undefined;
+  }
+  return ts.isBindingElement(declaration.node) ? declaration.node : undefined;
 }
 
 /**
