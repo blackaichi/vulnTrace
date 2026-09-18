@@ -13422,12 +13422,15 @@ found by the corpus differential:
   self-recursion where the real code calls the module-level
   `function push (self, item)` 275 lines later. Same shape in `yallist`'s
   `unshift` and `lru-cache`'s `del`. Three occurrences in the corpus.
-- **the matcher pre-empted VT-210's correct answer.** 22 call sites in
+- **the matcher pre-empted VT-210.** 22 call sites in
   `lodash.js` are higher-order (`arrayFilter`'s `predicate(...)`), where
   VT-210 can resolve the real function passed at the call site. Because
   the matcher ran first, they were attributed to an unrelated top-level
-  `predicate`/`iteratee` instead. They now resolve, as `callback` edges,
-  to the function actually passed.
+  `predicate`/`iteratee` instead. Six of them resolve, as `callback`
+  edges, to the same target the matcher had named; the other sixteen
+  turned out to be VT-210 making an arbitrary single-target claim of its
+  own, and section 6 refuses them. Calling all 22 "corrections" was an
+  accounting error the audit caught.
 
 ### 3. What replaced it
 
@@ -13436,10 +13439,17 @@ One question, asked of the one lexical model
 bind to?* Four resolved shapes yield a node and nothing else does — a
 hoisted `function` declaration, a function/arrow expression held by a
 stable binding, a named function expression seen from inside itself, and
-a `class`. Every refusal, for any cause, yields UNKNOWN. **No name-based
-fallback remains anywhere in the call graph**; that fallback was the
-defect, and a fallback that can rescue a refusal is the same defect
-wearing a different position in the ladder.
+a `class`. Every refusal, for any cause, yields UNKNOWN. ~~**No name-based
+fallback remains anywhere in the call graph**~~.
+
+**CORRECTION (P1-B3b remediation).** The struck sentence was wrong, and
+an independent audit caught it before this branch merged. Two name
+comparisons survived inside VT-210, the higher-order rescue that runs
+after this authority, and each could decide an edge on its own -- one of
+them by overriding a refusal this authority had just issued. They are
+corrected in section 6 below. The sentence stays here, struck rather
+than deleted, because the claim was made and has to remain legible as a
+claim that was wrong.
 
 All four former call sites now route through it: `classifyCall`,
 `classifyNew`, `resolveAliasedValue`'s identifier fallback, and VT-210's
@@ -13482,7 +13492,9 @@ At the graph level, 234 edges change, and every one is classified:
 | binding is `reassigned` | 36 | yes |
 | binding holds a non-callable value | 12 | yes |
 | `used_before_initialized` | 85 | no — precision only, RWF-044 |
-| matcher pre-empted VT-210 | 22 | yes — now resolves to the right target |
+| matcher pre-empted VT-210 (same target, edge type only) | 6 | no — target identical |
+| VT-210 single-target claim over a multi-valued parameter | 29 | yes — now UNKNOWN (section 6) |
+| VT-210 refusal falling through to the inline callback | 2 | no — target is the function passed at that call |
 | matcher named the wrong function | 3 | yes — now resolves to the right target |
 
 Packages affected: `lodash` (138), `semver` + `lru-cache` + `yallist`
@@ -13495,15 +13507,150 @@ That last sentence is the point D-12 draws out: the corpus stayed
 entirely green across a change that removed a live false-`NOT_AFFECTED`
 mechanism. A green corpus differential is not a soundness result.
 
-### 5. Status
+### 5. Status as first implemented (superseded by section 7)
 
-**Closed.** No text-only path can decide a call or construct edge. The
-open half named in the original finding — `classifyCall`'s matcher call
-and `resolveAliasedValue`'s identifier fallback — is gone, along with two
-call sites the original finding did not name.
+The open half named in the original finding — `classifyCall`'s matcher
+call and `resolveAliasedValue`'s identifier fallback — is gone, along
+with two call sites the original finding did not name.
 
-Not closed here, and deliberately: the `used_before_initialized`
-refusals, which are a precision debt recorded separately as **RWF-044**.
+This section originally read "**Closed.** No text-only path can decide a
+call or construct edge." An independent audit disproved that sentence
+before the branch merged; section 6 records what it found and what
+closing it actually required.
+
+### 6. VT-210's own text authority (P1-B3b remediation)
+
+Sections 1-5 describe removing the flat same-name matcher from the four
+direct-call sites. An independent audit of that work found the job
+half-done: the higher-order rescue those sites fall through to, VT-210,
+kept **two** name comparisons of its own, and a third defect in how it
+chose among candidates.
+
+**(a) Which name is a parameter.**
+
+```ts
+enclosing.parameters.findIndex(
+  (p) => ts.isIdentifier(p.name) && p.name.text === callee.text)
+```
+
+This asks whether a name *spells* a parameter, not whether the reference
+*binds* to one, so every inner declaration that shadows a parameter's
+name matched. The audit's reproduction:
+
+```js
+function vulnerable() {}
+function invoke(fn) {
+  {
+    function fn() {}
+    fn();
+  }
+}
+function main() { invoke(vulnerable); }
+```
+
+`fn()` binds the inner `function fn() {}`. The binding model refuses the
+name (two declarations own it in `invoke`'s scope) and VT-210 then
+**overrode that refusal**, reinterpreting the call as a call to the
+parameter and redirecting it to `vulnerable`. On the pre-B3b base the
+flat matcher happened to get this shape right, so B3b's first
+implementation made the graph *worse* here -- a new wrong-target edge.
+
+Fixed by `resolveParameterDeclaration` (named-bindings.ts), which returns
+the exact `ParameterDeclaration` node a reference binds to, or nothing.
+Parameter IDENTITY, not spelling, is now what admits a call to VT-210.
+
+**(b) Which call sites belong to the enclosing function.**
+
+```ts
+node.expression.text === functionName
+```
+
+A whole-file search by name, so a different function of the same name in
+an unrelated scope donated its arguments. Replaced by
+`callSitesOfDeclaration`, which walks the file once, resolves every
+bare-identifier call through the same lexical model everything else
+uses, and buckets the results by the DECLARATION the callee denotes.
+Later queries are a map lookup, so the new authority proves strictly
+more than the text scan while costing less; `higherOrderCallSiteIndexBuildCount`
+lets a test assert that structurally instead of with a stopwatch.
+
+**(c) How many targets a parameter may have.**
+
+VT-210 took the first identifier argument that resolved and ignored every
+other call site -- including sites passing a different function, an
+inline function, or a call result. That is not a resolution, it is a
+sample. `lodash`'s `arrayMap` receives `baseToString` at one site and
+`castArrayLikeObject` at three others; the graph claimed `baseToString`
+because it is written first.
+
+This matters for the same reason the flat matcher did. **A resolved edge
+suppresses the `unknown` blocker that withholds
+`reachableSubgraphComplete`**, so an arbitrary pick among real candidates
+is the RWF-043 displacement mechanism arriving through the higher-order
+path instead of the flat index. The rule now:
+
+- every authoritative call site of the exact declaration must agree on
+  one callable -- then VT-210 may name it;
+- two distinct callables: UNKNOWN;
+- any argument this analyzer cannot name (inline function, call result,
+  member expression): UNKNOWN, rather than skipping that site and
+  claiming another one's identifier;
+- a call site passing no argument at that position is ignored, and only
+  that case is ignored: the parameter is `undefined` there, so calling it
+  throws before reaching anything and it provably contributes no target;
+- a recursive call passing the parameter itself resolves to a parameter,
+  which is not authoritative, so the whole question is refused -- which
+  is also what makes the walk terminate without recursion.
+
+**Measured effect.** 29 edges lose a single-target claim across the
+corpus (14 distinct sites in `lodash`, ×2 fixtures, plus one in
+`lodash.template`): `arrayMap`, `arrayFilter`, `baseFlatten`,
+`baseExtremum` (×2 parameters), `baseSortedIndexBy` (×2 sites),
+`baseFindIndex`, `baseSum`, `baseGetAllKeys`, `baseClone` (×2),
+`baseZipObject`, `hasPath`. Every one is a genuinely multi-valued
+higher-order parameter. Two further edges (`baseFindKey`'s `eachFunc`)
+now fall through to VT-213 and resolve to the inline callback literally
+passed at that call -- a strictly more local target than the
+`baseForOwn` VT-210 had guessed.
+
+**Zero new resolved edges.** An intermediate version of this fix derived
+the enclosing function from `parameter.parent` alone, which also admitted
+calls nested inside closures the function creates and ADDED three resolved
+edges in `lodash`/`lodash.template`. Widening higher-order reach is a
+separate question with its own soundness burden, so the nearest enclosing
+function must still BE the parameter's owner, exactly as before. The
+remediation is a tightening in every direction.
+
+**Verdicts are unchanged** across all 17 real-world cases, including all
+four surviving `NOT_AFFECTED` proofs. No new negative proof appears.
+
+**(d) Class callability.** The audit also found class authority leaking
+into the plain-call path: `Thing()` and, newly on the audited commit,
+`const Alias = Thing; Alias();` produced edges into the constructor.
+Calling a class throws a `TypeError` before the constructor body runs, so
+those edges describe an execution that cannot happen -- and the alias
+form was a regression, since the pre-B3b matcher left it UNKNOWN. Binding
+resolution now carries the invocation form (`"call"` vs `"construct"`), a
+`class` answers only to `construct`, and every function-like declaration
+still answers to both because `new Ctor()` on a `function` is ordinary
+JavaScript.
+
+### 7. Status after remediation
+
+**Closed.** The four flat-index matcher sites are gone; VT-210 identifies
+its parameter by declaration and its call sites by declaration; a
+higher-order parameter resolves only on unique authoritative provenance;
+class authority is construct-only.
+
+No text-only comparison anywhere in direct-call or higher-order
+attribution can now decide a target. What textual comparison remains in
+`call-graph.ts` is export-name mapping across a module boundary (where
+the name IS the key) and refusal-only guards, neither of which can create
+an edge.
+
+Still open, and deliberately: **RWF-044**, the
+`used_before_initialized` precision debt.
+
 
 ---
 
