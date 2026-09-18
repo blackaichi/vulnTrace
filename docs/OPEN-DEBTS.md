@@ -388,6 +388,45 @@ call above `const fn = danger` being attributed to `danger`.
 
 Recorded in full as RWF-044 in `tests/validation/FINDINGS.md`.
 
+### D-14 — RWF-046: a function-local `require` binds at FILE scope
+
+**What.** `source-index.ts`'s `extractRequireBindings` keys a `require()`
+binding on its `localName` in a file-level import table, with no scope
+attached. A `require` written inside a function body is registered as
+though it bound at module scope, so two functions binding the same local
+name to different specifiers collapse onto whichever was indexed first:
+
+```js
+function a() { const { run } = require('./safe.js');   return run(); }
+function b() { const { run } = require('./danger.js'); return run(); }
+```
+
+Both calls resolve to `safe.js#run`. `b`'s edge is fabricated.
+
+**Class: soundness, both directions.** By the displacement argument
+D-12/RWF-043 established, the wrong resolved edge REPLACES the honest
+`unknown` one, so it can withdraw the blocker that withholds
+`reachableSubgraphComplete` as readily as it can invent an exposure.
+
+**Not destructuring-specific.** The non-destructured form
+(`const mod = require('./danger.js'); mod.run()`) collapses identically.
+That is precisely why RWF-045 did not fix it: RWF-045 owns the
+destructuring bridge's pattern SELECTION, and this defect lives in the
+import table underneath it. Fixing it there would have overstated
+RWF-045's closure.
+
+**How to close it.** The same move that closed RWF-043 and RWF-045: key
+the binding on its DECLARATION and resolve references through the shared
+lexical authority in `named-bindings.ts`. That module already refuses such
+a reference with cause `import_binding`, so the work belongs on the
+symbol-binder side of that refusal — not in a second resolver.
+
+Do **not** close it by restricting the import table to top-level requires.
+Most function-local requires are genuinely unambiguous, and dropping them
+trades a soundness defect for a large precision loss.
+
+Recorded in full as RWF-046 in `tests/validation/FINDINGS.md`.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
