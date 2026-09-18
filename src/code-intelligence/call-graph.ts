@@ -238,18 +238,55 @@ function prepareFile(
   };
 }
 
-function findLocalFunctionNodeId(
-  callee: ts.Expression,
+/**
+ * The graph node a bare identifier DENOTES in this file -- resolved by
+ * lexical binding, never by name (P1-B3b, RWF-043).
+ *
+ * WHAT THIS REPLACED. Until P1-B3b this was `findLocalFunctionNodeId`:
+ *
+ *     prepared.index.functions.find((fn) => fn.name === callee.text)
+ *
+ * -- identifier TEXT matched against a flat, whole-file, first-match-wins
+ * index of every function-like node in the file. That index is not a
+ * scope and carries none of the information the question needs: it does
+ * not know that a parameter, a block `let`, a catch binding or a nested
+ * declaration shadows the name, that a sibling scope's function was never
+ * visible here at all, that a class method is not a bare callable, that a
+ * `let` is reassigned before the call runs, or that a named function
+ * expression's self-name exists only inside its own body. In every one of
+ * those shapes it returned a function the program does not call, and the
+ * graph gained an edge that does not exist.
+ *
+ * WHY THAT WAS A SOUNDNESS DEFECT, correcting the claim RWF-042 and
+ * RWF-043 both inherited. "A fabricated edge only ADDS reachability, so
+ * it cannot produce a false NOT_AFFECTED" is false. The matcher ran
+ * FIRST, so it did not add an edge beside the honest one -- it REPLACED
+ * it. The honest edge for a call this analyzer cannot attribute is
+ * `unknown`, and an `unknown` edge inside the reachable subgraph is
+ * precisely what withholds `reachableSubgraphComplete`. Resolving that
+ * call to a borrowed same-named local displaced the blocker, the subgraph
+ * looked exhaustively searched, family C certified it, and a genuinely
+ * exposed program was reported NOT_AFFECTED. Reproduced end-to-end in
+ * `analysis/verdict.direct-call-binding-authority.integration.test.ts`.
+ *
+ * WHAT REPLACES IT. One question, asked of the one lexical model
+ * (named-bindings.ts, P1-B3b § 7/§ 29): *which declaration does this
+ * particular reference bind to?* Only a declaration this file actually
+ * contains -- a hoisted `function`, a function/arrow expression held by a
+ * stable binding, a named function expression seen from inside itself, a
+ * `class` -- yields a node. Every refusal, for any cause, yields
+ * `undefined` and the caller's own UNKNOWN. There is deliberately no
+ * name-based fallback left to rescue a refusal: that fallback WAS the
+ * defect.
+ */
+function localDeclarationNodeId(
+  reference: ts.Expression,
   prepared: FileGraphData,
 ): GraphNodeId | undefined {
-  if (!ts.isIdentifier(callee)) {
+  if (!ts.isIdentifier(reference)) {
     return undefined;
   }
-  const match = prepared.index.functions.find((fn) => fn.name === callee.text);
-  if (!match) {
-    return undefined;
-  }
-  return prepared.functionNodeIdByLocation.get(locationKey(match.location));
+  return nodeIdForBoundDeclaration(resolveNamedBinding(reference), prepared);
 }
 
 /**
@@ -576,7 +613,13 @@ async function resolveHigherOrderCallTarget(
       continue;
     }
 
-    const local = findLocalFunctionNodeId(arg, prepared);
+    // P1-B3b § 18. The argument is an identifier written at a real call
+    // site in this file, so the question "which local definition is it?"
+    // is the ordinary lexical one and gets the ordinary lexical answer --
+    // not a name match, which here would have handed `invoke(handler)`
+    // any function in the file called `handler`, including one a
+    // parameter or an inner block shadows at that very position.
+    const local = localDeclarationNodeId(arg, prepared);
     if (local) {
       return local;
     }
@@ -769,26 +812,77 @@ function authoritativeValueOf(
 }
 
 /**
- * The graph node of the function a resolved binding denotes, when that
- * function is written in this same file -- either a hoisted `function`
- * declaration or a function/arrow EXPRESSION held by a stable binding.
+ * The graph node the AST node `declaration` was indexed as, when it is
+ * written in this same file.
  *
- * The expression case is the gap P1-B3 measured and closed. `source-index`
- * names a function expression by its OWN name when it has one, so
- * `var parseValues = function parseQueryStringValues() {};` is indexed as
- * `parseQueryStringValues` and `findLocalFunctionNodeId`'s name match
- * against `parseValues` misses it entirely -- the single most common
- * unresolved named callee in the measured corpus (`qs/lib/parse.js` alone
- * carries `parseValues` and `parseKeys` this way, both on the route into
- * that package's parse internals). Resolving the BINDING rather than
- * matching the NAME makes the two agree.
+ * `source-index.ts`'s `extractFunction` keys a function node on the whole
+ * node's own location, so the same derivation is used here rather than a
+ * second, drift-prone convention.
  */
-function functionNodeIdFor(
+function nodeIdForIndexedDeclaration(
+  declaration: ts.Node,
+  prepared: FileGraphData,
+): GraphNodeId | undefined {
+  const location = toSourceLocation(prepared.index.sourceFile, declaration);
+  return prepared.functionNodeIdByLocation.get(locationKey(location));
+}
+
+/**
+ * The graph node a CLASS declaration's construction enters (P1-B3b § 11).
+ *
+ * A class is not itself indexed as a callable; its CONSTRUCTOR is, and by
+ * two different conventions depending on whether the source writes one:
+ * an explicit `constructor() {}` is indexed at its own node, while a
+ * class relying on the default constructor has no such AST node at all
+ * and `source-index.ts` synthesizes an entry at the class's NAME instead
+ * (VT-215). Both conventions are read here, from the class node the
+ * binding resolved to, so `new Thing()` lands on the same node whichever
+ * way `Thing` is written.
+ */
+function classConstructorNodeIdFor(
+  declaration: ts.ClassDeclaration | ts.ClassExpression,
+  prepared: FileGraphData,
+): GraphNodeId | undefined {
+  const explicit = declaration.members.find(ts.isConstructorDeclaration);
+  return nodeIdForIndexedDeclaration(
+    explicit ?? declaration.name ?? declaration,
+    prepared,
+  );
+}
+
+/**
+ * The graph node of the local definition a resolved binding denotes.
+ *
+ * This is the one place a {@link NamedBinding} becomes a graph node, so
+ * that "which declaration does this name denote" (named-bindings.ts) and
+ * "which node is that declaration" (here) stay one derivation each rather
+ * than being re-answered per call site.
+ *
+ * Four resolved shapes have a local node, and nothing else does:
+ *
+ * - a hoisted `function` declaration;
+ * - a function/arrow EXPRESSION held by a stable binding. This is the gap
+ *   P1-B3 measured and closed: `source-index` names a function expression
+ *   by its OWN name when it has one, so
+ *   `var parseValues = function parseQueryStringValues() {};` is indexed
+ *   as `parseQueryStringValues`, which a name match against `parseValues`
+ *   misses entirely -- the single most common unresolved named callee in
+ *   the measured corpus (`qs/lib/parse.js` alone carries `parseValues`
+ *   and `parseKeys` this way, both on the route into that package's parse
+ *   internals);
+ * - a named function expression referred to from inside its own body
+ *   (P1-B3b § 13), whose node is the expression itself;
+ * - a `class` (P1-B3b § 11), whose node is its constructor.
+ */
+function nodeIdForBoundDeclaration(
   binding: NamedBinding,
   prepared: FileGraphData,
 ): GraphNodeId | undefined {
+  if (binding.kind === "class") {
+    return classConstructorNodeIdFor(binding.declaration, prepared);
+  }
   const declaration =
-    binding.kind === "function"
+    binding.kind === "function" || binding.kind === "function-expression"
       ? binding.declaration
       : binding.kind === "value" &&
           (ts.isFunctionExpression(binding.value) ||
@@ -798,11 +892,7 @@ function functionNodeIdFor(
   if (!declaration) {
     return undefined;
   }
-  // `source-index.ts`'s `extractFunction` keys a function node on the
-  // whole node's own location, so the same derivation is used here rather
-  // than a second, drift-prone convention.
-  const location = toSourceLocation(prepared.index.sourceFile, declaration);
-  return prepared.functionNodeIdByLocation.get(locationKey(location));
+  return nodeIdForIndexedDeclaration(declaration, prepared);
 }
 
 /**
@@ -867,9 +957,12 @@ async function resolveAliasedValue(
     }
   }
 
-  return ts.isIdentifier(value)
-    ? findLocalFunctionNodeId(value, prepared)
-    : undefined;
+  // P1-B3b § 19. The import machinery above could not place this value,
+  // so it may still be a definition in this same file -- but WHICH one is
+  // a lexical question about `value`'s own position, and the name match
+  // that used to stand here could override a refusal B3 had already
+  // issued about that very name one hop earlier.
+  return localDeclarationNodeId(value, prepared);
 }
 
 /**
@@ -909,9 +1002,10 @@ async function resolveLocalAlias(
  *
  * Three outcomes are authoritative, and nothing else is:
  *
- * 1. the name binds to a function written in this file -- a hoisted
- *    `function` declaration, or a function/arrow expression held by a
- *    stable binding ({@link functionNodeIdFor});
+ * 1. the name binds to a definition written in this file -- a hoisted
+ *    `function` declaration, a function/arrow expression held by a
+ *    stable binding, a named function expression's self-reference, or a
+ *    `class` ({@link nodeIdForBoundDeclaration});
  * 2. the name binds to a value that is itself a resolvable reference --
  *    an import, a member of one, a same-file declaration -- which
  *    {@link resolveAliasedValue} resolves through the EXISTING import
@@ -930,7 +1024,7 @@ async function resolveNamedCalleeBinding(
 ): Promise<GraphNodeId | undefined> {
   const binding = resolveNamedBinding(callee);
 
-  const localFunction = functionNodeIdFor(binding, prepared);
+  const localFunction = nodeIdForBoundDeclaration(binding, prepared);
   if (localFunction) {
     return localFunction;
   }
@@ -1481,8 +1575,26 @@ async function classifyCall(
     };
   }
 
-  // Not an import: a direct, same-file call is still worth an edge.
-  const localTarget = findLocalFunctionNodeId(callee, prepared);
+  // Not an import: a direct, same-file call is still worth an edge --
+  // but only to the declaration the callee's own LEXICAL BINDING names
+  // (P1-B3b, RWF-043; see {@link localDeclarationNodeId} for what this
+  // replaced and why it was a soundness defect rather than noise).
+  //
+  // LADDER POSITION (P1-B3b § 8). This authority stays here, ahead of the
+  // ambient-global check below, because that check returns NO EDGE for
+  // any call rooted in a global name -- and a bundle that ships its own
+  // `function Promise(...)`, `function Map(...)` or `function require(...)`
+  // is calling its own definition, not the runtime's. Moving the
+  // authority after it would silently drop those real, resolvable edges.
+  //
+  // Nothing downstream can override a refusal from here, which is the
+  // invariant that matters: VT-210's higher-order rescue fires only for a
+  // name that is a PARAMETER of the enclosing function -- a shape B3
+  // necessarily refuses, so the two are mutually exclusive rather than
+  // competing -- and the VT-214 alias path below re-asks this very same
+  // authority before doing anything else. There is no longer any
+  // name-based path anywhere that can answer after B3 has declined.
+  const localTarget = localDeclarationNodeId(callee, prepared);
   if (localTarget) {
     return {
       from,
@@ -1752,9 +1864,17 @@ async function classifyNew(
   }
 
   // Not an import: a locally-declared class constructed by name is still
-  // worth an edge when it can be attributed (mirrors classifyCall's local
-  // function lookup).
-  const localTarget = findLocalFunctionNodeId(callee, prepared);
+  // worth an edge when it can be attributed (mirrors classifyCall's own
+  // local lookup, and shares its authority exactly).
+  //
+  // P1-B3b § 20. `new Identifier()` asks the same binding question a call
+  // does -- WHICH declaration is this name? -- so it gets the same answer
+  // from the same model, and a `class` binding resolves to that class's
+  // constructor node ({@link classConstructorNodeIdFor}). Deliberately
+  // nothing more: this says which class is being constructed, never
+  // anything about the instance it produces, its prototype or its `this`
+  // receiver, all of which remain Block C's.
+  const localTarget = localDeclarationNodeId(callee, prepared);
   if (localTarget) {
     return {
       from,
