@@ -19,6 +19,7 @@ import { classifyUnsupportedConstruct } from "./unsupported-construct.js";
 import { isConstDeclaration } from "./local-aliases.js";
 import {
   isMemberAssignedWithin,
+  resolveDestructuredBindingElement,
   resolveNamedBinding,
   resolveParameterDeclaration,
   type NamedBinding,
@@ -936,51 +937,90 @@ interface DestructuredBindingSource {
 }
 
 /**
- * Finds a same-file `const { originalName: name } = source;` (or
- * shorthand `const { name } = source;`) destructuring `name` out of a
- * plain-identifier `source`, or `undefined`. `const`-only and
- * single-property-source-must-be-a-plain-identifier, matching
- * {@link resolveSingleAssignmentValue}'s own scoping.
+ * The source a destructured REFERENCE was taken from --
+ * `const { originalName: name } = source;` (or shorthand
+ * `const { name } = source;`) with a plain-identifier `source` -- or
+ * `undefined` when this reference does not denote such a binding.
+ *
+ * RWF-045. This takes the reference NODE, never its text, and every fact
+ * it returns is read off the ONE binding element that reference actually
+ * binds to ({@link resolveDestructuredBindingElement}). The predecessor
+ * took a name and walked the whole file for the first
+ * `const { <name> } = src` at any depth, in any scope, which is not a
+ * scope lookup at all: it borrowed a sibling function's pattern, an
+ * enclosing block's, or one shadowed at the use site, and attributed the
+ * call to whatever THAT pattern's source exported. Same flat-index
+ * mistake RWF-043 removed from the direct-call paths, surviving here on
+ * the destructuring bridge.
+ *
+ * Because the element is authoritative, the checks below are no longer a
+ * SEARCH FILTER -- they are the shape boundary of what a binding element
+ * can prove, applied to the one element in question:
+ *
+ * - an object pattern only. An ARRAY pattern binds by position, which
+ *   this bridge has never modeled.
+ * - a pattern owned DIRECTLY by the variable declaration. A NESTED
+ *   pattern (`const { api: { run } } = source`) makes the real member
+ *   path `source.api.run`, which is not modeled either; refusing keeps it
+ *   UNKNOWN instead of mis-attributing it to `source.run`.
+ * - no rest element: `...rest` holds the REMAINING properties, never the
+ *   one named callable.
+ * - no default: `const { run = fallback } = source` has two possible
+ *   runtime values and nothing here proves which one runs.
+ * - `const` only. A `let`/`var` binding can be reassigned between the
+ *   destructuring and the call, and stale destructured provenance is
+ *   exactly the fabrication this file exists to prevent.
+ * - a plain-identifier initializer, matching this module's own scoping
+ *   for every other alias it follows.
+ *
+ * The property key comes from `propertyName ?? name`, which is the one
+ * place text is still read -- and it is read off THIS element, AFTER
+ * identity is settled, to select a member. `{ run: execute }` binds
+ * `execute` and reads `run`; confusing the two in either direction is its
+ * own defect, so both halves are pinned by test.
+ *
+ * DELIBERATELY NO ORDER RULE. A reference textually above its own
+ * destructuring is left exactly as it was before this remediation. The
+ * temporal-dead-zone question is the deferred-execution precision debt
+ * RWF-044 owns, it applies equally to every `const` in this module, and
+ * answering it here -- for one binding form only -- would move that
+ * boundary under cover of a name-authority fix.
  */
-function findDestructuredBindingSource(
-  name: string,
-  sourceFile: ts.SourceFile,
+function resolveDestructuredBindingSource(
+  reference: ts.Identifier,
 ): DestructuredBindingSource | undefined {
-  let found: DestructuredBindingSource | undefined;
-  function visit(node: ts.Node): void {
-    if (found) {
-      return;
-    }
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isObjectBindingPattern(node.name) &&
-      node.initializer &&
-      ts.isIdentifier(node.initializer) &&
-      isConstDeclaration(node)
-    ) {
-      const source = node.initializer;
-      for (const element of node.name.elements) {
-        if (
-          element.dotDotDotToken ||
-          !ts.isIdentifier(element.name) ||
-          element.name.text !== name
-        ) {
-          continue;
-        }
-        const propertyNameNode = element.propertyName ?? element.name;
-        if (
-          ts.isIdentifier(propertyNameNode) ||
-          ts.isStringLiteralLike(propertyNameNode)
-        ) {
-          found = { source, propertyName: propertyNameNode.text };
-        }
-        return;
-      }
-    }
-    ts.forEachChild(node, visit);
+  const element = resolveDestructuredBindingElement(reference);
+  if (!element || element.dotDotDotToken || element.initializer) {
+    return undefined;
   }
-  visit(sourceFile);
-  return found;
+
+  const pattern = element.parent;
+  if (!ts.isObjectBindingPattern(pattern)) {
+    return undefined;
+  }
+
+  const declaration = pattern.parent;
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    !declaration.initializer ||
+    !ts.isIdentifier(declaration.initializer) ||
+    !isConstDeclaration(declaration)
+  ) {
+    return undefined;
+  }
+
+  const propertyNameNode = element.propertyName ?? element.name;
+  if (
+    !ts.isIdentifier(propertyNameNode) &&
+    !ts.isStringLiteralLike(propertyNameNode)
+  ) {
+    return undefined;
+  }
+
+  return {
+    source: declaration.initializer,
+    propertyName: propertyNameNode.text,
+  };
 }
 
 /**
@@ -1251,7 +1291,9 @@ async function resolveLocalAlias(
  *    {@link resolveAliasedValue} resolves through the EXISTING import
  *    machinery rather than a second resolver (P1-B3 § 11);
  * 3. the name came out of a destructuring, which
- *    {@link findDestructuredBindingSource} owns.
+ *    {@link resolveDestructuredBindingSource} owns -- resolving it from
+ *    the exact binding element the reference denotes, never from the
+ *    first same-named pattern in the file (RWF-045).
  *
  * Everything else -- a parameter, a reassigned binding, a use above its
  * own initializer, an alias cycle, two declarations in one scope -- stays
@@ -1277,10 +1319,7 @@ async function resolveNamedCalleeBinding(
   // one: every other unresolved cause is a REFUSAL (reassigned, ordered
   // wrongly, ambiguous, cyclic) and must not be routed around.
   if (binding.kind === "unresolved" && binding.cause === "destructuring") {
-    const destructured = findDestructuredBindingSource(
-      callee.text,
-      prepared.index.sourceFile,
-    );
+    const destructured = resolveDestructuredBindingSource(callee);
     if (destructured) {
       const synthetic = ts.factory.createPropertyAccessExpression(
         destructured.source,
