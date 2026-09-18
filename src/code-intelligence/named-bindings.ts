@@ -807,6 +807,201 @@ export function resolveParameterDeclaration(
 }
 
 /**
+ * The EXACT declaration that supplies a reference's import/require
+ * provenance, or the reason no such declaration owns it (RWF-046).
+ *
+ * WHY THIS EXISTS. `symbol-binder.ts` used to answer "which module does
+ * this name denote?" with
+ *
+ *     moduleModel.imports.find((imp) => imp.localName === callee.text)
+ *
+ * against a FILE-WIDE, NAME-KEYED table built by `source-index.ts`. That
+ * table is a flat list of rows: it records that some `require("outer")`
+ * somewhere in the file bound the name `source`, and nothing whatever
+ * about WHICH declaration did it. So a function-local
+ * `const source = require("inner")` and a file-scope
+ * `const source = require("outer")` are two indistinguishable rows
+ * spelled the same, and `find` handed every reference in the file to
+ * whichever was written first.
+ *
+ * This is the same flat-index mistake RWF-042 removed from the
+ * value-binding paths and RWF-043 removed from the direct-call paths,
+ * surviving one layer down: those fixes made the call graph ask which
+ * DECLARATION a name binds to, but the answer was then thrown away and
+ * the module question re-asked by spelling.
+ *
+ * Returning the NODE is the whole point. A specifier string cannot carry
+ * declaration identity, and identity is exactly what decides which
+ * install a reference reaches -- two same-name twins at different depths
+ * resolve to different `PackageInstance`s from different importing
+ * files.
+ *
+ * WHAT IS DELIBERATELY NOT CHECKED HERE. Evaluation order. A reference
+ * written above its own `const x = require(...)` is a deferred-execution
+ * question (RWF-044) that this module answers for VALUES and that no
+ * import consumer has ever asked; adding it here would move precision
+ * for a reason unrelated to binding identity. Reassignment IS checked --
+ * that is a write the analyzer already recognizes, and letting stale
+ * require provenance survive one is the RWF-046 shape that fabricates.
+ */
+export type ImportProvenanceDeclaration =
+  /** An ESM `import` (or `import x = require(...)`) binding, owned by the source file. */
+  | {
+      readonly kind: "esm";
+      readonly node:
+        | ts.ImportClause
+        | ts.ImportSpecifier
+        | ts.NamespaceImport
+        | ts.ImportEqualsDeclaration;
+    }
+  /** `const source = require("pkg")` -- the whole module bound to one name. */
+  | {
+      readonly kind: "require";
+      readonly declaration: ts.VariableDeclaration;
+      readonly call: ts.CallExpression;
+    }
+  /** `const { run } = require("pkg")` -- one member, bound by an exact `BindingElement`. */
+  | {
+      readonly kind: "require-element";
+      readonly element: ts.BindingElement;
+      readonly call: ts.CallExpression;
+    }
+  /**
+   * No declaration in scope supplies import provenance to this
+   * reference: it binds to a parameter, a catch binding, an ordinary
+   * local, a reassigned binding, or nothing this pass can see. Never a
+   * licence to fall back on the name.
+   */
+  | {
+      readonly kind: "none";
+      readonly cause: NamedBindingUnresolvedCause;
+    };
+
+/**
+ * The `require("<literal>")` call a declaration is initialized with, or
+ * `undefined`.
+ *
+ * The shape test is deliberately identical to `source-index.ts`'s own
+ * `isRequireCall` -- an identifier spelled `require`, exactly one
+ * argument, that argument a string literal. Keeping the two in step
+ * matters more than either being clever: a `require` this accepted and
+ * the index did not (or the reverse) would be a provenance the rest of
+ * the engine cannot corroborate. A computed specifier
+ * (`require(name)`), a conditional (`cond ? require("a") : require("b")`)
+ * and a call with no literal all correctly fall out here, leaving the
+ * reference with no import provenance at all rather than a guessed one.
+ */
+function requireCallInitializer(
+  variable: ts.VariableDeclaration,
+): ts.CallExpression | undefined {
+  if (!variable.initializer) {
+    return undefined;
+  }
+  const initializer = unwrapTypeOnly(variable.initializer);
+  if (
+    !ts.isCallExpression(initializer) ||
+    !ts.isIdentifier(initializer.expression) ||
+    initializer.expression.text !== "require" ||
+    initializer.arguments.length !== 1
+  ) {
+    return undefined;
+  }
+  const [argument] = initializer.arguments;
+  return argument !== undefined && ts.isStringLiteral(argument)
+    ? initializer
+    : undefined;
+}
+
+/**
+ * Whether a write anywhere in the owning scope could have replaced what
+ * the require-bound name holds by the time the reference reads it.
+ *
+ * The same rule {@link resolveFrom} applies to a `let`/`var` value, for
+ * the same reason and with the same deliberate over-approximation: a
+ * `const` cannot be rebound at all, and for everything else the WHOLE
+ * owning scope is searched rather than the statements between the
+ * declaration and the use, because a closure can run the write later.
+ * `let source = require("safe"); source = other; source.run();` must
+ * reach nothing, not `safe`.
+ */
+function isReboundInScope(
+  variable: ts.VariableDeclaration,
+  scope: ts.Node,
+  name: string,
+): boolean {
+  return variableKind(variable) !== "const" && isAssignedWithin(scope, name);
+}
+
+/**
+ * See {@link ImportProvenanceDeclaration}. `reference` must be the
+ * identifier NODE at the use site: shadowing is a property of where the
+ * name is written, and the whole defect this closes was reading a name
+ * that had been separated from its position.
+ */
+export function resolveImportProvenanceDeclaration(
+  reference: ts.Identifier,
+): ImportProvenanceDeclaration {
+  const found = findBindingDeclaration(reference, reference.text);
+  if ("kind" in found) {
+    return { kind: "none", cause: found.cause };
+  }
+  const { declaration, scope } = found;
+
+  if (declaration.kind === "import") {
+    const node = declaration.node;
+    if (
+      ts.isImportClause(node) ||
+      ts.isImportSpecifier(node) ||
+      ts.isNamespaceImport(node) ||
+      ts.isImportEqualsDeclaration(node)
+    ) {
+      return { kind: "esm", node };
+    }
+    return { kind: "none", cause: "no_declaration" };
+  }
+
+  if (declaration.kind === "destructuring") {
+    const element = declaration.node;
+    if (!ts.isBindingElement(element)) {
+      return { kind: "none", cause: "destructuring" };
+    }
+    // Only a pattern written DIRECTLY on the declaration destructures the
+    // required module itself. A nested one (`const { a: { b } } = require(...)`)
+    // reads a member of a member, which no import binding models, so it
+    // gets no import provenance rather than the outer module's.
+    const variable = element.parent.parent;
+    if (!ts.isVariableDeclaration(variable)) {
+      return { kind: "none", cause: "destructuring" };
+    }
+    const call = requireCallInitializer(variable);
+    if (!call) {
+      return { kind: "none", cause: "destructuring" };
+    }
+    if (isReboundInScope(variable, scope, reference.text)) {
+      return { kind: "none", cause: "reassigned" };
+    }
+    return { kind: "require-element", element, call };
+  }
+
+  const variable = declaration.variable;
+  if (!variable) {
+    return { kind: "none", cause: "no_declaration" };
+  }
+  const call = requireCallInitializer(variable);
+  if (!call) {
+    // A real declaration that simply is not a require binding -- a local
+    // object, an alias, a function value. The name is OWNED here, so the
+    // search stops: it must never continue outward to an import that
+    // happens to share the spelling.
+    return { kind: "none", cause: "no_declaration" };
+  }
+  if (isReboundInScope(variable, scope, reference.text)) {
+    return { kind: "none", cause: "reassigned" };
+  }
+  return { kind: "require", declaration: variable, call };
+}
+
+/**
  * Resolves one reference to a name into the single authoritative value or
  * function it denotes, or the reason it cannot be resolved.
  *

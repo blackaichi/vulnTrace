@@ -774,12 +774,7 @@ async function resolveArgumentTarget(
   prepared: FileGraphData,
   ctx: WalkContext,
 ): Promise<GraphNodeId | undefined> {
-  const binding = await bindCallee(
-    arg,
-    prepared.model,
-    ctx.resolver,
-    prepared.index.filePath,
-  );
+  const binding = await bindCallee(arg, ctx.resolver, prepared.index.filePath);
 
   if (binding.kind === "resolved") {
     ctx.onDiscoverFile(binding.target.modulePath);
@@ -1184,7 +1179,6 @@ async function resolveAliasedValue(
 
   const binding = await bindCallee(
     resolved,
-    prepared.model,
     ctx.resolver,
     prepared.index.filePath,
   );
@@ -1716,7 +1710,6 @@ async function classifyCall(
 
   const binding = await bindCallee(
     callee,
-    prepared.model,
     ctx.resolver,
     prepared.index.filePath,
   );
@@ -2008,7 +2001,6 @@ async function classifyNew(
 
   const binding = await bindCallee(
     callee,
-    prepared.model,
     ctx.resolver,
     prepared.index.filePath,
   );
