@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 173 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 175 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (LIVE) — `npm run test:validation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-17 | Real npm-installed packages against real advisories over the real OSV API. | Integration evidence and a provider-movement detector, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -217,8 +217,8 @@ parameter that owned nothing so an outer binding answered for it, and
 an object-literal member read as though duplicate keys, spreads and
 later `obj.m = ...` writes could not change it. The last two were
 found by an INDEPENDENT AUDIT that blocked the first implementation
-(`tests/validation/FINDINGS.md` RWF-042 § 17); a fifth is recorded and
-still open in part (RWF-043).
+(`tests/validation/FINDINGS.md` RWF-042 § 17); a fifth was recorded
+and left open in part (RWF-043), and is closed by P1-B3b below.
 
 **None of the four is visible in the table above**, because none of
 those shapes occurs in this corpus. They are pinned by unit tests, and
@@ -226,14 +226,69 @@ that is the point: a corpus that does not contain a shape is not
 evidence the shape is handled. Reading a soundness fix off these
 counts would find nothing to read.
 
+### 7.3 What P1-B3b (direct-call binding authority) moved
+
+P1-B3 routed the NAMED-BINDING paths through a scope model and left
+the DIRECT-call and construct paths deciding edges by matching
+identifier text against a flat, whole-file, first-match-wins index of
+every function in the file (RWF-043). P1-B3b removes that matcher. A
+bare identifier now resolves to a local target only when the analyzer
+can name the exact lexical declaration the reference denotes; every
+refusal is UNKNOWN, and no name-based fallback remains that could
+rescue one.
+
+**The correction this block forced.** RWF-042 and RWF-043 both
+recorded that a fabricated edge can only ADD reachability and so could
+never yield a false `NOT_AFFECTED`. That is FALSE. The matcher ran
+before every authoritative path, so its edge REPLACED the honest
+`unknown` one rather than joining it — and an `unknown` edge inside
+the reachable subgraph is exactly what withholds
+`reachableSubgraphComplete`. Displacing it lets family C certify a
+subgraph that was never exhaustively searched. Reproduced end to end
+in the verdict-level integration test named in RWF-043 § 1, where
+the correction is recorded in full.
+
+| Measured over the 15 real-world fixtures | Count |
+| --- | --- |
+| Call/construct sites the matcher resolved | 4364 |
+| ...where the binding names the identical declaration | 4075 |
+| ...via a `function` declaration | 3704 |
+| ...via a stable function/arrow binding | 357 |
+| ...via a `class` (new, narrow authority) | 7 |
+| ...via a function-expression self-name (new, narrow authority) | 7 |
+| Sites the binding resolves that the matcher MISSED | 12 |
+
+| Graph edges changed (234 total) | Count | Fabricated? |
+| --- | --- | --- |
+| Callee is a `parameter` | 76 | yes |
+| Binding is `reassigned` | 36 | yes |
+| Binding holds a non-callable value | 12 | yes |
+| `used_before_initialized` | 85 | no — precision only, RWF-044 |
+| Matcher pre-empted VT-210's correct answer | 22 | yes — now retargeted |
+| Matcher named the wrong function outright | 3 | yes — now retargeted |
+
+**No verdict changes on any of the 17 real-world cases.** All four
+surviving `NOT_AFFECTED` proofs and all six `AFFECTED` findings are
+byte-identical to base, and no new negative proof is introduced.
+
+That last line is the one to read carefully, and it is the sharpest
+datum in `docs/OPEN-DEBTS.md` D-12. The corpus CONTAINED 124
+fabricated edges. Removing them moved nothing here — not a verdict,
+not a proof, not a blocker count — while the mechanism being removed
+was demonstrably able to produce a false `NOT_AFFECTED`. A green
+corpus differential is not evidence of soundness even for a defect
+the corpus contains, because whether a fabricated edge reaches a
+verdict depends on where it sits relative to the reachability search,
+not on whether it exists.
+
 ## 8. Known defect register (RWF)
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 25 | structural — the status table in `tests/validation/FINDINGS.md` | Every gap found by scanning real packages is recorded before it is fixed, and stays recorded after. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 2 — RWF-001, RWF-006 | structural — the same table | Each is a precision gap that degrades to UNKNOWN in both directions, never a false verdict. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
-| Open in part | 2 — RWF-002, RWF-043 | structural — the same table | Partly discharged, partly outstanding. RWF-002 is bypassed for unloaded packages; its underlying reachability-scoping tradeoff remains. | **Counting these as closed is the register's single most consequential misreading**, and the blocker counts recorded for RWF-002 are not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
-| Recorded as fixed | 21 | structural — the same table | Every soundness defect found so far has a fixture and a test that keeps it fixed. | A fix is proven for the shapes its fixtures cover. |
+| Findings recorded | 26 | structural — the status table in `tests/validation/FINDINGS.md` | Every gap found by scanning real packages is recorded before it is fixed, and stays recorded after. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 3 — RWF-001, RWF-006, RWF-044 | structural — the same table | Each is a precision gap that degrades to UNKNOWN in both directions, never a false verdict. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Open in part | 1 — RWF-002 | structural — the same table | Partly discharged, partly outstanding. RWF-002 is bypassed for unloaded packages; its underlying reachability-scoping tradeoff remains. | **Counting these as closed is the register's single most consequential misreading**, and the blocker counts recorded for RWF-002 are not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
+| Recorded as fixed | 22 | structural — the same table | Every soundness defect found so far has a fixture and a test that keeps it fixed. | A fix is proven for the shapes its fixtures cover. |
 
 ## 9. Commands referenced by the documentation
 

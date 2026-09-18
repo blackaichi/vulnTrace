@@ -306,6 +306,88 @@ turned out to have been resting on three such edges. Adversarial unit
 coverage is not a supplement to the benchmark here; for this class of
 defect it is the only instrument that works.
 
+**Third update — the corpus can stay green while a live false-`NOT_AFFECTED`
+mechanism is removed (RWF-043, P1-B3b).** This is the sharpest datum of
+the three, because it is not about shapes the corpus lacks. The corpus
+CONTAINED the defect: 124 fabricated call edges across `lodash`,
+`semver`, `lru-cache`, `yallist`, `fast-xml-parser`, `qs` and
+`object-inspect`, including three where the analyzer resolved a call to
+the wrong function outright. P1-B3b removed all of them and corrected 25
+more that were pointing at the wrong target.
+
+The corpus did not move. All 17 real-world verdicts are byte-identical
+before and after — same verdicts, same proof families, same four
+`NOT_AFFECTED` certifications, same six `AFFECTED` findings. The
+benchmark's own blocker counts did not change either.
+
+Meanwhile the defect being removed was demonstrably capable of producing
+a false `NOT_AFFECTED` with a complete Family C proof — shown end to end
+on a fifteen-line program in
+`src/analysis/verdict.direct-call-binding-authority.integration.test.ts`.
+
+So the caution has to be stated more strongly than "the corpus cannot see
+shapes it lacks". **A green corpus differential is not evidence of
+soundness even for a defect the corpus contains**, because whether a
+fabricated edge reaches a verdict depends on where it sits relative to
+the reachability search, not on whether it exists. Every one of those 124
+edges was real, in real installed packages, on every scan — and not one
+of them happened to sit on a proof-critical path in these 17 projects.
+The next corpus, or the next advisory against the same corpus, has no
+such guarantee.
+
+The instrument that found this was an adversarial oracle written from the
+MECHANISM (displace the blocker, certify the subgraph) rather than from
+observed corpus behaviour. That is the only instrument that works for
+negative-proof defects, and D-12's practical rule follows from it: a
+soundness claim must be discharged by a test that reproduces the
+mechanism, never by a differential that failed to notice it.
+
+### D-13 — RWF-044: the positional order rule is wrong for deferred bodies
+
+**What.** `named-bindings.ts` refuses a reference written textually above
+the initializer that would give its name a value (P1-B3 § 9,
+`used_before_initialized`). The rule reads STATEMENT order, but what
+matters is EXECUTION order, and a function body does not execute at the
+point it is written:
+
+```js
+function forEach(fn) {
+  forEachStep(this, fn);        // refused — `forEachStep` is declared below
+}
+const forEachStep = (self, fn) => { /* ... */ };
+```
+
+`forEach`'s body only runs once something calls `forEach`, which cannot
+happen before the module has finished initializing, so the initializer
+has always completed by then.
+
+**Class: precision, never soundness.** Every refusal costs an edge that
+is correct in fact, and the failure direction is UNKNOWN — the direction
+this engine is permitted to fail in. Nothing here can fabricate.
+
+**Extent.** 85 call-graph edges across the real-world corpus, in
+`fast-xml-parser`'s minified `lib/fxp.cjs` and in `lru-cache`/`semver`'s
+class-heavy modules. They resolved before P1-B3b only because the
+same-name matcher overrode B3's refusal — the analyzer was reaching the
+right answer for a reason that was independently unsound (RWF-043), and
+removing that reason removed these answers with it. No verdict in the
+corpus depends on them today.
+
+**Why it is still open.** Closing it means modeling deferred execution:
+which function bodies can run during module load and which provably
+cannot. A heuristic — "a reference inside a function body skips the order
+check" — is wrong for an IIFE, for a function invoked during
+initialization, and for a class static initializer, and shipping it would
+reintroduce exactly the plausible-but-unproven reasoning P1-B3b removed.
+
+**How to close it.** Reuse the module-load closure (D-06/RWF-002,
+VT-307a), which already computes a closely related set, and exempt from
+the positional check only a reference whose enclosing body is provably
+outside it. Do **not** relax the order rule generally: it is what stops a
+call above `const fn = danger` being attributed to `danger`.
+
+Recorded in full as RWF-044 in `tests/validation/FINDINGS.md`.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
