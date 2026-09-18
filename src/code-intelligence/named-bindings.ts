@@ -765,6 +765,48 @@ function findBindingDeclaration(
 }
 
 /**
+ * The exact PARAMETER DECLARATION a reference binds to, or `undefined`
+ * when the reference does not bind to a parameter at all (P1-B3b
+ * remediation).
+ *
+ * WHY THIS EXISTS. Higher-order resolution (VT-210) has to know that a
+ * callee IS the enclosing function's parameter before it may attribute
+ * the call to whatever a caller passed. It used to decide that by
+ * spelling:
+ *
+ *     enclosing.parameters.findIndex(
+ *       (p) => ts.isIdentifier(p.name) && p.name.text === callee.text)
+ *
+ * which answers a different question -- does this name SPELL a parameter
+ * -- and says yes for every inner declaration that shadows one. An
+ * independent audit showed that overriding a refusal this module had
+ * already issued, and redirecting a call to the inner declaration onto
+ * the caller's argument instead.
+ *
+ * Returning the NODE rather than an index or a boolean is deliberate: the
+ * caller needs parameter IDENTITY (which parameter, of which function),
+ * and identity is the one thing a name cannot carry.
+ *
+ * A catch clause's binding is recorded as a parameter internally, since
+ * it is a positionally-bound name for shadowing purposes, but it is not a
+ * `ParameterDeclaration` and no caller ever passes it an argument, so it
+ * correctly yields `undefined` here.
+ */
+export function resolveParameterDeclaration(
+  reference: ts.Identifier,
+): ts.ParameterDeclaration | undefined {
+  const found = findBindingDeclaration(reference, reference.text);
+  if ("kind" in found) {
+    return undefined;
+  }
+  const { declaration } = found;
+  if (declaration.kind !== "parameter") {
+    return undefined;
+  }
+  return ts.isParameter(declaration.node) ? declaration.node : undefined;
+}
+
+/**
  * Resolves one reference to a name into the single authoritative value or
  * function it denotes, or the reason it cannot be resolved.
  *
