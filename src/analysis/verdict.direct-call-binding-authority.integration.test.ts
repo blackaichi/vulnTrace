@@ -250,3 +250,80 @@ describe("P1-B3b: a fabricated edge CAN produce a false negative proof", () => {
     expect(outcome.verdict).toBe("UNKNOWN");
   });
 });
+
+/**
+ * POST-B3b -- THE SAME ORACLE, REACHED THROUGH A DEFAULT PARAMETER.
+ *
+ * The block above retires "a fabricated edge can only ADD reachability"
+ * for the flat same-name matcher. This one shows the identical
+ * displacement arriving through VT-210's own provenance loop, with no
+ * name matching anywhere.
+ *
+ *  1. `applyFn(fn = end, value)` calls `fn(value)`. `end` here is the
+ *     VULNERABLE export, bound by the destructuring `require`.
+ *  2. The program calls `applyFn` twice: once passing the innocuous
+ *     local `safe`, and once with no argument at all -- which runs the
+ *     initializer and calls the vulnerable `end`.
+ *  3. The provenance loop SKIPPED the argument-less site, on the
+ *     reasoning that an omitted argument leaves the parameter
+ *     `undefined`. With an initializer that premise is false.
+ *  4. Having discarded the only site that disagreed, the loop found
+ *     exactly one candidate and resolved `fn(value)` to `safe` -- a real
+ *     function, correctly named, and the wrong answer on half the
+ *     program's paths.
+ *  5. The blocker was again REPLACED rather than joined: no unresolved
+ *     edge remained, the subgraph looked exhaustively searched, and
+ *     Family C certified NOT_AFFECTED for a vulnerable function this
+ *     program really does invoke.
+ *
+ * The correct answer is UNKNOWN. VT-210 does not model default-value
+ * provenance, so it cannot name what `applyFn()` calls -- and not naming
+ * it is a precision cost, while certifying its absence is a soundness
+ * defect.
+ */
+const DEFAULT_PARAMETER_SRC = [
+  "const { end } = require('trim-newlines');",
+  "",
+  "function safe(x) {",
+  "  return x;",
+  "}",
+  "",
+  "function applyFn(fn = end, value) {",
+  "  return fn(value);",
+  "}",
+  "",
+  "function normalize(input) {",
+  "  return applyFn(safe, input);",
+  "}",
+  "",
+  "function normalizeWithDefault(input) {",
+  "  return applyFn();",
+  "}",
+  "",
+  "module.exports = { normalize, normalizeWithDefault };",
+  "",
+].join("\n");
+
+describe("post-B3b: a defaulted parameter cannot manufacture a negative proof", () => {
+  it("keeps the honest blocker the skipped default site used to displace", async () => {
+    const outcome = await run(DEFAULT_PARAMETER_SRC);
+    expect(
+      outcome.graphUnknownEdges,
+      "`fn(value)` has two runtime possibilities; it must remain an unresolved edge",
+    ).toBeGreaterThan(0);
+  });
+
+  it("does not certify the reachable subgraph as exhaustively searched", async () => {
+    const outcome = await run(DEFAULT_PARAMETER_SRC);
+    expect(outcome.reachableSubgraphComplete).toBe(false);
+  });
+
+  it("returns UNKNOWN rather than a Family C NOT_AFFECTED", async () => {
+    const outcome = await run(DEFAULT_PARAMETER_SRC);
+    expect(
+      outcome.family,
+      "no negative proof family may certify this program",
+    ).toBe("-");
+    expect(outcome.verdict).toBe("UNKNOWN");
+  });
+});

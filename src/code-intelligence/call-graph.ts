@@ -686,6 +686,19 @@ async function resolveHigherOrderCallTarget(
   // So every call site must agree, and any candidate this analyzer
   // cannot name at all refuses the whole question rather than being
   // quietly skipped.
+  //
+  // THE INVARIANT, stated once: a parameter may be given a unique
+  // callable target only when EVERY authoritative call site is accounted
+  // for and none of them can leave the parameter holding a different or
+  // unknown runtime value. Four ways a site fails that, each refused
+  // below: it passes a different target; it passes something this
+  // analyzer cannot name (an inline function, a call result, a member
+  // expression, a reassigned binding); it passes an unresolvable import;
+  // or it omits the argument for a parameter that has a default
+  // initializer. Only the fifth -- omitting the argument for a parameter
+  // with NO initializer -- genuinely contributes nothing, because the
+  // value is then `undefined` and the call throws before reaching a
+  // callable.
   let unique: GraphNodeId | undefined;
   for (const site of callSites) {
     const arg = site.arguments[paramIndex];
@@ -694,7 +707,34 @@ async function resolveHigherOrderCallTarget(
     // that path, and calling `undefined` throws before reaching anything.
     // Such a site provably contributes no callable, so ignoring it cannot
     // hide a target.
+    //
+    // -- unless the parameter has a DEFAULT INITIALIZER, in which case the
+    // premise is simply false: the omitted site does not leave the
+    // parameter `undefined`, it runs the initializer. `fn` below is
+    // `actual` on one path and `fallback` on the other, and skipping the
+    // second site let the first be returned as THE unique target
+    // (post-merge hotfix; see RWF-043 § 9):
+    //
+    //     function invoke(fn = fallback) { fn(); }
+    //     invoke(actual);
+    //     invoke();
+    //
+    // Same displacement mechanism as every other refusal in this loop: a
+    // resolved edge suppresses the `unknown` blocker, so an answer true
+    // on only one of two real paths withholds the honest refusal.
+    //
+    // The rule is the smallest sound one -- refuse -- and deliberately
+    // syntactic. It does not resolve the initializer (naming `fallback`
+    // would be a second authority, default-value provenance, that the
+    // defect never required), and it does not try to prove a particular
+    // initializer non-callable: `fn = 42` really does throw on the
+    // omitted path, but nothing here MODELS the initializer's value, and
+    // reading non-callability off a literal's spelling is the kind of
+    // inference this analyzer refuses everywhere else.
     if (!arg) {
+      if (parameter.initializer) {
+        return undefined;
+      }
       continue;
     }
 

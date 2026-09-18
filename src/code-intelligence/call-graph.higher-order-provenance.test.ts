@@ -299,10 +299,12 @@ describe("VT-210 hotfix: a rest parameter is not a positional argument", () => {
   });
 
   it("a default parameter is unaffected by the rest guard", async () => {
-    // Already fail-closed before this hotfix, for its own reason: the
-    // only call site passes no argument at that position, so there is no
-    // authoritative provenance to read. Pinned so the guard cannot
-    // silently change it.
+    // Already fail-closed before the rest hotfix, for its own reason:
+    // the only call site passes no argument at that position, so there
+    // is no authoritative provenance to read. Pinned so the rest guard
+    // cannot silently change it. The later default-parameter hotfix
+    // (below) gives the same shape a second, independent reason to
+    // refuse.
     const graph = await graphForSource(
       [
         "function fallback() {}",
@@ -588,5 +590,310 @@ describe("P1-B3b remediation: a class is constructable, not callable", () => {
       ].join("\n"),
     );
     expectResolvedTo(graph, soleNodeNamed(graph, "Ctor"));
+  });
+});
+
+/**
+ * POST-MERGE HOTFIX -- an OMITTED argument is not "no argument" when the
+ * parameter has a default initializer.
+ *
+ * Found by the post-B3b soundness follow-up. The provenance loop skipped
+ * any call site that wrote no argument at the parameter's position:
+ *
+ *     const arg = site.arguments[paramIndex];
+ *     if (!arg) {
+ *       continue;
+ *     }
+ *
+ * The justification was that such a site leaves the parameter
+ * `undefined`, so `fn()` throws before reaching a callable and the site
+ * provably contributes no target. That reasoning is correct ONLY for a
+ * plain parameter. With a default initializer the omitted site does not
+ * leave the parameter `undefined` at all -- it runs the initializer:
+ *
+ *     function invoke(fn = fallback) { fn(); }
+ *     invoke(actual);
+ *     invoke();
+ *
+ * `fn` is `actual` on one path and `fallback` on the other, yet the loop
+ * discarded the second site and returned `actual` as THE unique target.
+ * That is the RWF-043 displacement mechanism once more: a resolved edge
+ * suppresses the `unknown` blocker, so an answer that holds on only one
+ * of two real paths withholds the honest refusal and can manufacture
+ * `NOT_AFFECTED` reachability where the runtime has a second callee.
+ *
+ * The rule added here is deliberately the SMALLEST one that is sound: if
+ * the parameter has an initializer and any authoritative call site omits
+ * the argument, VT-210 refuses the whole question. It does not resolve
+ * the initializer, and it does not try to prove a particular initializer
+ * non-callable -- both are precision, and precision is not what was
+ * unsound.
+ *
+ * The defect PREDATES P1-B3b: the text matcher it replaced skipped
+ * argument-less sites in exactly the same way. Zero occurrences in the
+ * real-world corpus.
+ */
+describe("VT-210 hotfix: an omitted argument with a default is not skippable", () => {
+  it("does not claim the PROVIDED target when another site takes the default", async () => {
+    const graph = await graphForSource(
+      [
+        "function fallback() {}",
+        "function actual() {}",
+        "function invoke(fn = fallback) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke(actual);",
+        "  invoke();",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    // Both are real runtime possibilities, so neither may be named as
+    // the single answer.
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "actual"));
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "fallback"));
+  });
+
+  it("CONTROL -- with no default, an omitted argument is still skippable", async () => {
+    // Unchanged behaviour, and the reason the guard is keyed on the
+    // initializer rather than on the missing argument: without one the
+    // omitted site really does leave `fn` undefined, and `fn()` throws
+    // before reaching a callable. That site contributes no target, so
+    // skipping it cannot hide one.
+    const graph = await graphForSource(
+      [
+        "function actual() {}",
+        "function invoke(fn) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke(actual);",
+        "  invoke();",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectResolvedTo(graph, soleNodeNamed(graph, "actual"));
+  });
+
+  it("CONTROL -- a default whose initializer is never taken still resolves", async () => {
+    // Every call site passes the argument, so the initializer does not
+    // run on any path VT-210 can see. Having a default is not by itself
+    // disqualifying; taking it is.
+    const graph = await graphForSource(
+      [
+        "function fallback() {}",
+        "function actual() {}",
+        "function invoke(fn = fallback) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke(actual);",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectResolvedTo(graph, soleNodeNamed(graph, "actual"));
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "fallback"));
+  });
+
+  it("the SAME provided target repeated does not erase the default path", async () => {
+    const graph = await graphForSource(
+      [
+        "function fallback() {}",
+        "function a() {}",
+        "function invoke(fn = fallback) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke(a);",
+        "  invoke(a);",
+        "  invoke();",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    // Agreement among the explicit sites is not agreement with the
+    // omitted one.
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "a"));
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "fallback"));
+  });
+
+  it("two different explicit targets plus a default stay closed", async () => {
+    const graph = await graphForSource(
+      [
+        "function fallback() {}",
+        "function a() {}",
+        "function b() {}",
+        "function invoke(fn = fallback) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke(a);",
+        "  invoke(b);",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "a"));
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "b"));
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "fallback"));
+  });
+
+  it("a NON-CALLABLE default is refused too -- the rule is syntactic", async () => {
+    // At runtime `invoke()` throws, so the omitted path arguably
+    // contributes no target and `actual` would be safe to name. VT-210
+    // has no model that PROVES what `fn` holds on that path, let alone
+    // that it is not callable, so it does not infer that from the
+    // literal's spelling. Conservative UNKNOWN; precision here needs an
+    // initializer-value model this analyzer does not have.
+    const graph = await graphForSource(
+      [
+        "function actual() {}",
+        "function invoke(fn = 42) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke(actual);",
+        "  invoke();",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "actual"));
+  });
+
+  it("a CALL-RESULT default is refused -- its value is unknowable here", async () => {
+    const graph = await graphForSource(
+      [
+        "function other() {}",
+        "function getFn() { return other; }",
+        "function actual() {}",
+        "function invoke(fn = getFn()) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke(actual);",
+        "  invoke();",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "actual"));
+  });
+
+  it("an IDENTIFIER default is not resolved into a target of its own", async () => {
+    // The sound minimal behaviour is refusal, not "resolve `fallback`".
+    // Naming the initializer's callable would be a second authority --
+    // default-value provenance -- that this hotfix deliberately does not
+    // open, because nothing about the defect required it.
+    const graph = await graphForSource(
+      [
+        "function fallback() {}",
+        "function invoke(fn = fallback) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke();",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "fallback"));
+  });
+
+  it("a default on ANOTHER parameter does not close the one being read", async () => {
+    // The guard is per-parameter. `value`'s default says nothing about
+    // `fn`, whose every call site provides an argument.
+    const graph = await graphForSource(
+      [
+        "function actual() {}",
+        "function invoke(fn, value = 1) {",
+        "  fn(value);",
+        "}",
+        "function main() {",
+        "  invoke(actual);",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectResolvedTo(graph, soleNodeNamed(graph, "actual"));
+  });
+
+  it("the REST guard still holds beside a defaulted parameter", async () => {
+    // A rest parameter cannot carry an initializer -- the grammar
+    // forbids it -- so the two guards can never contend for the same
+    // declaration. What they CAN do is sit in one signature, and the
+    // rest refusal must survive that.
+    const graph = await graphForSource(
+      [
+        "function fallback() {}",
+        "function a() {}",
+        "function b() {}",
+        "function invoke(first = fallback, ...rest) {",
+        "  rest();",
+        "}",
+        "function main() { invoke(a, b); }",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "b"));
+    expectNeverResolvedTo(graph, soleNodeNamed(graph, "a"));
+  });
+
+  it("DESTRUCTURED parameters with a default remain outside VT-210", async () => {
+    // `{ fn } = obj` binds `fn` to a BindingElement, not to the
+    // parameter declaration, so positional provenance never engages.
+    // Pinned so this hotfix is not read as an opening onto patterns.
+    const objectPattern = await graphForSource(
+      [
+        "function vulnerable() {}",
+        "const obj = { fn: vulnerable };",
+        "function invoke({ fn } = obj) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke({ fn: vulnerable });",
+        "  invoke();",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(
+      objectPattern,
+      soleNodeNamed(objectPattern, "vulnerable"),
+    );
+
+    const arrayPattern = await graphForSource(
+      [
+        "function vulnerable() {}",
+        "const arr = [vulnerable];",
+        "function invoke([fn] = arr) {",
+        "  fn();",
+        "}",
+        "function main() {",
+        "  invoke([vulnerable]);",
+        "  invoke();",
+        "}",
+        "module.exports = { main };",
+        "",
+      ].join("\n"),
+    );
+    expectNeverResolvedTo(
+      arrayPattern,
+      soleNodeNamed(arrayPattern, "vulnerable"),
+    );
   });
 });
