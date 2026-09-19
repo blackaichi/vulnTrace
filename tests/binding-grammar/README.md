@@ -107,6 +107,44 @@ agreeing cell that regresses fails, and a disagreeing cell that drifts —
 including one that gets *fixed* — fails too, which is the signal to
 delete its row.
 
+### What an entry may never silence
+
+An entry is a **silencer**: it turns a failing cell into a passing one.
+That makes it the one mechanism by which this instrument could be
+turned against itself. If a change re-introduced the RWF-046a defect,
+the cheapest way to green CI would be an entry saying "observed:
+`EXACT node_modules/pkg/index.js#run`" — and the suite built to catch
+that defect would now certify it.
+
+So an entry may record **exactly one** kind of divergence:
+
+> expected an EXACT target, observed a **refusal**.
+
+Two layers enforce it (`guard.ts`, proven by `guard.test.ts`):
+
+1. **Type level.** `KnownDisagreement.observed` is a
+   `RefusalObservation` — `{ kind: "unknown"; reason: string }`. There
+   is no member of that type that names a module and a declaration, so
+   the wrong entry is unrepresentable, not merely discouraged.
+2. **Runtime.** `classifyCellOutcome` checks the fabrication case
+   **before it reads the table at all**, so an observed EXACT that is
+   not the expected one fails whatever `disagreements.ts` says. A type
+   constrains source code and says nothing about a value arriving
+   through a cast or a JSON load; this layer does.
+
+Also unconditionally fatal: a degenerate observation (no edge, several
+edges, no probe), a recorded cell that now agrees, a recorded refusal
+whose reason has drifted, and an unclassified refusal.
+
+### Half-verified cells
+
+Some cells are exercised in the **refusal direction only**: they state
+the right answer and would still catch a regression into a wrong exact
+target, but they have never been observed passing, because the
+selection they perform resolves nowhere in the engine. The matrix marks
+those forms with `refusalOnlyVerified` and `REPORT.md` prints them with
+a `†`, under their own section. Do not read them as fully verified.
+
 This is a deliberate departure from `tests/adversarial/v1|v2`, which let
 a disagreeing scenario simply fail. Those suites are a research record
 read by a human; this one is an instrument meant to catch the *next*
