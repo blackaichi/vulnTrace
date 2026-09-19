@@ -912,10 +912,24 @@ export type ImportProvenanceDeclaration =
       readonly declaration: ts.VariableDeclaration;
       readonly call: ts.CallExpression;
     }
-  /** `const { run } = require("pkg")` -- one member, bound by an exact `BindingElement`. */
+  /**
+   * `const { run } = require("pkg")` -- ONE static, single-valued
+   * property of the module object, bound by an exact `BindingElement`
+   * that has been proved to name it (see
+   * {@link resolveImportProvenanceDeclaration}'s shape boundary).
+   *
+   * `propertyName` is that proved key, resolved here and handed to the
+   * consumer. It is deliberately NOT left for the consumer to re-derive
+   * as `element.propertyName ?? element.name`: that fallback is sound
+   * only once the element is known to be an object-pattern element, and
+   * an audit found the first implementation applying it to ARRAY
+   * elements, where there is no property name and the fallback promoted
+   * the LOCAL IDENTIFIER'S TEXT into an export name.
+   */
   | {
       readonly kind: "require-element";
       readonly element: ts.BindingElement;
+      readonly propertyName: string;
       readonly call: ts.CallExpression;
     }
   /**
@@ -946,10 +960,21 @@ export type ImportProvenanceDeclaration =
 function requireCallInitializer(
   variable: ts.VariableDeclaration,
 ): ts.CallExpression | undefined {
+  // READ THE INITIALIZER AS WRITTEN (RWF-046 N1). An earlier version of
+  // this function ran `unwrapTypeOnly` here, which made
+  // `const m = (require("pkg"))` and `require("pkg") as any` resolve
+  // where the base commit left them UNKNOWN. That is a COVERAGE change,
+  // not an authority one: it widens which initializers count as a
+  // require, and neither RWF-046's mandate nor its corpus differential
+  // covered it. Carrying an unreviewed precision widening inside a
+  // soundness fix makes the differential unattributable, so it is
+  // withdrawn here and left for its own item. Reading the initializer as
+  // written also keeps this in step with `source-index.ts`'s
+  // `extractRequireBindings`, which tests `parent.initializer === call`.
   if (!variable.initializer) {
     return undefined;
   }
-  const initializer = unwrapTypeOnly(variable.initializer);
+  const initializer = variable.initializer;
   if (
     !ts.isCallExpression(initializer) ||
     !ts.isIdentifier(initializer.expression) ||
@@ -1017,14 +1042,64 @@ export function resolveImportProvenanceDeclaration(
     if (!ts.isBindingElement(element)) {
       return { kind: "none", cause: "destructuring" };
     }
-    // Only a pattern written DIRECTLY on the declaration destructures the
-    // required module itself. A nested one (`const { a: { b } } = require(...)`)
-    // reads a member of a member, which no import binding models, so it
-    // gets no import provenance rather than the outer module's.
-    const variable = element.parent.parent;
-    if (!ts.isVariableDeclaration(variable)) {
+
+    // THE SHAPE BOUNDARY: what a binding element can PROVE about the
+    // required module's properties. Every clause below refuses, and
+    // refusing costs an edge that may well have been correct -- the
+    // right trade, because the alternative is naming an export this
+    // element does not name.
+    //
+    // This mirrors the boundary RWF-045 draws for the destructuring
+    // bridge, deliberately clause for clause: the two answer different
+    // questions (which declaration owns the name, versus which module
+    // that declaration denotes) about the SAME syntax, and letting them
+    // drift is how one ends up admitting a shape the other rejects.
+    //
+    // FOUND BY AUDIT, AFTER THE FIRST IMPLEMENTATION LANDED. That
+    // version checked only that `element.parent.parent` was a
+    // require-initialized `VariableDeclaration`. An independent audit
+    // showed that admits an ARRAY element, and `symbol-binder.ts`'s
+    // `element.propertyName ?? element.name` then used the LOCAL name as
+    // the export name: `const [, run] = require("pkg")` binds index 1
+    // and resolved to `pkg#run` -- the very text-authority defect
+    // RWF-046 exists to remove, one layer in. Gating on "not an array
+    // pattern" would not have been the fix: the same substitution is
+    // reachable through a rest element, and a defaulted element resolves
+    // two possible runtime values onto one target. So the boundary is
+    // stated as the property proof itself, not as the counterexample.
+
+    // A rest element holds the REMAINING properties, never the one named
+    // callable; a default gives the binding two possible runtime values
+    // and nothing here proves which one the call reaches.
+    if (element.dotDotDotToken || element.initializer) {
       return { kind: "none", cause: "destructuring" };
     }
+
+    // An ARRAY pattern binds by POSITION. It has no property name at
+    // all, so there is nothing for a key to be read from -- and the
+    // local name is emphatically not one.
+    const pattern = element.parent;
+    if (!ts.isObjectBindingPattern(pattern)) {
+      return { kind: "none", cause: "destructuring" };
+    }
+
+    // The pattern must be the declaration's OWN name. A nested pattern
+    // (`const { api: { run } } = require("pkg")`) makes the real member
+    // path `pkg.api.run`, which no import binding models; refusing keeps
+    // it UNKNOWN rather than mis-attributing it to `pkg.run`.
+    const variable = pattern.parent;
+    if (!ts.isVariableDeclaration(variable) || variable.name !== pattern) {
+      return { kind: "none", cause: "destructuring" };
+    }
+
+    // The key must be statically spellable. A computed key
+    // (`const { [k]: run } = require("pkg")`) names no property this can
+    // read, and a numeric key names no export.
+    const key = element.propertyName ?? element.name;
+    if (!ts.isIdentifier(key) && !ts.isStringLiteralLike(key)) {
+      return { kind: "none", cause: "destructuring" };
+    }
+
     const call = requireCallInitializer(variable);
     if (!call) {
       return { kind: "none", cause: "destructuring" };
@@ -1032,7 +1107,12 @@ export function resolveImportProvenanceDeclaration(
     if (isReboundInScope(variable, scope, reference.text)) {
       return { kind: "none", cause: "reassigned" };
     }
-    return { kind: "require-element", element, call };
+    return {
+      kind: "require-element",
+      element,
+      propertyName: key.text,
+      call,
+    };
   }
 
   const variable = declaration.variable;

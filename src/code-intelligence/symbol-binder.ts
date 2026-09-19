@@ -209,22 +209,20 @@ function importBindingFor(
   }
 
   if (declaration.kind === "require-element") {
-    const { element } = declaration;
-    // A rest element (`const { ...rest } = require("pkg")`) binds an
-    // object of the remaining members, not any one export, so it names
-    // nothing this can be authoritative about.
-    if (element.dotDotDotToken || !ts.isIdentifier(element.name)) {
-      return undefined;
-    }
-    const propertyName = element.propertyName ?? element.name;
-    if (
-      !ts.isIdentifier(propertyName) &&
-      !ts.isStringLiteralLike(propertyName)
-    ) {
-      // A computed key (`const { [k]: run } = require("pkg")`) names no
-      // export statically.
-      return undefined;
-    }
+    // The exported name is taken from `declaration.propertyName`, which
+    // the authority layer already PROVED names a static, single-valued
+    // property of the module object (named-bindings.ts's shape
+    // boundary). This deliberately does not re-derive it as
+    // `element.propertyName ?? element.name`: that fallback is sound
+    // only for an object-pattern element, and an audit found the first
+    // implementation applying it to an ARRAY element, where it promoted
+    // the local identifier's TEXT into an export name
+    // (`const [, run] = require("pkg")` resolved to `pkg#run`).
+    //
+    // Re-checking the shape here as well would be harmless but is not
+    // done on purpose: a guard enforced in two places is a guard whose
+    // mutation test passes with either copy deleted, and each clause of
+    // that boundary has a named test that must fail when it is removed.
     const [specifier] = declaration.call.arguments;
     if (!ts.isStringLiteral(specifier as ts.Node)) {
       return undefined;
@@ -232,7 +230,7 @@ function importBindingFor(
     return {
       specifier: (specifier as ts.StringLiteral).text,
       kind: "named",
-      importedName: propertyName.text,
+      importedName: declaration.propertyName,
     };
   }
 
