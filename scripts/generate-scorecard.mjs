@@ -653,7 +653,7 @@ async function build() {
       "Still open",
       `${register.open.length} — ${register.open.map((entry) => entry.id).join(", ")}`,
       "structural — the same table",
-      "NOT all of one kind, and the difference matters: RWF-001 and RWF-006 are precision gaps that degrade to UNKNOWN in both directions, RWF-044 is precision-only by construction, but RWF-046 is a SOUNDNESS finding in BOTH directions (a function-local require binding at file scope, so two same-named locals collapse). Reading this row as 'open precision debt' is the misreading to avoid.",
+      "NOT all of one kind, and the difference matters: RWF-001 and RWF-006 are precision gaps that degrade to UNKNOWN in both directions, RWF-044 is precision-only by construction, RWF-045 is a SOUNDNESS finding in the fabricating direction (a destructuring pattern selected by name across scopes), and RWF-047 is DELIBERATELY UNCLASSIFIED -- a require-bound module object keeps its attribution across a member write, which yields a WRONG attribution rather than an absent one, so whether it is a precision gap or a fabricated-edge class is the open question and is not assumed here. Reading this row as 'open precision debt' is the misreading to avoid.",
       "'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`.",
     ]),
     row([

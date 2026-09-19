@@ -486,6 +486,41 @@ from `symbol-binder.ts` when the boundary moved into
 mutation test passes with either copy deleted, which is the same
 false-comfort failure in miniature.
 
+**What this does to § 3 criterion 3**, which requires *no known path to
+a false `NOT_AFFECTED` or a silently dropped finding*. Two separate
+answers, and they differ:
+
+- **The INTRODUCED array fabrication never violated it.** It existed
+  only on an unmerged branch, between the first RWF-046 implementation
+  and the audit that found it. Criterion 3 is a statement about
+  Foundation — about `main` — and `main` never carried this defect. The
+  register was not wrong about the state it describes.
+- **Five PRE-EXISTING defects WERE on `main` while the criterion read
+  as satisfied** (RWF-046b: computed, numeric and string-literal
+  property keys resolving by local text, a defaulted element resolving
+  two runtime values to one target, and a reassigned destructured
+  binding keeping stale provenance). Each is a fabricating-direction
+  defect, and by RWF-043 § 1's corrected reasoning a fabricated edge
+  displaces the honest `unknown` blocker, so each was a path to a false
+  `NOT_AFFECTED`. They were unknown, not tolerated — but criterion 3
+  says *no known path*, and "known" is a fact about what has been
+  looked for, not about what is there.
+
+So the criterion held as written and did not hold as intended, and the
+gap between those two readings is the interesting part. It was closed
+by an audit sweeping a grammar exhaustively, not by the corpus
+differential, which had zero instances of all five shapes and reported
+no movement for any of them. The honest conclusion is not that the
+criterion was violated but that **it cannot be discharged by a
+differential**, which is D-12's rule arriving for the third time.
+
+**The class is now the thing to gate, not the instances.** Local text
+standing in for a resolved name has now been found and closed in four
+independent locations — RWF-043, RWF-045, RWF-046, and RWF-046a/046b —
+each discovered only after the previous one was fixed. Four is enough
+to stop treating them as coincidences. See RWF-046b in
+`tests/validation/FINDINGS.md` for the site-by-site table.
+
 Recorded in full as RWF-046a in `tests/validation/FINDINGS.md`.
 
 ## 2. Target intelligence is not analyzer uncertainty

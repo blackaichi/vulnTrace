@@ -104,7 +104,9 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-044 | `fast-xml-parser`, `lru-cache`, `semver` — any module whose function bodies reference a `const`/`let` callable declared later in the file | B3's evaluation-order rule (P1-B3 § 9) refuses a reference written textually above its initializer. That is right about STATEMENT order and wrong about EXECUTION order for a deferred body: `function f() { later(); }` above `const later = ...` only runs `later()` once something calls `f`, which cannot precede module initialization | **Precision only, never soundness** — every refusal costs an edge that is correct in fact; the failure direction is UNKNOWN. 85 call-graph edges in the corpus. These resolved on `779e219` only because the same-name matcher overrode B3's refusal | Open, deliberately not scoped into P1-B3b — precision only; needs deferred-execution modeling, not a heuristic — see below |
 | RWF-045 | any file with two `const { name } = source` patterns binding the SAME name in different scopes | `findDestructuredBindingSource` is reached only once `resolveNamedBinding` has proved the reference binds to a destructuring, but it then locates WHICH pattern by a whole-file, first-match search on the bound name — the same flat-index mistake RWF-043 removed from the direct-call paths, surviving on the destructuring bridge | **Soundness, BOTH directions** — reproduced: `main` destructures `run` from `safeMod` and calls it, and the edge resolves to `danger.js#run`. Identical on the P1-B3 base `779e219`, so pre-existing rather than a P1-B3b regression. The record's original "fabricating direction" framing was INCOMPLETE and is corrected below: an end-to-end oracle now reproduces a false `NOT_AFFECTED` carrying a complete Family C proof over a call the program really makes into the vulnerable export, AND a false `AFFECTED` against a program that never calls it | **Fixed (RWF-045)** — see below |
 | RWF-046 | `gopd` (found via the RWF-046 corpus differential), the repo's own `fixtures/target-side-reexport` and `fixtures/commonjs-entrypoint-root-widening`; any file that binds a require to a name bound more than once in the file, or that reassigns a require-bound name | `bindCallee` resolved a callee's module with `moduleModel.imports.find((imp) => imp.localName === calleeText)` — a FILE-WIDE, NAME-KEYED table carrying no declaration identity at all, so the first row spelled the same won every reference in the file. The same flat-index mistake RWF-042 removed from the value-binding paths and RWF-043 removed from the direct-call paths, surviving one layer down: both of those made the call graph ask which DECLARATION a name binds to, and the answer was then discarded and the module question re-asked by spelling | **Soundness, BOTH directions** — reproduced on the base `b9bb81b`. False `AFFECTED`: a file-scope `require("vulnerable-mod")` answers for an inner `const source = require("safe-mod"); source.run()`. False `NOT_AFFECTED`: reversing the two resolves the inner vulnerable call onto the outer safe module, and by RWF-043 § 1's corrected reasoning a fabricated edge also DISPLACES the honest `unknown` blocker. Reproduced in the repo's OWN corpus: 7 edges in `fixtures/target-side-reexport/verify.cjs` all collapsed onto `direct-lib#vulnerable`, and a resolved edge was FABRICATED at `verify.cjs:306` out of a dynamic template specifier by borrowing a `main` require six lines away in a different block. Real npm code reproduces the reassignment shape: `gopd/index.js`'s `var $gOPD = require('./gOPD'); ... $gOPD = null;` kept its pre-reassignment provenance | **Fixed (RWF-046)**; the first implementation of this fix introduced a separate fabrication of its own, recorded and closed as RWF-046a — see below |
-| RWF-046a | any file binding a require with an ARRAY pattern, a rest element, or (on the base commit too) a defaulted element — zero occurrences in the current corpus, which is why nothing caught it | RWF-046's first implementation accepted any `BindingElement` under a require-initialized `VariableDeclaration` and let `symbol-binder.ts` take `element.propertyName ?? element.name` as the exported name. Sound for an object shorthand, where the property and local names are the same token; unsound otherwise. An ARRAY element has no property name, so the LOCAL IDENTIFIER'S TEXT became the export name — the `identifier text → module source` substitution RWF-046 exists to remove, reintroduced inside the function that replaced the old table | **Soundness, fabricating direction. INTRODUCED, not pre-existing** — found by independent audit of branch head `e29a713` before it merged. `const [, run] = require("pkg"); run()` binds array index 1 and resolved to `pkg#run`; the base `b9bb81b` returns UNKNOWN. A false-AFFECTED vector whose fabricated key is whatever the local is spelled. The defaulted form (`const { run = fallback } = require("pkg")`) resolved on the BASE too, and is closed here as well | **Fixed (RWF-046a)** — see below |
+| RWF-046a | any file binding a require with an ARRAY pattern, a rest element, or (on the base commit too) a defaulted element — zero occurrences in the current corpus, which is why nothing caught it | RWF-046's first implementation accepted any `BindingElement` under a require-initialized `VariableDeclaration` and let `symbol-binder.ts` take `element.propertyName ?? element.name` as the exported name. Sound for an object shorthand, where the property and local names are the same token; unsound otherwise. An ARRAY element has no property name, so the LOCAL IDENTIFIER'S TEXT became the export name — the `identifier text → module source` substitution RWF-046 exists to remove, reintroduced inside the function that replaced the old table | **Soundness, fabricating direction. INTRODUCED, not pre-existing** — found by independent audit of branch head `e29a713` before it merged. `const [, run] = require("pkg"); run()` binds array index 1 and resolved to `pkg#run`; the base `b9bb81b` returns UNKNOWN. A false-AFFECTED vector whose fabricated key is whatever the local is spelled. The defaulted form (`const { run = fallback } = require("pkg")`) resolved on the BASE too, and is closed here as well. A scoped re-audit then measured FIVE further pre-existing base defects sharing the same root cause — see RWF-046b | **Fixed (RWF-046a)** — see below |
+| RWF-046b | any file destructuring a require with a COMPUTED, NUMERIC or STRING-LITERAL property key, or with a default, or reassigning a destructured require binding. Zero occurrences in the current corpus | `source-index.ts`'s `extractRequireBindings` derives the imported name as `ts.isIdentifier(propertyName) ? propertyName.text : element.name.text` — so any key that is not an `Identifier` falls through to the binding's LOCAL name and publishes it as the export name. Separately it never checked `element.initializer`, so a defaulted element resolved to one target despite two possible runtime values. The same local-text-as-export-name class as RWF-046a, reached by a different route, and the FOURTH site of that class after RWF-043, RWF-045 and RWF-046 | **Soundness, fabricating direction. PRE-EXISTING on `main`** — measured on `b9bb81b` by the scoped re-audit of RWF-046a, not by the corpus differential. `const { [k]: run }`, `const { ["run"]: run }` and `const { 0: run }` all resolve to `pkg#run` by local text; `const { "run": execute }` resolves to `pkg#execute`, a DIFFERENT REAL EXPORT of the same package, which nothing downstream could detect as wrong; `let { run } = require("pkg"); run = null` keeps stale provenance | **Fixed (RWF-046a)** — closed by the same shape boundary; recorded separately because it was on `main` and RWF-046a's introduced array case was not |
+| RWF-047 | any file that writes a member of a require-bound module object and then calls it — `const mod = require("pkg"); mod.run = patched; mod.run()` | `isMemberAssignedWithin` invalidates a member read on an OBJECT LITERAL binding, but no equivalent check governs a require-bound module object, so the attribution survives a write to the member it names | **OPEN QUESTION, deliberately not yet classified** — identical on `b9bb81b` and on this branch, so neither introduced nor expanded by RWF-046/046a. A missing invalidation yields a WRONG attribution rather than an absent one, so this may be a fabricated-edge class rather than a precision gap; that is the thing to decide, and it is not decided here | Open — unclassified pending the reproduction below |
 
 ---
 
@@ -14545,9 +14547,20 @@ implementation, on branch head `e29a713`, BEFORE that branch merged.
 Not found by the corpus differential, not found by any gate, and not
 designed in — this record exists partly to say so.
 
-**Class: soundness, fabricating direction. INTRODUCED by RWF-046**, not
-pre-existing: the base commit `b9bb81b` fails closed on every shape
-below.
+**Class: soundness, fabricating direction.**
+
+**The ARRAY shapes are INTRODUCED by RWF-046's first implementation**;
+the base commit `b9bb81b` returns UNKNOWN for every one of them.
+
+> **This record as first written said the base "fails closed on every
+> shape below". That is WRONG and is corrected in place rather than
+> deleted.** It was already contradicted by this record's own
+> defaulted-element row, and the scoped re-audit then measured four
+> further shapes the base resolves — three of them by the SAME
+> local-identifier-text substitution. The claim was written from the
+> array reproduction and generalised without measuring. See
+> **§ The base was not clean** below, which records each as its own
+> closure rather than folding it into this one.
 
 ### The defect
 
@@ -14585,11 +14598,64 @@ the old table.
 | `const { run = fallback } = require("pkg")` | resolved | resolved | UNKNOWN |
 | `const { ...run } = require("pkg")` | UNKNOWN | UNKNOWN | UNKNOWN |
 
-The defaulted row is a **base defect this remediation also closes**:
-`source-index.ts`'s `extractRequireBindings` never checked
-`element.initializer`, so `const { run = fallback } = require("pkg")`
-resolved to one target although the binding has two possible runtime
-values.
+### The base was not clean — five further defects, each closed here
+
+Measured by the scoped re-audit with a 36-shape grammar sweep run
+against `b9bb81b` and against this branch. These are **PRE-EXISTING
+defects that were on `main`**, distinct from the array shapes above,
+and each is recorded as its own closure rather than folded into
+RWF-046a:
+
+| # | Shape | base `b9bb81b` | after RWF-046a | Closure |
+| --- | --- | --- | --- | --- |
+| **a** | `const { [k]: run } = require("pkg")` (computed key, variable) | **resolved `pkg#run`** — by LOCAL text | UNKNOWN | fabricated edge removed |
+| **b** | `const { ["run"]: run } = require("pkg")` (computed key, literal) | **resolved `pkg#run`** — by LOCAL text | UNKNOWN | fabricated edge removed |
+| **c** | `const { 0: run } = require("pkg")` (numeric key) | **resolved `pkg#run`** — by LOCAL text | UNKNOWN | fabricated edge removed |
+| **d** | `const { "run": execute } = require("pkg")` (string-literal key) | **resolved `pkg#execute`** — the WRONG export, by LOCAL text | **resolved `pkg#run`** — correct | mis-attribution corrected |
+| **e** | `let { run } = require("pkg"); run = null; run()` | **resolved `pkg#run`** — stale | UNKNOWN | stale provenance removed |
+
+Row **d** is the sharpest: the base did not merely fail to resolve, it
+resolved to a *different real export of the same package*. `execute`
+exists in the fixture, so nothing downstream could tell the answer was
+wrong.
+
+The defaulted element in the table above belongs to this group too —
+`extractRequireBindings` never checked `element.initializer`, so
+`const { run = fallback } = require("pkg")` resolved to one target
+although the binding has two possible runtime values.
+
+### The shared root cause, and why it is the fourth of its kind
+
+Every one of a, b, c, d is the same line in `source-index.ts`'s
+`extractRequireBindings`:
+
+```ts
+const importedName =
+  element.propertyName && ts.isIdentifier(element.propertyName)
+    ? element.propertyName.text
+    : element.name.text;        // <- the LOCAL name, as an export name
+```
+
+A property key that is not an `Identifier` — computed, numeric, or a
+string literal — falls through to the binding's LOCAL name and that
+name is published as the imported export name. The array case RWF-046's
+first implementation introduced is the same substitution reached by a
+different route: there the element had no property name at all.
+
+**This is the FOURTH location of one defect class**: an identifier's
+TEXT standing in for a resolved name.
+
+| Finding | Where the text stood in |
+| --- | --- |
+| RWF-043 | a bare-name call matched the first same-named function in the file |
+| RWF-045 | the destructuring bridge selected its pattern by the bound name |
+| RWF-046 | the import table was keyed by `localName` |
+| **RWF-046a / this section** | a binding element's LOCAL name became the EXPORT name — in the base index for non-identifier keys, and in the first remediation for array elements |
+
+Four independent sites, four separate discoveries, each found only
+after the previous one was closed. That is the evidence base for
+treating local-text-as-resolved-name as a class to be gated
+structurally rather than as four defects that happened to rhyme.
 
 ### Why it was the boundary, not the array case
 
@@ -14681,3 +14747,98 @@ is caught by NAMED tests:
 
 **Fixed (RWF-046a).** RWF-045 is untouched and remains open; the two
 remain separate authority layers.
+
+### Test obligation owed by this PR
+
+The RWF-045 × RWF-046 cross-layer oracle has never run, because the two
+boundaries live on branches that have never both been present. The two
+partition cleanly by initializer shape — RWF-046's require path needs a
+`require("literal")` initializer, RWF-045's bridge needs a
+plain-identifier one, and a declaration has one or the other — so the
+re-audit found no conflict and neither PR is blocked on it.
+
+It is owed nonetheless, and **it is owed by this PR**: PR #60 (RWF-045)
+merges first, so this branch is the second onto a tree carrying both,
+and only there can the oracle actually run. The case to pin is the
+composition
+`const mod = require("pkg"); const { run } = mod; run()` — RWF-045
+selects the exact source identifier, RWF-046 resolves that identifier's
+declaration — together with the const-ness divergence: RWF-045's bridge
+is `const`-only while RWF-046 uses the reassignment rule, so
+`let { run } = require("pkg")` with no write resolves while
+`let { run } = mod` does not. Both are sound; the asymmetry should be
+asserted rather than discovered.
+
+---
+
+## RWF-047 — A require-bound module object keeps its attribution across a member write
+
+**Discovered:** by the scoped re-audit of RWF-046a, while sweeping the
+binding grammar for shapes where a local name could still reach an
+exported name. Not a shape RWF-046 touches.
+
+**Neither introduced nor expanded by RWF-046/046a.** Measured
+identically on `b9bb81b` and on this branch:
+
+```js
+const mod = require("pkg");
+function patched() {}
+function f() {
+  mod.run = patched;
+  mod.run();        // resolves to pkg#run, on BOTH
+}
+```
+
+**The asymmetry.** `named-bindings.ts` exposes `isMemberAssignedWithin`,
+and the call graph uses it for an object-literal receiver: `const obj =
+{ m: danger }; obj.m = safe; obj.m()` correctly refuses, because a
+`const` binding to an object literal freezes the BINDING and not the
+OBJECT. A require-bound module object has exactly the same property —
+`const` freezes `mod`, not `mod.run` — and no equivalent check governs
+it.
+
+### Why this is NOT recorded as precision debt
+
+The re-audit suggested "pre-existing precision debt". That
+classification is not adopted here, because it may well be wrong, and
+the distinction is the whole question:
+
+- a **precision gap** costs an edge that was correct in fact, and fails
+  toward UNKNOWN — the direction this engine is permitted to fail in;
+- a **missing invalidation** yields an edge that is WRONG, pointing at
+  `pkg#run` while the program calls `patched`. That is an attribution
+  the analyzer states and the runtime contradicts, which is the
+  fabricated-edge class — and by RWF-043 § 1's corrected reasoning a
+  fabricated edge also displaces the honest `unknown` blocker, so the
+  false-`NOT_AFFECTED` direction is in scope too.
+
+Calling it precision debt on an auditor's word would file a possible
+soundness finding under a heading that exempts it from the soundness
+gate. It stays unclassified until measured.
+
+### The minimal reproduction needed to decide it
+
+Three things, none of them yet done:
+
+1. **Does the wrong edge reach a verdict?** Build the shape above with
+   the advisory naming `pkg#run`, where `patched` is safe and `run` is
+   vulnerable, and scan. If the finding is AFFECTED on a path the
+   runtime never takes, it is a false AFFECTED and the class is
+   settled.
+2. **The reverse direction.** Make `run` safe and `patched` vulnerable
+   and confirm whether the analyzer reports NOT_AFFECTED over a target
+   the program does reach — the displacement case, which matters more.
+3. **Real `node` ground truth** for both, in the style of this repo's
+   circular-import fixtures, so the runtime answer is measured rather
+   than argued.
+
+Only after 1–3 can this be classified. **Do not fix it before it is
+classified**: the fix differs by class. A precision gap would be
+addressed by extending `isMemberAssignedWithin` to require bindings; a
+fabricated-edge class needs that plus an audit of every other receiver
+whose members are read without an invalidation check.
+
+**Prevalence is unmeasured** and is not a reason to defer: monkey-
+patching a required module (`mod.foo = wrapper`) is an established
+JavaScript idiom, and the corpus's silence on the RWF-046a shapes is
+exactly what D-12 warns against reading as absence.
