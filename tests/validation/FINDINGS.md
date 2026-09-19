@@ -15063,51 +15063,56 @@ reference. P1-B3 § 14 withholds class and instance modeling, so this
 sits inside a stated boundary — but the STATIC case needs no instance
 modeling at all, and it is not separately stated.
 
-### 5. An adjacent gap the controls found: a quoted CommonJS export key is not an export
+#### 4f. `non-identifier-key` — and why these 21 cells are only HALF verified
 
-Not a matrix cell, and not caused by anything on this branch. Found
-because the instrument's own numeric-liveness control failed.
+The destructuring shape boundary admits a key only when it is an
+identifier or a string literal, so a numeric-literal key and a computed
+key are both refused although each names a property JavaScript resolves
+to exactly one value. Sound and imprecise, like the rest of § 4.
 
-```js
-// node_modules/pkg/index.js
-function f() {}
-module.exports = { "1": f };
-```
+**What is different about this family, and why it is marked separately
+in the matrix and in `REPORT.md`:** these cells are exercised in the
+**refusal direction only**. A non-identifier key resolves in NO
+position anywhere in the engine, so no source spelling exercises the
+positive direction and none of these cells has ever been observed
+passing. Measured, all three layers:
 
-```js
-const { "1": x } = require("pkg");
-x();                    // UNKNOWN unresolved_target
-```
+| position | spelling | result |
+| --- | --- | --- |
+| destructuring | `const { 1: x } = src` | `UNKNOWN` (shape boundary) |
+| destructuring | `const { [KEY]: x } = src` | `UNKNOWN` (shape boundary) |
+| element access | `x[1]()` | `UNKNOWN dynamic_member_access` |
+| element access | `x[KEY]()`, `KEY` a `const` string literal | `UNKNOWN dynamic_member_access` |
+| CommonJS export model | `module.exports = { "1": f }` | not an export at all (RWF-049) |
 
-`module-model.ts`'s object-literal export extraction accepts a property
-name that is an **identifier**, or a **computed** name whose literal it
-can read, and nothing else. A plain string-literal or numeric-literal
-key matches neither, so the export is not in the model at all. Writing
-the same export as `module.exports = { ["1"]: f }` makes it reachable —
-which is what the fixture now does, and the control passes.
+The element-access rows are worth stating plainly, because they
+contradict what VT-217 is documented to do: its literal-key rewrite
+(`fns[KEY]` where `KEY` is a same-file `const` bound to a string
+literal) does **not** fire for either shape measured here, on a local
+object or on a required module. Whether VT-217 is narrower than its
+description or the description is stale is not decided here.
 
-| spelling | in the export model |
-| --- | --- |
-| `module.exports = { f: f }` | yes |
-| `module.exports = { ["1"]: f }` | yes |
-| `module.exports = { "1": f }` | **no** |
-| `module.exports = { 1: f }` | **no** |
+Each cell's expected target IS a real, emittable observation — the
+sweep's numeric control reaches `_n1` through a string-literal key — so
+the cells are correctly specified and would still catch a regression
+into a WRONG exact target. What they have never done is pass. **They
+must not be read as fully verified, or as one boundary-widening away
+from green**, and `matrix.ts` marks them via `refusalOnlyVerified` so
+the report cannot print them as though they were the same as the rest.
 
-**Direction of failure: toward UNKNOWN**, so it is a precision gap and
-not a soundness one. It is recorded rather than fixed, per this task's
-scope. Its practical significance for auditing is larger than its
-practical significance for scanning: **a fixture that exports a name
-with a quoted key exports nothing**, so any future test baiting a
-quoted or numeric spelling is silently unfalsifiable in exactly the way
-D-12 and the RWF-046 array hole warn about.
+### 5. An adjacent gap the controls found — promoted to RWF-049
 
-Also worth recording, because RWF-046a's own boundary comment asserts
-the opposite: the comment justifies refusing a numeric destructuring
-key with "a numeric key names no export". That is not accurate —
-`module.exports = { ["1"]: f }` is a real export named `"1"` and this
-suite's control reaches it. **The refusal is right; the reason given
-for it is not**, and a future widening argued from that reason would be
-argued from a false premise.
+The instrument's own numeric-liveness control failed on its first run,
+and the cause is that **a CommonJS export written with a quoted or
+numeric key is not an export at all**: `module.exports = { "1": f }`
+and `{ 1: f }` put nothing in the model, while `{ ["1"]: f }` does.
+
+Not a matrix cell, not caused by anything on this branch, and a
+property of the EXPORT MODEL rather than of any binding form — so it
+is written up as **RWF-049** rather than kept here, where nobody would
+search for it. Its consequence for this sweep is recorded in § 4f: it
+is one of the three layers that make the `non-identifier-key` cells
+refusal-direction-only.
 
 ### 6. Differentials
 
@@ -15173,3 +15178,105 @@ it should be scoped from § 4 and § 7. It does not fix anything: every
 disagreement above is recorded, not remediated, and RWF-047, RWF-044,
 RWF-006, RWF-001, Block C, VT-210's implementation and
 `loader-constructs.ts` are untouched.
+
+---
+
+## RWF-049 — A CommonJS export written with a quoted or numeric key is not an export
+
+**Discovered:** by the binding-form grammar sweep's own numeric-liveness
+control (RWF-048 § 2), which failed on its first run. Not caused by
+anything on that branch, and not a shape RWF-045 or RWF-046 touches.
+
+**Promoted from RWF-048 § 5 to its own finding** because it is a
+property of the EXPORT MODEL rather than of any binding form, it
+constrains what future tests can assert, and a gap filed inside another
+finding's supporting section is a gap nobody searches for.
+
+### Minimal reproduction
+
+```js
+// node_modules/pkg/index.js
+function f() {}
+module.exports = { "1": f };
+```
+
+```js
+const { "1": x } = require("pkg");
+x();                    // UNKNOWN unresolved_target
+```
+
+Rewriting the export as a computed literal makes it reachable:
+
+```js
+module.exports = { ["1"]: f };   // export "1" exists
+const { "1": x } = require("pkg");
+x();                    // EXACT node_modules/pkg/index.js#f
+```
+
+| export spelling | in the export model |
+| --- | --- |
+| `module.exports = { f: f }` | yes |
+| `module.exports = { ["1"]: f }` | yes |
+| `module.exports = { ["name"]: f }` | yes |
+| `module.exports = { "1": f }` | **no** |
+| `module.exports = { "name": f }` | **no** |
+| `module.exports = { 1: f }` | **no** |
+
+### Mechanism
+
+`module-model.ts`'s object-literal export extraction accepts a property
+name that is an **identifier**, or a **computed** name whose literal it
+can read (`resolveComputedPropertyNameLiteral`), and nothing else. A
+plain string-literal or numeric-literal key matches neither branch, so
+no `ExportBinding` is produced and the name is absent from the model.
+
+Note the inconsistency this creates with the module model's own
+member-reading path, which DOES accept a numeric or string-literal
+property name when reading an object literal's member. The export side
+and the member side disagree about what a property name is.
+
+### Classification: precision debt, not a soundness defect
+
+**The direction of failure is toward UNKNOWN.** A missing export cannot
+produce a wrong attribution; it produces `unresolved_target`, which is
+an honest refusal and the direction this engine is permitted to fail
+in. No verdict can be made AFFECTED or NOT_AFFECTED by it that would
+not have been anyway.
+
+**Prevalence is unmeasured**, and per D-12 that silence is not evidence
+of absence. Quoted keys in a `module.exports` object literal are
+uncommon in hand-written source but ordinary in generated and
+transpiled output.
+
+### Why it matters more for auditing than for scanning
+
+This is the part worth carrying forward. A fixture that exports a name
+with a quoted key **exports nothing**, so any test baiting that
+spelling is silently unfalsifiable — the fabrication it is looking for
+degrades to `unresolved_target` and reads as an honest UNKNOWN. That is
+precisely the mechanism by which the RWF-046 array hole survived a
+green suite, and precisely what the loud-fixture rule exists to
+prevent.
+
+The grammar sweep's fixture is written as `{ ["1"]: f }` for this
+reason, and its numeric control asserts the export is reachable so the
+workaround cannot silently rot.
+
+### Consequence already recorded elsewhere
+
+RWF-046a's shape-boundary comment justifies refusing a numeric
+destructuring key with "a numeric key names no export". That premise is
+false: `module.exports = { ["1"]: f }` is a real export named `"1"`.
+The refusal is correct and should stand; the reason given for it is
+not, and a future widening argued from that reason would be argued from
+a false premise. **Not corrected here** — that comment lives in a
+production file and belongs to its own branch.
+
+### Not fixed
+
+Recorded only. A fix would extend the object-literal export extraction
+to accept string-literal and numeric-literal property names, bringing
+it into line with the member-reading path — and would need its own
+corpus differential, since it WIDENS the set of names that resolve and
+a widening can turn an honest UNKNOWN into a resolved edge that
+displaces a blocker (RWF-043 § 1).

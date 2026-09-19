@@ -573,6 +573,26 @@ export interface BindingForm {
   refusalFor?(
     mechanism: AuthorityMechanism,
   ): AuthorityMechanism["refusal"] | undefined;
+  /**
+   * Set when this form's cells are exercised in the REFUSAL DIRECTION
+   * ONLY, and why.
+   *
+   * A cell expecting EXACT normally has two live directions: it fails if
+   * the analyzer refuses (today's disagreement), and it would fail
+   * differently if the analyzer named the WRONG target. For some forms
+   * the second direction is not reachable by any source spelling,
+   * because the selection this form performs resolves NOWHERE in the
+   * engine. Such a cell still states the right answer and still catches
+   * a regression into a wrong EXACT if one ever becomes possible -- but
+   * it has never been observed passing, and nothing about it has been
+   * confirmed positively.
+   *
+   * A reader must not take those cells as fully verified, or as one
+   * boundary-widening away from green. Recording it here rather than
+   * only in a note means the report cannot print them as though they
+   * were the same as the rest.
+   */
+  readonly refusalOnlyVerified?: string;
   readonly note: string;
 }
 
@@ -655,6 +675,18 @@ export const BINDING_FORMS: readonly BindingForm[] = [
         [`const { 1: probeTarget } = ${ctx.container};`],
         ctx.invoke("probeTarget"),
       ),
+    refusalOnlyVerified:
+      "A non-identifier key resolves in NO position anywhere in the " +
+      "engine, so these cells have never been observed passing and " +
+      "nothing about them is positively confirmed. Measured: " +
+      "destructuring refuses a numeric key (the shape boundary); " +
+      "element access refuses it too (`x[1]()` is " +
+      "`dynamic_member_access`, not the VT-217 literal-key rewrite); " +
+      "and in CommonJS the export model has no representation for one " +
+      'at all -- `module.exports = { "1": f }` and `{ 1: f }` index ' +
+      "nothing (RWF-049). The expected target IS a real emittable " +
+      "observation -- this suite's numeric control reaches `_n1` -- but " +
+      "no source spelling produces it THROUGH a numeric key.",
     note:
       "A numeric key is a STATIC property name -- `module.exports = { 1: f }` " +
       'is a real export called "1", and the fixture provides it. The ' +
@@ -674,6 +706,17 @@ export const BINDING_FORMS: readonly BindingForm[] = [
         ],
         ctx.invoke("probeTarget"),
       ),
+    refusalOnlyVerified:
+      "A computed key resolves in NO position anywhere in the engine, " +
+      "so these cells have never been observed passing. Measured: " +
+      "destructuring refuses a computed key (the shape boundary), and " +
+      "element access refuses it too -- `x[KEY]()` with `KEY` a " +
+      "same-file `const` string literal is `dynamic_member_access`, " +
+      "both on a local object and on a required module, so VT-217's " +
+      "documented literal-key rewrite does not in fact fire here. The " +
+      "expected target is an ordinary identifier-keyed export that the " +
+      "engine reaches easily by other spellings; what is unverified is " +
+      "reaching it through a computed key.",
     note:
       "`KEY` is a same-file `const` initialized to a string literal, which " +
       "is exactly the shape VT-217 already resolves for element access " +
@@ -690,6 +733,17 @@ export const BINDING_FORMS: readonly BindingForm[] = [
         [`const { ["run"]: probeTarget } = ${ctx.container};`],
         ctx.invoke("probeTarget"),
       ),
+    refusalOnlyVerified:
+      "A computed key resolves in NO position anywhere in the engine, " +
+      "so these cells have never been observed passing. Measured: " +
+      "destructuring refuses a computed key (the shape boundary), and " +
+      "element access refuses it too -- `x[KEY]()` with `KEY` a " +
+      "same-file `const` string literal is `dynamic_member_access`, " +
+      "both on a local object and on a required module, so VT-217's " +
+      "documented literal-key rewrite does not in fact fire here. The " +
+      "expected target is an ordinary identifier-keyed export that the " +
+      "engine reaches easily by other spellings; what is unverified is " +
+      "reaching it through a computed key.",
     note:
       '`{ ["run"]: x }` and `{ "run": x }` are the same property named two ' +
       "ways. A different answer for the two would be describing the " +
