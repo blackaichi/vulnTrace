@@ -1,4 +1,4 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -28,6 +28,7 @@ import {
   type DisagreementGroup,
   type KnownDisagreement,
 } from "./disagreements.js";
+import { classifyCellOutcome } from "./guard.js";
 
 /**
  * THE BINDING-FORM GRAMMAR SWEEP -- driver.
@@ -176,31 +177,23 @@ describe("binding-form grammar sweep", () => {
         }\n` +
         `--- source ---\n${cell.source}--------------\n`;
 
-      if (cell.disagreement) {
-        // A KNOWN disagreement. The expectation above still states the
-        // correct answer; what is asserted here is that the defect has
-        // not changed shape. Both directions fail loudly: the analyzer
-        // being FIXED fails the first assertion (delete the row), and
-        // the analyzer drifting to a third answer fails the second.
-        expect(
-          actual,
-          `${cell.key} is recorded as a known disagreement but now AGREES ` +
-            `with the correct expectation. Delete its row from ` +
-            `disagreements.ts.${context}`,
-        ).not.toBe(wanted);
-        expect(
-          actual,
-          `${cell.key} is a known ` +
-            `${groupOf(cell.disagreement)?.class ?? "?"} disagreement ` +
-            `(${cell.disagreement.group}) ` +
-            `whose observed behaviour has CHANGED.${context}`,
-        ).toBe(cell.disagreement.observed);
-        return;
-      }
+      // EVERY cell goes through the guard, including the ones with a
+      // recorded entry. The guard decides what an entry is allowed to
+      // silence, and it checks the fabrication case BEFORE it reads the
+      // table -- so a wrong EXACT fails here whatever disagreements.ts
+      // says. See `guard.ts` for the rule and `guard.test.ts` for the
+      // proof that it holds.
+      const outcome = classifyCellOutcome({
+        key: cell.key,
+        expectation: cell.expectation,
+        observed,
+        entry: cell.disagreement,
+      });
 
-      expect(actual, `${cell.key} disagrees with its oracle.${context}`).toBe(
-        wanted,
-      );
+      if (outcome.kind === "violation") {
+        expect.fail(`${outcome.message}${context}`);
+      }
+      expect(["agrees", "known-disagreement"]).toContain(outcome.kind);
     });
   }
 });
@@ -402,7 +395,10 @@ describe("the sweep's own invariants", () => {
       ).toBeDefined();
       expect(["A", "B", "C", "honest-unknown"]).toContain(group?.class);
       expect((group?.why ?? "").length).toBeGreaterThan(80);
-      expect(d.observed).toMatch(/^(EXACT [^#]+#.+|UNKNOWN \w+)$/);
+      // The SHAPE of `observed` is the guard's business, and
+      // `guard.test.ts` owns it: an entry may record only a refusal,
+      // enforced at the type level and again at runtime.
+      expect(d.observed.reason).toMatch(/^\w+$/);
     }
     const seen = new Set<string>();
     for (const d of KNOWN_DISAGREEMENTS) {
@@ -410,6 +406,61 @@ describe("the sweep's own invariants", () => {
       expect(seen.has(key), `${key} listed twice`).toBe(false);
       seen.add(key);
     }
+  });
+
+  it("every disagreement carries a class AND a FINDINGS reference", () => {
+    // Both halves, because either one alone is unauditable. A class
+    // with no write-up says the analyzer differs and never says why, or
+    // with what reproduction, or whether anybody decided it was
+    // acceptable -- which is the part that looks like diligence and is
+    // not. A write-up with no class cannot be counted or triaged.
+    for (const d of KNOWN_DISAGREEMENTS) {
+      const group = groupOf(d);
+      const where = `${d.form} x ${d.mechanism} (group ${d.group})`;
+      expect(group, `${where}: no such group`).toBeDefined();
+      expect(["A", "B", "C", "honest-unknown"], `${where}: class`).toContain(
+        group?.class,
+      );
+      expect(group?.findings ?? "", `${where}: FINDINGS reference`).toMatch(
+        /^RWF-\d+/,
+      );
+    }
+  });
+
+  it("every FINDINGS reference resolves to a real heading", () => {
+    // A dangling reference is worse than none: it reads as though the
+    // write-up exists.
+    const findings = readFileSync(
+      path.join(REPO_ROOT, "tests", "validation", "FINDINGS.md"),
+      "utf-8",
+    );
+    for (const group of DISAGREEMENT_GROUPS) {
+      const id = group.findings.split(" ")[0] ?? "";
+      expect(
+        findings.includes(`## ${id} —`) || findings.includes(`## ${id} -`),
+        `${group.id}: FINDINGS.md has no heading for ${id}`,
+      ).toBe(true);
+    }
+  });
+
+  it("a refusal-only form marks itself, and only where it expects EXACT", () => {
+    const marked = CELLS.filter((c) => isRefusalOnly(c));
+    // The property is real and load-bearing, so it is asserted rather
+    // than left to the report: every marked cell must expect an EXACT
+    // target (a cell expecting UNKNOWN is verified by its own
+    // expectation), and every marked cell must currently be a recorded
+    // disagreement (if it agreed, the positive direction would have
+    // been observed, contradicting the mark).
+    for (const cell of marked) {
+      expect(cell.expectation.kind, cell.key).toBe("exact");
+      expect(
+        cell.disagreement,
+        `${cell.key} is marked refusal-only but AGREES -- the positive ` +
+          `direction was observed, so the mark is wrong`,
+      ).toBeDefined();
+      expect((cell.form.refusalOnlyVerified ?? "").length).toBeGreaterThan(80);
+    }
+    expect(marked.length, "the marked set must not silently empty").toBe(21);
   });
 
   it("every disagreement group is used by at least one cell", () => {
@@ -453,6 +504,21 @@ describe("the sweep's own invariants", () => {
 // The report
 // ---------------------------------------------------------------------
 
+/**
+ * Whether a cell is exercised in the refusal direction only.
+ *
+ * True when the form says its selection resolves nowhere in the engine
+ * AND the cell expects an EXACT target -- so the cell has never been
+ * observed passing and nothing about it is positively confirmed. A cell
+ * that expects UNKNOWN is unaffected: its expectation is the refusal.
+ */
+function isRefusalOnly(cell: Cell): boolean {
+  return (
+    cell.form.refusalOnlyVerified !== undefined &&
+    cell.expectation.kind === "exact"
+  );
+}
+
 const CLASS_GLYPH: Record<string, string> = {
   A: "A",
   B: "B",
@@ -488,6 +554,12 @@ function writeReport(): void {
   lines.push(`- Skipped (syntactically impossible): ${SKIPPED_CELLS.length}`);
   lines.push(`- Agreeing with the oracle: ${agree}`);
   lines.push(`- Known disagreements: ${disagree}`);
+  const refusalOnly = CELLS.filter(isRefusalOnly);
+  lines.push(
+    `- **Refusal-direction-only cells: ${refusalOnly.length}** — see ` +
+      '"Half-verified cells" below; these have never been observed ' +
+      "passing and must not be read as fully verified",
+  );
   for (const cls of ["A", "B", "C", "honest-unknown"] as const) {
     const n = KNOWN_DISAGREEMENTS.filter(
       (d) => groupOf(d)?.class === cls,
@@ -501,7 +573,9 @@ function writeReport(): void {
   lines.push(
     "`.` agrees with the oracle &middot; `A`/`B`/`C` a classified " +
       "disagreement &middot; `u` an honest, deliberate UNKNOWN that the " +
-      "oracle would have resolved &middot; `-` skipped &middot; `?` not run.",
+      "oracle would have resolved &middot; `u†` the same, but " +
+      "**refusal-direction only** — never observed passing &middot; " +
+      "`-` skipped &middot; `?` not run.",
   );
   lines.push("");
   lines.push(
@@ -519,10 +593,12 @@ function writeReport(): void {
         return "-";
       }
       const d = disagreementByKey.get(key);
+      const cell = CELLS.find((c) => c.key === key);
+      const dagger = cell && isRefusalOnly(cell) ? "\u2020" : "";
       if (d) {
-        return CLASS_GLYPH[groupOf(d)?.class ?? ""] ?? "?";
+        return (CLASS_GLYPH[groupOf(d)?.class ?? ""] ?? "?") + dagger;
       }
-      return byKey.has(key) ? "." : "?";
+      return byKey.has(key) ? "." + dagger : "?";
     });
     lines.push(`| \`${form.id}\` | ${cells.join(" | ")} |`);
   }
@@ -530,8 +606,8 @@ function writeReport(): void {
 
   lines.push("## Every cell");
   lines.push("");
-  lines.push("| cell | expectation | observed | verdict |");
-  lines.push("| --- | --- | --- | --- |");
+  lines.push("| cell | expectation | observed | verdict | verification |");
+  lines.push("| --- | --- | --- | --- | --- |");
   for (const form of BINDING_FORMS) {
     for (const mechanism of AUTHORITY_MECHANISMS) {
       const key = cellKey(form.id, mechanism.id);
@@ -539,7 +615,7 @@ function writeReport(): void {
         (s) => cellKey(s.form, s.mechanism) === key,
       );
       if (skip) {
-        lines.push(`| \`${key}\` | — | — | skipped: ${skip.reason} |`);
+        lines.push(`| \`${key}\` | — | — | skipped: ${skip.reason} | — |`);
         continue;
       }
       const result = byKey.get(key);
@@ -552,7 +628,14 @@ function writeReport(): void {
         : result?.agrees
           ? "agrees"
           : "**UNCLASSIFIED DISAGREEMENT**";
-      lines.push(`| \`${key}\` | ${expectation} | ${observed} | ${verdict} |`);
+      const verification =
+        cell && isRefusalOnly(cell)
+          ? "**refusal direction only**"
+          : "both directions";
+      lines.push(
+        `| \`${key}\` | ${expectation} | ${observed} | ${verdict} | ` +
+          `${verification} |`,
+      );
     }
   }
   lines.push("");
@@ -582,6 +665,39 @@ function writeReport(): void {
     }
   }
 
+  lines.push("## Half-verified cells (refusal direction only)");
+  lines.push("");
+  lines.push(
+    "These cells state the right answer and would still catch a " +
+      "regression into a WRONG exact target. What they have never done " +
+      "is pass. The selection each one performs resolves nowhere in the " +
+      "engine, so no source spelling exercises the positive direction, " +
+      "and nothing about them has been confirmed by observation. **Do " +
+      "not read them as fully verified, or as one boundary-widening " +
+      "away from green.**",
+  );
+  lines.push("");
+  if (refusalOnly.length === 0) {
+    lines.push("None.");
+  } else {
+    const byForm = new Map<string, Cell[]>();
+    for (const cell of refusalOnly) {
+      const list = byForm.get(cell.form.id) ?? [];
+      list.push(cell);
+      byForm.set(cell.form.id, list);
+    }
+    for (const [formId, cells] of byForm) {
+      const form = BINDING_FORMS.find((f) => f.id === formId);
+      lines.push(`### \`${formId}\` — ${cells.length} cells`);
+      lines.push("");
+      lines.push(form?.refusalOnlyVerified ?? "");
+      lines.push("");
+      lines.push(
+        "Cells: " + cells.map((c) => `\`${c.mechanism.id}\``).join(", "),
+      );
+      lines.push("");
+    }
+  }
   lines.push("## Disagreement groups");
   lines.push("");
   lines.push(
@@ -590,14 +706,14 @@ function writeReport(): void {
       "nowhere, and therefore able to change without anyone noticing.",
   );
   lines.push("");
-  lines.push("| group | class | cells | documented | owner | why |");
-  lines.push("| --- | --- | --- | --- | --- | --- |");
+  lines.push("| group | class | cells | documented | owner | findings | why |");
+  lines.push("| --- | --- | --- | --- | --- | --- | --- |");
   for (const group of DISAGREEMENT_GROUPS) {
     const n = KNOWN_DISAGREEMENTS.filter((d) => d.group === group.id).length;
     lines.push(
       `| \`${group.id}\` | ${group.class} | ${n} | ` +
         `${group.documented ? "yes" : "**no**"} | ${group.owner} | ` +
-        `${group.why} |`,
+        `${group.findings} | ${group.why} |`,
     );
   }
   lines.push("");
