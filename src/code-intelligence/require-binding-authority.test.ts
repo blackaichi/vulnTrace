@@ -702,3 +702,182 @@ describe("RWF-046 § I: false-AFFECTED and false-NOT_AFFECTED oracles", () => {
     expect(module).not.toContain(path.join("node_modules", "safe-mod"));
   });
 });
+
+/**
+ * RWF-046 § J — WHAT A BINDING ELEMENT CAN PROVE ABOUT A MODULE'S
+ * PROPERTY. Found by independent audit AFTER the first implementation
+ * landed, not designed in.
+ *
+ * The first implementation accepted any `BindingElement` whose
+ * `parent.parent` was a require-initialized `VariableDeclaration`, and
+ * `symbol-binder.ts` then took `element.propertyName ?? element.name` as
+ * the exported name. For an object shorthand that fallback is sound --
+ * JavaScript makes the property name and the local name the same token.
+ * For an ARRAY element there is no property name at all, so the LOCAL
+ * IDENTIFIER'S TEXT became the export name: the exact text-authority
+ * defect RWF-046 exists to remove, reintroduced one layer in.
+ *
+ * `const [, run] = require("pkg")` binds array index 1 and resolved to
+ * `pkg#run` — position ignored entirely.
+ *
+ * THE BOUNDARY IS THE SHAPE, NOT THE COUNTEREXAMPLE. Gating on
+ * "not an array pattern" would leave the same fabrication reachable
+ * through a rest element and would leave a two-valued defaulted binding
+ * resolving to one target. What is required is proof of a STATIC,
+ * SINGLE-VALUED property of the module object, which is the boundary
+ * RWF-045 drew for the destructuring bridge and which this mirrors.
+ *
+ * EVERY PACKAGE HERE EXPORTS EVERY NAME THESE TESTS BIND. That is
+ * deliberate and it is what makes the negative cases meaningful: if a
+ * guard fails, the fabricated export name EXISTS and the edge RESOLVES,
+ * so the test fails loudly. Against a package missing those names a
+ * fabrication would merely degrade to `unresolved_target` — still
+ * `unknown`, and the hole would stay invisible exactly as it did before.
+ */
+describe("RWF-046 § J: a binding element must prove a static single-valued property", () => {
+  /** One package exporting every name the cases below bind. */
+  function multiExportProject(): string {
+    const root = tempProject();
+    write(
+      root,
+      "node_modules/pkg/package.json",
+      JSON.stringify({ name: "pkg", version: "1.0.0", main: "index.js" }),
+    );
+    write(
+      root,
+      "node_modules/pkg/index.js",
+      [
+        "function run() {}",
+        "function other() {}",
+        "function a() {}",
+        "function b() {}",
+        "function rest() {}",
+        "function execute() {}",
+        "module.exports = { run, other, a, b, rest, execute };",
+      ].join("\n"),
+    );
+    return root;
+  }
+
+  function graphForBody(lines: readonly string[]): Promise<CallGraph> {
+    const root = multiExportProject();
+    const entry = write(root, "index.js", lines.join("\n"));
+    return graphFor(root, entry);
+  }
+
+  const fabrications: ReadonlyArray<readonly [string, readonly string[]]> = [
+    ["array pattern, single element", ['const [run] = require("pkg");']],
+    ["array pattern, position 1 (a hole)", ['const [, run] = require("pkg");']],
+    [
+      "array pattern, position 1 (named sibling)",
+      ['const [other, run] = require("pkg");'],
+    ],
+    ["rest element alone", ['const { ...run } = require("pkg");']],
+    [
+      "rest element after a named one",
+      ['const { a, ...run } = require("pkg");'],
+    ],
+    [
+      "defaulted element (two possible runtime values)",
+      [
+        "const fallback = () => {};",
+        'const { run = fallback } = require("pkg");',
+      ],
+    ],
+    [
+      "computed key",
+      ['const k = "run";', 'const { [k]: run } = require("pkg");'],
+    ],
+  ];
+
+  for (const [label, declaration] of fabrications) {
+    it(`REFUSES ${label}`, async () => {
+      const graph = await graphForBody([
+        ...declaration,
+        "function f() { run(); }",
+        "module.exports = { f };",
+      ]);
+      expectUnknown(graph, "f");
+    });
+  }
+
+  it("REFUSES a nested ARRAY pattern inside an object pattern", async () => {
+    const graph = await graphForBody([
+      'const { a: [b] } = require("pkg");',
+      "function f() { b(); }",
+      "module.exports = { f };",
+    ]);
+    expectUnknown(graph, "f");
+  });
+
+  it("REFUSES a nested OBJECT pattern inside an object pattern", async () => {
+    const graph = await graphForBody([
+      'const { a: { b } } = require("pkg");',
+      "function f() { b(); }",
+      "module.exports = { f };",
+    ]);
+    expectUnknown(graph, "f");
+  });
+
+  // ---------------------------------------------------------------
+  // Positive controls. The boundary must not be satisfied by refusing
+  // everything: each of these is a static, single-valued property and
+  // must resolve exactly as it did before.
+  // ---------------------------------------------------------------
+
+  it("still resolves object SHORTHAND", async () => {
+    const graph = await graphForBody([
+      'const { run } = require("pkg");',
+      "function f() { run(); }",
+      "module.exports = { f };",
+    ]);
+    expect(resolvedNameOf(graph, soleEdgeFrom(graph, "f"))).toBe("run");
+  });
+
+  it("still resolves a RENAMED element, reading the PROPERTY not the local name", async () => {
+    const graph = await graphForBody([
+      'const { run: execute } = require("pkg");',
+      "function f() { execute(); }",
+      "module.exports = { f };",
+    ]);
+    // `execute` is also a real export of `pkg`, so resolving the LOCAL
+    // name instead of the property would silently succeed against a
+    // laxer fixture. Naming the target is what separates the two.
+    expect(resolvedNameOf(graph, soleEdgeFrom(graph, "f"))).toBe("run");
+  });
+
+  it("still resolves a STRING-LITERAL key", async () => {
+    const graph = await graphForBody([
+      'const { "run": execute } = require("pkg");',
+      "function f() { execute(); }",
+      "module.exports = { f };",
+    ]);
+    expect(resolvedNameOf(graph, soleEdgeFrom(graph, "f"))).toBe("run");
+  });
+
+  it("still resolves whole-module member access", async () => {
+    const graph = await graphForBody([
+      'const mod = require("pkg");',
+      "function f() { mod.run(); }",
+      "module.exports = { f };",
+    ]);
+    expect(resolvedNameOf(graph, soleEdgeFrom(graph, "f"))).toBe("run");
+  });
+
+  // ---------------------------------------------------------------
+  // N1. `requireCallInitializer` briefly unwrapped parenthesized and
+  // type-assertion initializers, which resolved shapes the base left
+  // UNKNOWN. That widening was withdrawn from this branch (it is a
+  // coverage change, not an authority one); these pin the base
+  // behaviour so it cannot drift back in unnoticed.
+  // ---------------------------------------------------------------
+
+  it("REFUSES a parenthesized require initializer (base behaviour, N1)", async () => {
+    const graph = await graphForBody([
+      'const mod = (require("pkg"));',
+      "function f() { mod.run(); }",
+      "module.exports = { f };",
+    ]);
+    expectUnknown(graph, "f");
+  });
+});
