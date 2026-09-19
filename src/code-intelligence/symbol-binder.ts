@@ -133,11 +133,36 @@ function analyzeCalleeShape(callee: ts.Expression): CalleeShape {
  * the exact declaration that binds this reference rather than looked up
  * by spelling (RWF-046).
  */
-interface ResolvedImportBinding {
-  readonly specifier: string;
-  readonly kind: BindingKind;
-  readonly importedName?: string;
-}
+type ResolvedImportBinding =
+  /**
+   * A binding that names ONE export. `importedName` is required, so a
+   * producer cannot construct a named binding without saying which
+   * export it names (RWF-046a, audit finding 4).
+   *
+   * It was previously optional on a single interface, and the consumer
+   * read `binding.importedName ?? reference.text`. Both producers set
+   * it, so that fallback was unreachable — but the TYPE still permitted
+   * the state, and a future named producer that forgot the field would
+   * silently resolve to the LOCAL IDENTIFIER'S TEXT. That is exactly
+   * RWF-046a, which reached production once already. Making it required
+   * turns an unreachable path into an unrepresentable one, which is the
+   * difference between a defect that is currently absent and a defect
+   * that cannot be written.
+   */
+  | {
+      readonly kind: "named";
+      readonly specifier: string;
+      readonly importedName: string;
+    }
+  /**
+   * A binding that names the whole module. The exported name comes from
+   * the callee's property chain, never from the binding, so there is no
+   * `importedName` field to omit.
+   */
+  | {
+      readonly kind: Exclude<BindingKind, "named">;
+      readonly specifier: string;
+    };
 
 /** The ESM module specifier an import binding node was written with, if it is a literal one. */
 function esmSpecifierOf(
@@ -223,6 +248,34 @@ function importBindingFor(
     // done on purpose: a guard enforced in two places is a guard whose
     // mutation test passes with either copy deleted, and each clause of
     // that boundary has a named test that must fail when it is removed.
+    //
+    // THE INVARIANT THAT ARGUMENT DEPENDS ON, stated because deleting a
+    // guard is only safe while it holds:
+    //
+    //   EVERY production path that attributes an EXPORT NAME to a
+    //   reference passes through `resolveImportProvenanceDeclaration`.
+    //
+    // Enumerated by the RWF-046a re-audit, and true today:
+    //   - `importBindingFor` has exactly one caller, `bindCallee` below;
+    //   - `resolveImportProvenanceDeclaration` has exactly one caller,
+    //     `importBindingFor` above;
+    //   - every other production reader of `ModuleModel.imports` /
+    //     `SourceIndex.imports` consumes `specifier` or `bindingKind`
+    //     and NEVER `localName`, so none of them names an export:
+    //     `call-graph.ts`'s `emitModuleLoadEdges` (specifier only,
+    //     emits `module_load` edges), `module-load-closure.ts` (maps
+    //     `{specifier, location}`), `commonjs-reexports.ts`'s
+    //     `usableFactsOf` (a boolean gate on `bindingKind`), and
+    //     `loader-constructs.ts` (text-keyed, but refusal-only by
+    //     construction -- its `LoaderConstruct` carries a
+    //     `DynamicCallReason` and no target).
+    //
+    // A NEW CALLER MUST RE-ESTABLISH THIS. If you add a second path
+    // into export attribution, either route it through
+    // `resolveImportProvenanceDeclaration` or restore the shape checks
+    // here -- and if you restore them, say so at the boundary above,
+    // because the mutation controls assume exactly one enforcement
+    // site.
     const [specifier] = declaration.call.arguments;
     if (!ts.isStringLiteral(specifier as ts.Node)) {
       return undefined;
@@ -312,7 +365,12 @@ export async function bindCallee(
     // A trailing property chain here (e.g. `vulnerable.someMethod()`) is a
     // method call on the already-bound export's value, not a reference to
     // a different export — the chain is intentionally not consulted.
-    exportedName = binding.importedName ?? shape.rootIdentifier.text;
+    //
+    // No `?? reference.text` fallback: the type makes `importedName`
+    // required on a named binding, so there is no case where the local
+    // identifier's spelling could stand in for an export name
+    // (RWF-046a).
+    exportedName = binding.importedName;
   } else if (binding.kind === "default" || binding.kind === "namespace") {
     const [firstProperty] = shape.propertyChain;
     // No property access at all means the default export / whole module
