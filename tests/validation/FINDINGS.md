@@ -103,7 +103,8 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-043 | `lodash` (found via the P1-B3 corpus differential); any file with two same-named functions in unrelated scopes | `findLocalFunctionNodeId` attributes a bare-name call to the FIRST same-named function anywhere in the file, at any nesting depth, with no scope check — so `lodash`'s module-scope `var freeParseInt = parseInt` (the ambient global) could be paired with its own `parseInt` declared inside `runInContext` | **Soundness, fabricating direction** — invents a call edge to a function never reached through that name; can produce a false `AFFECTED` and a misleading evidence path, ~~never a false `NOT_AFFECTED`~~. **The struck clause is WRONG**: the matcher ran BEFORE every authoritative path, so its edge REPLACED the honest `unknown` one, displacing the blocker that withholds `reachableSubgraphComplete` and yielding a false Family-C `NOT_AFFECTED`. Reproduced end-to-end in P1-B3b — see RWF-043 § 1 | **Fixed (P1-B3b)** — the named-binding paths were closed by P1-B3; the direct-call and construct paths are closed by P1-B3b, which removes the matcher entirely — see below |
 | RWF-044 | `fast-xml-parser`, `lru-cache`, `semver` — any module whose function bodies reference a `const`/`let` callable declared later in the file | B3's evaluation-order rule (P1-B3 § 9) refuses a reference written textually above its initializer. That is right about STATEMENT order and wrong about EXECUTION order for a deferred body: `function f() { later(); }` above `const later = ...` only runs `later()` once something calls `f`, which cannot precede module initialization | **Precision only, never soundness** — every refusal costs an edge that is correct in fact; the failure direction is UNKNOWN. 85 call-graph edges in the corpus. These resolved on `779e219` only because the same-name matcher overrode B3's refusal | Open, deliberately not scoped into P1-B3b — precision only; needs deferred-execution modeling, not a heuristic — see below |
 | RWF-045 | any file with two `const { name } = source` patterns binding the SAME name in different scopes | `findDestructuredBindingSource` is reached only once `resolveNamedBinding` has proved the reference binds to a destructuring, but it then locates WHICH pattern by a whole-file, first-match search on the bound name — the same flat-index mistake RWF-043 removed from the direct-call paths, surviving on the destructuring bridge | **Soundness, BOTH directions** — reproduced: `main` destructures `run` from `safeMod` and calls it, and the edge resolves to `danger.js#run`. Identical on the P1-B3 base `779e219`, so pre-existing rather than a P1-B3b regression. The record's original "fabricating direction" framing was INCOMPLETE and is corrected below: an end-to-end oracle now reproduces a false `NOT_AFFECTED` carrying a complete Family C proof over a call the program really makes into the vulnerable export, AND a false `AFFECTED` against a program that never calls it | **Fixed (RWF-045)** — see below |
-| RWF-046 | `gopd` (found via the RWF-046 corpus differential), the repo's own `fixtures/target-side-reexport` and `fixtures/commonjs-entrypoint-root-widening`; any file that binds a require to a name bound more than once in the file, or that reassigns a require-bound name | `bindCallee` resolved a callee's module with `moduleModel.imports.find((imp) => imp.localName === calleeText)` — a FILE-WIDE, NAME-KEYED table carrying no declaration identity at all, so the first row spelled the same won every reference in the file. The same flat-index mistake RWF-042 removed from the value-binding paths and RWF-043 removed from the direct-call paths, surviving one layer down: both of those made the call graph ask which DECLARATION a name binds to, and the answer was then discarded and the module question re-asked by spelling | **Soundness, BOTH directions** — reproduced on the base `b9bb81b`. False `AFFECTED`: a file-scope `require("vulnerable-mod")` answers for an inner `const source = require("safe-mod"); source.run()`. False `NOT_AFFECTED`: reversing the two resolves the inner vulnerable call onto the outer safe module, and by RWF-043 § 1's corrected reasoning a fabricated edge also DISPLACES the honest `unknown` blocker. Reproduced in the repo's OWN corpus: 7 edges in `fixtures/target-side-reexport/verify.cjs` all collapsed onto `direct-lib#vulnerable`, and a resolved edge was FABRICATED at `verify.cjs:306` out of a dynamic template specifier by borrowing a `main` require six lines away in a different block. Real npm code reproduces the reassignment shape: `gopd/index.js`'s `var $gOPD = require('./gOPD'); ... $gOPD = null;` kept its pre-reassignment provenance | **Fixed (RWF-046)** — see below |
+| RWF-046 | `gopd` (found via the RWF-046 corpus differential), the repo's own `fixtures/target-side-reexport` and `fixtures/commonjs-entrypoint-root-widening`; any file that binds a require to a name bound more than once in the file, or that reassigns a require-bound name | `bindCallee` resolved a callee's module with `moduleModel.imports.find((imp) => imp.localName === calleeText)` — a FILE-WIDE, NAME-KEYED table carrying no declaration identity at all, so the first row spelled the same won every reference in the file. The same flat-index mistake RWF-042 removed from the value-binding paths and RWF-043 removed from the direct-call paths, surviving one layer down: both of those made the call graph ask which DECLARATION a name binds to, and the answer was then discarded and the module question re-asked by spelling | **Soundness, BOTH directions** — reproduced on the base `b9bb81b`. False `AFFECTED`: a file-scope `require("vulnerable-mod")` answers for an inner `const source = require("safe-mod"); source.run()`. False `NOT_AFFECTED`: reversing the two resolves the inner vulnerable call onto the outer safe module, and by RWF-043 § 1's corrected reasoning a fabricated edge also DISPLACES the honest `unknown` blocker. Reproduced in the repo's OWN corpus: 7 edges in `fixtures/target-side-reexport/verify.cjs` all collapsed onto `direct-lib#vulnerable`, and a resolved edge was FABRICATED at `verify.cjs:306` out of a dynamic template specifier by borrowing a `main` require six lines away in a different block. Real npm code reproduces the reassignment shape: `gopd/index.js`'s `var $gOPD = require('./gOPD'); ... $gOPD = null;` kept its pre-reassignment provenance | **Fixed (RWF-046)**; the first implementation of this fix introduced a separate fabrication of its own, recorded and closed as RWF-046a — see below |
+| RWF-046a | any file binding a require with an ARRAY pattern, a rest element, or (on the base commit too) a defaulted element — zero occurrences in the current corpus, which is why nothing caught it | RWF-046's first implementation accepted any `BindingElement` under a require-initialized `VariableDeclaration` and let `symbol-binder.ts` take `element.propertyName ?? element.name` as the exported name. Sound for an object shorthand, where the property and local names are the same token; unsound otherwise. An ARRAY element has no property name, so the LOCAL IDENTIFIER'S TEXT became the export name — the `identifier text → module source` substitution RWF-046 exists to remove, reintroduced inside the function that replaced the old table | **Soundness, fabricating direction. INTRODUCED, not pre-existing** — found by independent audit of branch head `e29a713` before it merged. `const [, run] = require("pkg"); run()` binds array index 1 and resolved to `pkg#run`; the base `b9bb81b` returns UNKNOWN. A false-AFFECTED vector whose fabricated key is whatever the local is spelled. The defaulted form (`const { run = fallback } = require("pkg")`) resolved on the BASE too, and is closed here as well | **Fixed (RWF-046a)** — see below |
 
 ---
 
@@ -14467,6 +14468,14 @@ initializer is a literal `require`, or the `BindingElement` of a
 destructured one), or a refusal. `symbol-binder.ts` derives the
 specifier from that node.
 
+> **This section as first written claimed the `BindingElement` path was
+> exact. It was not, and the claim is corrected rather than deleted.**
+> Locating the element exactly is necessary but not sufficient: the
+> element must also be shown to NAME a property of the module object,
+> and the first implementation did not check that. See
+> **RWF-046a** below, found by independent audit after this remediation
+> merged into the branch.
+
 `bindCallee` no longer takes a `ModuleModel`. The parameter is removed
 rather than left unused, so no later caller can reach for the table as
 an authority again. `ModuleModel.imports` remains the right answer to
@@ -14526,3 +14535,149 @@ They are left alone deliberately: they share no code with `bindCallee`,
 and changing loader-construct semantics is explicitly outside this
 remediation. Recorded here so the next audit finds them named rather
 than having to re-derive them.
+
+---
+
+## RWF-046a — A binding element named an export by its LOCAL text
+
+**Discovered:** by independent soundness audit of the RWF-046
+implementation, on branch head `e29a713`, BEFORE that branch merged.
+Not found by the corpus differential, not found by any gate, and not
+designed in — this record exists partly to say so.
+
+**Class: soundness, fabricating direction. INTRODUCED by RWF-046**, not
+pre-existing: the base commit `b9bb81b` fails closed on every shape
+below.
+
+### The defect
+
+RWF-046 replaced a name-keyed import table with declaration identity.
+Its destructuring branch accepted any `BindingElement` whose
+`parent.parent` was a require-initialized `VariableDeclaration`, and
+`symbol-binder.ts` then took the exported name from:
+
+```ts
+element.propertyName ?? element.name
+```
+
+That fallback is sound for an object shorthand — JavaScript makes the
+property name and the local name the same token. It is unsound for
+every other binding element, and an ARRAY element has no property name
+at all, so the **local identifier's text became the export name**:
+
+```js
+const [, run] = require("pkg");
+run();                            // resolved to pkg#run
+```
+
+`run` binds array index 1. `pkg` is not iterable and this throws at
+runtime. Position was ignored entirely; the only input to the answer
+was the spelling of the local. That is precisely the
+`identifier text → module source` substitution RWF-046 was written to
+remove, reintroduced one layer in, inside the function that replaced
+the old table.
+
+| Shape | base `b9bb81b` | RWF-046 first impl. | after RWF-046a |
+| --- | --- | --- | --- |
+| `const [run] = require("pkg")` | UNKNOWN | **resolved `pkg#run`** | UNKNOWN |
+| `const [, run] = require("pkg")` | UNKNOWN | **resolved `pkg#run`** | UNKNOWN |
+| `const [other, run] = require("pkg")` | UNKNOWN | **resolved `pkg#run`** | UNKNOWN |
+| `const { run = fallback } = require("pkg")` | resolved | resolved | UNKNOWN |
+| `const { ...run } = require("pkg")` | UNKNOWN | UNKNOWN | UNKNOWN |
+
+The defaulted row is a **base defect this remediation also closes**:
+`source-index.ts`'s `extractRequireBindings` never checked
+`element.initializer`, so `const { run = fallback } = require("pkg")`
+resolved to one target although the binding has two possible runtime
+values.
+
+### Why it was the boundary, not the array case
+
+Gating on `ts.isObjectBindingPattern(element.parent)` alone would have
+answered the counterexample and left the family open: the same
+text-for-key substitution is reachable through a rest element, and a
+defaulted element still resolves two runtime values onto one target. So
+the rule is stated as the proof required — a **static, single-valued
+property of the module object** — mirroring clause for clause the
+boundary RWF-045 draws for the destructuring bridge, because the two
+read the same syntax and must not drift:
+
+- parent is an `ObjectBindingPattern`;
+- that pattern is the declaration's own `name` (a nested pattern's real
+  member path is `pkg.api.run`, which no import binding models);
+- no `dotDotDotToken` — a rest element holds the REMAINING properties;
+- no initializer — a default is two possible values;
+- the key is an `Identifier` or a string literal; computed and numeric
+  keys refuse.
+
+Everything else refuses to UNKNOWN under the existing `destructuring`
+and `reassigned` reason tokens. No new reason code was added and no
+seventh uncertainty category was created.
+
+The guard lives in `named-bindings.ts`, the authority layer, and the
+proved key is carried on the result instead of being re-derived
+downstream. The shape checks were **removed** from `symbol-binder.ts`
+rather than kept as a defensive mirror: a guard enforced twice is a
+guard whose mutation test passes with either copy deleted.
+
+### Why no gate caught it, stated plainly
+
+The corpus contains **zero** instances of every shape involved.
+Measured over the same 885 files as RWF-046's own prevalence table:
+
+| Shape | Count |
+| --- | --- |
+| require declarations (literal specifier) | 902 |
+| object-pattern requires | 28 |
+| **array-pattern requires** | **0** |
+| **rest elements on a require pattern** | **0** |
+| **defaulted elements on a require pattern** | **0** |
+| computed-key elements on a require pattern | 0 |
+| nested pattern elements on a require pattern | 0 |
+| parenthesized / cast require initializers (N1) | 0 |
+
+So the graph differential could not have caught this, and it did not.
+This is **D-12's rule, demonstrated a second time**: a soundness claim
+must be discharged by a test that reproduces the MECHANISM, never by a
+differential that failed to notice it. The first implementation's 13-edge
+differential was accurate and told us nothing about this family. After
+the remediation the differential is still exactly 13 edges, unchanged
+line for line — the guards withdraw nothing in this corpus, because
+there is nothing here for them to withdraw.
+
+It also says something about the first implementation's test suite: 25
+passing tests, four mutation controls, and none of them bound a name
+with anything but an object shorthand or a rename. The new cases fix
+that at the fixture level too — every package in § J exports every name
+the cases bind, so a regression RESOLVES and fails loudly instead of
+degrading to `unresolved_target`, which is still `unknown` and would
+have hidden the hole exactly as before.
+
+### N1 — the `unwrapTypeOnly` widening, withdrawn
+
+The same audit noted that `requireCallInitializer` ran `unwrapTypeOnly`,
+making `const m = (require("pkg"))` and `require("pkg") as any` resolve
+where the base left them UNKNOWN. Sound, but a COVERAGE change smuggled
+inside a soundness fix: untested, uncovered by the differential, and it
+makes the differential unattributable. **Withdrawn from this branch**
+and pinned by a test asserting the base behaviour, rather than
+documented and kept. It is a candidate for its own item; it has zero
+corpus occurrences either way.
+
+### Mutation controls
+
+The near-tautological PackageInstance mutation the first implementation
+cited was replaced. Each of these weakens the authority itself, and each
+is caught by NAMED tests:
+
+| Mutation | Tests that fail |
+| --- | --- |
+| remove the `ObjectBindingPattern` guard | 3 (all three array-pattern cases) |
+| remove the rest-element guard | 6 (2 unit + all 4 verdict-oracle assertions) |
+| remove the default-initializer guard | 1 (the defaulted element) |
+| resolve the specifier from the project root instead of the importing file | 7 — and the twin controls fail on the BORROW assertion (`expected [ Array(1) ] to deeply equal []`), naming the sibling install, not merely losing an edge |
+
+### Status
+
+**Fixed (RWF-046a).** RWF-045 is untouched and remains open; the two
+remain separate authority layers.
