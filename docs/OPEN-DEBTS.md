@@ -426,6 +426,67 @@ Most function-local requires are genuinely unambiguous, and dropping them
 trades a soundness defect for a large precision loss.
 
 Recorded in full as RWF-046 in `tests/validation/FINDINGS.md`.
+### D-15 — A remediation introduced the defect class it was closing
+
+**Not an open debt.** Both halves are fixed. It is recorded here because
+the *pattern* is the debt, and the register is where this project keeps
+the lessons that generalise.
+
+**What happened.** RWF-046 replaced a file-wide, name-keyed import table
+with declaration identity. Its own destructuring branch then named an
+export with `element.propertyName ?? element.name` — the local
+identifier's TEXT — for any binding element it accepted. For an array
+element there is no property name, so:
+
+```js
+const [, run] = require("pkg");
+run();                            // resolved to pkg#run
+```
+
+Array index 1, resolved by spelling. The base commit returns UNKNOWN, so
+the fix introduced a fabrication of exactly the kind it was removing,
+one layer in. Recorded as RWF-046a; closed by a shape boundary that
+mirrors RWF-045's, clause for clause.
+
+**Why the gates were silent, and why that is the point.** Every gate
+passed: typecheck, 1356 foundation tests, 4375 unit/integration tests,
+124 adversarial, and the RWF-046 suite's own 25 cases plus four mutation
+controls. The corpus contains **zero** array-pattern requires, zero rest
+elements and zero defaulted elements on a require pattern, so the graph
+differential could not have seen it. After the remediation that
+differential is still 13 edges, unchanged line for line.
+
+**This is D-12's rule hitting the same project twice.** D-12 says a
+soundness claim must be discharged by a test that reproduces the
+MECHANISM, not by a differential that failed to notice it. RWF-046's
+first implementation had mechanism tests — and every one of them bound a
+name with an object shorthand or a rename, so the suite explored the
+shape it had already got right. A differential of 13 edges and a suite
+of 25 tests both pointed at the same blind spot and neither could see
+it.
+
+**Two practical rules this produced**, both now embodied in the § J
+suite rather than left as advice:
+
+1. **State the boundary, not the counterexample.** Gating on "not an
+   array pattern" would have answered the audit and left the same
+   substitution reachable through a rest element and a default. What the
+   code must prove — a static, single-valued property of the module
+   object — is the thing to write down.
+2. **A negative test needs a fixture that can fail loudly.** Every
+   package in § J exports every name its cases bind, so a regression
+   RESOLVES. Against a package missing those names a fabrication
+   degrades to `unresolved_target`, which is still `unknown` and passes
+   a naive assertion — which is how a fabricating path hid behind
+   green tests here.
+
+**A guard belongs in exactly one place.** The shape checks were removed
+from `symbol-binder.ts` when the boundary moved into
+`named-bindings.ts`. A guard enforced in two layers is a guard whose
+mutation test passes with either copy deleted, which is the same
+false-comfort failure in miniature.
+
+Recorded in full as RWF-046a in `tests/validation/FINDINGS.md`.
 
 ## 2. Target intelligence is not analyzer uncertainty
 
