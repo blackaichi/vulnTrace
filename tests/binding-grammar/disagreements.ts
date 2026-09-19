@@ -93,7 +93,46 @@ export interface DisagreementGroup {
   readonly documented: boolean;
   /** The remediation or SDD section that owns the boundary. */
   readonly owner: string;
+  /**
+   * Where a reader finds this written up: a section of
+   * `tests/validation/FINDINGS.md`, e.g. `"RWF-048 § 4a"`.
+   *
+   * Required, and checked. A recorded disagreement with a class but no
+   * finding is an entry a future reader cannot audit: they can see THAT
+   * the analyzer differs and what it currently does, but not the
+   * reproduction, the reasoning, or whether anybody decided it was
+   * acceptable. The class without the write-up is the part that looks
+   * like diligence and is not.
+   */
+  readonly findings: string;
   readonly why: string;
+}
+
+/**
+ * What the analyzer produces TODAY for a cell that disagrees.
+ *
+ * DELIBERATELY NOT A FREE STRING, AND DELIBERATELY NOT ABLE TO NAME AN
+ * EXACT TARGET.
+ *
+ * A disagreement entry is a silencer: it converts a failing cell into a
+ * passing one. The only divergence that may ever be silenced is the
+ * REFUSAL direction -- the analyzer declining to name a target the
+ * language names. A wrong EXACT is the opposite: a wrong export name, a
+ * wrong install, or a wrong declaration, which is the class-A defect
+ * this whole instrument exists to catch. Letting an entry record one
+ * would let the gate go green on a fabrication, which is worse than
+ * having no gate at all.
+ *
+ * So the shape makes it unrepresentable rather than merely undone: there
+ * is no member of this type that names a module and a declaration. The
+ * driver's guard (`guard.ts`) enforces the same rule again at runtime,
+ * because a type says nothing about a value that arrives from JSON, a
+ * cast, or a future refactor that widens the field.
+ */
+export interface RefusalObservation {
+  readonly kind: "unknown";
+  /** The `DynamicCallReason` the refusal carries, pinned so drift fails. */
+  readonly reason: string;
 }
 
 export interface KnownDisagreement {
@@ -101,11 +140,10 @@ export interface KnownDisagreement {
   readonly mechanism: string;
   readonly group: string;
   /**
-   * What the analyzer produces TODAY, in the driver's observation
-   * format (`EXACT <module>#<name>` or `UNKNOWN <reason>`). Pinned so
-   * drift in either direction fails the cell.
+   * The refusal the analyzer produces today. See
+   * {@link RefusalObservation} for why this cannot be an EXACT target.
    */
-  readonly observed: string;
+  readonly observed: RefusalObservation;
 }
 
 export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
@@ -114,23 +152,33 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
     class: "honest-unknown",
     documented: true,
     owner: "RWF-046a shape boundary / RWF-045 bridge",
+    findings: "RWF-048 § 4f",
     why:
       "The destructuring shape boundary admits a key only when it is an " +
-      "identifier or a string literal. A numeric-literal key and a computed " +
-      "key -- even one whose value is a same-file `const` string literal, " +
-      "which is the shape VT-217 already resolves for element access -- both " +
-      "name a property JavaScript resolves to exactly one value, and both are " +
-      "refused. Sound and imprecise. RWF-046a's stated rationale for the " +
-      'numeric case, "a numeric key names no export", is not accurate: ' +
-      '`module.exports = { ["1"]: f }` is a real export named "1" and this ' +
-      "suite's own control reaches it. The refusal is right; the reason given " +
-      "for it is not.",
+      "identifier or a string literal, so a numeric-literal key and a " +
+      "computed key are both refused although each names a property " +
+      "JavaScript resolves to exactly one value. Sound and imprecise. " +
+      "These 21 cells are REFUSAL-ONLY VERIFIED: a non-identifier key " +
+      "resolves in no position anywhere in the engine -- not in " +
+      "destructuring, not in element access (`x[1]()` and `x[KEY]()` are " +
+      "both `dynamic_member_access`, measured), and for CommonJS not even " +
+      'in the export model, where `{ "1": f }` and `{ 1: f }` index ' +
+      "nothing at all (RWF-049). Each cell's expected target IS a real " +
+      "emittable observation, proven by this suite's numeric control, but " +
+      "no source spelling produces it THROUGH a non-identifier key, so " +
+      "these cells must not be read as one boundary-widening away from " +
+      "green. RWF-046a's stated rationale for the numeric case, \"a " +
+      'numeric key names no export", is separately inaccurate: ' +
+      '`module.exports = { ["1"]: f }` is a real export named "1" and the ' +
+      "control reaches it. The refusal is right; the reason given for it " +
+      "is not.",
   },
   {
     id: "array-pattern-positional",
     class: "honest-unknown",
     documented: true,
     owner: "RWF-045 / RWF-046a shape boundary",
+    findings: "RWF-048 § 4",
     why:
       "An array pattern binds by POSITION, and no authority path models " +
       "positions. Where the source really is an array -- a local array " +
@@ -146,6 +194,7 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
     class: "honest-unknown",
     documented: true,
     owner: "RWF-045 / RWF-046a shape boundary",
+    findings: "RWF-048 § 4",
     why:
       "A nested pattern makes the real member path two hops (`X.api.run`, " +
       "`X.deep[0]`), and no binding models a member path. Refusing keeps it " +
@@ -159,6 +208,7 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
     class: "honest-unknown",
     documented: true,
     owner: "VT-210 / SDD-v0.2.md 16",
+    findings: "RWF-048 § 4",
     why:
       "VT-210 is explicitly single-hop and same-file: the argument at the " +
       "enclosing function's call site must itself be a plain identifier this " +
@@ -172,6 +222,7 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
     class: "honest-unknown",
     documented: false,
     owner: "RWF-045, callee path only",
+    findings: "RWF-048 § 4a",
     why:
       "The RWF-045 destructuring bridge exists only on the CALLEE path. " +
       '`resolveNamedReceiverBinding` requires `binding.kind === "value"`, and ' +
@@ -185,6 +236,7 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
     class: "honest-unknown",
     documented: false,
     owner: "P1-B3 14 (adjacent)",
+    findings: "RWF-048 § 4e",
     why:
       "A static class field is not modeled as a binding: `Holder.probeTarget` " +
       "is a member access whose receiver is a class declaration, and the " +
@@ -198,6 +250,7 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
     class: "honest-unknown",
     documented: false,
     owner: "RWF-045 bridge / VT-214 receiver path",
+    findings: "RWF-048 § 4b",
     why:
       "Destructuring from a local object literal is refused (`const { run } = " +
       "objSrc; run()`), while member access on the SAME literal resolves " +
@@ -212,6 +265,7 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
     class: "honest-unknown",
     documented: false,
     owner: "symbol-binder bindCallee",
+    findings: "RWF-048 § 4c",
     why:
       '`const probeTarget = require("pkg").run; probeTarget()` is refused, ' +
       'while the two-step `const mod = require("pkg"); const probeTarget = ' +
@@ -225,6 +279,7 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
     class: "honest-unknown",
     documented: false,
     owner: "VT-210 / P1-B3b 11",
+    findings: "RWF-048 § 4d",
     why:
       "VT-210's higher-order rescue resolves CALLS only. `function probe(p) { " +
       "new p(); } probe(Thing)` stays UNKNOWN although the language proves " +
@@ -240,542 +295,542 @@ export const KNOWN_DISAGREEMENTS: readonly KnownDisagreement[] = [
     form: "computed-key-literal",
     mechanism: "class-construct",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-literal",
     mechanism: "destructuring-bridge",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-literal",
     mechanism: "direct-call",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-literal",
     mechanism: "esm-import",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-literal",
     mechanism: "higher-order-parameter",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-literal",
     mechanism: "member-on-bound-module",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "computed-key-literal",
     mechanism: "require-provenance",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-variable",
     mechanism: "class-construct",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-variable",
     mechanism: "destructuring-bridge",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-variable",
     mechanism: "direct-call",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-variable",
     mechanism: "esm-import",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-variable",
     mechanism: "higher-order-parameter",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "computed-key-variable",
     mechanism: "member-on-bound-module",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "computed-key-variable",
     mechanism: "require-provenance",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "numeric-key",
     mechanism: "class-construct",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "numeric-key",
     mechanism: "destructuring-bridge",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "numeric-key",
     mechanism: "direct-call",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "numeric-key",
     mechanism: "esm-import",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "numeric-key",
     mechanism: "higher-order-parameter",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "numeric-key",
     mechanism: "member-on-bound-module",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "numeric-key",
     mechanism: "require-provenance",
     group: "non-identifier-key",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   // -- array-pattern-positional ------------------------------------
   {
     form: "array-element-leading-hole",
     mechanism: "class-construct",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-leading-hole",
     mechanism: "direct-call",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-leading-hole",
     mechanism: "higher-order-parameter",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-named-sibling",
     mechanism: "class-construct",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-named-sibling",
     mechanism: "direct-call",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-named-sibling",
     mechanism: "higher-order-parameter",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-single",
     mechanism: "class-construct",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-single",
     mechanism: "direct-call",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-single",
     mechanism: "higher-order-parameter",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-trailing-hole",
     mechanism: "class-construct",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-trailing-hole",
     mechanism: "direct-call",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "array-element-trailing-hole",
     mechanism: "higher-order-parameter",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "object-in-array",
     mechanism: "class-construct",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "object-in-array",
     mechanism: "direct-call",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "object-in-array",
     mechanism: "higher-order-parameter",
     group: "array-pattern-positional",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   // -- nested-pattern ----------------------------------------------
   {
     form: "nested-array-in-object",
     mechanism: "class-construct",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-array-in-object",
     mechanism: "destructuring-bridge",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-array-in-object",
     mechanism: "direct-call",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-array-in-object",
     mechanism: "esm-import",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-array-in-object",
     mechanism: "higher-order-parameter",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-array-in-object",
     mechanism: "member-on-bound-module",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "nested-array-in-object",
     mechanism: "require-provenance",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-object-pattern",
     mechanism: "class-construct",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-object-pattern",
     mechanism: "destructuring-bridge",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-object-pattern",
     mechanism: "direct-call",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-object-pattern",
     mechanism: "esm-import",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-object-pattern",
     mechanism: "higher-order-parameter",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "nested-object-pattern",
     mechanism: "member-on-bound-module",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "nested-object-pattern",
     mechanism: "require-provenance",
     group: "nested-pattern",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   // -- vt210-single-hop --------------------------------------------
   {
     form: "destructured-parameter",
     mechanism: "class-construct",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "destructured-parameter",
     mechanism: "destructuring-bridge",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "destructured-parameter",
     mechanism: "direct-call",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "destructured-parameter",
     mechanism: "esm-import",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "destructured-parameter",
     mechanism: "higher-order-parameter",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "destructured-parameter",
     mechanism: "require-provenance",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "object-renamed",
     mechanism: "higher-order-parameter",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "object-shorthand",
     mechanism: "higher-order-parameter",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "parameter-binding",
     mechanism: "destructuring-bridge",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "parameter-binding",
     mechanism: "higher-order-parameter",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "parameter-binding",
     mechanism: "require-provenance",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "string-literal-key",
     mechanism: "higher-order-parameter",
     group: "vt210-single-hop",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   // -- receiver-has-no-destructuring-bridge ------------------------
   {
     form: "array-element-leading-hole",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "array-element-named-sibling",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "array-element-single",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "array-element-trailing-hole",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "destructured-parameter",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "object-in-array",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "object-renamed",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "object-shorthand",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "parameter-binding",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "string-literal-key",
     mechanism: "member-on-bound-module",
     group: "receiver-has-no-destructuring-bridge",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   // -- class-static-field ------------------------------------------
   {
     form: "class-field",
     mechanism: "class-construct",
     group: "class-static-field",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "class-field",
     mechanism: "destructuring-bridge",
     group: "class-static-field",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "class-field",
     mechanism: "direct-call",
     group: "class-static-field",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "class-field",
     mechanism: "esm-import",
     group: "class-static-field",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "class-field",
     mechanism: "higher-order-parameter",
     group: "class-static-field",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "class-field",
     mechanism: "member-on-bound-module",
     group: "class-static-field",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   {
     form: "class-field",
     mechanism: "require-provenance",
     group: "class-static-field",
-    observed: "UNKNOWN unsupported_receiver_binding",
+    observed: { kind: "unknown", reason: "unsupported_receiver_binding" },
   },
   // -- local-object-literal-destructuring --------------------------
   {
     form: "object-renamed",
     mechanism: "class-construct",
     group: "local-object-literal-destructuring",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "object-renamed",
     mechanism: "direct-call",
     group: "local-object-literal-destructuring",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "object-shorthand",
     mechanism: "class-construct",
     group: "local-object-literal-destructuring",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "object-shorthand",
     mechanism: "direct-call",
     group: "local-object-literal-destructuring",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "string-literal-key",
     mechanism: "class-construct",
     group: "local-object-literal-destructuring",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "string-literal-key",
     mechanism: "direct-call",
     group: "local-object-literal-destructuring",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   // -- require-call-member-alias -----------------------------------
   {
     form: "identifier",
     mechanism: "require-provenance",
     group: "require-call-member-alias",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "let-binding",
     mechanism: "require-provenance",
     group: "require-call-member-alias",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   {
     form: "var-binding",
     mechanism: "require-provenance",
     group: "require-call-member-alias",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
   // -- vt210-no-construct ------------------------------------------
   {
     form: "parameter-binding",
     mechanism: "class-construct",
     group: "vt210-no-construct",
-    observed: "UNKNOWN unsupported_callee_binding",
+    observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
 ];
