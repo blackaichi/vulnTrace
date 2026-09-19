@@ -14842,3 +14842,334 @@ whose members are read without an invalidation check.
 patching a required module (`mod.foo = wrapper`) is an established
 JavaScript idiom, and the corpus's silence on the RWF-046a shapes is
 exactly what D-12 warns against reading as absence.
+
+---
+
+## RWF-048 — The binding-form grammar, swept: 264 cells, zero fabrications, eight refusal families
+
+**What this is.** The standing instrument
+(`tests/binding-grammar/`, `npm run test:binding-grammar`) that
+enumerates every JavaScript binding form against every authority
+mechanism that can attribute a call to a target. It exists because four
+consecutive audits — RWF-043, RWF-045, RWF-046, RWF-046a — found the
+same defect class, a local identifier's TEXT reaching an authoritative
+attribution, and the last of them was **introduced by the fix for the
+previous one**, passed every gate, and was caught only by a hand
+enumeration of the binding grammar that lived in no committed file.
+
+**Base:** `312faec` (main, carrying both RWF-045 and RWF-046, D-14 and
+D-15 in `docs/OPEN-DEBTS.md`, and both
+`resolveDestructuredBindingElement` and
+`resolveImportProvenanceDeclaration` in `named-bindings.ts`).
+
+**Test-only.** No production file is touched. The graph, proof and
+verdict differentials are therefore zero by construction, and were
+measured rather than assumed (§ 6).
+
+### 1. The headline, stated first
+
+**There is no class-A finding on this base.** 264 cells, 175 agreeing,
+89 disagreeing, and **every single disagreement is in the same
+direction**: the analyzer REFUSES where the language names a target. No
+cell produced a wrong EXACT — not a wrong export name, not a wrong
+install, not a wrong declaration.
+
+The text-authority defect class that RWF-043, RWF-045, RWF-046 and
+RWF-046a each closed **does not reproduce anywhere in the grammar**,
+including at every shape the four remediations did not individually
+test: a rest element spelled with an exported name, a `for-in` binding
+spelled with an exported name, a catch binding, a destructured catch, a
+`for-of` header, an empty pattern with an undeclared use site, an array
+pattern's named sibling, and a trailing elision.
+
+There is likewise no class B and no class C. All 89 disagreements are
+`honest-unknown`.
+
+### 2. Why that negative result is believable
+
+A negative result about fabrication is worth nothing unless a
+fabrication would have been VISIBLE, and the exact way it becomes
+invisible is already on the record: against a package that does not
+export the name, a fabricated attribution degrades to
+`unresolved_target` and reads as an honest UNKNOWN. That is how the
+RWF-046 array hole survived a green suite.
+
+So the instrument carries **controls**, asserted alongside the matrix:
+
+| control | asserts |
+| --- | --- |
+| loud-export liveness, per baited name | `probeTarget`, `run`, `sibling`, `rest`, `key`, `KEY` are each a real, reachable export of the fixture: a fabrication of that spelling RESOLVES |
+| positional liveness | the export named `"1"` is real and reachable, so a fabrication BY POSITION also lands on something |
+| install exactness | a requirer inside `node_modules/nested/` reaches `node_modules/nested/node_modules/twin`, and a top-level requirer reaches `node_modules/twin`; the two observations differ |
+
+If any control fails, no "no fabrication here" cell may be believed.
+
+**The numeric control earned its keep on the first run.** It failed,
+and the reason is a real gap — see § 5.
+
+### 3. The matrix
+
+33 binding forms × 8 authority mechanisms = 264 cells. **No cell was
+skipped**: every combination in the cross-product is syntactically
+writable, including the ones whose destructuring would throw at
+runtime, and those are swept precisely because a resolution there would
+be a fabrication. `SKIPPED_CELLS` is empty, and an invariant requires
+any future entry to state a SYNTACTIC impossibility rather than an
+expectation about the result.
+
+Rows: identifier; object shorthand; object renamed; string-literal key;
+numeric key; computed key (variable-valued); computed key
+(literal-valued); default at top level; default nested; rest in object;
+rest in array; array element single / leading hole / trailing hole /
+named sibling; nested object pattern; nested array-in-object;
+object-in-array; empty pattern; parameter binding; destructured
+parameter; catch binding; destructured catch; static class field;
+for-of; for-in; let; var; reassigned; compound-assigned `=`, `||=`,
+`??=`; closure-deferred write.
+
+Columns: direct call binding (RWF-043/B3b); require provenance
+(RWF-046); destructuring source bridge (RWF-045); VT-210 higher-order
+parameter; ESM import binding; class construct authority as **two**
+columns (`new` and call-without-`new`, since a cell asserts one thing
+and the two have opposite correct answers); member access on a bound
+module.
+
+The full per-cell table is `tests/binding-grammar/REPORT.md`, generated
+by the run.
+
+### 4. The eight refusal families
+
+Every disagreeing cell belongs to exactly one family. `documented: no`
+marks a boundary this sweep DISCOVERED: sound, but stated nowhere, and
+therefore able to change without anyone noticing.
+
+| family | cells | documented | what it is |
+| --- | --- | --- | --- |
+| `non-identifier-key` | 21 | yes | numeric-literal and computed keys refused, though both name one static property |
+| `array-pattern-positional` | 15 | yes | array patterns bind by position, which no authority path models |
+| `nested-pattern` | 14 | yes | a nested pattern is a two-hop member path; refusing avoids mis-attributing `X.api.run` to `X.run` |
+| `vt210-single-hop` | 12 | yes | VT-210's argument must itself be a nameable plain identifier |
+| `receiver-has-no-destructuring-bridge` | 10 | **no** | the RWF-045 bridge is CALLEE-only |
+| `class-static-field` | 7 | **no** | a static class field is not a modeled binding |
+| `local-object-literal-destructuring` | 6 | **no** | destructuring a local object literal is refused while member access on it resolves |
+| `require-call-member-alias` | 3 | **no** | `const x = require("pkg").run` is refused while the two-step form resolves |
+| `vt210-no-construct` | 1 | **no** | VT-210 rescues calls, never `new` |
+
+#### 4a. `receiver-has-no-destructuring-bridge` — the largest undocumented gap
+
+RWF-045 rebuilt the destructuring bridge on binding-element identity,
+on the **callee** path. `resolveNamedReceiverBinding` requires
+`binding.kind === "value"`, and a destructured name resolves to the
+`destructuring` cause instead, so the receiver path never reaches a
+bridge at all.
+
+```js
+const mods = { run: require("pkg") };
+const { run } = mods;
+function probe() {
+  run.execute();        // UNKNOWN unsupported_receiver_binding
+}
+```
+
+| | base `312faec` | expected |
+| --- | --- | --- |
+| `const { run } = mods; run.execute()` | `UNKNOWN unsupported_receiver_binding` | `EXACT node_modules/pkg/index.js#execute` |
+| `const { run } = mod; run()` (callee twin) | `EXACT node_modules/pkg/index.js#run` | same |
+
+Sound in both directions; the point is the asymmetry, which no test
+stated and which the next remediation of either path could silently
+widen or narrow.
+
+#### 4b. `local-object-literal-destructuring`
+
+```js
+function tRun() {}
+const objSrc = { run: tRun };
+const { run } = objSrc;
+function probe() {
+  run();                // UNKNOWN unsupported_callee_binding
+}
+```
+
+while the member-access twin on the SAME literal resolves:
+
+```js
+const x = objSrc;
+x.run();                // resolves, via findObjectLiteralPropertyValue
+```
+
+The bridge synthesizes `objSrc.run` and hands it to
+`resolveAliasedValue`, which places a value through the IMPORT
+machinery only; the object-literal member lookup the receiver path owns
+is never reached.
+
+| | base `312faec` | expected |
+| --- | --- | --- |
+| `const { run } = objSrc; run()` | `UNKNOWN unsupported_callee_binding` | `EXACT <file>#tRun` |
+| `const x = objSrc; x.run()` | resolves | same |
+
+#### 4c. `require-call-member-alias`
+
+```js
+const probeTarget = require("pkg").run;
+function probe() {
+  probeTarget();        // UNKNOWN unsupported_callee_binding
+}
+```
+
+while the two-step form resolves:
+
+```js
+const mod = require("pkg");
+const probeTarget = mod.run;
+probeTarget();          // EXACT node_modules/pkg/index.js#run
+```
+
+The alias value is a property access whose receiver is the `require`
+CALL rather than an identifier, so `bindCallee` reaches neither an
+import binding nor a local declaration.
+
+| | base `312faec` | expected |
+| --- | --- | --- |
+| `const x = require("pkg").run; x()` | `UNKNOWN unsupported_callee_binding` | `EXACT node_modules/pkg/index.js#run` |
+| `const m = require("pkg"); const x = m.run; x()` | `EXACT node_modules/pkg/index.js#run` | same |
+
+#### 4d. `vt210-no-construct`
+
+```js
+class Thing { constructor() {} }
+function probe(probeTarget) {
+  new probeTarget();    // UNKNOWN unsupported_callee_binding
+}
+probe(Thing);
+```
+
+`nodeIdForBoundDeclaration` is construct-aware (P1-B3b made it
+construct-ONLY for a class, which is the correct half); the
+higher-order path is simply never consulted for a `new` expression.
+Single call site, one argument, the language proves the value.
+
+| | base `312faec` | expected |
+| --- | --- | --- |
+| `function probe(p){ new p(); } probe(Thing)` | `UNKNOWN unsupported_callee_binding` | `EXACT <file>#Thing` |
+| `function probe(p){ p(); } probe(tRun)` | `EXACT <file>#tRun` | same |
+
+#### 4e. `class-static-field`
+
+A static class field is not modeled as a binding in any mechanism:
+`Holder.probeTarget` is a member access whose receiver is a class
+declaration, and the receiver path admits only an object literal or a
+reference. P1-B3 § 14 withholds class and instance modeling, so this
+sits inside a stated boundary — but the STATIC case needs no instance
+modeling at all, and it is not separately stated.
+
+### 5. An adjacent gap the controls found: a quoted CommonJS export key is not an export
+
+Not a matrix cell, and not caused by anything on this branch. Found
+because the instrument's own numeric-liveness control failed.
+
+```js
+// node_modules/pkg/index.js
+function f() {}
+module.exports = { "1": f };
+```
+
+```js
+const { "1": x } = require("pkg");
+x();                    // UNKNOWN unresolved_target
+```
+
+`module-model.ts`'s object-literal export extraction accepts a property
+name that is an **identifier**, or a **computed** name whose literal it
+can read, and nothing else. A plain string-literal or numeric-literal
+key matches neither, so the export is not in the model at all. Writing
+the same export as `module.exports = { ["1"]: f }` makes it reachable —
+which is what the fixture now does, and the control passes.
+
+| spelling | in the export model |
+| --- | --- |
+| `module.exports = { f: f }` | yes |
+| `module.exports = { ["1"]: f }` | yes |
+| `module.exports = { "1": f }` | **no** |
+| `module.exports = { 1: f }` | **no** |
+
+**Direction of failure: toward UNKNOWN**, so it is a precision gap and
+not a soundness one. It is recorded rather than fixed, per this task's
+scope. Its practical significance for auditing is larger than its
+practical significance for scanning: **a fixture that exports a name
+with a quoted key exports nothing**, so any future test baiting a
+quoted or numeric spelling is silently unfalsifiable in exactly the way
+D-12 and the RWF-046 array hole warn about.
+
+Also worth recording, because RWF-046a's own boundary comment asserts
+the opposite: the comment justifies refusing a numeric destructuring
+key with "a numeric key names no export". That is not accurate —
+`module.exports = { ["1"]: f }` is a real export named `"1"` and this
+suite's control reaches it. **The refusal is right; the reason given
+for it is not**, and a future widening argued from that reason would be
+argued from a false premise.
+
+### 6. Differentials
+
+Test-only, so all three must be zero, and all three are.
+
+| differential | result | how measured |
+| --- | --- | --- |
+| graph | **0** | no production file changed; `git diff` against the base over `src/`, `rules/`, `config/`, `schemas/` is empty, so no analyzer input or code path moved |
+| proof | **0** | as above; additionally the two adversarial suites' generated `REPORT.md` files are byte-identical to the base |
+| verdict | **0** | 122 real end-to-end scans across `tests/adversarial/v1` + `v2` produce byte-identical result tables, same pass counts, same per-scenario verdicts |
+
+No finding, verdict, confidence, target, `PackageInstance`, evidence
+path, negative proof or unknown reason moved. Nothing to audit.
+
+### 7. Which mechanisms are under-instrumented
+
+The require path is the only mechanism that had been swept before this
+instrument existed, and it shows: it is the only column with no
+undocumented refusal family of its own beyond
+`require-call-member-alias`.
+
+Ranked by undocumented gaps the sweep surfaced:
+
+1. **member access on a bound module** — 10 undocumented cells, the
+   whole receiver-side absence of the RWF-045 bridge. This column is
+   also the one adjacent to RWF-047 (a require-bound module object
+   keeping its attribution across a member write), which remains
+   recorded, unclassified and untouched here.
+2. **class construct authority** — the construct column carries the
+   `vt210-no-construct` gap and shares the static-field gap; the
+   call-without-`new` column is fully clean, which is the B3b
+   regression guard now stated across the whole grammar rather than for
+   one alias.
+3. **direct call binding** — the `local-object-literal-destructuring`
+   asymmetry lives here.
+4. **VT-210 higher-order parameter** — documented as single-hop, but
+   the `new` direction is not stated anywhere.
+5. **ESM import binding** — no undocumented family. Every ESM cell
+   either agrees or falls into a shared, documented destructuring
+   boundary, which is the SDD § 17 convergence holding.
+
+### 8. Cells whose expectation could not be assigned confidently
+
+None. Every cell resolved to one of the two admissible expectations
+from the row's determinacy and the column's contents, and each is
+printed with its rationale in the report. Two judgment calls are worth
+naming explicitly rather than leaving implicit:
+
+- **`for-of`** is declared `outside-scope` rather than `single-valued`,
+  even though the cell's iterable is a one-element array literal. The
+  binding's value comes from the iterator protocol, and this engine
+  never executes target code, so UNKNOWN is the honest expectation and
+  a resolution would be a claim it has not earned.
+- **the call-without-`new` column** expects UNKNOWN in all 33 cells
+  whatever the binding proves, because `Thing()` throws before a
+  statement of the constructor runs. Exact binding identity does not by
+  itself make a value callable.
+
+### 9. What this does NOT do
+
+It does not build the structural lint gate — that is the next task, and
+it should be scoped from § 4 and § 7. It does not fix anything: every
+disagreement above is recorded, not remediated, and RWF-047, RWF-044,
+RWF-006, RWF-001, Block C, VT-210's implementation and
+`loader-constructs.ts` are untouched.
