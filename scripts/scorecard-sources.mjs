@@ -324,7 +324,7 @@ export function classifyScript(name, command) {
     };
   }
   if (
-    /vitest\.foundation\.config\.ts|vitest\.adversarial\.config\.ts/.test(
+    /vitest\.foundation\.config\.ts|vitest\.adversarial\.config\.ts|vitest\.binding-grammar\.config\.ts/.test(
       command,
     )
   ) {

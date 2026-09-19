@@ -324,6 +324,7 @@ points at an offline config reaches OSV.
 | `npm run lint` | yes | no |
 | `npm run test` | no — includes the live OSV provider integration suite | **yes — live OSV** |
 | `npm run test:adversarial` | yes | no |
+| `npm run test:binding-grammar` | yes | no |
 | `npm run test:coverage` | no — includes the live OSV provider integration suite | **yes — live OSV** |
 | `npm run test:foundation` | yes | no |
 | `npm run test:integration` | no — includes the live OSV provider integration suite | **yes — live OSV** |

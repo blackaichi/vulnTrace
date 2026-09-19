@@ -225,6 +225,26 @@ is implemented in `src/cli/`; `src/cli.ts` is the thin process entrypoint.
   disagree with the analyzer's current output rather than fixing the
   analyzer to pass them — see each suite's own `REPORT.md`. Excluded from
   `npm test`; run separately and gated in CI.
+- **Binding-form grammar sweep**: `tests/binding-grammar/` runs every
+  JavaScript *binding form* (33 of them — destructuring in all its
+  spellings, array positions and holes, parameters, catch bindings,
+  loop bindings, class fields, compound assignments, closure-deferred
+  writes) against every *authority mechanism* that can attribute a call
+  to a target (8 of them — direct call binding, require provenance, the
+  destructuring source bridge, VT-210's higher-order parameter, ESM
+  imports, class call vs. construct, member access on a bound module).
+  The full 264-cell cross-product is asserted to be either swept or
+  explicitly skipped for syntactic impossibility. Each cell asserts one
+  of exactly two things: an EXACT target naming module, install and
+  declaration, or UNKNOWN under a named reason — "does not crash" is not
+  expressible. It exists because four consecutive audits (RWF-043, -045,
+  -046, -046a) found the same defect — a local identifier's *text*
+  reaching an authoritative attribution — and the last of them was
+  introduced by the fix for the previous one, passed every gate, and was
+  caught only by a hand enumeration that lived in no committed file.
+  The grammar and its oracle are data (`matrix.ts`), so a new form or
+  mechanism is a row or a column rather than a new test file. Excluded
+  from `npm test`; run separately.
 - **Real-world CVE validation**: `tests/validation/` scans real,
   npm-installed vulnerable packages (e.g. `lodash`) against real
   advisories, rather than the synthetic `fixture-lib` used elsewhere —
@@ -240,6 +260,7 @@ npm run test:unit        # unit tests only
 npm run test:integration  # integration tests only
 npm run test:coverage      # run everything with V8 coverage reporting
 npm run test:adversarial   # adversarial suites (v1 + v2); also run in CI
+npm run test:binding-grammar # binding-form grammar sweep (every form x every authority mechanism)
 npm run test:validation    # real-world CVE validation suite
 npm run validate:history   # bootstrap-kit archive + commit metadata policy
 ```

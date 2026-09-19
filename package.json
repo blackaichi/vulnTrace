@@ -28,6 +28,7 @@
     "test:coverage": "vitest run --coverage",
     "test:performance": "vitest run --config vitest.performance.config.ts",
     "test:adversarial": "vitest run --config vitest.adversarial.config.ts",
+    "test:binding-grammar": "vitest run --config vitest.binding-grammar.config.ts",
     "test:validation": "vitest run --config vitest.validation.config.ts",
     "test:foundation": "vitest run --config vitest.foundation.config.ts",
     "lint": "eslint .",
