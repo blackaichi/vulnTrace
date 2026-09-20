@@ -1094,7 +1094,22 @@ export function resolveImportProvenanceDeclaration(
 
     // The key must be statically spellable. A computed key
     // (`const { [k]: run } = require("pkg")`) names no property this can
-    // read, and a numeric key names no export.
+    // read, and a numeric key is refused alongside it.
+    //
+    // The numeric refusal is NOT justified by "a numeric key names no
+    // export": `module.exports = { ["1"]: f }` is a real export, and
+    // the binding-grammar sweep's own numeric control reaches it. What
+    // is measured (RWF-049, and the sweep's `non-identifier-key`
+    // family) is narrower and stronger: a NON-IDENTIFIER key resolves
+    // in no position anywhere in this engine -- not in destructuring,
+    // not in element access, where `x[1]()` and `x[K]()` are both
+    // `dynamic_member_access`, and not in the CommonJS export model,
+    // where `{ "1": f }` and `{ 1: f }` put nothing in the model at
+    // all. That holds for a QUOTED STRING key as much as a numeric
+    // one, so the string literals this clause already admits carry it
+    // no further: they resolve only where their text is an identifier.
+    // Widening here on the strength of the old premise would be
+    // widening on a false one.
     const key = element.propertyName ?? element.name;
     if (!ts.isIdentifier(key) && !ts.isStringLiteralLike(key)) {
       return { kind: "none", cause: "destructuring" };
