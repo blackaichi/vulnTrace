@@ -106,7 +106,7 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 | RWF-046 | `gopd` (found via the RWF-046 corpus differential), the repo's own `fixtures/target-side-reexport` and `fixtures/commonjs-entrypoint-root-widening`; any file that binds a require to a name bound more than once in the file, or that reassigns a require-bound name | `bindCallee` resolved a callee's module with `moduleModel.imports.find((imp) => imp.localName === calleeText)` — a FILE-WIDE, NAME-KEYED table carrying no declaration identity at all, so the first row spelled the same won every reference in the file. The same flat-index mistake RWF-042 removed from the value-binding paths and RWF-043 removed from the direct-call paths, surviving one layer down: both of those made the call graph ask which DECLARATION a name binds to, and the answer was then discarded and the module question re-asked by spelling | **Soundness, BOTH directions** — reproduced on the base `b9bb81b`. False `AFFECTED`: a file-scope `require("vulnerable-mod")` answers for an inner `const source = require("safe-mod"); source.run()`. False `NOT_AFFECTED`: reversing the two resolves the inner vulnerable call onto the outer safe module, and by RWF-043 § 1's corrected reasoning a fabricated edge also DISPLACES the honest `unknown` blocker. Reproduced in the repo's OWN corpus: 7 edges in `fixtures/target-side-reexport/verify.cjs` all collapsed onto `direct-lib#vulnerable`, and a resolved edge was FABRICATED at `verify.cjs:306` out of a dynamic template specifier by borrowing a `main` require six lines away in a different block. Real npm code reproduces the reassignment shape: `gopd/index.js`'s `var $gOPD = require('./gOPD'); ... $gOPD = null;` kept its pre-reassignment provenance | **Fixed (RWF-046)**; the first implementation of this fix introduced a separate fabrication of its own, recorded and closed as RWF-046a — see below |
 | RWF-046a | any file binding a require with an ARRAY pattern, a rest element, or (on the base commit too) a defaulted element — zero occurrences in the current corpus, which is why nothing caught it | RWF-046's first implementation accepted any `BindingElement` under a require-initialized `VariableDeclaration` and let `symbol-binder.ts` take `element.propertyName ?? element.name` as the exported name. Sound for an object shorthand, where the property and local names are the same token; unsound otherwise. An ARRAY element has no property name, so the LOCAL IDENTIFIER'S TEXT became the export name — the `identifier text → module source` substitution RWF-046 exists to remove, reintroduced inside the function that replaced the old table | **Soundness, fabricating direction. INTRODUCED, not pre-existing** — found by independent audit of branch head `e29a713` before it merged. `const [, run] = require("pkg"); run()` binds array index 1 and resolved to `pkg#run`; the base `b9bb81b` returns UNKNOWN. A false-AFFECTED vector whose fabricated key is whatever the local is spelled. The defaulted form (`const { run = fallback } = require("pkg")`) resolved on the BASE too, and is closed here as well. A scoped re-audit then measured FIVE further pre-existing base defects sharing the same root cause — see RWF-046b | **Fixed (RWF-046a)** — see below |
 | RWF-046b | any file destructuring a require with a COMPUTED, NUMERIC or STRING-LITERAL property key, or with a default, or reassigning a destructured require binding. Zero occurrences in the current corpus | `source-index.ts`'s `extractRequireBindings` derives the imported name as `ts.isIdentifier(propertyName) ? propertyName.text : element.name.text` — so any key that is not an `Identifier` falls through to the binding's LOCAL name and publishes it as the export name. Separately it never checked `element.initializer`, so a defaulted element resolved to one target despite two possible runtime values. The same local-text-as-export-name class as RWF-046a, reached by a different route, and the FOURTH site of that class after RWF-043, RWF-045 and RWF-046 | **Soundness, fabricating direction. PRE-EXISTING on `main`** — measured on `b9bb81b` by the scoped re-audit of RWF-046a, not by the corpus differential. `const { [k]: run }`, `const { ["run"]: run }` and `const { 0: run }` all resolve to `pkg#run` by local text; `const { "run": execute }` resolves to `pkg#execute`, a DIFFERENT REAL EXPORT of the same package, which nothing downstream could detect as wrong; `let { run } = require("pkg"); run = null` keeps stale provenance | **Fixed (RWF-046a)** — closed by the same shape boundary; recorded separately because it was on `main` and RWF-046a's introduced array case was not |
-| RWF-047 | any file that writes a member of a require-bound module object and then calls it — `const mod = require("pkg"); mod.run = patched; mod.run()` | `isMemberAssignedWithin` invalidates a member read on an OBJECT LITERAL binding, but no equivalent check governs a require-bound module object, so the attribution survives a write to the member it names | **OPEN QUESTION, deliberately not yet classified** — identical on `b9bb81b` and on this branch, so neither introduced nor expanded by RWF-046/046a. A missing invalidation yields a WRONG attribution rather than an absent one, so this may be a fabricated-edge class rather than a precision gap; that is the thing to decide, and it is not decided here | Open — unclassified pending the reproduction below |
+| RWF-047 | any file that writes a member of a require-bound or import-bound module object and then calls it — `const mod = require("pkg"); mod.run = patched; mod.run()`. Measured: 33 occurrences in 4,383 files of this repo's installed npm tree; 97 in the 422-file validation corpus, 96 of them `node-forge` building its public API this way | `isMemberAssignedWithin` invalidates a member read on an OBJECT LITERAL binding, but no equivalent check governs a require-bound module object, so the attribution survives a write to the member it names. The module's STATIC EXPORT TABLE is substituted for the RUNTIME VALUE of a property on a mutable object | **Soundness, CLASS B (correct binding identity, wrong runtime-value semantics), BOTH directions** — classified by reproduction on `a40ce49`, not by argument. False `AFFECTED`: `AFFECTED` on a RESOLVED edge into an export the program overwrote before calling, which real `node` never enters. False `NOT_AFFECTED`: the displacement chain CLOSES — the stale attribution supplies a resolved edge where the honest answer is unresolved, removing the `unknown` blocker, orphaning the real caller, and certifying a complete Family C proof (`reachableSubgraphComplete: true`, zero unresolved edges) over an export `node` executes. NOT class A (no local text reaches an export name — asserted against a fixture exporting `patched`) and NOT class C (with the write unconditionally above the call there is exactly one determinate runtime value). 7 of 10 widened shapes reach it | Open — classified as a CLASS-B soundness defect, both directions reproduced; deliberately NOT remediated here, because RWF-047's own record required the class to be established first and the remedy differs by class. See `docs/OPEN-DEBTS.md` D-16 |
 
 ---
 
@@ -14777,6 +14777,11 @@ asserted rather than discovered.
 binding grammar for shapes where a local name could still reach an
 exported name. Not a shape RWF-046 touches.
 
+**CLASSIFIED — see § 0 below.** The record that follows is the original
+statement of the open question, kept verbatim so the classification can be
+read against what was actually asked, followed by the three steps'
+measured results.
+
 **Neither introduced nor expanded by RWF-046/046a.** Measured
 identically on `b9bb81b` and on this branch:
 
@@ -14816,32 +14821,361 @@ Calling it precision debt on an auditor's word would file a possible
 soundness finding under a heading that exempts it from the soundness
 gate. It stays unclassified until measured.
 
-### The minimal reproduction needed to decide it
+---
 
-Three things, none of them yet done:
+## RWF-047 — CLASSIFIED: a **class-B soundness defect**, with a closed path to a false `NOT_AFFECTED` on `main`
 
-1. **Does the wrong edge reach a verdict?** Build the shape above with
-   the advisory naming `pkg#run`, where `patched` is safe and `run` is
-   vulnerable, and scan. If the finding is AFFECTED on a path the
-   runtime never takes, it is a false AFFECTED and the class is
-   settled.
-2. **The reverse direction.** Make `run` safe and `patched` vulnerable
-   and confirm whether the analyzer reports NOT_AFFECTED over a target
-   the program does reach — the displacement case, which matters more.
-3. **Real `node` ground truth** for both, in the style of this repo's
-   circular-import fixtures, so the runtime answer is measured rather
-   than argued.
+**Base:** `a40ce49` (main, carrying RWF-045, RWF-046, RWF-046a and the
+RWF-048 binding-form grammar sweep; `tests/binding-grammar/` present;
+`docs/OPEN-DEBTS.md` carries D-14 and D-15).
 
-Only after 1–3 can this be classified. **Do not fix it before it is
-classified**: the fix differs by class. A precision gap would be
-addressed by extending `isMemberAssignedWithin` to require bindings; a
-fabricated-edge class needs that plus an audit of every other receiver
-whose members are read without an invalidation check.
+**Test-and-docs only.** No analyzer file was touched: `git diff` against
+the base over `src/`, `rules/`, `config/`, `schemas/` contains nothing but
+one added `*.test.ts`. All three differentials are zero, and were measured
+rather than assumed (§ 6). Two consequential edits fall outside a strict
+reading of "tests and `FINDINGS.md`", and both are named in § 6 rather than
+left for a reader to discover.
 
-**Prevalence is unmeasured** and is not a reason to defer: monkey-
-patching a required module (`mod.foo = wrapper`) is an established
-JavaScript idiom, and the corpus's silence on the RWF-046a shapes is
-exactly what D-12 warns against reading as absence.
+### 0. The classification, stated first
+
+**This is a soundness defect, not precision debt. It is CLASS B —
+correct binding identity, wrong runtime-value semantics.**
+
+Both directions reproduce end to end on `main` today:
+
+| direction | reproduced? | what it costs |
+| --- | --- | --- |
+| false `AFFECTED` | **yes** | `AFFECTED` on a resolved edge into an export the program overwrote before calling |
+| false `NOT_AFFECTED` | **yes** | `NOT_AFFECTED` carrying a **complete Family C proof** over an export the program really reaches |
+
+The second is the one that settles it. The precision-debt reading
+predicts failure toward UNKNOWN; this fails toward a target, in both
+directions, and in the negative direction it fails toward a *certified*
+negative proof.
+
+**Why class B and not class A.** The binding identity is entirely
+correct. `mod` really does bind to `require("pkg")`, and the analyzer
+names the right declaration, the right module and the right install. The
+text-authority class that RWF-043, RWF-045, RWF-046 and RWF-046a each
+closed does **not** reproduce here, and that is asserted positively rather
+than assumed: the fixture package exports `patched`, so an attribution
+onto the LOCAL spelling would have been a loud `EXACT …#patched`; the
+observation contains `#run` and not `#patched`.
+
+**Why class B and not class C.** Class C is a multi-valued provenance
+collapsed onto one published target. That is not what happens here. Row
+W6 is decisive:
+
+```js
+const mod = require("pkg");
+function patched() {}
+mod.run = patched;          // unconditional, at module scope, BEFORE the call
+function probe() { mod.run(); }
+```
+
+`mod.run` has **exactly one** runtime value at the call site, it is
+determinate, and it is not the one published. Nothing is collapsed —
+the analyzer never held the real value at all. It substitutes the
+module's *static export table* for the *runtime value of a property on a
+mutable object*, which is precisely "correct binding, wrong
+runtime-value semantics".
+
+**Reachable on `main` today: yes.** The reproductions run against the
+base commit with no production change of any kind.
+
+### 1. STEP 1 — the false-`AFFECTED` direction
+
+**Reproduction:**
+`src/analysis/verdict.require-member-write-authority.integration.test.ts`,
+`DEFECT: reports AFFECTED over an export the program overwrote before
+calling`.
+
+The advisory names `pkg#run`. `run` is vulnerable; the local `patched` is
+safe.
+
+```js
+const mod = require('pkg');
+function patched(x) { return x; }
+function normalize(input) {
+  mod.run = patched;
+  return mod.run(input);
+}
+module.exports = { normalize };
+```
+
+| | |
+| --- | --- |
+| verdict | **`AFFECTED`** |
+| evidence | a fully **RESOLVED** edge into `pkg#run` — not a potential target, not a hedge |
+| ground truth | `pkg#run`'s body is **never entered** (fixture row D1) |
+
+So the answer is not merely imprecise; the published evidence path is an
+attribution to a callable the runtime does not invoke.
+
+### 2. STEP 2 — the false-`NOT_AFFECTED` direction. **The chain CLOSES.**
+
+This is the direction the record said matters more, and it was required to
+be constructed rather than argued. It closes, and every link is asserted.
+
+**Reproduction:**
+`src/analysis/verdict.require-member-write-authority.integration.test.ts`,
+`DEFECT: certifies a Family C negative proof over an export the program
+really reaches` and `DEFECT: the displacement is what closes the chain`.
+
+The advisory now names `pkg#danger`. `danger` is vulnerable; `run` is a
+safe export of the same package.
+
+```js
+const mod = require('pkg');
+function wrapper(x) { return mod.danger(x); }
+function normalize(input) {
+  mod.run = wrapper;
+  return mod.run(input);
+}
+module.exports = { normalize };
+```
+
+| | |
+| --- | --- |
+| verdict | **`NOT_AFFECTED`** |
+| proof family | **C** (`confirmedUnreachableTarget`) |
+| `reachableSubgraphComplete` | **`true`** |
+| unresolved edges in the whole graph | **0** |
+| ground truth | the patched wrapper executes and reaches `danger#explode` (fixture row P3) |
+
+**The chain, link by link.**
+
+1. `mod.run()` receives a **RESOLVED** edge to the stale `pkg#run`.
+2. That edge **displaces the honest blocker.** The honest answer at this
+   site is "unresolved — a write to this member is in scope", which is an
+   `unknown` edge and withholds `reachableSubgraphComplete`. There is no
+   such edge anywhere in the graph: the count is zero.
+3. `wrapper` is therefore an **orphan** — nothing in the graph calls it.
+4. `pkg#danger` is consequently outside the **reachable** subgraph, the
+   subgraph reads as completely enumerated, and Family C certifies it.
+5. Real `node` executes `pkg#danger` on this load.
+
+**What is deliberately NOT claimed in link 4.** `pkg#danger` *does* carry
+a resolved incoming edge — from `wrapper`'s body, which the graph indexes
+perfectly well. The displacement does not delete that edge; it orphans its
+caller, so the edge sits outside the reachable subgraph. That is exactly
+why the proof is Family C ("confirmed unreachable target") rather than an
+absence: the analyzer can see the vulnerable call, and certifies that
+nothing reaches it, because the one thing that does reach it — the member
+write — is the thing it did not model. This is RWF-043 § 1's displacement
+mechanism, reproduced through the receiver-invalidation gap.
+
+**Two controls make this non-vacuous**, and both are asserted:
+
+- *the same program with the write removed* is `NOT_AFFECTED` with a
+  Family C proof, and that verdict is **correct** — so the Step 2 result
+  cannot be explained by the fixture merely never reaching anything;
+- *the same program with the receiver changed to a local object literal
+  and nothing else changed* is **not** `NOT_AFFECTED`:
+  `reachableSubgraphComplete` is `false` and unresolved edges survive.
+  One token — the receiver — and the chain breaks at exactly the link the
+  require path is missing.
+
+### 3. STEP 3 — real-`node` ground truth
+
+**Not covered by the existing differential-oracle machinery.** Those
+oracles (`*.differential-oracle.test.ts`) compare VulnTrace's *module
+resolution* against Node's, and this question is about *property mutation
+on an already-resolved module object*. So ground truth was established the
+way this repo's circular-import findings establish theirs: a committed,
+plain-Node program whose every claim is `assert`ed in-process.
+
+**`fixtures/require-member-write-ground-truth/entry.js`**, run with
+`node entry.js` on **node v22.11.0**. It exits `0` printing the measured
+table, or non-zero naming the first false claim.
+
+```
+$ node fixtures/require-member-write-ground-truth/entry.js
+  D1 const mod = require('pkg'); mod.run = patched; mod.run()
+    -> local#patched
+  D2 same write, vulnerable local: mod.run() reaches the LOCAL
+    -> local#dangerous
+  D3 the write is visible through a SECOND require of the same module
+    -> shared
+  W2 Object.defineProperty(mod, 'run', { value: patched })
+    -> local#definedProperty
+  W3 delete mod.run; mod.run()
+    -> TypeError: mod.run is not a function
+  W4 const m2 = mod; m2.run = patched; mod.run()
+    -> local#viaAlias
+  W5 function install() { mod.run = patched } install(); mod.run()
+    -> local#viaInstaller
+  W9 mod.execute = patched; mod.run()  [negative control]
+    -> pkg#run
+  P3 displacement: patched wrapper reaches danger#explode
+    -> local#wrapper -> danger#explode
+  W7 ESM `import * as mod`; mod.run = patched
+    -> TypeError (namespace is sealed)
+  W8 ESM default import of CJS; mod.run = patched
+    -> local#patched
+RWF-047 ground truth: all assertions passed
+```
+
+The load-bearing runtime facts, each asserted:
+
+- the write **displaces** the export: `mod.run()` returns the local
+  function's value and the package function's body never runs (its own
+  call log is unchanged);
+- the replaced export remains a **real, still-callable function**, which
+  is why the stale attribution *resolves* rather than dangling — the
+  mechanism by which it stays invisible;
+- the **require cache is process-wide** (`require("pkg") === require("pkg")`),
+  so the write is visible to every other consumer of the same instance.
+  This is why the displacement is not confined to one file;
+- the negative control W9 (`mod.execute = patched; mod.run()`) really does
+  reach `pkg#run` — so the defect is caused by a write to *the member
+  being called*, not by member resolution in general.
+
+### 4. The widening, bounded to the recorded list
+
+`tests/binding-grammar/require-member-write.test.ts` — 14 assertions,
+each row carrying the fixture row that grounds it. The count is itself
+asserted, so this table cannot drift from the tests.
+
+| shape | analyzer | node | reaches the defect? |
+| --- | --- | --- | --- |
+| W1 `mod.run = patched` | `EXACT pkg#run` | calls `patched` | **yes** |
+| W2 `Object.defineProperty(mod, "run", …)` | `EXACT pkg#run` | calls `patched` | **yes** |
+| W3 `delete mod.run` | `EXACT pkg#run` | `TypeError`; nothing is called | **yes** |
+| W4 alias: `const m2 = mod; m2.run = patched` | `EXACT pkg#run` | calls `patched` | **yes** |
+| W5 write inside a called function | `EXACT pkg#run` | calls `patched` | **yes** |
+| W6 module-scope write, call in a function | `EXACT pkg#run` | calls `patched` | **yes** |
+| W7 ESM `import * as mod`; `mod.run = …` | `EXACT pkg#run` | **`TypeError`** — namespace is sealed | **no** |
+| W8 ESM `import mod from` (CJS default) | `EXACT pkg#run` | calls `patched` | **yes** |
+| W9 write of a DIFFERENT member (control) | `EXACT pkg#run` | calls `pkg#run` | no — **correct** |
+| B0 no write (baseline) | `EXACT pkg#run` | calls `pkg#run` | no — **correct** |
+| C1 object literal, member written (control) | `UNKNOWN unsupported_receiver_binding` | calls `patched` | no — **refuses** |
+| C2 object literal, no write (control) | `EXACT case.js#danger` | calls `danger` | no — **correct** |
+
+**Seven of ten module-receiver shapes reach it.** Every syntactic form of
+write reaches it, and so does every position: through an alias, from
+inside a called function, and from module scope.
+
+**W7 is the one that does NOT, and the reason is the runtime's, not the
+analyzer's.** An ESM Module Namespace object is sealed with non-writable
+bindings, so the write is a `TypeError` and no displacement is possible.
+The analyzer's attribution is therefore not contradicted by a call that
+happened. That it does not model the abrupt completion is the RWF-016
+family's business, not this finding's, and is not pursued here.
+
+**W8 is the important ESM row.** A default import of a CommonJS module
+*is* `module.exports` — an ordinary mutable object — so ESM provides no
+protection at all in the shape real code actually uses.
+
+**C1/C2 are the asymmetry.** The object-literal path refuses the write
+case (C1) while resolving the no-write case (C2), so its refusal is a
+real invalidation and not an inability to read object-literal members.
+Two receivers with identical mutability, opposite treatment.
+
+### 5. Prevalence — measured, on two populations
+
+Instrument: `tests/binding-grammar/require-member-write-prevalence.mjs`
+(syntactic, deliberately over-approximate on the receiver; a prevalence
+probe, not an oracle).
+
+| population | files | occurrences | detail |
+| --- | --- | --- | --- |
+| this repo's installed npm tree | 4,383 | **33** | 31 assignment, 2 `delete`, across `ajv`, `isexe`, `prettier`, `zod` |
+| the 17-case validation corpus | 422 | **97** | 48 in `rwb-06`, 48 in `rwb-06a`, 1 in `rwb-10` |
+
+**Does any corpus case touch it? The shape yes; the verdict no — and the
+distinction is the point.** All 97 corpus occurrences are in vendored
+third-party code:
+
+- 96 are `node-forge` assembling its entire public API by writing members
+  onto the object from `require('./forge')` — `forge.pki = …`,
+  `forge.aes = …`, and so on for 48 modules. RWB-06's advisory target is
+  `node-forge#pki.verifyCertificateChain`, reached through exactly such a
+  written member. **But neither RWB-06 nor RWB-06A currently depends on
+  it**: both are proved `NOT_AFFECTED` by **Family A** (the package is
+  absent from a complete module-load closure), which is established
+  *before* the call graph is consulted at all.
+- 1 is `handlebars`' `parser.yy = …`, which is not RWB-10's advisory
+  target, and RWB-10 expects `UNKNOWN` regardless.
+
+So: **no corpus case's verdict moves today.** That is a statement about
+the corpus, not about the defect — and per D-12 it is not evidence of
+safety. The `node-forge` figure is the live warning: an application that
+*does* load `node-forge` reaches its advisory target through precisely
+this shape, and the corpus's silence is an artifact of those two cases
+resolving on a different, earlier proof family.
+
+### 6. Differentials, and the two edits outside the stated scope
+
+Test-and-docs only, so all three must be zero, and all three are.
+
+| differential | result | how measured |
+| --- | --- | --- |
+| graph | **0** | `git diff` against `a40ce49` over `src/`, `rules/`, `config/`, `schemas/` adds exactly one file, `src/analysis/verdict.require-member-write-authority.integration.test.ts`, and modifies none. No analyzer input or code path moved |
+| proof | **0** | both adversarial suites' generated `REPORT.md` files are **byte-identical** to the base (md5 unchanged), and `git status` over `tests/adversarial/` reports no modification |
+| verdict | **0** | 124 adversarial scans pass with byte-identical result tables and the same per-scenario verdicts; the 17-case validation corpus is unchanged — 12 pass and the same five D-09 cases fail, each reported by the suite itself as `FAIL (known)` |
+
+**Two edits outside "tests and `FINDINGS.md`", both forced and both
+recorded here rather than quietly made.**
+
+1. **`docs/OPEN-DEBTS.md`** — required by the task itself once the finding
+   classified as a soundness defect, including the § 3 criterion 3
+   correction. D-16 is the new entry.
+2. **`scripts/generate-scorecard.mjs` and the regenerated
+   `docs/SCORECARD.md`** — *not* anticipated, and worth stating plainly.
+   `docs-contract.test.ts` requires `SCORECARD.md` to match its sources,
+   and `OPEN-DEBTS.md` is one of them, so adding D-16 made the scorecard
+   stale and the gate red. Regenerating it was therefore mandatory. Two
+   things then surfaced:
+
+   - The generator carries **hardcoded prose** asserting that RWF-047 "is
+     DELIBERATELY UNCLASSIFIED … whether it is a precision gap or a
+     fabricated-edge class is the open question and is not assumed here."
+     That sentence is now false, and it is published in
+     `docs/SCORECARD.md` § 8. It was corrected to state the measured
+     classification. Leaving a generated document asserting the opposite
+     of this finding would have been worse than the scope deviation.
+   - The register row's status cell was initially written as
+     `**OPEN — classified, not fixed**`, and
+     `scripts/scorecard-sources.mjs` **mis-classified RWF-047 as FIXED**:
+     `isOpen` is `/^Open\b/i`, which the `**` prefix defeats, while
+     `isFixed` is `/\bfixed\b/i`, which the words "not fixed" satisfy.
+     The scorecard reported 3 open and 27 fixed. This is precisely the
+     failure the classifier's own header warns about — "the next honest
+     rewording defeats the next pattern just as quietly" — reproduced by
+     the next honest rewording. It was resolved on this side, by wording
+     the status so it classifies correctly; the classifier was left
+     alone. **It is a real latent defect in the scorecard pipeline and is
+     not fixed here**, because it is not RWF-047 and this task does not
+     own it. A status cell that begins with any markup, or that contains
+     the word "fixed" in a negation, still mis-files a row today.
+
+   Beyond the test-file count (182 → 183, from the one added test) and the
+   corrected RWF-047 prose, no scorecard value moved: still 31 findings, 4
+   open, 1 open-in-part, 26 fixed.
+
+### 7. What this does NOT establish
+
+Stated so the next task does not inherit an assumption as a measurement.
+
+- **The fix is not designed here, deliberately.** RWF-047's own record
+  says the fix differs by class, and the class is now known: a class-B
+  soundness defect needs the invalidation extended to require/import-bound
+  receivers *plus* an audit of every other receiver whose members are read
+  without an invalidation check. That audit is not done here.
+- **Which other receivers share the gap is not measured.** The widening
+  was bounded to RWF-047's recorded list and was not taken further.
+- **Conditional and order-dependent writes are not separated.** Every
+  reproduction here uses an unconditional write. A write behind a branch
+  is genuinely multi-valued and would be a class-C question sitting on top
+  of this class-B one; it is untested.
+- **`node-forge` is not scanned end to end.** The claim that a real
+  application loading it would reach the defect follows from the shape
+  count plus the reproductions, not from a scan of such an application.
+  Building that scan would settle it.
+- **The prevalence probe over-approximates.** It does not prove the write
+  and the later call reach the same object, so 33 and 97 are upper bounds
+  on the shape, not counts of confirmed defect sites.
 
 ---
 
