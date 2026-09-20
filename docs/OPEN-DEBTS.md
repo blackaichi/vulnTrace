@@ -9,7 +9,10 @@ Companion documents: [`ARCHITECTURE.md`](ARCHITECTURE.md),
 [`SOUNDNESS-CONTRACT.md`](SOUNDNESS-CONTRACT.md),
 [`SCORECARD.md`](SCORECARD.md).
 
-**None of these is a blocker for P1-B.** § 3 says what a blocker would be.
+**All but one of these is a blocker-free debt; D-16 is not.** § 3 says
+what a blocker would be, and D-16 meets it: a known, reproduced path to a
+false `NOT_AFFECTED` that is on `main` today. § 3 criterion 3 is annotated
+accordingly rather than left to read as satisfied.
 
 ---
 
@@ -523,6 +526,102 @@ to stop treating them as coincidences. See RWF-046b in
 
 Recorded in full as RWF-046a in `tests/validation/FINDINGS.md`.
 
+### D-16 — RWF-047: a member write on a require-bound module object is not modelled, and it is a live path to a false `NOT_AFFECTED`
+
+**OPEN, and it is a soundness blocker.** Unlike D-14 and D-15, this one is
+not a closed lesson. It is on `main` today.
+
+**What.** `call-graph.ts`'s `resolveNamedReceiverBinding` consults
+`named-bindings.ts`'s `isMemberAssignedWithin` before reading a member off
+an OBJECT-LITERAL receiver, because a `const` binding to an object literal
+freezes the BINDING and not the OBJECT. A require- or import-bound module
+object has exactly the same property — `const` freezes `mod`, not
+`mod.run` — and the require/import resolution path consults no equivalent
+check.
+
+```js
+const mod = require("pkg");
+mod.run = patched;
+mod.run();            // the analyzer says pkg#run; node calls patched
+```
+
+**Classified as CLASS B** — correct binding identity, wrong runtime-value
+semantics. The binding of `mod` is entirely right: the right declaration,
+the right module, the right install. What is wrong is that the module's
+*static export table* is substituted for the *runtime value of a property
+on a mutable object*. It is not class A (no local text reaches an export
+name here — asserted positively against a fixture that exports `patched`,
+so a text fabrication would have been loud) and not class C (nothing is
+collapsed: with the write unconditionally above the call there is exactly
+one runtime value, it is determinate, and the analyzer never held it).
+
+**Why it is a blocker and D-14/D-15 were not.** Both directions reproduce
+end to end on `main`, with no production change:
+
+- **false `AFFECTED`** — `AFFECTED` published on a RESOLVED edge into an
+  export the program overwrote before calling;
+- **false `NOT_AFFECTED`** — `NOT_AFFECTED` published with a **complete
+  Family C proof** (`reachableSubgraphComplete: true`, zero unresolved
+  edges in the whole graph) over an export real `node` executes.
+
+The second is the displacement mechanism of RWF-043 § 1: the stale
+attribution does not merely name the wrong callable, it supplies a
+RESOLVED edge where the honest answer is unresolved, removing the
+`unknown` blocker that would have withheld the negative proof. A control
+that changes only the receiver to a local object literal breaks the chain
+at exactly that link.
+
+**Reach.** Seven of ten measured module-receiver shapes reach it: plain
+assignment, `Object.defineProperty`, `delete`, a write through an alias, a
+write inside a called function, a write at module scope, and an ESM
+DEFAULT import of a CommonJS module. An ESM *namespace* import does not,
+and for the runtime's reason rather than the analyzer's: a Module
+Namespace object is sealed, so the write is a `TypeError` and no
+displacement is possible.
+
+**Prevalence, measured** (instrument:
+`tests/binding-grammar/require-member-write-prevalence.mjs`): 33
+occurrences in 4,383 files of this repo's installed npm tree (`ajv`,
+`isexe`, `prettier`, `zod`); 97 in the 422 files of the 17-case validation
+corpus. **No corpus case's verdict moves today**, and that is a fact about
+the corpus rather than about the defect: 96 of the 97 are `node-forge`
+assembling its whole public API by writing members onto the object from
+`require('./forge')` — including `pki`, through which RWB-06's advisory
+target `node-forge#pki.verifyCertificateChain` is reached — but RWB-06 and
+RWB-06A are both proved `NOT_AFFECTED` by **Family A**, established before
+the call graph is consulted at all. Per D-12 that silence is not evidence
+of safety.
+
+**Not fixed here, deliberately.** RWF-047's record required the class to
+be established before a fix was attempted, because the fix differs by
+class: a class-B soundness defect needs the invalidation extended to
+require/import-bound receivers *plus* an audit of every other receiver
+whose members are read without an invalidation check. That audit is not
+done, and which other receivers share the gap is not measured.
+
+**What this does to § 3 criterion 3.** It breaks it, and this time
+without any of D-15's qualification.
+
+D-15 could argue that criterion 3 "held as written and did not hold as
+intended", because the defects on `main` were unknown and the criterion
+says *no known path*. **That argument is not available now.** The path is
+known, it is reproduced by committed tests, it is on `main`, and it is
+recorded here. Criterion 3 as written — *no known path to a false
+`NOT_AFFECTED` or a silently dropped finding* — is **false on `main` as
+of this commit**.
+
+That assertion has now been wrong twice: once in substance while reading
+as satisfied (D-15's five pre-existing RWF-046b defects), and once
+outright, here. The pattern across D-15 and this entry is the same one
+D-12 names: a criterion about the absence of a defect class cannot be
+discharged by any differential, and it has not once been falsified by one.
+RWF-046b was found by sweeping a grammar; RWF-047 was found by sweeping
+the same grammar and then asking what happens to the OBJECT after it is
+correctly bound. Both times the corpus reported no movement.
+
+Recorded in full, with both reproductions, the real-`node` ground truth
+and the widening table, as RWF-047 in `tests/validation/FINDINGS.md`.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
@@ -573,6 +672,18 @@ owned and measurable, not to make them total.
    `validate:history`.
 3. **No open P0 or Foundation soundness blocker** — no known path to a false
    `NOT_AFFECTED` or a silently dropped finding.
+
+   > **This criterion is NOT satisfied on `main` as of RWF-047's
+   > classification.** D-16 records a known, reproduced path to a false
+   > `NOT_AFFECTED`: a member write on a require-bound module object keeps
+   > the stale attribution, which displaces the honest `unknown` blocker and
+   > lets a complete Family C proof certify a subgraph the program really
+   > leaves. It is on `main`, it is covered by committed tests, and it is
+   > not fixed. Stated plainly rather than qualified: the criterion is
+   > false, not merely at risk. It has now been wrong twice — see D-15 for
+   > the first occasion, where the defects were real but unknown and the
+   > criterion could still be read as holding as written. That reading is
+   > not available here.
 4. **A benchmark baseline is recorded** — the real-world corpus has a
    measured, reproducible state that a later change can be compared against.
 5. **The open debts are explicitly bounded** — every one named, with why it

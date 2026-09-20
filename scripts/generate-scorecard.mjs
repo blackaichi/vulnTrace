@@ -653,7 +653,7 @@ async function build() {
       "Still open",
       `${register.open.length} — ${register.open.map((entry) => entry.id).join(", ")}`,
       "structural — the same table",
-      "NOT all of one kind, and the difference matters: RWF-001 and RWF-006 are precision gaps that degrade to UNKNOWN in both directions, RWF-044 is precision-only by construction, and RWF-047 is DELIBERATELY UNCLASSIFIED -- a require-bound module object keeps its attribution across a member write, which yields a WRONG attribution rather than an absent one, so whether it is a precision gap or a fabricated-edge class is the open question and is not assumed here. Reading this row as 'open precision debt' is the misreading to avoid.",
+      "NOT all of one kind, and the difference matters: RWF-001 and RWF-006 are precision gaps that degrade to UNKNOWN in both directions, RWF-044 is precision-only by construction, and RWF-047 is a CLASSIFIED SOUNDNESS DEFECT that is open because it is not remediated, not because it is unexamined -- a require-bound module object keeps its attribution across a member write, and both directions are now reproduced end to end: a false AFFECTED over an export the program overwrote before calling, and a false NOT_AFFECTED carrying a complete Family C proof over an export the program really reaches. It is class B (correct binding identity, wrong runtime-value semantics). Reading this row as 'open precision debt' is the misreading to avoid, and for RWF-047 it is now measurably wrong rather than merely unproven -- see docs/OPEN-DEBTS.md D-16.",
       "'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`.",
     ]),
     row([
