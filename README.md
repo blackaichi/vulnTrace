@@ -87,6 +87,7 @@ not a soft `NOT_AFFECTED`.
 | [`docs/OPEN-DEBTS.md`](docs/OPEN-DEBTS.md) | every known debt, and the entry criteria for P1-B |
 | [`docs/SDD.md`](docs/SDD.md) | the original design document (historical; the four above are current where they disagree) |
 | [`tests/validation/FINDINGS.md`](tests/validation/FINDINGS.md) | the RWF register — every gap found by scanning real packages |
+| [`docs/tasks/`](docs/tasks/) | task files — the specification each branch executes and is audited against; workflow in [`AGENTS.md`](AGENTS.md) |
 
 ## Status
 
