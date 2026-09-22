@@ -120,3 +120,33 @@ In the format of `AGENTS.md` section J. Item 2 additionally names the
 branch SHA before and after, and the worktree method used. Item 4 carries
 the inventory table and, for each restructured test, before and after and
 proof that it fails when the observation changes.
+
+## Corrections
+
+### 2026-09-23 — the boundaries enclose both files that need restructuring
+
+**What was wrong.** The rebase premise held: the branch touches none of the
+paths `main` changed since `a40ce49`. But the task is self-contradictory as
+written: step 5 of "What to do" requires restructuring every case (c) test,
+while "Do not touch" places `src/` and `tests/binding-grammar/` out of
+bounds, and both of the branch's own reproduction test files live there.
+Measured (`git diff --stat origin/main HEAD`):
+
+- `src/analysis/verdict.require-member-write-authority.integration.test.ts`
+  (verdict level, 8 tests), and
+- `tests/binding-grammar/require-member-write.test.ts` (graph level, 14
+  tests).
+
+The rebase itself was clean (no conflicts; `git range-diff` shows every
+commit patch-identical).
+
+**What was measured instead.** Both files are green on the rebased branch
+and both contain case (c) assertions: `expected` is defined as "what the
+analyzer does TODAY", and the wrong results are asserted directly (for
+example `expect(outcome.verdict).toBe("AFFECTED")` over an export `node`
+never enters, and `toBe("NOT_AFFECTED")` with `family` `"C"` over an export
+`node` executes). Restructuring them requires editing a file under `src/`
+and a file under `tests/binding-grammar/`. That is outside this task's
+boundaries, so per AGENTS.md section D, step 5 of "What to do" was not
+executed and the task stopped with `NEEDS_DECISION`. The report carries the
+full inventory.
