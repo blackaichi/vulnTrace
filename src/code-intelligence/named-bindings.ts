@@ -1092,24 +1092,42 @@ export function resolveImportProvenanceDeclaration(
       return { kind: "none", cause: "destructuring" };
     }
 
-    // The key must be statically spellable. A computed key
-    // (`const { [k]: run } = require("pkg")`) names no property this can
-    // read, and a numeric key is refused alongside it.
+    // The key must be STATICALLY SPELLED as text this can read: an
+    // identifier or a string literal. A computed key
+    // (`const { [k]: run } = require("pkg")`) and a numeric-literal key
+    // (`const { 1: run } = ...`) are both refused here.
     //
-    // The numeric refusal is NOT justified by "a numeric key names no
-    // export": `module.exports = { ["1"]: f }` is a real export, and
-    // the binding-grammar sweep's own numeric control reaches it. What
-    // is measured (RWF-049, and the sweep's `non-identifier-key`
-    // family) is narrower and stronger: a NON-IDENTIFIER key resolves
-    // in no position anywhere in this engine -- not in destructuring,
-    // not in element access, where `x[1]()` and `x[K]()` are both
-    // `dynamic_member_access`, and not in the CommonJS export model,
-    // where `{ "1": f }` and `{ 1: f }` put nothing in the model at
-    // all. That holds for a QUOTED STRING key as much as a numeric
-    // one, so the string literals this clause already admits carry it
-    // no further: they resolve only where their text is an identifier.
-    // Widening here on the strength of the old premise would be
-    // widening on a false one.
+    // The refusal is NOT justified by "a numeric key names no export".
+    // That premise is false: `module.exports = { ["1"]: f }` IS a real
+    // export, and the binding-grammar sweep's numeric control reaches
+    // it.
+    //
+    // Nor is it justified by the broader claim that a NON-IDENTIFIER
+    // key resolves nowhere. That is false too, and measurably so -- a
+    // quoted non-identifier key resolves in BOTH consumer positions:
+    //
+    //   const { "1": t } = require("pkg"); t();   // -> pkg's "1" export
+    //   require("pkg")["1"]();                    // -> the same export
+    //
+    // What is actually measured is a line between SPELLINGS, not
+    // between identifiers and non-identifiers. A string literal is read
+    // as text and resolves on its exact characters, identifier-shaped
+    // or not. A numeric literal and a computed key are not read at all:
+    // here they return `none`, and in element access `x[1]()` and
+    // `x[K]()` are both `dynamic_member_access`.
+    //
+    // So this clause admits string literals deliberately and correctly,
+    // and the numeric refusal is a PRECISION boundary -- the numeric
+    // spelling is simply not modelled -- not a claim that nothing could
+    // be named. Two further facts bound any widening, and they point
+    // opposite ways: RWF-049 records that on the PRODUCING side
+    // `module.exports = { "1": f }` and `{ 1: f }` put nothing in the
+    // export model (only the computed `{ ["1"]: f }` does), so a
+    // numeric key admitted here would usually find no export to name;
+    // but the sweep's `non-identifier-key` cells are verified in the
+    // REFUSAL DIRECTION ONLY and have never been observed passing, so
+    // they are not evidence that widening would be safe either.
+    // Widening needs its own measurement, in both directions.
     const key = element.propertyName ?? element.name;
     if (!ts.isIdentifier(key) && !ts.isStringLiteralLike(key)) {
       return { kind: "none", cause: "destructuring" };
