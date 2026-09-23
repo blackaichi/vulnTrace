@@ -11,7 +11,7 @@
 // it reports a write to any name bound to a require/import in the same file,
 // without proving the write and the later call reach the same object. It is
 // a prevalence probe, not an oracle -- the oracles are
-// `require-member-write.test.ts` and
+// `src/analysis/require-member-write-widening.integration.test.ts` and
 // `src/analysis/verdict.require-member-write-authority.integration.test.ts`.
 
 /* global process, console */
