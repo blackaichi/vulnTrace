@@ -14890,6 +14890,10 @@ base commit with no production change of any kind.
 `DEFECT: reports AFFECTED over an export the program overwrote before
 calling`.
 
+> **Pointer (RWF-047 close-out):** this case is no longer named `DEFECT:`
+> and no longer asserts `AFFECTED`. It is an open-soundness-defect record;
+> see § 8 below.
+
 The advisory names `pkg#run`. `run` is vulnerable; the local `patched` is
 safe.
 
@@ -14921,6 +14925,10 @@ be constructed rather than argued. It closes, and every link is asserted.
 `src/analysis/verdict.require-member-write-authority.integration.test.ts`,
 `DEFECT: certifies a Family C negative proof over an export the program
 really reaches` and `DEFECT: the displacement is what closes the chain`.
+
+> **Pointer (RWF-047 close-out):** these cases are no longer named
+> `DEFECT:` and no longer assert `NOT_AFFECTED`. They are
+> open-soundness-defect records; see § 8 below.
 
 The advisory now names `pkg#danger`. `danger` is vulnerable; `run` is a
 safe export of the same package.
@@ -15036,6 +15044,12 @@ The load-bearing runtime facts, each asserted:
 `tests/binding-grammar/require-member-write.test.ts` — 14 assertions,
 each row carrying the fixture row that grounds it. The count is itself
 asserted, so this table cannot drift from the tests.
+
+> **Pointer (RWF-047 close-out):** this file moved to
+> `src/analysis/require-member-write-widening.integration.test.ts`, and
+> its "reaches the defect" rows are open-soundness-defect records rather
+> than expected `EXACT`s; see § 8 below. The table's measurements are
+> unchanged.
 
 | shape | analyzer | node | reaches the defect? |
 | --- | --- | --- | --- |
@@ -15176,6 +15190,71 @@ Stated so the next task does not inherit an assumption as a measurement.
 - **The prevalence probe over-approximates.** It does not prove the write
   and the later call reach the same object, so 33 and 97 are upper bounds
   on the shape, not counts of confirmed defect sites.
+
+### 8. How the reproductions are pinned (RWF-047 close-out)
+
+**Appended; supersedes the "what the analyzer does TODAY" framing in § 1,
+§ 2 and § 4 above, whose measurements stand.** Task:
+`docs/tasks/RWF-047-classification-closeout.md`.
+
+As first committed, every reproduction above asserted the WRONG result as
+its expected outcome: `toBe("AFFECTED")` over an export `node` never
+enters, `toBe("NOT_AFFECTED")` with Family C over an export `node`
+executes, and `EXACT node_modules/pkg/index.js#run` for seven widened
+shapes. The suite was green *because of* the defect, which AGENTS.md
+section G forbids and which the fix would have had to invert.
+
+**The mechanism.** Each case the defect reaches is now an
+**open-soundness-defect record** (`src/testing/open-soundness-defect.ts`,
+self-tested in `src/testing/open-soundness-defect.test.ts`). A record
+holds `admissible` (the sound outcomes), `expected` (the fail-closed fix's
+outcome), `observed` (the exact wrong result measured today), `rwf:
+"RWF-047"` and `debt: "D-16"`. The test requires `expected` ∈ admissible,
+`observed` ∉ admissible, `RWF-047` to resolve to a `##` heading here with
+an `Open` status in the register, `D-16` to resolve to an OPEN-DEBTS
+heading not marked CLOSED, and the live result to equal `observed`
+**exactly**. It therefore fails when RWF-047 is fixed (the fix PR deletes
+the record and asserts `expected`) and when the defect drifts into a
+different wrong result. It shares no code with
+`tests/binding-grammar/disagreements.ts`, whose guard is unchanged.
+
+**The records, and their admissible sets.**
+
+| case | file | admissible | expected | observed today |
+| --- | --- | --- | --- | --- |
+| step 1 verdict (export overwritten before the call) | `src/analysis/verdict.require-member-write-authority.integration.test.ts` | `UNKNOWN`, `NOT_AFFECTED` | `UNKNOWN` | `AFFECTED`, no proof family, call site `pkg#run`, 0 unresolved edges |
+| step 1 call site | same | a refusal; `EXACT src/index.js#patched` | a refusal | `EXACT node_modules/pkg/index.js#run` |
+| step 2 verdict (displacing wrapper reaches `pkg#danger`) | same | `UNKNOWN`, `AFFECTED` | `UNKNOWN` | `NOT_AFFECTED`, Family C, `reachableSubgraphComplete: true`, call site `pkg#run`, 0 unresolved edges |
+| step 2 call site | same | a refusal; `EXACT src/index.js#wrapper` | a refusal | `EXACT node_modules/pkg/index.js#run` |
+| W1, W2, W4, W5, W6, W8 | `src/analysis/require-member-write-widening.integration.test.ts` | a refusal; `EXACT` to the local `patched` the write installs | a refusal | `EXACT node_modules/pkg/index.js#run` |
+| W3 (`delete mod.run`) | same | a refusal only — the delete installs nothing | a refusal | `EXACT node_modules/pkg/index.js#run` |
+
+No refusal reason code is pinned in any `expected`; the fix chooses the
+existing reason and pins it then. The controls, the ground truth, W7, W9,
+B0 and the loud-fixture checks assert what they asserted before, because
+what they assert is correct.
+
+**The widening table moved** from
+`tests/binding-grammar/require-member-write.test.ts` to
+`src/analysis/require-member-write-widening.integration.test.ts`. The
+binding-grammar suite's contract is that a wrong `EXACT` fails
+unconditionally, so a record of a known wrong `EXACT` must not live inside
+it; the fix will add a member-write column to the matrix proper. `npm
+test` runs the moved file; `npm run test:binding-grammar` no longer does.
+
+**A correction to § 4, found while moving it.** The moved file had
+borrowed the binding-grammar harness, and its docblock said the fixture
+exported `patched`. It did not: the harness's loud vocabulary has no
+`patched`. And in ESM mode the harness makes `pkg` an ESM package with
+no default export, so W8 ("ESM default import of a CommonJS module") was
+not importing a CommonJS module. The moved file now builds its own
+fixture mirroring `fixtures/require-member-write-ground-truth/` (a
+CommonJS `pkg` exporting `run`, `execute`, `patched`, `safe` and `danger`;
+ESM rows in `.mjs`), and its loud-fixture test resolves every bound name
+rather than assuming it. **Every row's observation is unchanged** under
+the corrected fixture, so § 4's table stands. W7 was re-checked against
+real `node` with a CommonJS `pkg`: the namespace write is still a
+`TypeError`, and W8's default-import write still installs `patched`.
 
 ---
 
