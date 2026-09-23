@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 185 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 186 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (LIVE) — `npm run test:validation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-17 | Real npm-installed packages against real advisories over the real OSV API. | Integration evidence and a provider-movement detector, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -297,12 +297,33 @@ not on whether it exists.
 
 ## 8. Known defect register (RWF)
 
+Every value below is derived from the status table in
+`tests/validation/FINDINGS.md`. A row's status is read from that
+table's Status column only, through a closed vocabulary; an
+unrecognised status fails generation rather than being defaulted. The
+field and the vocabulary are documented next to the table.
+
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 31 | structural — the status table in `tests/validation/FINDINGS.md` | Every gap found by scanning real packages is recorded before it is fixed, and stays recorded after. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 4 — RWF-001, RWF-006, RWF-044, RWF-047 | structural — the same table | NOT all of one kind, and the difference matters: RWF-001 and RWF-006 are precision gaps that degrade to UNKNOWN in both directions, RWF-044 is precision-only by construction, and RWF-047 is a CLASSIFIED SOUNDNESS DEFECT that is open because it is not remediated, not because it is unexamined -- a require-bound module object keeps its attribution across a member write, and both directions are now reproduced end to end: a false AFFECTED over an export the program overwrote before calling, and a false NOT_AFFECTED carrying a complete Family C proof over an export the program really reaches. It is class B (correct binding identity, wrong runtime-value semantics). Reading this row as 'open precision debt' is the misreading to avoid, and for RWF-047 it is now measurably wrong rather than merely unproven -- see docs/OPEN-DEBTS.md D-16. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
-| Open in part | 1 — RWF-002 | structural — the same table | Partly discharged, partly outstanding. RWF-002 is bypassed for unloaded packages; its underlying reachability-scoping tradeoff remains. | **Counting these as closed is the register's single most consequential misreading**, and the blocker counts recorded for RWF-002 are not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
-| Recorded as fixed | 26 | structural — the same table | Every soundness defect found so far has a fixture and a test that keeps it fixed. | A fix is proven for the shapes its fixtures cover. |
+| Findings recorded | 31 | structural — the status table in `tests/validation/FINDINGS.md` | Rows in the status table. Only these are classified and counted below. | Counts rows in the register, not distinct defects in the analyzer. 19 finding section(s) in FINDINGS.md have no status-table row and are in NO count below, whatever their own prose says: RWF-023, RWF-024, RWF-025, RWF-026, RWF-027, RWF-028, RWF-025b, RWF-032, RWF-033, RWF-034, RWF-035, RWF-036, RWF-037, RWF-038, RWF-039, RWF-040, RWF-041, RWF-048, RWF-049. |
+| Still open | 4 — RWF-001, RWF-006, RWF-044, RWF-047 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Open in part | 2 — RWF-002, RWF-013 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
+| Recorded as fixed | 25 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
+
+### 8.1 Outstanding findings, in their own words
+
+Every open and open-in-part row, with its Status and Impact cells
+quoted verbatim from the register. The generator writes nothing in
+this table except the category.
+
+| ID | Category | Status (verbatim) | Impact (verbatim) |
+| --- | --- | --- | --- |
+| RWF-001 | open | Open, not yet scoped as a task | Precision only — degrades to UNKNOWN in both directions, never a false AFFECTED/NOT_AFFECTED |
+| RWF-006 | open | Open, not yet scoped as a task | Precision only — degrades to UNKNOWN, never a false verdict |
+| RWF-044 | open | Open, deliberately not scoped into P1-B3b — precision only; needs deferred-execution modeling, not a heuristic — see below | **Precision only, never soundness** — every refusal costs an edge that is correct in fact; the failure direction is UNKNOWN. 85 call-graph edges in the corpus. These resolved on `779e219` only because the same-name matcher overrode B3's refusal |
+| RWF-047 | open | Open — classified as a CLASS-B soundness defect, both directions reproduced; deliberately NOT remediated here, because RWF-047's own record required the class to be established first and the remedy differs by class. See `docs/OPEN-DEBTS.md` D-16 | **Soundness, CLASS B (correct binding identity, wrong runtime-value semantics), BOTH directions** — classified by reproduction on `a40ce49`, not by argument. False `AFFECTED`: `AFFECTED` on a RESOLVED edge into an export the program overwrote before calling, which real `node` never enters. False `NOT_AFFECTED`: the displacement chain CLOSES — the stale attribution supplies a resolved edge where the honest answer is unresolved, removing the `unknown` blocker, orphaning the real caller, and certifying a complete Family C proof (`reachableSubgraphComplete: true`, zero unresolved edges) over an export `node` executes. NOT class A (no local text reaches an export name — asserted against a fixture exporting `patched`) and NOT class C (with the write unconditionally above the call there is exactly one determinate runtime value). 7 of 10 widened shapes reach it |
+| RWF-002 | open in part | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model |
+| RWF-013 | open in part | **Fixed for variable bindings (RWF-013)**; the declaration-form half is RWF-013b below | **Soundness** — reproduced end-to-end as a false `NOT_AFFECTED` carrying a complete Family C unreachability proof over a function the module does not export |
 
 ## 9. Commands referenced by the documentation
 
