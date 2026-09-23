@@ -117,7 +117,7 @@ describe("open-soundness-defect record: the RWF reference is anchored, not permi
     [
       "## Status",
       "",
-      "| ID | Where | What | Class | Status |",
+      "| ID | Package | Root cause | Impact | Status |",
       "| --- | --- | --- | --- | --- |",
       `| RWF-900 | x | y | z | ${status} |`,
       "",
@@ -131,15 +131,37 @@ describe("open-soundness-defect record: the RWF reference is anchored, not permi
     ).toEqual([]);
   });
 
-  it("a status that merely CONTAINS the word open, or starts with markup, does not", () => {
-    // The scorecard classifier's own failure mode, refused here in the
-    // safe direction: an unreadable status fails the record.
+  it("follows the scorecard's shared vocabulary: emphasis is stripped, open in part is open", () => {
+    // This file once had its own reader (`/^Open\b/`), which refused
+    // `**Open**` while the scorecard accepted it. Both now read the same
+    // field through the same classifier.
+    expect(rwfReferenceProblems("RWF-900", register("**Open**"))).toEqual([]);
     expect(
-      rwfReferenceProblems("RWF-900", register("**OPEN — classified**")),
-    ).toHaveLength(1);
+      rwfReferenceProblems(
+        "RWF-900",
+        register("**OPEN — classified, not fixed**"),
+      ),
+    ).toEqual([]);
     expect(
-      rwfReferenceProblems("RWF-900", register("Fixed; was open")),
-    ).toHaveLength(1);
+      rwfReferenceProblems("RWF-900", register("Open in part — the ESM half")),
+    ).toEqual([]);
+  });
+
+  it("a fixed, contradicted or unknown status fails the record", () => {
+    expect(
+      rwfReferenceProblems("RWF-900", register("**Fixed (RWF-900)**")).join(
+        "\n",
+      ),
+    ).toMatch(/RWF-900: register status is not open/);
+    // A `Fixed` whose own cell says it is not: the shared classifier
+    // refuses the register, so no status is read and the record fails.
+    expect(
+      rwfReferenceProblems("RWF-900", register("Fixed; was open")).join("\n"),
+    ).toMatch(/cannot be classified/);
+    // A value outside the vocabulary is never defaulted to open.
+    expect(
+      rwfReferenceProblems("RWF-900", register("Triaged")).join("\n"),
+    ).toMatch(/cannot be classified.*"triaged" is not in the vocabulary/s);
   });
 
   it("a REMEDIATED heading closes the record even if the register lags", () => {
