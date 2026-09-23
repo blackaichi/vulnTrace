@@ -74,6 +74,35 @@ as a reason to doubt the `NOT_AFFECTED` conclusion.
 
 ## Status
 
+**How this table is read.** `docs/SCORECARD.md` § 8 is generated from
+this table by `readFindingsRegister` in `scripts/scorecard-sources.mjs`,
+and it reads a finding's status from **one field only: the `Status`
+column** (the fifth cell). Nothing else in a row, and no prose outside
+this table, decides a status. The header must stay exactly
+`| ID | Package | Root cause | Impact | Status |`; every row must have
+five cells, and its ID must look like `RWF-047` or `AUD-01`.
+
+The **status value** is the cell's leading phrase. Emphasis (`**`) is
+stripped, and the value ends at the first `—`, `;`, `,`, `:`, `.` or
+`(`. Whatever follows is commentary for the reader and is never
+classified. The value must be one of these, case-insensitive, with a
+hyphen counting as a space:
+
+- **open**: `Open`, `Not fixed`
+- **open in part**: `Open in part`, `Fixed in part`, `Partially fixed`,
+  `Bypassed for unloaded packages` (RWF-002's value),
+  `Fixed for variable bindings` (RWF-013's value)
+- **fixed**: `Fixed`
+
+"Open in part" is open: a finding that is only partly fixed is not fixed.
+Any other value makes the scorecard generator **fail**, naming the row
+and the value. A `Fixed` value whose own cell also says "not fixed",
+"in part", "partially", "open", "remains" or "outstanding" fails too. To
+record a new kind of status, add it to `FINDINGS_STATUS_VOCABULARY`
+deliberately, in the category that cannot overstate closure. A finding
+with a `##` section here but no row in this table is in no count at all,
+and the scorecard lists it as such.
+
 | ID | Package | Root cause | Impact | Status |
 |---|---|---|---|---|
 | RWF-001 | `lodash` (the main package) | UMD `module.exports` assignment via a locally-aliased variable is invisible to export detection | Precision only — degrades to UNKNOWN in both directions, never a false AFFECTED/NOT_AFFECTED | Open, not yet scoped as a task |
@@ -15255,6 +15284,44 @@ rather than assuming it. **Every row's observation is unchanged** under
 the corrected fixture, so § 4's table stands. W7 was re-checked against
 real `node` with a CommonJS `pkg`: the namespace write is still a
 `TypeError`, and W8's default-import write still installs `patched`.
+
+### 9. Status update — the scorecard classifier defect in § 6 is closed
+
+Appended by task `scorecard-status-classifier` (branch
+`scorecard-status-classifier`, task file
+`docs/tasks/scorecard-status-classifier.md`). It supersedes the "not
+fixed here" of § 6, item 2 for the classifier only. RWF-047 itself is
+still open and unremediated.
+
+§ 6 recorded that `scripts/scorecard-sources.mjs` classified a status by
+matching prose. `isOpen` was `/^Open\b/i` and `isFixed` was
+`/\bfixed\b/i`, so it filed `**OPEN — classified, not fixed**` as FIXED.
+That classifier is replaced. A status is now read only from the `Status`
+column of the table under `## Status`. Its leading value, with emphasis
+stripped, is looked up in a closed vocabulary. An unknown value fails
+generation, naming the row and the value. A `Fixed` value contradicted
+by its own cell fails too. The field and the vocabulary are documented
+directly above the status table.
+
+Re-running the new classifier over all 31 rows moved exactly one row:
+RWF-013 (`**Fixed for variable bindings (RWF-013)**; the declaration-form
+half is RWF-013b below`) moved from fixed to **open in part**. A scoped
+fix value maps to the category that cannot overstate closure. That move
+is conservative, and it does not show an earlier misreport: RWF-013's own
+section says `Status: Fixed`, and RWF-013b is fixed. No other row's
+category changed, and RWF-047 still classifies as open.
+
+RWF-047's status cell is **left as it is**. The new classifier would
+file its first wording, `**OPEN — classified, not fixed**`, as open
+(`src/testing/findings-status.test.ts` pins exactly that). But the cell
+has a second, independent reader: `src/testing/open-soundness-defect.ts`
+requires the Status cell of every open-defect record's row to match
+`/^Open\b/`, which is case-sensitive and does not strip emphasis. With
+that wording restored, its self-test fails five cases. That file is
+outside this task's boundaries. Its reader fails closed, because a
+reworded cell turns a test red rather than reporting a finding as fixed,
+but it is a second status vocabulary that can drift from the first. It is
+recorded here, not changed.
 
 ---
 
