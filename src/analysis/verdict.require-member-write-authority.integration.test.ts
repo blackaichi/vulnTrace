@@ -14,20 +14,41 @@ import type { VulnerableSymbolRule } from "../domain/target.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import { buildGateEligibleModuleLoadClosure } from "./module-load-closure.js";
 import { buildFindingForTest } from "../testing/finding.js";
+import {
+  EDGE_DOMAIN,
+  VERDICT_DOMAIN,
+  loadDefectRegisters,
+  openSoundnessDefectProblems,
+  type EdgeObservation,
+  type EdgePattern,
+  type OpenSoundnessDefect,
+  type OutcomeDomain,
+  type Verdict,
+  type VerdictObservation,
+} from "../testing/open-soundness-defect.js";
 
 /**
  * RWF-047 -- THE VERDICT ORACLE FOR A MEMBER WRITE ON A REQUIRE-BOUND
  * MODULE OBJECT.
  *
- * THIS FILE CHARACTERISES AN OPEN DEFECT. Every `it` here asserts what the
- * analyzer does TODAY, and several of those assertions record answers that
- * are WRONG against the runtime. The wrongness is not incidental to the
- * test -- it is the measurement the test exists to take, and each such case
- * is named `DEFECT:` and carries the real-`node` row that contradicts it.
- * The fix for RWF-047 is expected to INVERT those cases; it is a separate
+ * THIS FILE REPRODUCES AN OPEN SOUNDNESS DEFECT WITHOUT PINNING IT. No
+ * assertion here states a wrong result as its expected outcome (AGENTS.md
+ * section G). Every case the defect reaches is an open-soundness-defect
+ * record (`src/testing/open-soundness-defect.ts`): the SOUND outcomes are
+ * `admissible`, the fail-closed fix's outcome is `expected`, and the exact
+ * wrong result the analyzer gives today -- verdict, proof family, call-site
+ * target, completeness flag, unresolved-edge count -- is `observed`, kept
+ * apart from the expectation. Each record names RWF-047 and OPEN-DEBTS
+ * D-16. It FAILS if the live result changes in any way: when RWF-047 is
+ * fixed (the fix PR deletes the record and asserts `expected`), and when
+ * the defect drifts into a different wrong result. The fix is a separate
  * task, deliberately, because the fix differs by class and deciding the
  * class under time pressure from a green test is how the class gets
  * assumed rather than established.
+ *
+ * (History: until the RWF-047 close-out these cases were named `DEFECT:`
+ * and asserted the wrong verdict directly. See
+ * `docs/tasks/RWF-047-classification-closeout.md`.)
  *
  * THE SHAPE.
  *
@@ -113,6 +134,28 @@ interface Outcome {
   readonly unknownEdges: number;
   /** Whether any edge resolves to the named export of the package. */
   resolvesTo(exportName: string): boolean;
+  /**
+   * The single call edge leaving `normalize` -- the `mod.run(input)` /
+   * `holder.run(input)` call site every program here probes.
+   */
+  readonly callSite: EdgeObservation;
+  /** The verdict-level observation an open-defect record compares. */
+  readonly observation: VerdictObservation;
+}
+
+function formatEdge(e: EdgeObservation): string {
+  switch (e.kind) {
+    case "exact":
+      return e.target;
+    case "unknown":
+      return `UNKNOWN ${e.reason}`;
+    case "no-edge":
+      return "NO-EDGE";
+    case "ambiguous":
+      return `AMBIGUOUS(${e.count})`;
+    case "no-probe":
+      return "NO-PROBE";
+  }
 }
 
 async function run(options: {
@@ -188,19 +231,60 @@ async function run(options: {
   });
 
   const evidence = finding?.evidence;
+  const family = evidence?.confirmedAbsentFromModuleLoadClosure
+    ? "A"
+    : evidence?.confirmedAbsentInstance
+      ? "B"
+      : evidence?.confirmedUnreachableTarget
+        ? "C"
+        : "-";
+  const reachableSubgraphComplete =
+    evidence?.confirmedUnreachableTarget?.reachableSubgraphComplete ?? false;
+  const unknownEdges = graph.edges.filter(
+    (e) => e.resolution.kind === "unknown",
+  ).length;
+
+  let callSite: EdgeObservation;
+  const probe = graph.nodes.find((n) => n.name === "normalize");
+  const probeEdges = probe
+    ? graph.edges.filter((e) => e.from === probe.id && e.type !== "module_load")
+    : [];
+  const [edge] = probeEdges;
+  if (!probe) {
+    callSite = { kind: "no-probe" };
+  } else if (!edge) {
+    callSite = { kind: "no-edge" };
+  } else if (probeEdges.length > 1) {
+    callSite = { kind: "ambiguous", count: probeEdges.length };
+  } else if (edge.resolution.kind === "unknown") {
+    callSite = { kind: "unknown", reason: edge.resolution.reason };
+  } else {
+    const targetId = edge.resolution.target;
+    const node = graph.nodes.find((n) => n.id === targetId);
+    callSite = node
+      ? {
+          kind: "exact",
+          target: `${path
+            .relative(root, node.module)
+            .split(path.sep)
+            .join("/")}#${node.name ?? "<anonymous>"}`,
+        }
+      : { kind: "no-edge" };
+  }
+
   return {
     verdict: finding?.verdict,
-    family: evidence?.confirmedAbsentFromModuleLoadClosure
-      ? "A"
-      : evidence?.confirmedAbsentInstance
-        ? "B"
-        : evidence?.confirmedUnreachableTarget
-          ? "C"
-          : "-",
-    reachableSubgraphComplete:
-      evidence?.confirmedUnreachableTarget?.reachableSubgraphComplete ?? false,
-    unknownEdges: graph.edges.filter((e) => e.resolution.kind === "unknown")
-      .length,
+    family,
+    reachableSubgraphComplete,
+    unknownEdges,
+    callSite,
+    observation: {
+      verdict: finding?.verdict as Verdict | undefined,
+      proofFamily: family,
+      target: formatEdge(callSite),
+      reachableSubgraphComplete,
+      unknownEdges,
+    },
     resolvesTo(exportName: string): boolean {
       const node = graph.nodes.find(
         (n) => n.name === exportName && n.module.includes("node_modules/pkg"),
@@ -339,33 +423,121 @@ const OBJECT_LITERAL_CONTROL = [
   "",
 ].join("\n");
 
-describe("RWF-047: a member write on a require-bound module object (OPEN DEFECT, characterised)", () => {
+const registers = loadDefectRegisters();
+
+function expectOpenDefect<Pattern, Outcome>(
+  record: OpenSoundnessDefect<Pattern, Outcome>,
+  domain: OutcomeDomain<Pattern, Outcome>,
+  live: Outcome,
+): void {
+  expect(
+    openSoundnessDefectProblems(record, domain, live, registers),
+    `${record.rwf} / ${record.debt}: ${record.caseId}`,
+  ).toEqual([]);
+}
+
+// ---------------------------------------------------------------------------
+// THE OPEN-DEFECT RECORDS. Each `observed` is the measured wrong result on
+// `main`; none is an expectation. The admissible sets and expectations are
+// the ones decided for the RWF-047 close-out (see the task file's
+// Corrections).
+// ---------------------------------------------------------------------------
+
+/**
+ * STEP 1, verdict. Real node never enters `pkg#run` (fixture row D1), so
+ * `AFFECTED` is unsound. `NOT_AFFECTED` would be sound but needs a proof
+ * this analyzer does not have, so the fail-closed fix gives `UNKNOWN`.
+ */
+const STEP1_VERDICT: OpenSoundnessDefect<Verdict, VerdictObservation> = {
+  caseId: "step 1: vulnerable export overwritten before the call",
+  rwf: "RWF-047",
+  debt: "D-16",
+  admissible: ["UNKNOWN", "NOT_AFFECTED"],
+  expected: "UNKNOWN",
+  observed: {
+    verdict: "AFFECTED",
+    proofFamily: "-",
+    target: "node_modules/pkg/index.js#run",
+    reachableSubgraphComplete: false,
+    unknownEdges: 0,
+  },
+};
+
+/**
+ * STEP 1, call site. The write displaces `pkg#run` with the local
+ * `patched`, so the only sound EXACT is `patched`'s own declaration. The
+ * fail-closed fix refuses; no reason code is pinned, the fix chooses it.
+ */
+const STEP1_CALL_SITE: OpenSoundnessDefect<EdgePattern, EdgeObservation> = {
+  caseId: "step 1: the mod.run(input) call site after mod.run = patched",
+  rwf: "RWF-047",
+  debt: "D-16",
+  admissible: [
+    { kind: "refusal" },
+    { kind: "exact", target: "src/index.js#patched" },
+  ],
+  expected: { kind: "refusal" },
+  observed: { kind: "exact", target: "node_modules/pkg/index.js#run" },
+};
+
+/**
+ * STEP 2, verdict. Real node reaches `pkg#danger` through the displacing
+ * wrapper (fixture row P3), so `NOT_AFFECTED` is unsound -- the critical
+ * failure. `AFFECTED` would be sound; the fail-closed fix gives `UNKNOWN`.
+ */
+const STEP2_VERDICT: OpenSoundnessDefect<Verdict, VerdictObservation> = {
+  caseId: "step 2: a displacing wrapper reaches pkg#danger",
+  rwf: "RWF-047",
+  debt: "D-16",
+  admissible: ["UNKNOWN", "AFFECTED"],
+  expected: "UNKNOWN",
+  observed: {
+    verdict: "NOT_AFFECTED",
+    proofFamily: "C",
+    target: "node_modules/pkg/index.js#run",
+    reachableSubgraphComplete: true,
+    unknownEdges: 0,
+  },
+};
+
+/** STEP 2, call site: the written value is the local `wrapper`. */
+const STEP2_CALL_SITE: OpenSoundnessDefect<EdgePattern, EdgeObservation> = {
+  caseId: "step 2: the mod.run(input) call site after mod.run = wrapper",
+  rwf: "RWF-047",
+  debt: "D-16",
+  admissible: [
+    { kind: "refusal" },
+    { kind: "exact", target: "src/index.js#wrapper" },
+  ],
+  expected: { kind: "refusal" },
+  observed: { kind: "exact", target: "node_modules/pkg/index.js#run" },
+};
+
+describe("RWF-047: a member write on a require-bound module object (open soundness defect, recorded)", () => {
   // ------------------------------------------------------------------
-  // STEP 1 -- false AFFECTED
+  // STEP 1 -- the false-AFFECTED direction
   // ------------------------------------------------------------------
 
-  it("DEFECT: reports AFFECTED over an export the program overwrote before calling", async () => {
+  it("is not AFFECTED over an export the program overwrote before calling (known open defect RWF-047)", async () => {
     const outcome = await run({
       entrySrc: OVERWRITES_THE_VULNERABLE_EXPORT,
       target: "run",
     });
 
     // Ground truth (fixture row D1): `pkg#run`'s body never executes.
-    expect(
-      outcome.verdict,
-      "real node calls the local `patched`; `pkg#run` is never entered",
-    ).toBe("AFFECTED");
+    expectOpenDefect(STEP1_VERDICT, VERDICT_DOMAIN, outcome.observation);
   });
 
-  it("DEFECT: the AFFECTED verdict rests on a RESOLVED edge into pkg#run", async () => {
+  it("refuses the call site after the export is overwritten (known open defect RWF-047)", async () => {
     const outcome = await run({
       entrySrc: OVERWRITES_THE_VULNERABLE_EXPORT,
       target: "run",
     });
 
-    // The evidence is not a hedge or a potential target -- it is a fully
-    // resolved attribution to a callable the runtime does not reach.
-    expect(outcome.resolvesTo("run")).toBe(true);
+    // The evidence the wrong verdict rests on is not a hedge: it is a
+    // RESOLVED attribution to a callable the runtime does not reach. The
+    // record keeps that measurement without calling it correct.
+    expectOpenDefect(STEP1_CALL_SITE, EDGE_DOMAIN, outcome.callSite);
   });
 
   it("the wrong attribution would have been observable (loud-fixture rule)", async () => {
@@ -391,53 +563,52 @@ describe("RWF-047: a member write on a require-bound module object (OPEN DEFECT,
   });
 
   // ------------------------------------------------------------------
-  // STEP 2 -- false NOT_AFFECTED (the displacement chain)
+  // STEP 2 -- the false-NOT_AFFECTED direction (the displacement chain)
   // ------------------------------------------------------------------
 
-  it("DEFECT: certifies a Family C negative proof over an export the program really reaches", async () => {
+  it("is not NOT_AFFECTED when a displacing wrapper reaches the vulnerable export (known open defect RWF-047)", async () => {
     const outcome = await run({
       entrySrc: DISPLACES_THE_HONEST_BLOCKER,
       target: "danger",
     });
 
     // Ground truth (fixture row P3): the patched wrapper executes and
-    // reaches the vulnerable sink on this load.
-    expect(outcome.verdict).toBe("NOT_AFFECTED");
-    expect(outcome.family, "a confirmed-unreachable-target proof").toBe("C");
-    expect(
-      outcome.reachableSubgraphComplete,
-      "the subgraph reads as completely enumerated because the stale attribution left no unresolved edge at the call site",
-    ).toBe(true);
+    // reaches the vulnerable sink on this load. The record's `observed`
+    // carries the whole closed chain -- a Family C proof, a complete
+    // reachable subgraph, zero unresolved edges -- so ANY link changing
+    // fails this test.
+    expectOpenDefect(STEP2_VERDICT, VERDICT_DOMAIN, outcome.observation);
   });
 
-  it("DEFECT: the displacement is what closes the chain -- the honest blocker is gone", async () => {
+  it("refuses the call site after the displacing write (known open defect RWF-047)", async () => {
     const outcome = await run({
       entrySrc: DISPLACES_THE_HONEST_BLOCKER,
       target: "danger",
     });
 
-    // This is link 2 of the chain, stated as its own measurement. The
-    // honest answer at `mod.run()` is "unresolved: a write to this member
-    // is in scope". Such an edge is an `unknown` and withholds
-    // `reachableSubgraphComplete`. There is no such edge.
-    expect(
-      outcome.unknownEdges,
-      "no unresolved edge survives anywhere in the graph",
-    ).toBe(0);
-    expect(outcome.resolvesTo("run"), "the stale attribution").toBe(true);
+    // Link 2 of the chain, as its own record. The honest answer at
+    // `mod.run()` is "unresolved: a write to this member is in scope"; such
+    // an edge is an `unknown` and withholds `reachableSubgraphComplete`.
+    expectOpenDefect(STEP2_CALL_SITE, EDGE_DOMAIN, outcome.callSite);
+  });
 
-    // NOTE on what is NOT asserted here. `pkg#danger` DOES carry a resolved
-    // incoming edge -- from `wrapper`'s body, which the graph indexes
-    // correctly. The displacement does not delete that edge; it orphans
-    // `wrapper`, so the edge sits outside the REACHABLE subgraph. That is
-    // precisely why the proof is Family C ("confirmed unreachable target")
-    // rather than an absence: the analyzer can see the vulnerable call and
-    // certifies that nothing reaches it, because the one thing that does
-    // reach it -- the member write -- is the thing it did not model.
+  it("indexes the wrapper's own resolved edge into pkg#danger", async () => {
+    const outcome = await run({
+      entrySrc: DISPLACES_THE_HONEST_BLOCKER,
+      target: "danger",
+    });
+
+    // CORRECT today, and stated so the records above cannot be read as
+    // "the vulnerable call is invisible". `pkg#danger` DOES carry a
+    // resolved incoming edge -- from `wrapper`'s body, which the graph
+    // indexes correctly. The displacement does not delete that edge; it
+    // orphans `wrapper`, so the edge sits outside the REACHABLE subgraph.
+    // That is why the wrong proof is Family C ("confirmed unreachable
+    // target") rather than an absence.
     expect(outcome.resolvesTo("danger")).toBe(true);
   });
 
-  it("DEFECT: the identical displacement against an object literal does NOT close", async () => {
+  it("the identical displacement against an object literal keeps an unresolved edge and is not NOT_AFFECTED", async () => {
     const outcome = await run({
       entrySrc: DISPLACEMENT_OBJECT_LITERAL_TWIN,
       target: "danger",
