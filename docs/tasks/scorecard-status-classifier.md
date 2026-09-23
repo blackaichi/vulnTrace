@@ -2,11 +2,25 @@
 
 ## Status
 
-- **Status**: in-progress
+- **Status**: done
 - **Branch**: `scorecard-status-classifier`
 - **Base SHA**: `62b52b90cb5fead842534e1743519ca3da411945` (main after the
   RWF-047 classification close-out merged)
-- **Commits**: <!-- filled in when done -->
+- **Commits**:
+  - [`0d4b55d`](https://github.com/blackaichi/vulnTrace/commit/0d4b55d) —
+    this task file, in-progress
+  - [`2533e3b`](https://github.com/blackaichi/vulnTrace/commit/2533e3b) —
+    behaviour-preserving seam: classify the register from its text
+  - [`3f4a384`](https://github.com/blackaichi/vulnTrace/commit/3f4a384) —
+    classifier tests, 14 of 32 failing against the old classifier
+  - [`bafbab9`](https://github.com/blackaichi/vulnTrace/commit/bafbab9) —
+    the fix: one designated field, closed vocabulary, fail on unknown
+  - [`51015d2`](https://github.com/blackaichi/vulnTrace/commit/51015d2) —
+    scorecard § 8 derived from the data; § 7 status premises checked
+  - [`abaf314`](https://github.com/blackaichi/vulnTrace/commit/abaf314) —
+    FINDINGS: the field and vocabulary documented; RWF-047 § 9 closes
+    the classifier record
+  - the commit setting this status to done
 - **Superseded by**:
 
 ## Project context
@@ -140,3 +154,29 @@ identical verdicts.
 code verbatim; every distinct status value and its mapping; the step-2
 tests with base/after results; the step-4 reclassification table; the
 scorecard open/fixed counts before and after.
+
+## Corrections
+
+### 2026-09-23 — premises measured differently from the task text
+
+- **"the classifier searches a row".** It did not: it already read the
+  fifth cell of the status table (`cells[4]` after splitting on `" | "`).
+  The defect was the prose regexes applied *within* that cell, plus no
+  header or cell-count check and a parser that silently dropped any row
+  not beginning `| RWF-`. The fix keeps the one field and replaces the
+  matching with a closed vocabulary.
+- **"each row whose category moves is a place the scorecard was
+  misreporting".** Only one row moved: RWF-013, fixed → open in part. Its
+  cell's value is the scoped `Fixed for variable bindings`, mapped by the
+  step-3 rule to the category that cannot overstate closure. But its own
+  section says `Status: Fixed`, and its other half (RWF-013b) is fixed. So
+  this move is conservative. It is not evidence of an earlier misreport.
+- **Step 5, RWF-047's wording.** The new classifier handles the natural
+  wording (`**OPEN — classified, not fixed**`, pinned by a test). The cell
+  was still left unchanged, because
+  `src/testing/open-soundness-defect.ts` (out of bounds) independently
+  requires it to match `/^Open\b/`. Recorded in FINDINGS RWF-047 § 9.
+- **Hardcoded status prose in § 7 narrative.** It records what measured
+  blocks did, so it is kept. Each status premise it rests on (RWF-002
+  open; RWF-042 and RWF-043 fixed) is declared and checked, so generation
+  fails if the register disagrees. § 8's status prose is fully derived.
