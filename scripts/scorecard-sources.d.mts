@@ -42,8 +42,6 @@ export interface FindingsRegister {
   readonly open: readonly FindingsRegisterRow[];
   readonly partlyOpen: readonly FindingsRegisterRow[];
   readonly fixed: readonly FindingsRegisterRow[];
-  /** Ids with a `## <ID>` section but no status-table row: in no bucket. */
-  readonly sectionsWithoutRow: readonly string[];
 }
 
 /** Classifies the status table of the given `FINDINGS.md` text. */

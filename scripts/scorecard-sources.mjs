@@ -227,6 +227,10 @@ export function readScripts() {
  * it to the vocabulary, deliberately, with the category that cannot
  * overstate closure.
  *
+ * EVERY FINDING IS COUNTED. The ids with a `## <ID>` section and the ids
+ * with a status row must be the same set; a mismatch either way is an
+ * error naming the id (`sectionRowProblems`).
+ *
  * ONE TRIPWIRE, AND IT CAN ONLY REFUSE. A cell whose value is `fixed` but
  * whose commentary says the fix is incomplete ("not fixed", "in part",
  * "partially", "open", "remains", "outstanding") contradicts itself; that
@@ -423,11 +427,13 @@ export function classifyFindingsRegister(text) {
     }
     rows.push({ id, status, value, category, impact: cells[3] });
   }
+  problems.push(...sectionRowProblems(lines, rows));
 
   if (problems.length > 0) {
     throw new Error(
-      `FINDINGS.md: ${problems.length} status-table row(s) cannot be ` +
-        "classified. A status is read from the Status column only, and its " +
+      `FINDINGS.md: ${problems.length} register problem(s). Every finding ` +
+        "section needs a status-table row and every row a section; a status " +
+        "is read from the Status column only, and its " +
         "value must be one of " +
         [...FINDINGS_STATUS_VOCABULARY.keys()]
           .map((value) => JSON.stringify(value))
@@ -454,19 +460,35 @@ export function classifyFindingsRegister(text) {
     );
   }
 
-  // A finding section (`## RWF-049 — ...`) with no status-table row is in
-  // no bucket at all. It is reported, not guessed at: its status lives in
-  // prose this reader does not classify.
-  const tabled = new Set(rows.map((row) => row.id));
-  const sectionsWithoutRow = [
-    ...new Set(
-      lines
-        .map((line) => /^## ([A-Z]+-\d+[a-z]?)\b/.exec(line)?.[1])
-        .filter((id) => id !== undefined && !tabled.has(id)),
-    ),
-  ];
+  return { rows, open, partlyOpen, fixed };
+}
 
-  return { rows, open, partlyOpen, fixed, sectionsWithoutRow };
+/** A finding section's heading: `## RWF-049 — …`, `## AUD-01 — …`. */
+const SECTION_ID = /^## ([A-Z]+-\d+[a-z]?)\b/;
+
+/**
+ * Every finding id with a `##` section and every id with a status row must
+ * be the same set. A section with no row is in no count at all -- that is
+ * how nineteen findings, one of them open, were invisible to the
+ * scorecard -- and a row with no section is a status nobody can check.
+ * Both are errors naming the id. There is no allowlist: the fix is always
+ * to the data.
+ */
+function sectionRowProblems(lines, rows) {
+  const sections = new Set(
+    lines
+      .map((line) => SECTION_ID.exec(line)?.[1])
+      .filter((id) => id !== undefined),
+  );
+  const tabled = new Set(rows.map((row) => row.id));
+  return [
+    ...[...sections]
+      .filter((id) => !tabled.has(id))
+      .map((id) => `${id}: has a "## ${id}" section but no status-table row`),
+    ...[...tabled]
+      .filter((id) => !sections.has(id))
+      .map((id) => `${id}: has a status-table row but no "## ${id}" section`),
+  ];
 }
 
 /**
