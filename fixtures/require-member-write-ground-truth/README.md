@@ -79,8 +79,13 @@ behind a green suite. With the name present, a wrong attribution is a loud
 
 ## Where the analyzer-side measurements live
 
-- `tests/binding-grammar/require-member-write.test.ts` — the graph-level
-  widening table, each row naming the fixture row that grounds it.
+- `src/analysis/require-member-write-widening.integration.test.ts` — the
+  graph-level widening table, each row naming the fixture row that grounds
+  it. (Moved from `tests/binding-grammar/require-member-write.test.ts` by
+  the RWF-047 close-out; see `docs/tasks/RWF-047-classification-closeout.md`.)
+  The rows the defect reaches, and the verdict oracle's defect cases below,
+  are open-soundness-defect records (`src/testing/open-soundness-defect.ts`),
+  not expectations.
 - `src/analysis/verdict.require-member-write-authority.integration.test.ts`
   — the end-to-end verdict oracle for both directions, including the
   Family C displacement chain and its object-literal control.
