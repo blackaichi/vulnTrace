@@ -203,11 +203,44 @@ export function readScripts() {
 }
 
 /**
- * The RWF register's own status table (`tests/validation/FINDINGS.md`).
+ * The findings register's own status table (`tests/validation/FINDINGS.md`,
+ * `## Status`).
  *
- * The table is a committed markdown table with a fixed five-column shape,
- * not free prose: the parser below requires that shape and throws if the
- * table moves, rather than best-effort scraping around it.
+ * THE DESIGNATED FIELD. A row's status is read from exactly one place: the
+ * `Status` column (the fifth cell) of that table, whose header must be
+ * exactly `FINDINGS_STATUS_HEADER`. Nothing else in a row, and nothing
+ * outside the table, is ever consulted to decide a status. A header that
+ * moves, a row whose cell count differs from the header's, a malformed or
+ * duplicated id -- each is an error, never a best-effort parse.
+ *
+ * THE STATUS VALUE is the leading phrase of that cell: markdown emphasis
+ * (`*`, `_`) is stripped, then the text runs up to the first `—`, `–`,
+ * `;`, `,`, `:`, `.` or `(`, and is lower-cased with hyphens read as
+ * spaces. So `**Fixed (RWF-046)** — see below` has the value `fixed`, and
+ * `Open — classified, not fixed` has the value `open`. What follows the
+ * value is commentary for the reader, and is never classified.
+ *
+ * THE VOCABULARY is closed: `FINDINGS_STATUS_VOCABULARY` lists every
+ * accepted value and the one category it maps to. A value that is not
+ * listed is an ERROR naming the row and the value. It is never defaulted
+ * to a category, and above all never to fixed: adding a value means adding
+ * it to the vocabulary, deliberately, with the category that cannot
+ * overstate closure.
+ *
+ * ONE TRIPWIRE, AND IT CAN ONLY REFUSE. A cell whose value is `fixed` but
+ * whose commentary says the fix is incomplete ("not fixed", "in part",
+ * "partially", "open", "remains", "outstanding") contradicts itself; that
+ * is an error too, because the classifier must not decide which half the
+ * author meant. The tripwire never places a row in any category.
+ *
+ * History, for why this is structural. The first classifier asked whether
+ * a status began with "Open", and filed RWF-002 ("…the underlying
+ * tradeoff remains open") as closed. Its replacement matched prose
+ * (`/^Open\b/i`, `/\bfixed\b/i`) and filed RWF-047 -- a reproduced,
+ * open soundness defect whose cell read `**OPEN — classified, not
+ * fixed**` -- as FIXED (`tests/validation/FINDINGS.md`, RWF-047 § 6).
+ * Every widening of a prose pattern is defeated by the next honest
+ * rewording; a closed vocabulary over one field is not.
  */
 export function readFindingsRegister() {
   return classifyFindingsRegister(
@@ -215,82 +248,200 @@ export function readFindingsRegister() {
   );
 }
 
+/** The exact header the status table must carry, in order. */
+export const FINDINGS_STATUS_HEADER = Object.freeze([
+  "ID",
+  "Package",
+  "Root cause",
+  "Impact",
+  "Status",
+]);
+
+/**
+ * Every accepted status value, and the one category it maps to.
+ *
+ * - `open`: wholly outstanding.
+ * - `partlyOpen`: partly discharged and partly outstanding. It is OPEN for
+ *   every purpose that asks "is anything left?" -- a finding only partly
+ *   fixed is not fixed.
+ * - `fixed`: wholly discharged.
+ *
+ * The two scoped entries (`bypassed for unloaded packages`, `fixed for
+ * variable bindings`) are existing rows' qualified values (RWF-002,
+ * RWF-013). A fix or bypass scoped to part of a finding does not by itself
+ * say the rest is closed, so they map to `partlyOpen` -- the category that
+ * cannot overstate closure -- whatever another row may say about the rest.
+ */
+export const FINDINGS_STATUS_VOCABULARY = new Map([
+  ["open", "open"],
+  ["not fixed", "open"],
+  ["open in part", "partlyOpen"],
+  ["fixed in part", "partlyOpen"],
+  ["partially fixed", "partlyOpen"],
+  ["bypassed for unloaded packages", "partlyOpen"],
+  ["fixed for variable bindings", "partlyOpen"],
+  ["fixed", "fixed"],
+]);
+
+/** Commentary that contradicts a `fixed` value. Used only to refuse. */
+const INCOMPLETE_FIX =
+  /\bnot\s+(?:yet\s+)?(?:fully\s+)?fixed\b|\bunfixed\b|\bpartial(?:ly)?\b|\bin[\s-]part\b|\bopen\b|\bremains?\b|\bremaining\b|\boutstanding\b/i;
+
+const ROW_ID = /^[A-Z]+-\d+[a-z]?$/;
+
+/**
+ * Splits one markdown table row into its trimmed cells, or `undefined` when
+ * the line is not a `| a | b |` row. A `|` inside a code span or escaped as
+ * `\|` does not split.
+ */
+function tableCells(line) {
+  const cells = [];
+  let current = "";
+  let inCode = false;
+  for (let index = 0; index < line.length; index += 1) {
+    const char = line[index];
+    if (char === "\\" && line[index + 1] === "|") {
+      current += "|";
+      index += 1;
+    } else if (char === "`") {
+      inCode = !inCode;
+      current += char;
+    } else if (char === "|" && !inCode) {
+      cells.push(current.trim());
+      current = "";
+    } else {
+      current += char;
+    }
+  }
+  cells.push(current.trim());
+  if (cells.length < 3 || cells[0] !== "" || cells[cells.length - 1] !== "") {
+    return undefined;
+  }
+  return cells.slice(1, -1);
+}
+
+/** The status value of one Status cell (see `readFindingsRegister`). */
+export function findingsStatusValue(cell) {
+  return cell
+    .replace(/[*_]/g, "")
+    .split(/[—–;,:.(]/)[0]
+    .replace(/-/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
 /**
  * The classification itself, over the text of `FINDINGS.md`, so it can be
  * exercised without the committed file (`src/testing/findings-status.test.ts`).
  */
 export function classifyFindingsRegister(text) {
-  const start = text.indexOf("\n## Status\n");
-  if (start < 0) throw new Error("FINDINGS.md: no '## Status' section");
+  const lines = text.split("\n");
+  const heading = lines.indexOf("## Status");
+  if (heading < 0) throw new Error("FINDINGS.md: no '## Status' section");
+
+  // The table is the first table under the heading. Prose above it (the
+  // note naming this field and vocabulary) is allowed; another heading
+  // before it is not.
+  let cursor = heading + 1;
+  while (cursor < lines.length && !lines[cursor].startsWith("|")) {
+    if (lines[cursor].startsWith("#")) {
+      throw new Error(
+        "FINDINGS.md: '## Status' has no table before the next heading",
+      );
+    }
+    cursor += 1;
+  }
+  const header = tableCells(lines[cursor] ?? "");
+  if (
+    header === undefined ||
+    header.join(" | ") !== FINDINGS_STATUS_HEADER.join(" | ")
+  ) {
+    throw new Error(
+      "FINDINGS.md: the status table's header must be exactly " +
+        `"| ${FINDINGS_STATUS_HEADER.join(" | ")} |", found ` +
+        JSON.stringify(lines[cursor] ?? ""),
+    );
+  }
+  const separator = tableCells(lines[cursor + 1] ?? "");
+  if (
+    separator === undefined ||
+    separator.length !== header.length ||
+    !separator.every((cell) => /^:?-+:?$/.test(cell))
+  ) {
+    throw new Error(
+      "FINDINGS.md: the status table's header has no separator row",
+    );
+  }
+
+  const statusColumn = FINDINGS_STATUS_HEADER.indexOf("Status");
   const rows = [];
-  for (const line of text.slice(start).split("\n")) {
-    if (rows.length > 0 && !line.startsWith("| RWF-")) break;
-    if (!line.startsWith("| RWF-")) continue;
-    const cells = line.split(" | ");
-    rows.push({
-      id: cells[0].replace(/^\|\s*/, "").trim(),
-      status: cells[4].replace(/\s*\|$/, "").trim(),
-    });
+  const problems = [];
+  const seen = new Set();
+  for (const line of lines.slice(cursor + 2)) {
+    if (!line.startsWith("|")) break;
+    const cells = tableCells(line);
+    const id = cells?.[0] ?? line.slice(0, 40);
+    if (cells === undefined || cells.length !== header.length) {
+      problems.push(
+        `${id}: the row has ${cells?.length ?? "no"} cells; the header has ${header.length}`,
+      );
+      continue;
+    }
+    if (!ROW_ID.test(id)) {
+      problems.push(
+        `${JSON.stringify(id)}: not a register id (e.g. RWF-047, AUD-01)`,
+      );
+      continue;
+    }
+    if (seen.has(id)) {
+      problems.push(`${id}: appears in the status table more than once`);
+      continue;
+    }
+    seen.add(id);
+
+    const status = cells[statusColumn];
+    const value = findingsStatusValue(status);
+    const category = FINDINGS_STATUS_VOCABULARY.get(value);
+    if (category === undefined) {
+      problems.push(
+        `${id}: status value ${JSON.stringify(value)} is not in the ` +
+          `vocabulary (cell: ${JSON.stringify(status)})`,
+      );
+      continue;
+    }
+    if (
+      category === "fixed" &&
+      INCOMPLETE_FIX.test(status.replace(/[*_]/g, ""))
+    ) {
+      problems.push(
+        `${id}: status value "fixed" is contradicted by its own cell, ` +
+          "which says the fix is incomplete -- use an open or open-in-part " +
+          `value (cell: ${JSON.stringify(status)})`,
+      );
+      continue;
+    }
+    rows.push({ id, status, value, category, impact: cells[3] });
+  }
+
+  if (problems.length > 0) {
+    throw new Error(
+      `FINDINGS.md: ${problems.length} status-table row(s) cannot be ` +
+        "classified. A status is read from the Status column only, and its " +
+        "value must be one of " +
+        [...FINDINGS_STATUS_VOCABULARY.keys()]
+          .map((value) => JSON.stringify(value))
+          .join(", ") +
+        " (FINDINGS_STATUS_VOCABULARY, scripts/scorecard-sources.mjs). " +
+        "Never default a row -- classify it:\n" +
+        problems.map((problem) => `  ${problem}`).join("\n"),
+    );
   }
   if (rows.length === 0) throw new Error("FINDINGS.md: status table is empty");
 
-  // ------------------------------------------------------------------
-  // CLASSIFICATION IS TOTAL. Every row lands in exactly one bucket.
-  //
-  // This is the register's most consequential reading, and it has already
-  // gone wrong once: an earlier version asked only whether a status began
-  // with "Open", and so reported RWF-002 -- whose status reads "Bypassed
-  // for unloaded packages (VT-307d); the underlying reachability-scoping
-  // tradeoff remains open" -- as CLOSED.
-  //
-  // Widening the pattern is not the fix on its own, because the next
-  // honest rewording defeats the next pattern just as quietly. The fix is
-  // to refuse to guess: a status this function cannot classify is an
-  // ERROR naming the row and its text, never a silent omission and never
-  // a default bucket. A row that falls out of every bucket is precisely
-  // how an open finding disappears from the scorecard while the totals
-  // still look plausible.
-  //
-  // Deliberately NOT keyed on any RWF id. RWF-002 classifies because its
-  // status is recognised, not because it is special-cased.
-  // ------------------------------------------------------------------
-
-  /** Partly discharged AND partly outstanding -- both halves must be said. */
-  const isPartlyOpen = (status) =>
-    /\bremains?\b[^.]*\bopen\b|\bstill\b[^.]*\bopen\b|\bopen\b[^.]*\bremains?\b/i.test(
-      status,
-    ) && /fixed|bypassed|partial|mitigated/i.test(status);
-
-  /** Wholly outstanding. */
-  const isOpen = (status) => /^Open\b/i.test(status) && !isPartlyOpen(status);
-
-  /** Wholly discharged. */
-  const isFixed = (status) =>
-    /\bfixed\b/i.test(status) && !isOpen(status) && !isPartlyOpen(status);
-
-  const open = [];
-  const partlyOpen = [];
-  const fixed = [];
-  const unclassified = [];
-
-  for (const row of rows) {
-    if (isPartlyOpen(row.status)) partlyOpen.push(row);
-    else if (isOpen(row.status)) open.push(row);
-    else if (isFixed(row.status)) fixed.push(row);
-    else unclassified.push(row);
-  }
-
-  if (unclassified.length > 0) {
-    throw new Error(
-      `FINDINGS.md: the status of ${unclassified.length} register row(s) ` +
-        "could not be classified as open, open-in-part or fixed. Classify " +
-        "the row, or teach `readFindingsRegister` the wording -- do not " +
-        "leave it out of the scorecard:\n" +
-        unclassified
-          .map((row) => `  ${row.id}: ${JSON.stringify(row.status)}`)
-          .join("\n"),
-    );
-  }
+  const open = rows.filter((row) => row.category === "open");
+  const partlyOpen = rows.filter((row) => row.category === "partlyOpen");
+  const fixed = rows.filter((row) => row.category === "fixed");
 
   // The partition invariant, asserted rather than assumed. If the three
   // buckets ever stop summing to the parsed row count, the scorecard is
@@ -303,7 +454,19 @@ export function classifyFindingsRegister(text) {
     );
   }
 
-  return { rows, open, partlyOpen, fixed };
+  // A finding section (`## RWF-049 — ...`) with no status-table row is in
+  // no bucket at all. It is reported, not guessed at: its status lives in
+  // prose this reader does not classify.
+  const tabled = new Set(rows.map((row) => row.id));
+  const sectionsWithoutRow = [
+    ...new Set(
+      lines
+        .map((line) => /^## ([A-Z]+-\d+[a-z]?)\b/.exec(line)?.[1])
+        .filter((id) => id !== undefined && !tabled.has(id)),
+    ),
+  ];
+
+  return { rows, open, partlyOpen, fixed, sectionsWithoutRow };
 }
 
 /**
