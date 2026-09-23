@@ -150,3 +150,33 @@ and a file under `tests/binding-grammar/`. That is outside this task's
 boundaries, so per AGENTS.md section D, step 5 of "What to do" was not
 executed and the task stopped with `NEEDS_DECISION`. The report carries the
 full inventory.
+
+### 2026-09-23 — boundary amended by user decision
+
+The "no file under `src/`" boundary was meant as "no production code". This
+repository co-locates tests under `src/`, so the literal boundary forbade
+the very edit step 5 requires. By user decision the boundaries are amended
+as follows, and the task resumes from step 5:
+
+- **May edit, test-only:**
+  `src/analysis/verdict.require-member-write-authority.integration.test.ts`,
+  and `tests/binding-grammar/require-member-write.test.ts`, which is
+  **moved** out of `tests/binding-grammar/` next to the integration test.
+  The binding-grammar suite's contract is that a wrong `EXACT` fails
+  unconditionally, so a record of a known wrong `EXACT` must not live
+  inside that suite.
+- **Still must not change:** any non-test file under `src/`;
+  `tests/binding-grammar/` `disagreements.ts`, `matrix.ts`, `harness.ts`,
+  `guard.ts`, `guard.test.ts`, `binding-grammar.test.ts`, or the guard's
+  behaviour; `scripts/scorecard-sources.mjs` or the RWF-047 status-row
+  rewording; any locked worktree. Generated files may be regenerated,
+  never hand-edited.
+- **Added:** a separate open-soundness-defect record mechanism (not shared
+  with `disagreements.ts`) holding `admissible`, `expected`, `observed`,
+  `rwf` and `debt` per case, with a self-test of its four rejection cases.
+  Expected outcomes: step 1 (false `AFFECTED`) admissible
+  `{UNKNOWN, NOT_AFFECTED}`, expected `UNKNOWN`; step 2 (false
+  `NOT_AFFECTED`) admissible `{UNKNOWN, AFFECTED}`, expected `UNKNOWN`;
+  graph rows W1–W6 and W8 admissible a refusal or an `EXACT` to the real
+  declaration of the written value, expected a refusal, no reason code
+  pinned.
