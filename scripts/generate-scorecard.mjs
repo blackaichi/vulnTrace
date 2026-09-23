@@ -679,7 +679,6 @@ async function build() {
       : ` — ${entries.map((entry) => entry.id).join(", ")}`;
   const outstanding = [...register.open, ...register.partlyOpen];
   const categoryLabel = { open: "open", partlyOpen: "open in part" };
-  const unlisted = register.sectionsWithoutRow;
   push(
     "## 8. Known defect register (RWF)",
     "",
@@ -695,10 +694,8 @@ async function build() {
       "Findings recorded",
       register.rows.length,
       "structural — the status table in `tests/validation/FINDINGS.md`",
-      "Rows in the status table. Only these are classified and counted below.",
-      unlisted.length === 0
-        ? "Counts rows in the register, not distinct defects in the analyzer."
-        : `Counts rows in the register, not distinct defects in the analyzer. ${unlisted.length} finding section(s) in FINDINGS.md have no status-table row and are in NO count below, whatever their own prose says: ${unlisted.join(", ")}.`,
+      "One row per finding section: generation fails if a section has no row or a row has no section.",
+      "Counts rows in the register, not distinct defects in the analyzer.",
     ]),
     row([
       "Still open",

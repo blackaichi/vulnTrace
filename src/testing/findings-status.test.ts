@@ -34,10 +34,20 @@ function findingsText(
         `| ${id} | \`pkg\` | a root cause | an impact | ${status} |`,
     ),
     "",
-    "---",
+    ...rows.flatMap(([id]) => ["---", "", `## ${id} — a finding`, ""]),
+  ].join("\n");
+}
+
+/** A status table given verbatim, followed by one section per listed id. */
+function tableText(tableLines: readonly string[], ids: readonly string[]) {
+  return [
+    "# Real-world findings",
     "",
-    "## RWF-001 — a finding",
+    "## Status",
     "",
+    ...tableLines,
+    "",
+    ...ids.flatMap((id) => [`## ${id} — a finding`, ""]),
   ].join("\n");
 }
 
@@ -131,16 +141,14 @@ describe("FINDINGS status classification", () => {
 
   describe("status is read from the Status column only", () => {
     it("the word Fixed in another column does not make an open row fixed", () => {
-      const text = [
-        "# Real-world findings",
-        "",
-        "## Status",
-        "",
-        "| ID | Package | Root cause | Impact | Status |",
-        "|---|---|---|---|---|",
-        "| RWF-901 | Fixed | Fixed | Fixed | Open |",
-        "",
-      ].join("\n");
+      const text = tableText(
+        [
+          "| ID | Package | Root cause | Impact | Status |",
+          "|---|---|---|---|---|",
+          "| RWF-901 | Fixed | Fixed | Fixed | Open |",
+        ],
+        ["RWF-901"],
+      );
       const register = classifyFindingsRegister(text);
       expect(register.open.map((row) => row.id)).toEqual(["RWF-901"]);
       expect(register.fixed).toEqual([]);
@@ -197,6 +205,72 @@ describe("FINDINGS status classification", () => {
       expect(() =>
         classifyFindingsRegister(findingsText([["AUD-16", "Triaged"]])),
       ).toThrow(/AUD-16.*Triaged/s);
+    });
+  });
+
+  describe("every finding section has a status row, and every row a section", () => {
+    const header = [
+      "| ID | Package | Root cause | Impact | Status |",
+      "|---|---|---|---|---|",
+    ];
+
+    it("a finding section with no status row fails, naming the id", () => {
+      const text = tableText(
+        [...header, "| RWF-001 | pkg | cause | impact | Fixed |"],
+        ["RWF-001", "RWF-049"],
+      );
+      expect(() => classifyFindingsRegister(text)).toThrow(
+        /RWF-049: has a "## RWF-049" section but no status-table row/,
+      );
+    });
+
+    it("a status row with no finding section fails, naming the id", () => {
+      const text = tableText(
+        [
+          ...header,
+          "| RWF-001 | pkg | cause | impact | Fixed |",
+          "| RWF-046b | pkg | cause | impact | Fixed |",
+        ],
+        ["RWF-001"],
+      );
+      expect(() => classifyFindingsRegister(text)).toThrow(
+        /RWF-046b: has a status-table row but no "## RWF-046b" section/,
+      );
+    });
+
+    it("sections of the AUD- and PRM- series are held to the same rule", () => {
+      const missingRows = tableText(
+        [...header, "| RWF-001 | pkg | cause | impact | Open |"],
+        ["RWF-001", "AUD-07", "PRM-02"],
+      );
+      expect(() => classifyFindingsRegister(missingRows)).toThrow(/AUD-07/);
+      expect(() => classifyFindingsRegister(missingRows)).toThrow(/PRM-02/);
+
+      const complete = tableText(
+        [
+          ...header,
+          "| AUD-07 | pkg | cause | impact | **Open** |",
+          "| PRM-02 | pkg | cause | impact | Fixed (PRM-02) |",
+        ],
+        ["AUD-07", "PRM-02"],
+      );
+      const register = classifyFindingsRegister(complete);
+      expect(register.open.map((row) => row.id)).toEqual(["AUD-07"]);
+      expect(register.fixed.map((row) => row.id)).toEqual(["PRM-02"]);
+    });
+
+    it("several sections for one id (a CORRECTION) need one row, not several", () => {
+      const text = [
+        tableText(
+          [...header, "| RWF-032 | pkg | cause | impact | Fixed |"],
+          ["RWF-032"],
+        ),
+        "## RWF-032 CORRECTION — the record above was wrong",
+        "",
+      ].join("\n");
+      expect(classifyFindingsRegister(text).fixed.map((row) => row.id)).toEqual(
+        ["RWF-032"],
+      );
     });
   });
 
