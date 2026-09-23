@@ -210,10 +210,16 @@ export function readScripts() {
  * table moves, rather than best-effort scraping around it.
  */
 export function readFindingsRegister() {
-  const text = fs.readFileSync(
-    path.join(ROOT, "tests/validation/FINDINGS.md"),
-    "utf-8",
+  return classifyFindingsRegister(
+    fs.readFileSync(path.join(ROOT, "tests/validation/FINDINGS.md"), "utf-8"),
   );
+}
+
+/**
+ * The classification itself, over the text of `FINDINGS.md`, so it can be
+ * exercised without the committed file (`src/testing/findings-status.test.ts`).
+ */
+export function classifyFindingsRegister(text) {
   const start = text.indexOf("\n## Status\n");
   if (start < 0) throw new Error("FINDINGS.md: no '## Status' section");
   const rows = [];
