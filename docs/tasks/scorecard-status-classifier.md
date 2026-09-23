@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Status**: in-progress (follow-up; see "Follow-up" below)
+- **Status**: done
 - **Branch**: `scorecard-status-classifier`
 - **Base SHA**: `62b52b90cb5fead842534e1743519ca3da411945` (main after the
   RWF-047 classification close-out merged)
@@ -20,6 +20,18 @@
   - [`abaf314`](https://github.com/blackaichi/vulnTrace/commit/abaf314) —
     FINDINGS: the field and vocabulary documented; RWF-047 § 9 closes
     the classifier record
+  - [`ce7f1e2`](https://github.com/blackaichi/vulnTrace/commit/ce7f1e2) —
+    first close-out (task done)
+  - Follow-up:
+    [`730307d`](https://github.com/blackaichi/vulnTrace/commit/730307d) —
+    the follow-up recorded;
+    [`5aea241`](https://github.com/blackaichi/vulnTrace/commit/5aea241) —
+    a status row for every finding section, RWF-013 resolved, RWF-046b
+    pointer;
+    [`95f81e5`](https://github.com/blackaichi/vulnTrace/commit/95f81e5) —
+    generator fails on a section without a row or a row without a section;
+    [`24ddd3c`](https://github.com/blackaichi/vulnTrace/commit/24ddd3c) —
+    the open-defect record reads status through the shared classifier
   - the commit setting this status to done
 - **Superseded by**:
 
@@ -213,3 +225,22 @@ Still out of bounds: the meaning of any existing section; any analyzer
 file; any AUD- or PRM- finding; any other worktree. STOP
 (`NEEDS_DECISION`) if one of the nineteen sections contradicts itself
 about its status, or if RWF-013's section is ambiguous.
+
+### Follow-up outcome
+
+- **RWF-013**: its section opens "**Status: Fixed.**". The gap it "left
+  open" (a multi-hop reassigned alias) was closed under RWF-012, which is
+  fixed. Its only other residue is recorded as "Residual limitation
+  (precision, not soundness)" that "never manufactures" an attribution.
+  The cell now reads `**Fixed** (variable bindings; declaration form:
+  RWF-013b)`. The vocabulary is unchanged. The entry
+  `fixed for variable bindings` is kept, but no row uses it any more.
+- **Nineteen rows added**, all from their sections: 17 fixed and 2 open
+  (RWF-048: an instrument record that states no status; RWF-049: "Not
+  fixed"). No section contradicted itself about its own status.
+- **Scorecard**: 31 → 50 findings; open 4 → 6; open in part 2 → 1;
+  fixed 25 → 43.
+- **Gate note**: in the first follow-up gate run, `npm test` and
+  `test:adversarial` exited 1. Every test passed; the cause was a
+  vitest-internal `Timeout calling "onTaskUpdate"` at load average ~8.
+  Both were rerun alone and exited 0 (4517/4517; 124/124).
