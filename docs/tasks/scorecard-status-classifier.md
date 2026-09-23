@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Status**: done
+- **Status**: in-progress (follow-up; see "Follow-up" below)
 - **Branch**: `scorecard-status-classifier`
 - **Base SHA**: `62b52b90cb5fead842534e1743519ca3da411945` (main after the
   RWF-047 classification close-out merged)
@@ -180,3 +180,36 @@ scorecard open/fixed counts before and after.
   blocks did, so it is kept. Each status premise it rests on (RWF-002
   open; RWF-042 and RWF-043 fixed) is declared and checked, so generation
   fails if the register disagrees. § 8's status prose is fully derived.
+
+## Follow-up — every finding counted, one parser (2026-09-23)
+
+Requested after the first report was accepted, on the same branch, before
+the PR. Standing decisions and scope, as given:
+
+- **A. RWF-013.** The vocabulary entry is NOT remapped: a mapping from a
+  qualified value to fixed would set the precedent that qualified wording
+  can mean fully fixed. Read RWF-013's section (and RWF-013b's). If it shows
+  no open remainder, set the Status cell's leading value to Fixed with the
+  scope in parentheses; if any part remains open, keep open in part and
+  name the open part.
+- **B. The nineteen findings with a `##` section and no status row**
+  (RWF-023–028, 025b, 032–041, 048, 049; verified independently): add a
+  row for each, the status determined from the section's own text and
+  mapped to the category that cannot overstate closure. A status that
+  cannot be determined without guessing is set Open and reported.
+- **C. RWF-046b** has a row and no section: append a short `##` section
+  pointing to where it is described.
+- **D.** The generator fails when a finding section has no status row or a
+  status row has no section, naming the ID. No allowlist. The rule accepts
+  the AUD- and PRM- series through the same checks.
+- **E. One parser.** `src/testing/open-soundness-defect.ts` classifies
+  status through the same function as `scripts/scorecard-sources.mjs`,
+  still requires the referenced finding to be open, and its self-test
+  covers the shared vocabulary.
+
+Additional files in bounds: `src/testing/open-soundness-defect.ts` and its
+test; FINDINGS.md status-table rows and the RWF-046b pointer section.
+Still out of bounds: the meaning of any existing section; any analyzer
+file; any AUD- or PRM- finding; any other worktree. STOP
+(`NEEDS_DECISION`) if one of the nineteen sections contradicts itself
+about its status, or if RWF-013's section is ambiguous.
