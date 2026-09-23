@@ -53,6 +53,26 @@ async function build() {
   const validation = readValidationCases();
   const contract = readOutputContract();
   const register = readFindingsRegister();
+
+  /**
+   * A status premise of the narrative prose in § 7, checked against the
+   * register. That prose is a record of what a measured block did, so it
+   * names findings; where a sentence depends on a finding's status ("is
+   * closed by P1-B3b", "reachability scoping might discharge"), the premise
+   * is declared here and generation FAILS when the register disagrees, so
+   * the sentence is rewritten rather than published stale.
+   */
+  const premise = (id, categories, sentence) => {
+    const entry = register.rows.find((candidate) => candidate.id === id);
+    if (entry === undefined || !categories.includes(entry.category)) {
+      throw new Error(
+        `generate-scorecard.mjs: the prose "${sentence}" assumes ${id} is ` +
+          `${categories.join(" or ")}, but FINDINGS.md classifies it as ` +
+          `${entry?.category ?? "absent from the status table"}. Rewrite ` +
+          "the prose; do not edit the register to match it.",
+      );
+    }
+  };
   const scripts = readScripts();
   const measured = readMeasurements();
 
@@ -376,6 +396,11 @@ async function build() {
   );
 
   // -- 7.1 The frontend row, decomposed (P1-B1/P1-B2) ---------------------
+  premise(
+    "RWF-002",
+    ["open", "partlyOpen"],
+    "the same occurrences RWF-002 is about ... reachability scoping might discharge every one of them",
+  );
   const gaps = measured.frontendGapDistribution;
 
   // RECONCILIATION, ASSERTED RATHER THAN CLAIMED. The whole value of a
@@ -490,6 +515,8 @@ async function build() {
   );
 
   // -- 7.2 What the first capability block actually moved -----------------
+  premise("RWF-042", ["fixed"], "P1-B3 closed four ways the analyzer could FABRICATE a call edge");
+  premise("RWF-043", ["fixed"], "left open in part (RWF-043), and is closed by P1-B3b below");
   const prior = gaps.priorBaseline;
   const movedSubtypes = gaps.bySubtype.filter(
     (entry) => entry.baselineOccurrences !== undefined,
@@ -564,6 +591,7 @@ async function build() {
   );
 
   // -- 7.3 P1-B3b --------------------------------------------------------
+  premise("RWF-043", ["fixed"], "P1-B3b removes that matcher");
   push(
     "### 7.3 What P1-B3b (direct-call binding authority) moved",
     "",
@@ -637,8 +665,29 @@ async function build() {
   );
 
   // -- 8. Known defect register ------------------------------------------
+  //
+  // Every status claim in this section is DERIVED from the classified
+  // register -- ids, counts, and each row's own Status and Impact cells.
+  // No sentence here may name a finding or characterise one by status:
+  // hand-written clauses of that kind went stale twice (one kept naming
+  // RWF-045 as open after it merged; one implied every open item was
+  // classified while RWF-047 was not), and a stale status claim is the
+  // scorecard's false NOT_AFFECTED.
+  const ids = (entries) =>
+    entries.length === 0
+      ? ""
+      : ` — ${entries.map((entry) => entry.id).join(", ")}`;
+  const outstanding = [...register.open, ...register.partlyOpen];
+  const categoryLabel = { open: "open", partlyOpen: "open in part" };
+  const unlisted = register.sectionsWithoutRow;
   push(
     "## 8. Known defect register (RWF)",
+    "",
+    "Every value below is derived from the status table in",
+    "`tests/validation/FINDINGS.md`. A row's status is read from that",
+    "table's Status column only, through a closed vocabulary; an",
+    "unrecognised status fails generation rather than being defaulted. The",
+    "field and the vocabulary are documented next to the table.",
     "",
     row(["Metric", "Current", "Source", "Interpretation", "Limitation"]),
     row(["---", "---", "---", "---", "---"]),
@@ -646,30 +695,49 @@ async function build() {
       "Findings recorded",
       register.rows.length,
       "structural — the status table in `tests/validation/FINDINGS.md`",
-      "Every gap found by scanning real packages is recorded before it is fixed, and stays recorded after.",
-      "Counts rows in the register, not distinct defects in the analyzer.",
+      "Rows in the status table. Only these are classified and counted below.",
+      unlisted.length === 0
+        ? "Counts rows in the register, not distinct defects in the analyzer."
+        : `Counts rows in the register, not distinct defects in the analyzer. ${unlisted.length} finding section(s) in FINDINGS.md have no status-table row and are in NO count below, whatever their own prose says: ${unlisted.join(", ")}.`,
     ]),
     row([
       "Still open",
-      `${register.open.length} — ${register.open.map((entry) => entry.id).join(", ")}`,
+      `${register.open.length}${ids(register.open)}`,
       "structural — the same table",
-      "NOT all of one kind, and the difference matters: RWF-001 and RWF-006 are precision gaps that degrade to UNKNOWN in both directions, RWF-044 is precision-only by construction, and RWF-047 is a CLASSIFIED SOUNDNESS DEFECT that is open because it is not remediated, not because it is unexamined -- a require-bound module object keeps its attribution across a member write, and both directions are now reproduced end to end: a false AFFECTED over an export the program overwrote before calling, and a false NOT_AFFECTED carrying a complete Family C proof over an export the program really reaches. It is class B (correct binding identity, wrong runtime-value semantics). Reading this row as 'open precision debt' is the misreading to avoid, and for RWF-047 it is now measurably wrong rather than merely unproven -- see docs/OPEN-DEBTS.md D-16.",
+      "Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt.",
       "'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`.",
     ]),
     row([
       "Open in part",
-      `${register.partlyOpen.length} — ${register.partlyOpen.map((entry) => entry.id).join(", ")}`,
+      `${register.partlyOpen.length}${ids(register.partlyOpen)}`,
       "structural — the same table",
-      "Partly discharged, partly outstanding. RWF-002 is bypassed for unloaded packages; its underlying reachability-scoping tradeoff remains.",
-      "**Counting these as closed is the register's single most consequential misreading**, and the blocker counts recorded for RWF-002 are not an implementation task count. See `docs/OPEN-DEBTS.md` D-06.",
+      "Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part.",
+      "**Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06.",
     ]),
     row([
       "Recorded as fixed",
       register.fixed.length,
       "structural — the same table",
-      "Every soundness defect found so far has a fixture and a test that keeps it fixed.",
+      "Rows whose Status cell records the finding as wholly fixed.",
       "A fix is proven for the shapes its fixtures cover.",
     ]),
+    "",
+    "### 8.1 Outstanding findings, in their own words",
+    "",
+    "Every open and open-in-part row, with its Status and Impact cells",
+    "quoted verbatim from the register. The generator writes nothing in",
+    "this table except the category.",
+    "",
+    row(["ID", "Category", "Status (verbatim)", "Impact (verbatim)"]),
+    row(["---", "---", "---", "---"]),
+    ...outstanding.map((entry) =>
+      row([
+        entry.id,
+        categoryLabel[entry.category],
+        entry.status,
+        entry.impact,
+      ]),
+    ),
     "",
   );
 
