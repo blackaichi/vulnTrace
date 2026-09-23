@@ -3,6 +3,11 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
+import {
+  classifyFindingsRegister,
+  type FindingsRegister,
+} from "../../scripts/scorecard-sources.mjs";
+
 /**
  * OPEN SOUNDNESS DEFECTS -- the record a reproduction test uses while a
  * reproduced soundness defect is still open on `main`.
@@ -95,13 +100,17 @@ function escapeRegExp(text: string): string {
 /**
  * Problems with the `rwf` reference: it must name at least one `## <id> —`
  * heading in FINDINGS.md, and its row in FINDINGS.md's `## Status` register
- * must exist exactly once with a status cell that BEGINS with `Open`.
+ * must exist and be classified OPEN (`open` or `partlyOpen` -- a finding
+ * only partly fixed is not fixed).
  *
- * Anchored at the start of the cell on purpose. A status that begins with
- * anything else -- `**Fixed`, markup, a negation -- reads as NOT open and
- * the record fails, which is the direction this check must fail in: a
- * record that outlives its defect is deleted, never kept green by a
- * permissive match.
+ * ONE PARSER. The status is classified by `classifyFindingsRegister`, the
+ * same function `docs/SCORECARD.md` is generated from: one designated
+ * field, one closed vocabulary. This file used to carry its own reader
+ * (`/^Open\b/` on the last cell), which could drift from the scorecard's.
+ * A register the shared classifier refuses -- an unknown status value, a
+ * contradicted `Fixed`, a missing row or section -- fails the record too,
+ * which is the direction this check must fail in: a record that outlives
+ * its defect is deleted, never kept green by a permissive match.
  */
 export function rwfReferenceProblems(
   rwf: string,
@@ -122,29 +131,26 @@ export function rwfReferenceProblems(
     );
   }
 
-  const statusStart = findings.search(/^## Status$/m);
-  const statusEnd =
-    statusStart < 0
-      ? -1
-      : findings.slice(statusStart + 1).search(/^## /m) + statusStart + 1;
-  const register =
-    statusStart < 0 || statusEnd <= statusStart
-      ? ""
-      : findings.slice(statusStart, statusEnd);
-  const rows = register.match(new RegExp(`^\\| ${id} \\|.*\\|\\s*$`, "gm"));
-  const [row] = rows ?? [];
-  if (rows === null || rows.length !== 1 || row === undefined) {
+  let register: FindingsRegister;
+  try {
+    register = classifyFindingsRegister(findings);
+  } catch (error) {
     problems.push(
-      `${rwf}: expected exactly one row in FINDINGS.md's "## Status" register, found ${rows?.length ?? 0}`,
+      `${rwf}: FINDINGS.md's register cannot be classified, so no status can be read: ${(error as Error).message}`,
     );
     return problems;
   }
-  const cells = row.split("|").map((c) => c.trim());
-  // A row `| a | b | c |` splits into ["", "a", "b", "c", ""].
-  const status = cells[cells.length - 2] ?? "";
-  if (!/^Open\b/.test(status)) {
+  // The classifier refuses duplicate ids, so there is at most one row.
+  const row = register.rows.find((candidate) => candidate.id === rwf);
+  if (row === undefined) {
     problems.push(
-      `${rwf}: register status is not open: "${status.slice(0, 60)}"`,
+      `${rwf}: expected exactly one row in FINDINGS.md's "## Status" register, found 0`,
+    );
+    return problems;
+  }
+  if (row.category !== "open" && row.category !== "partlyOpen") {
+    problems.push(
+      `${rwf}: register status is not open: "${row.status.slice(0, 60)}" (value "${row.value}", category ${row.category})`,
     );
   }
   return problems;
