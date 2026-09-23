@@ -2,11 +2,30 @@
 
 ## Status
 
-- **Status**: in-progress
+- **Status**: done
 - **Branch**: `rwf-047-classification`
 - **Base SHA**: `2e7aaaf4291474dd224c09316f963529863c1d33` (main after the
   AGENTS.md rewrite and `docs/tasks/` were merged)
-- **Commits**:
+- **Commits**: on top of the rebased original four
+  ([`eacebee`](https://github.com/blackaichi/vulnTrace/commit/eacebee),
+  [`5fc48c1`](https://github.com/blackaichi/vulnTrace/commit/5fc48c1),
+  [`fc53a61`](https://github.com/blackaichi/vulnTrace/commit/fc53a61),
+  [`264093f`](https://github.com/blackaichi/vulnTrace/commit/264093f)):
+  - [`578bb30`](https://github.com/blackaichi/vulnTrace/commit/578bb30) —
+    this task file, in-progress
+  - [`9179f40`](https://github.com/blackaichi/vulnTrace/commit/9179f40) —
+    Corrections: the boundaries enclosed the branch's own tests
+  - [`d8b36fd`](https://github.com/blackaichi/vulnTrace/commit/d8b36fd) —
+    Corrections: boundary amended by user decision
+  - [`a8fb320`](https://github.com/blackaichi/vulnTrace/commit/a8fb320) —
+    the open-soundness-defect record and its self-test
+  - [`8abd254`](https://github.com/blackaichi/vulnTrace/commit/8abd254) —
+    verdict reproductions recorded as open defects
+  - [`fb87bc3`](https://github.com/blackaichi/vulnTrace/commit/fb87bc3) —
+    widening table moved out of `tests/binding-grammar/` and recorded
+  - [`ffcacfa`](https://github.com/blackaichi/vulnTrace/commit/ffcacfa) —
+    FINDINGS RWF-047 § 8 and the regenerated scorecard
+  - the commit setting this status to done
 - **Superseded by**:
 
 ## Project context
