@@ -223,6 +223,9 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | Open |
 | PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | Open |
 | RWF-050 | n/a — a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) has no register row of its own | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below | Open |
+| PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | Open |
+| RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | Open |
 
 ---
 
@@ -15927,6 +15930,37 @@ A callback handed to an ambient global/builtin (`setTimeout`, `new Promise`'s ex
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-01"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Appended by task A-0 (2026-09-26).** Two surfaces of this mechanism
+that sweep round 2 recorded here (`docs/audits/2026-09-premise-sweep-round-2.md`
+§ 4: "defineProperty getter / setter (function expression)" and "Proxy
+traps", both read directly there) were reproduced again on `main` at
+`276a208`, this time run by builtins and operators, with the H-0 oracle
+harness (loud fixture, positive and negative controls, real-Node ground
+truth, Node v22.11.0). Each is a false `NOT_AFFECTED` by family C over a
+complete subgraph, pinned as an open-soundness-defect record in
+`tests/oracle/adr0008-coverage.test.ts`:
+
+- **an `Object.defineProperty` getter (function expression) with
+  `enumerable: true`**, read by `JSON.stringify(o)`,
+  `Object.assign({}, o)`, `{...o}` and `Object.entries(o)`
+  (cases `S2.defineProperty-enumerable.*`). Without `enumerable: true`
+  the getter is non-enumerable, none of the four reads it (measured), and
+  `main`'s `NOT_AFFECTED` is correct (`S2.defineProperty.*`, pinned as
+  sound);
+- **a Proxy handler whose traps are not protocol methods**:
+  `Object.keys(p)` and `Object.getOwnPropertyNames(p)` → `ownKeys`;
+  `"k" in p` → `has`; `JSON.stringify(p)` → `ownKeys`, and → `get`. The
+  handler is written inline in `new Proxy(...)` (`S3.*`), and, for
+  `Object.keys` and `in`, bound to a `const` first
+  (`S3.*.named-handler`).
+
+Whether ADR 0008 as written closes each shape is recorded in its
+"Amendment A-0" section: the descriptor and inline-handler shapes are
+closed by § 2's escape row; the named-handler `in` shape is closed by no
+rule, because `in` is not an invocation-capable site and
+`new Proxy(target, handler)` passes the Decision record's admission test
+for the non-invoking allowlist (it runs no user code during the call).
+
 ---
 
 ## AUD-02 — A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge
@@ -16965,3 +16999,138 @@ Full account: `tests/validation/FINDINGS.md`, "RWF-026 ...", section
 "Remaining limitations (deliberately not fixed here)" (this same file,
 above) — this is a correction to the register's own stated gap, not new
 report content from `docs/audits/`.
+
+---
+
+## PRM-117 — An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B
+**Proof family affected:** C
+**Severity:** Critical
+**Fix lane:** A — call graph
+
+`const obj = { [util.inspect.custom]() { return lib.parse("x"); } };`
+followed by `console.log(obj)`, `util.inspect(obj)` or
+`util.format("%o", obj)`: Node's inspector calls the method, so
+`lib.parse` runs, but the method is a function-like owner that nothing in
+the call graph calls, and the builtin call gets no edge (VT-201 for the
+ambient `console`, VT-305 for the `util` builtin). Family C certifies
+`lib.parse` unreachable over a complete subgraph. Same shape as PRM-112 /
+PRM-113 (a hook the runtime calls by a well-known symbol), for a hook
+that is Node's, not the language's.
+
+**Registered by task A-0** (`docs/tasks/A-0-adr0008-coverage-reproduction.md`),
+reproduced on `main` at `276a208` with the H-0 oracle harness (loud
+fixture, positive and negative controls, real-Node ground truth, Node
+v22.11.0); the H-0 builtin probe confirms each of the three builtins runs
+`util.inspect.custom`. Pinned as open-soundness-defect records
+`S1.console.log`, `S1.util.inspect`, `S1.util.format-o` in
+`tests/oracle/adr0008-coverage.test.ts` (admissible `UNKNOWN`/`AFFECTED`,
+expected after lane A `UNKNOWN`).
+
+ADR 0008: `util.inspect.custom` is outside § 2's protocol-member list
+(the Decision record's own table says "Not covered"), and a method of an
+object passed by name is not "an object/array member of an argument", so
+the escape row does not reach it either. The case is closed only through
+the fail-closed default, because the Decision record's admission rule
+bars all three builtins from the non-invoking allowlist. See ADR 0008,
+"Amendment A-0".
+
+---
+
+## PRM-118 — A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path
+
+**Status:** Open
+**Failure class:** false AFFECTED (a fabricated call edge)
+**Defect class:** B
+**Proof family affected:** none (the `AFFECTED` side of the contract)
+**Severity:** High
+**Fix lane:** A — call graph (not closed by ADR 0008 as written; see its "Amendment A-0", part B)
+
+`walkFile` pushes an owner node only for `isFunctionLike` constructs, and
+`isFunctionLike` (`source-index.ts`) excludes `GetAccessor` /
+`SetAccessor`. A call inside an accessor body is therefore attributed to
+the enclosing owner, usually the module, as if it ran when the definition
+is evaluated. Real Node runs an accessor body only when the property is
+read (or written). So `class C { get v() { return lib.parse("x"); } }`,
+with the getter never read, gives `AFFECTED` along
+`src/index.js → vuln-lib#parse`, a path that does not exist.
+SOUNDNESS-CONTRACT § 1 requires a concrete path for `AFFECTED`, and
+AGENTS.md § E counts a fabricated edge as a soundness defect.
+
+Measured on `main` at `276a208` (H-0 oracle harness, Node v22.11.0):
+
+- a class instance getter and a class static getter, "read" by
+  `JSON.stringify(o)`, `Object.assign({}, o)`, `{...o}` or
+  `Object.entries(o)`: all eight give `AFFECTED`. None of the four
+  builtins reads either getter, because they read only own enumerable
+  properties, and an instance getter lives on the prototype while a static
+  getter is non-enumerable. Real Node never calls `lib.parse`. Pinned as
+  open-soundness-defect records `S2.class-instance.*` and
+  `S2.class-static.*` in `tests/oracle/adr0008-coverage.test.ts`
+  (admissible `UNKNOWN`/`NOT_AFFECTED`, expected `UNKNOWN`);
+- the same attribution, with no reader at all: an object-literal getter,
+  a class getter and an object-literal setter, each never used, give
+  `AFFECTED`. An ordinary class method never called gives `NOT_AFFECTED`
+  (measured during task A-0; not pinned).
+
+**A correction to sweep round 1.** Round 1 recorded this attribution as
+PRM-46, **TRUE** ("isFunctionLike … excludes accessors, so this
+over-approximates"). That is true in the direction it was checked: it
+never removes an edge, so it cannot produce a false `NOT_AFFECTED`. It
+is false in the other direction, which round 1 did not check. The
+over-approximation is a resolved path, so it produces `AFFECTED`.
+
+**It currently masks a false `NOT_AFFECTED`.** An own enumerable
+object-literal getter read by any of the four readers above really runs,
+and `main` answers `AFFECTED` correctly, but only because of this
+attribution (`S2.literal.*`, pinned as sound: `AFFECTED` or `UNKNOWN`,
+never `NOT_AFFECTED`). If an accessor were given its own owner node with
+no incoming edge, those cases would become false `NOT_AFFECTED`, because
+no ADR 0008 rule covers a getter read (the Decision record's own table:
+getter "Not covered").
+
+**Registered by task A-0.** Not fixed here.
+
+---
+
+## RWF-051 — Nothing under `tests/` is type-checked, so a type-level guard written there is enforced by no gate
+
+**Status:** Open
+**Failure class:** tooling — a guard that reads as enforced is not
+**Defect class:** not applicable (tooling)
+**Proof family affected:** none directly
+**Severity:** Medium
+**Fix lane:** none assigned (tooling)
+
+`npm run typecheck` is `tsc --noEmit` over `tsconfig.json`, whose
+`include` is `["src"]`. At `276a208`, `tsc --noEmit --listFiles` lists
+**zero** files under `tests/`, and vitest (esbuild) strips types without
+checking them. So a compile-time guard written in a test under `tests/`
+is enforced by no gate, however its comment reads.
+
+The consequential instance is `tests/binding-grammar/guard.test.ts`,
+"the TYPE forbids an entry that names an exact target". It is an
+`@ts-expect-error` pin whose comment says "If this stops being a type
+error, `npm run typecheck` fails on the `@ts-expect-error`". That has
+never been true: `npm run typecheck` never reads the file. Measured with
+a scratch tsconfig that type-checks `tests/**` (not committed):
+
+- the directive is currently *used*: the type still forbids an exact
+  disagreement entry. The type-level half of the guard holds today, but
+  nothing would notice if it stopped holding;
+- the runtime half (`classifyCellOutcome`, exercised by
+  `npm run test:binding-grammar`) still holds and is enforced;
+- one latent type error nobody has seen:
+  `tests/binding-grammar/harness.ts:328`, TS2339, `edge.resolution.target`
+  inside a `.find` callback, where the narrowing that excluded the
+  `unknown` resolution is lost. It is harmless at runtime, because the
+  `unknown` branch returns first.
+
+**Partly addressed by task A-0, for `tests/oracle/` only.**
+`npm run typecheck` now also runs `tests/oracle/tsconfig.json`, and the
+oracle harness re-checks a case's bound names, controls and ground truth
+at runtime. The rest of `tests/` is still not type-checked, and nothing
+else is fixed here.
