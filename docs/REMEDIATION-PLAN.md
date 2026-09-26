@@ -152,9 +152,9 @@ the case are named in its ADR.
 | A, modeled | 1 (ADV2-021, a prototype shortcut the design removes) | 0 | 0 | 36 / 36 |
 | A, possible → unknown (upper bound of the design) | 1 (the same) | 0 | 0 | — |
 | A, strict (no non-invoking allowlist) | 1 (the same) | 1 (RWB-07 `NOT_AFFECTED → UNKNOWN`) | 1 | — |
-| E | 1 (ADV2-028, a prototype shortcut the design removes) | 0 | 0 | 19 / 20 (PRM-11 needs E-4) |
+| E (upper bound: the prototype withdrew every name written twice, which the revised ADR 0009 rule does not) | 1 (ADV2-028, a prototype shortcut the design removes) | 0 | 0 | 19 / 20 (PRM-11 needs E-4) |
 | C | 0 | 0 (RWB-09a first timed out at the runner's 30 s limit; re-run without the limit: unchanged `AFFECTED`) | 0 | 11 / 11 |
-| V | 0 | 0 | FILL_V | 5 / 5 |
+| V | 0 | 0 | 0 | 5 / 5 |
 
 **What the corpora can and cannot show.** The validation corpus has 85
 findings, of which 15 are definitive (10 `AFFECTED`, 5 `NOT_AFFECTED`) and
@@ -162,6 +162,13 @@ findings, of which 15 are definitive (10 `AFFECTED`, 5 `NOT_AFFECTED`) and
 definitive finding, so the measured cost is a cost on those 15 and on the
 122 adversarial scenarios. Each lane's first implementation task repeats
 this measurement and reports every movement case by case.
+
+**The repository's own suite** (`npx vitest run`, 4,480 tests) under each
+prototype: A 5 failures, C 5, V 20, E 303. Every failure is assigned in the
+lane's ADR § 8, either as a test that must change or as a precision control
+the design must keep green. Lane E's 303 are the reason ADR 0009's
+invariant was revised: they pin a sound "last definitely-reached write
+wins" rule that the crude prototype discarded.
 
 **Wall time.** Validation suite, run alone: baseline 115 s; A 103 s; E 138 s;
 V 145 s; **C 337 s (≈ 2.9×)**. Lane C's cost is an implementation

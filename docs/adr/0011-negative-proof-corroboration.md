@@ -129,7 +129,8 @@ from both runs and diffed them by (case, advisory, instance).
 | --- | --- |
 | adversarial scenarios | **0 / 122** |
 | validation cases | **0 / 17** |
-| validation findings (all, not only the selected one) | see [`REMEDIATION-PLAN.md` § 4](../REMEDIATION-PLAN.md) |
+| validation findings (all 85, every advisory × instance, not only the selected one) | **0 / 85** |
+| the repository's own suite (`npx vitest run`, 4,480 tests) | **20 failures**, listed in § 8 |
 | all 5 targeted reproductions | flip to `UNKNOWN` or to the correct verdict |
 
 The corpora contain no package loaded only through `export *` and not
@@ -173,9 +174,9 @@ reports (cases `r2-phantom-export-star-barrel`,
 
 | Task | Scope | Reproductions that flip | Existing tests that change |
 | --- | --- | --- | --- |
-| **V-1** closure corroboration for Site B; instance-keyed site selection | `verdict.ts` `resolveTargetNodes` | PRM-101 (both variants), PRM-102 | `verdict.site-b-target-authority.integration.test.ts` "still reports NOT_AFFECTED for a package nothing imports at all" must now pass via **family A** (assert the family, not only the verdict); any test asserting family C for a phantom |
-| **V-2** `traversal_truncated` blocks families B and C | `module-load-closure.ts` `invalidatesCallGraphNegativeProof` | PRM-23 | **`verdict.negative-proof.test.ts` "case 10b"** (pins the false premise: must now expect `UNKNOWN`), and the assertion at line ~369 `invalidatesCallGraphNegativeProof("traversal_truncated")` |
-| **V-3** identity-keyed roots; unmaterialized symbol is incompleteness; name-lookup census gate | `verdict.ts` `entrypointSourceNodes`; new Foundation census test | PRM-25 (both directions) | VT-205 tests in `verdict.test.ts` / `verdict.integration.test.ts` that configure a symbol whose export is a renamed local |
+| **V-1** closure corroboration for Site B; instance-keyed site selection | `verdict.ts` `resolveTargetNodes` | PRM-101 (both variants), PRM-102 | `verdict.site-b-target-authority.integration.test.ts` "still reports NOT_AFFECTED for a package nothing imports at all" must now pass via **family A** (assert the family, not only the verdict); the F4 mutation harness (`verdict.f4-proof-mutation.test.ts` family A mutations, "closure-says-loaded hands over to family C", VT-CONTRACT-02 and monotonicity checks), `verdict.module-load-absence.test.ts` case 14, `verdict.negative-proof.test.ts` cases 8 and 16 and `finding.f4-closure-hardening.test.ts` § 24: these build synthetic graphs whose target is a phantom and assert which proof *survives*; under V-1 a phantom never supports family C, so each must re-state its expectation (the verdict stays not-`NOT_AFFECTED` in every mutation; only which blocker is reported changes) |
+| **V-2** `traversal_truncated` blocks families B and C | `module-load-closure.ts` `invalidatesCallGraphNegativeProof` | PRM-23 | **`verdict.negative-proof.test.ts` "case 10b"** (pins the false premise: must now expect `UNKNOWN`), and the `invalidatesCallGraphNegativeProof("traversal_truncated")` assertion; `verdict.f4-proof-mutation.test.ts` "closure_incomplete_traversal_truncated_only -> control: family C legitimately stands" and "AUDIT: a closure truncated on its OWN walk hands over to family C" (both encode the old exclusion); `verdict.f2-proof-guards.test.ts` "is unchanged for a present, incomplete closure"; `scan-security.test.ts` VT-202 truncation test (verdict unchanged, reason changes) |
+| **V-3** identity-keyed roots; unmaterialized symbol is incompleteness; name-lookup census gate | `verdict.ts` `entrypointSourceNodes`; new Foundation census test | PRM-25 (both directions) | `verdict.test.ts` VT-205 "finds AFFECTED when the configured symbol itself is the one that reaches the target" and "does not become AFFECTED via a sibling export's own call": they use synthetic graphs with no entrypoint file on disk, so identity resolution has nothing to read; they must supply a real file (or the synthetic seam must carry positions) |
 | **V-4** proof-input types (`ClosureCorroboration`, `AttributedTarget`) and mutation tests | `src/domain/evidence.ts` types, `verdict.ts` constructors | none new; locks V-1..V-3 | `verdict.f2-proof-guards.test.ts`, `verdict.f4-proof-mutation.test.ts` gain cases |
 
 ## Rationale

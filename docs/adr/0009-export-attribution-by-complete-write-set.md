@@ -1,4 +1,4 @@
-# ADR 0009 — An Export Is Attributed Only When Its Complete Write Set Has One Effective Write
+# ADR 0009 — An Export Is Attributed Only When Its Complete Write Set Determines One Effective Write
 
 Lane E of [`docs/REMEDIATION-PLAN.md`](../REMEDIATION-PLAN.md). Status:
 **proposed** (design only; nothing here is implemented).
@@ -42,23 +42,49 @@ dotted spelling), but the assumption is the same.
 > **E.** For each module file, the export model computes the **complete
 > write set** of every export name: every syntactic form that can write a
 > property of that module's export object, or replace it, anywhere in the
-> file (including inside functions and after `require` calls that can
-> re-enter this module), plus every write the file cannot enumerate. An
-> export `x` is attributed to a declaration **only if** its write set has
-> exactly one member, that member is unconditional at module scope, it
-> denotes exactly one declaration by lexical identity, and the file has no
-> un-enumerable export writer. Otherwise attribution is withdrawn for `x`
-> (or for every name, when the un-enumerable writer can reach any name).
-> The same write set gates the forwarding hop and the entrypoint root
-> requirement.
+> file (including inside functions), each write tagged with **which export
+> object it targets** (the original `exports`/`module.exports` object, or
+> the object a later `module.exports = …` installed), plus a flag for any
+> write the file cannot enumerate. An export `x` is attributed to a
+> declaration **only if** the write set **determines one effective write**:
+>
+> 1. the set is complete for `x` (no un-enumerable writer can reach `x`);
+> 2. every write of `x` to the *final* export object is at module scope,
+>    so none can run after module evaluation completes (a write inside a
+>    function body, or an ESM `let`/`var` export assigned anywhere, is a
+>    competing write that may run later);
+> 3. the existing straight-line and abrupt-completion machinery (RWF-013 …
+>    RWF-028, `isDefinitelyReachedExportAssignment` and the cutoff
+>    predicates) selects a unique last write that definitely runs;
+> 4. no **observation point** lies between the first and the last
+>    competing write: a `require`/`import` that can re-enter this module,
+>    or a call that receives or closes over the export object;
+> 5. the effective write denotes exactly one declaration by lexical
+>    identity (never by name).
+>
+> Otherwise attribution is withdrawn for `x` (or for every name, when the
+> un-enumerable writer can reach any name). Writes to a *stale* export
+> object (after `module.exports` was replaced) are not writes of the final
+> export and are ignored for attribution but never for forwarding hops
+> that read them. The same determination gates the forwarding hop and the
+> entrypoint root requirement.
+
+This keeps what the RWF-013 … RWF-028 work established (a module that
+writes an export several times in straight-line code, with the last write
+definitely reached, is attributed to that last write) and closes the four
+gaps the reproductions share: an **incomplete** write set (bracket, alias,
+`Object.assign`, deferred and foreign writes), writes to a **stale** export
+object, an **observation point** between writes, and attribution **by
+name**.
 
 The same rule covers writes *from other modules* for the two shapes the
 analyzer can see: a member write on a require/import-bound module object
 (RWF-047) and a property write on a re-export source (PRM-11) withdraw the
 target module's attribution for that name, or the forwarding origin.
 
-Mechanically: `exportWriteSet(file): Map<name, WriteSite[]> & { unenumerable: boolean }`
-is total over a closed `ExportWriteKind` union, and `mapExportsToFunctions`,
+Mechanically: `exportWriteSet(file): Map<name, WriteSite[]> & { unenumerable: boolean }`,
+each `WriteSite` carrying its target object and whether it is at module
+scope, is total over a closed `ExportWriteKind` union, and `mapExportsToFunctions`,
 `commonJsExportForwardingHop`, `esmExportForwardingHop`,
 `commonjs-reexports` origins and `entrypointRootCandidates` all consult it.
 
@@ -152,6 +178,20 @@ un-enumerable writer at an entrypoint is root incompleteness.
 | targeted reproductions | 19 of 20 flip to `UNKNOWN`; PRM-11 (RWF-047's re-export surface) does not, because the prototype did not touch `commonjs-reexports.ts` (task E-4) |
 | costs visible in controls | the whole-module cyclic-observer *positive* control also becomes `UNKNOWN` (the write set is genuinely split); the entrypoint-decoy *negative* control becomes `UNKNOWN` |
 | wall time | no material change (validation suite 138 s vs 115 s baseline, within run-to-run noise of the other prototypes) |
+| the repository's own suite (`npx vitest run`, 4,480 tests) | **303 failures**, in 27 files, almost all "keeps authority / keeps the later export attributable" controls of the RWF-013 … RWF-028 abrupt-completion suites and the P1-A2 / RWF-003 "binds the LAST write" tests |
+
+**What the unit result means.** The prototype withdrew every name written
+more than once. The repository's suites prove that rule wrong in the
+precise direction: a straight-line module that writes an export several
+times, with the last write definitely reached, is correctly attributed to
+the last write, and 303 tests pin exactly that. The invariant in § 1 was
+revised because of this measurement: it keeps that machinery (clause 3) and
+withdraws only on the four gaps the reproductions share (incomplete write
+set, stale object, observation point, attribution by name). The revised
+rule withdraws **strictly fewer** names than the prototype did, so the
+prototype's corpus results (1 / 122, 0 / 17, 0 / 85) are an **upper
+bound** on the designed rule's cost, and the 303 controls become E-1's
+precision acceptance: they must all stay green.
 
 ### 6. Reopened certified behaviour
 
@@ -159,7 +199,7 @@ un-enumerable writer at an entrypoint is root incompleteness.
 | --- | --- | --- |
 | RWF-011/P1-A: "Dropping the fallback costs nothing that had provenance" (the remaining name `find`) | `module-model.ts:5992-6006` | PRM-26 |
 | TASK-017/VT-217: literal unpacking skips spreads and computed keys "intentionally", and a computed key is resolved "via a same-file `const`" | `module-model.ts:4684-4736, 4885-4886` | PRM-27, PRM-28 |
-| RWF-014/013: "Last-write-wins is Node's real semantics for straight-line module-scope code" | `module-model.ts:437-442, 536-541, 4638-4645` | PRM-29, PRM-30, PRM-103 |
+| RWF-014/013: "Last-write-wins is Node's real semantics for straight-line module-scope code" — reopened **narrowly**: last-write-wins is kept for a complete write set with no deferred writes and no observation point between writes; it is withdrawn otherwise | `module-model.ts:437-442, 536-541, 4638-4645` | PRM-29 (deferred write), PRM-30 (write the model did not enumerate), PRM-103 (re-entrant observer) |
 | RWF-021 root selection: "an extra root can only make more code reachable" (the name fallback also *witnesses* materialization) | `module-model.ts:5767-5779` with `verdict.ts:1186-1201` | PRM-31 |
 | RWF-003 whole-module collection: "Every `module.exports = X` … write in the file" | `module-model.ts:4506-4550` | PRM-32, PRM-63 |
 | P1-A1 forwarding hop, first own binding | `export-forwarding.ts:92-113` | PRM-61 |
@@ -185,8 +225,8 @@ un-enumerable writer at an entrypoint is root incompleteness.
 
 | Task | Scope | Reproductions that flip | Existing tests that change |
 | --- | --- | --- | --- |
-| **E-1** the `ExportWriteKind` write set; gate `mapExportsToFunctions` on it; lexical identity instead of the name `find`; lexical computed-key constants | `module-model.ts` | PRM-26, 27, 28, 29, 30, 62, 63, 103 (and ADV2-028 stays `AFFECTED`) | `module-model.*.test.ts` suites that assert attribution for a name written by two *different* statements; the `{ bail, bail: safeFn }` fixture in `fixtures/commonjs-invocation-provenance-soundness` must stay green (one literal, § 4) and becomes the exception's named test |
-| **E-2** forwarding hops consult the write set | `export-forwarding.ts`, `call-graph.ts` consumer unchanged | PRM-61 (both shapes, and its false `AFFECTED`) | `call-graph.commonjs-reexport.test.ts`, `call-graph.cross-package-reexport.test.ts` cases with a stale `exports` write |
+| **E-1** the `ExportWriteKind` write set; gate `mapExportsToFunctions` on it; lexical identity instead of the name `find`; lexical computed-key constants | `module-model.ts` | PRM-26, 27, 28, 29, 30, 62, 63, 103 (and ADV2-028 stays `AFFECTED`) | **must stay green** (precision acceptance): every RWF-013 … RWF-028 "keeps authority / keeps the later export attributable" control (`module-model.definitely-abrupt-expression-evaluation.test.ts`, `…destructuring-assignment-target-reassignment…`, `…invalid-class-heritage-value…`, `…multipath-class-definition-completion…`, `…class-heritage-throwing-call…`, `…computed-object-literal-key…`, `…computed-class-key…`, `…static-field…`, `…conditional-whole-module-export…`, `…early-exit-whole-module-export…` and their `verdict.*.integration.test.ts` counterparts), the P1-A2 "binds the LAST write" tests, RWF-003's "takes the LAST module-scope assignment", and the `{ bail, bail: safeFn }` fixture in `fixtures/commonjs-invocation-provenance-soundness` (the prototype failed 303 of these; the revised § 1 keeps them). **Expected to change**: tests asserting attribution despite a deferred write, a stale-object write, or an intervening re-entrant `require` (none found by the unit run beyond the reproductions) |
+| **E-2** forwarding hops consult the write set (final-object writes only) | `export-forwarding.ts`, `call-graph.ts` consumer unchanged | PRM-61 (both shapes, and its false `AFFECTED`) | `export-forwarding.test.ts` "forwards the LAST of duplicate export writes, never the stale first" and `verdict.target-side-reexport.integration.test.ts` "resolves a duplicated export to the LAST write" must stay green (the prototype failed both) |
 | **E-3** entrypoint roots: write set gates root requirements; name fallback may widen but not witness | `module-model.ts` `entrypointRootCandidates` (coordinate with V-3 in `verdict.ts`) | PRM-31, PRM-32 | `verdict.entrypoint-root-*.test.ts` cases whose requirement is witnessed only by name |
 | **E-4** writes by other modules: member writes on module objects and on re-export sources | `commonjs-reexports.ts`, `symbol-binder.ts` consumer (after lane A's A-5) | RWF-047 (D-16), PRM-11 | the RWF-047 open-defect records in `src/analysis/require-member-write-widening.integration.test.ts` flip from recorded-disagreement to passing |
 | **E-5** AUD-13 ESM→CJS default interop | `module-model.ts` ESM consumer of a CJS default | AUD-13 (reproduction to be taken from the audit report) | to be determined from the audit report |
