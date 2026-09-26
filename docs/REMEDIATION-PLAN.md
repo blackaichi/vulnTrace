@@ -287,9 +287,30 @@ dedicated suite, `npm run test:oracle`), rather than the illustrative
 `tests/real-node-oracle/` location above. See
 [`docs/tasks/H-0-real-node-oracle-harness.md`](tasks/H-0-real-node-oracle-harness.md).
 
+**A-0, ADR 0008 coverage reproduction.** Added by task
+[`A-0`](tasks/A-0-adr0008-coverage-reproduction.md) as order **1a**,
+between H-0 and A-1, so the existing order numbers (which later rows
+cite) stay unchanged. Scope: reproduce, before lane A is built, the
+implicit invocations ADR 0008's protocol-member rule does not name
+(`util.inspect.custom`, getters read by builtins, non-protocol Proxy
+traps), pin them, and decide from the ADR's text whether it closes each.
+No analyzer change.
+
+Status: **done, pending a project-owner decision.** 32 cases in
+`tests/oracle/adr0008-coverage.test.ts`. False `NOT_AFFECTED`: 3 under
+the new PRM-117 (`util.inspect.custom`) and 11 attached to AUD-01 (an
+enumerable `defineProperty` getter; non-protocol Proxy traps). False
+`AFFECTED`: 8 under the new PRM-118 (accessor bodies attributed to the
+enclosing owner). One false `NOT_AFFECTED` case (a named Proxy handler
+triggered by `in`) and PRM-118 are closed by no rule of ADR 0008 as
+written. ADR 0008's appended "Amendment A-0" proposes the change, which
+is **not decided**. See "A-0 additions to lane-A acceptance", below the
+table.
+
 | Order | Task | Lane | Reasoning |
 | --- | --- | --- | --- |
 | 1 | H-0 | — | every later task's failing-first tests, precision measurements (§ 4, § 9) and grammar sweeps (ADR 0009 § 2, ADR 0010 § 2) need real-Node ground truth; building the shared harness once, first, avoids each lane reimplementing its own ad hoc version, which is what § 9's method describes happening already |
+| 1a | A-0 | A | reproduction only, no analyzer change: lane A's design must be checked against the implicit invocations the ADR 0008 Decision record lists as not covered, before A-1..A-6 are built on it; uses H-0, so it follows H-0 |
 | 2 | A-1 | A | first task of the most prevalent lane (§ 5 "Prevalence first": timer/Promise callbacks, JSX, decorators, derived classes are ordinary code); a hard dependency of A-2/A-3/A-4 (ADR 0008 § 8) |
 | 3 | A-2 | A | hard dependency: A-3 and A-4 emit `possible` edges that A-2 defines (ADR 0008 § 8) |
 | 4 | A-3 | A | prevalent shapes (escaped callbacks, JSX, own-export calls); depends on A-1, A-2 |
@@ -318,6 +339,57 @@ dedicated suite, `npm run test:oracle`), rather than the illustrative
 | 27 | C-4 | C | hard dependency: consumes A-6 (order 7), already done |
 | 28 | C-5 | C | depends on C-4's loader-table work (`verdict.ts` path check reads the loader-mutation reason C-4 introduces), per ADR 0010 § 8's own order |
 | 29 | D-1 | D | hard dependency: edits `html-report.ts` after B-5 (order 17), per § 5.1 |
+
+#### A-0 additions to lane-A acceptance
+
+Added by task A-0. Every case named below is in
+`tests/oracle/adr0008-coverage.test.ts`. A case pinned there as an
+open-soundness-defect record is closed when its live result becomes
+`UNKNOWN`. The fix then deletes the record and asserts `UNKNOWN`, the
+same way every such record in this repository is closed. The task each
+case is assigned to is the one ADR 0008 names for the rule that closes
+it (its "Amendment A-0" section quotes each rule).
+
+**A-3** (escaped function values; the invoking and non-invoking
+allowlists and their real-Node tests) also accepts only when:
+
+- [ ] `S1.console.log`, `S1.util.inspect`, `S1.util.format-o` (PRM-117)
+      are `UNKNOWN`. They are closed by the fail-closed default: none of
+      `console.*`, `util.inspect` or `util.format` may be admitted to the
+      non-invoking allowlist, per the Decision record's admission rule.
+- [ ] `S2.defineProperty-enumerable.JSON.stringify`, `.Object.assign`,
+      `.spread` and `.Object.entries` (AUD-01) are `UNKNOWN`, by the
+      escape row ("a property descriptor").
+- [ ] `S3.Object.keys.ownKeys`, `S3.Object.getOwnPropertyNames.ownKeys`,
+      `S3.in.has`, `S3.JSON.stringify.ownKeys`, `S3.JSON.stringify.get`
+      (AUD-01, inline handler) are `UNKNOWN`, by the escape row at
+      `new Proxy(...)`. No non-invoking allowlist entry for `Proxy` may
+      remove that edge.
+- [ ] `S3.Object.keys.ownKeys.named-handler` (AUD-01) is `UNKNOWN`, by
+      the fail-closed default at `Object.keys`.
+- [ ] `S3.in.has.named-handler` (AUD-01) is `UNKNOWN`. **ADR 0008 as
+      written does not close it**; this criterion depends on Amendment
+      A-0 part A (retaining builtins), which awaits a project-owner
+      decision.
+- [ ] `S4.Array.isArray`, `S4.Object.is` stay `NOT_AFFECTED` (precision
+      controls: both builtins pass the admission test and store nothing).
+- [ ] `S2.defineProperty.*` (a default, non-enumerable getter; real Node
+      never runs it) stay `NOT_AFFECTED` or `UNKNOWN`. `UNKNOWN` is the
+      expected, sound precision cost of the escape row.
+- [ ] `S2.literal.*` stay `AFFECTED` or `UNKNOWN`, never `NOT_AFFECTED`.
+
+**A-4** (protocol members) also accepts only when, **if** Amendment A-0
+part B (accessor bodies) is accepted:
+
+- [ ] `S2.class-instance.*` and `S2.class-static.*` (PRM-118: eight false
+      `AFFECTED`) are `UNKNOWN`. ADR 0008 as written closes none of them.
+- [ ] `S2.literal.*` stay `AFFECTED` or `UNKNOWN`, never `NOT_AFFECTED`.
+      That is, an accessor body is given a possible edge, never no edge.
+- [ ] The RWB-09 validation case is re-measured, since its `semver` and
+      `lru-cache` code contains accessors.
+
+A lane-A task that makes any of these cases `UNKNOWN` earlier than
+listed deletes that case's record in the same way.
 
 ## 6. Decisions for the user
 
