@@ -1,0 +1,13 @@
+{
+  // Task A-0 step 1: `npm run typecheck` runs this project after the root
+  // one, so the oracle cases' compile-time guarantees (a non-empty
+  // `boundNames`, a required `groundTruth`, ...) are enforced by a gate.
+  // Scoped to tests/oracle/ ONLY; the rest of tests/ is still not
+  // type-checked (tests/validation/FINDINGS.md, RWF-051).
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "rootDir": "../..",
+    "noEmit": true
+  },
+  "include": ["./**/*.ts"]
+}
