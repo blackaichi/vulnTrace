@@ -622,6 +622,76 @@ correctly bound. Both times the corpus reported no movement.
 Recorded in full, with both reproductions, the real-`node` ground truth
 and the widening table, as RWF-047 in `tests/validation/FINDINGS.md`.
 
+### D-17 — Three read-only audits found ~70 further reproduced defects; the soundness contract does not hold on `main`
+
+**OPEN. Documentation only — recorded by task `record-soundness-audits`;
+no code changed.**
+
+**What ran.** Three read-only investigations, reproducing everything end
+to end against real Node on `main` (`ea5d25b` for the independent audit;
+`62b52b9` for both premise-sweep rounds — main did not move between the
+two rounds): an independent audit (`AUD-01`…`AUD-16`) and two rounds of a
+sweep checking every "this cannot happen because…" code comment in the
+call-graph, module-model, loader and intake layers against a real scan
+and real Node (`PRM-01`…`PRM-116`). Nothing was committed, branched or
+edited by any of the three; every finding is a synthetic-fixture
+reproduction with a positive control, a negative control and a
+loud-fixture assertion (every reproduction requires the fixture package
+and asserts every bound name really is a function, so a fabricated
+target would fail loudly rather than degrade to a quiet `UNKNOWN`).
+
+**What was found, by failure class** (see `tests/validation/FINDINGS.md`
+for the full register; each finding below is one row there):
+
+Counted programmatically from the register's own failure-class field (a
+finding carrying more than one failure class — for example `AUD-05`,
+silent drop in one direction and false `AFFECTED` in the reverse — is
+counted once in each row it belongs to, so rows do not sum to 67):
+
+| Failure class | Count | IDs |
+| --- | --- | --- |
+| false `NOT_AFFECTED` | 46 | `AUD-01,02,03,04`; `PRM-12..33,37,38,60,61,62,63,101..109,112..116` |
+| silent drop | 11 | `AUD-05,06,07,08,09,10`; `PRM-34,64,65,66,111` |
+| false `AFFECTED` | 6 | `AUD-05,13,14`; `PRM-25,61,107` |
+| false reason | 4 | `AUD-12,15`; `PRM-36,110` |
+| scan abort | 2 | `AUD-11`; `PRM-35` |
+| disclosure | 2 | `AUD-16`; `PRM-67` |
+
+`PRM-01`…`PRM-10` are KNOWN aliases of `AUD` findings, and
+`PRM-11` is a second surface of `RWF-047` (D-16) — neither is counted
+again above. Round 1's `PRM-40`…`PRM-52` and round 2's `T-1`…`T-12` are
+TRUE premises, not findings, and round 2's `U-1`…`U-4` are UNVERIFIED
+suspicions, not reproduced — neither group is registered.
+
+**Why this is not a corpus differential.** Every finding above is a
+synthetic minimal-fixture reproduction, not a real-world package. Per
+D-12, a zero real-world differential is not evidence of safety, and
+these findings do not move one — they are evidence about the analyzer's
+own semantic model, independent of what the current 17-case validation
+corpus happens to contain. `AUD-01`'s callback mechanism and `PRM-105`'s
+capability-receiver mechanism are exactly the kind of gap D-12 says the
+corpus is not shaped to surface.
+
+**What this does to § 3.** See the addendum appended to criterion 3,
+below. Read plainly: the soundness contract does not hold on `main`
+today, in far more places than `RWF-047`/D-16 alone.
+
+**Not fixed here, deliberately.** This task is documentation only, per
+its own boundaries. A remediation design is understood to be in
+progress in a separate, not-yet-merged effort; this entry does not name
+it by path, because it is not on `main` yet and `check-docs.mjs` would
+fail a reference to a file that does not exist here.
+
+**Not acted on.** Neither of the two unnumbered mechanisms in round 1
+§ 5 (tagged templates; implicit protocol invocations) nor RWF-026's
+inherited MAY-execute conditional-operand gap (now `RWF-050`,
+UNCLASSIFIED) is counted in the table above as a *settled* finding in
+the same sense as the numbered `AUD`/`PRM` entries: the first two are
+newly-numbered (`PRM-37`, `PRM-38`) but otherwise measured exactly like
+their siblings, so they ARE counted; `RWF-050` is not, because it was
+not independently reproduced by any of the three audits and is recorded
+UNCLASSIFIED rather than FALSE.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
@@ -684,6 +754,17 @@ owned and measurable, not to make them total.
    > the first occasion, where the defects were real but unknown and the
    > criterion could still be read as holding as written. That reading is
    > not available here.
+   >
+   > **Addendum, added by task `record-soundness-audits`.** Three
+   > read-only audits (D-17) reproduced a further 46 false `NOT_AFFECTED`
+   > findings, 11 silent drops, 6 false `AFFECTED`, 4 false reasons, 2
+   > scan aborts and 2 disclosure defects, end to end against real Node
+   > — none of them `RWF-047`/D-16, and none of them a corpus
+   > differential. Stated plainly: **criterion 3 is false on `main`, and
+   > has been in far more places than D-16 alone recorded.** The
+   > false-`NOT_AFFECTED` and silent-drop families are the ones
+   > criterion 3 names by name; see D-17 and
+   > `tests/validation/FINDINGS.md` for the full register.
 4. **A benchmark baseline is recorded** — the real-world corpus has a
    measured, reproducible state that a later change can be compared against.
 5. **The open debts are explicitly bounded** — every one named, with why it
@@ -692,6 +773,21 @@ owned and measurable, not to make them total.
 ## 4. P1-B initial direction
 
 **Strategy, not implementation. Nothing below is built.**
+
+> **Blocked, added by task `record-soundness-audits`.** Criterion 3
+> above is false on `main` (D-16, D-17): call-graph edges (`AUD-01/02`,
+> `PRM-12..24,37,38,60,101,104..116`), export attribution
+> (`PRM-26..32,61,62,63,103`) and receiver/capability resolution
+> (`PRM-18,20,21,22,33,105..109`) are exactly the areas this section's
+> feature work would touch. Building callback modeling, builtin
+> modeling, framework support, or any receiver-modeling work here on top
+> of a call graph and export model with dozens of known, reproduced
+> fabrication/omission paths would build coverage on a foundation the
+> soundness contract does not hold for. **This section's feature work is
+> blocked until the soundness remediation that D-17's findings motivate
+> has closed.** The taxonomy-split step (`unsupported_construct`, D-07)
+> is not itself blocked — it changes no analyzer behavior — but taking
+> its ranking's top rows into implementation is.
 
 **Step one is not to implement a construct.** It is to **split
 `unsupported_construct` by syntactic and semantic shape** (D-07). Until
