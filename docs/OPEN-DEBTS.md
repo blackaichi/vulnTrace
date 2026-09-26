@@ -692,6 +692,16 @@ their siblings, so they ARE counted; `RWF-050` is not, because it was
 not independently reproduced by any of the three audits and is recorded
 UNCLASSIFIED rather than FALSE.
 
+**Pointer, added by task `remediation-reconciliation` (2026-09-26).** The
+remediation design this entry declined to name by path when it was
+written is now on `main`: `docs/REMEDIATION-PLAN.md` maps every finding
+counted above to the invariant or point-fix task that closes it, and
+`docs/adr/0008`-`0011` design the four structural invariants (lanes A, E,
+C, V). `REMEDIATION-PLAN.md` § 6.1 records the project owner's 12 policy
+decisions for the design, and § 5a its single sequential implementation
+schedule. None of it is implemented yet; this entry's "the soundness
+contract does not hold on `main` today" therefore still stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
