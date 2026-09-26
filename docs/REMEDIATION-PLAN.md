@@ -149,6 +149,20 @@ abrupt-completion reachability) is the same machinery ADR 0009 § 1
 clause 3 (E-1's scope) keeps and narrows; this is a hypothesis for
 scheduling purposes only; the task itself decides.
 
+### 2.5 Task A-0 (ADR 0008 coverage reproduction)
+
+Added 2026-09-27, when the project owner decided ADR 0008's Amendment
+A-0 (its "Decision record — Amendment A-0"). Task
+[`A-0`](tasks/A-0-adr0008-coverage-reproduction.md) registered these
+findings. Its eleven other false-`NOT_AFFECTED` cases are attached to
+AUD-01 (§ 2.1) and are not listed again.
+
+| Finding | Summary | Impact | Lane | Closed by | Task |
+| --- | --- | --- | --- | --- | --- |
+| PRM-117 | `[util.inspect.custom]()` run by `console.log` / `util.inspect` / `util.format("%o")` gets no edge | FNA | A | fail-closed default (§ 3), held by Amendment A-0 part A's mechanical-admission condition: no inspecting builtin on the non-invoking allowlist | A-3 |
+| PRM-118 | a getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs gives a fabricated `AFFECTED` path | FA | A | Amendment A-0 part B: an accessor is its own owner, reached by a *possible* edge | A-4 (precision restored by A-7) |
+| RWF-051 | nothing under `tests/` is type-checked, so a type-level guard written there is enforced by no gate (`tests/oracle/` excepted since A-0) | tooling | none (tooling) | type-check everything under `tests/` and fix the latent errors it reveals | **RWF-051-typecheck** (§ 5a, order 1b) |
+
 ## 3. The three tests that pin a false premise
 
 | Test | Pinned premise | Task that changes it |
@@ -296,7 +310,11 @@ implicit invocations ADR 0008's protocol-member rule does not name
 traps), pin them, and decide from the ADR's text whether it closes each.
 No analyzer change.
 
-Status: **done, pending a project-owner decision.** 32 cases in
+Status: **done; Amendment A-0 accepted by the project owner on
+2026-09-27**, parts A and B, with conditions (ADR 0008, "Decision record
+— Amendment A-0"). The conditions are A-3's and A-4's acceptance
+criteria below. The rest of this paragraph is the status as A-0 first
+recorded it. 32 cases in
 `tests/oracle/adr0008-coverage.test.ts`. False `NOT_AFFECTED`: 3 under
 the new PRM-117 (`util.inspect.custom`) and 11 attached to AUD-01 (an
 enumerable `defineProperty` getter; non-protocol Proxy traps). False
@@ -307,10 +325,49 @@ written. ADR 0008's appended "Amendment A-0" proposes the change, which
 is **not decided**. See "A-0 additions to lane-A acceptance", below the
 table.
 
+**RWF-051-typecheck, type-check everything under `tests/`.** Added
+2026-09-27 as order **1b**, immediately after A-0 and before A-1, when
+the project owner decided Amendment A-0. Scope: type-check everything
+under `tests/` and fix the latent errors it reveals (including
+`tests/binding-grammar/harness.ts:328`). Closes RWF-051 (§ 2.5). Reason:
+lane A adds `tests/binding-grammar/` rows (ADR 0008 § 2), and that suite
+relies on type-level guards, so those guards must be enforced by a gate
+before lane A starts adding to it. Status: **planned**.
+
+**A-7, reader builtins invoke accessors.** Added 2026-09-27 as order
+**30**, after every lane, by the project owner's Amendment A-0 decision
+(part B, condition 2). Scope: model the reader builtins
+(`JSON.stringify`, `Object.assign`, object spread, `Object.entries` and
+similar) as invoking the own enumerable accessors of attributable
+objects, with a resolved edge where real Node guarantees the read. The
+correct `AFFECTED` results that A-4 turns into `UNKNOWN` (for example
+`S2.literal.*` in `tests/oracle/adr0008-coverage.test.ts`) then become
+proven `AFFECTED` again. It is a precision task: it may add an edge only
+where real Node runs the accessor. `S2.class-instance.*`,
+`S2.class-static.*` and `S2.defineProperty.*` are not read by these
+builtins and must not become `AFFECTED`. ADR 0008 § 8 does not list it.
+Status: **planned**.
+
+**Note on the H-0 builtin probe** (recorded 2026-09-27, by the project
+owner's Amendment A-0 decision). `probeBuiltinArgKind` in
+`src/testing/oracle/builtin-probe.ts` catches an exception from the call
+and records it in `fired` as `THREW:<message>`, then reports
+`ranUserCode: fired.length > 0`. A builtin that **throws** is therefore
+reported as `ranUserCode: true`, whether or not any user hook ran. For
+admission this errs on the conservative side: it can keep an entry off
+the allowlist, never put one on. But it is inaccurate. Measured
+2026-09-27, Node v22.11.0: `JSON.parse(__ARG__)` throws for all nine
+argument kinds, so it reports `ranUserCode: true` for all nine, while
+real user hooks fire only for `toString`, `toPrimitive` and the two
+Proxy kinds (`get`). The probe is not changed. A task that builds a
+mechanical admission test on it (A-3) must read `fired`, not
+`ranUserCode` alone.
+
 | Order | Task | Lane | Reasoning |
 | --- | --- | --- | --- |
 | 1 | H-0 | — | every later task's failing-first tests, precision measurements (§ 4, § 9) and grammar sweeps (ADR 0009 § 2, ADR 0010 § 2) need real-Node ground truth; building the shared harness once, first, avoids each lane reimplementing its own ad hoc version, which is what § 9's method describes happening already |
 | 1a | A-0 | A | reproduction only, no analyzer change: lane A's design must be checked against the implicit invocations the ADR 0008 Decision record lists as not covered, before A-1..A-6 are built on it; uses H-0, so it follows H-0 |
+| 1b | RWF-051-typecheck | — (tooling) | type-check everything under `tests/` and fix the latent errors it reveals (including `tests/binding-grammar/harness.ts:328`): lane A adds `tests/binding-grammar/` rows that rely on type-level guards, and those guards must be enforced by a gate first |
 | 2 | A-1 | A | first task of the most prevalent lane (§ 5 "Prevalence first": timer/Promise callbacks, JSX, decorators, derived classes are ordinary code); a hard dependency of A-2/A-3/A-4 (ADR 0008 § 8) |
 | 3 | A-2 | A | hard dependency: A-3 and A-4 emit `possible` edges that A-2 defines (ADR 0008 § 8) |
 | 4 | A-3 | A | prevalent shapes (escaped callbacks, JSX, own-export calls); depends on A-1, A-2 |
@@ -339,6 +396,7 @@ table.
 | 27 | C-4 | C | hard dependency: consumes A-6 (order 7), already done |
 | 28 | C-5 | C | depends on C-4's loader-table work (`verdict.ts` path check reads the loader-mutation reason C-4 introduces), per ADR 0010 § 8's own order |
 | 29 | D-1 | D | hard dependency: edits `html-report.ts` after B-5 (order 17), per § 5.1 |
+| 30 | A-7 | A (precision) | the project owner's Amendment A-0 decision, part B, condition 2 ("later, after the lanes"): restores, as proven `AFFECTED`, the correct results A-4 turns into `UNKNOWN`; needs A-4 (order 5) and A-3 (order 4); soundness tasks come first, so it follows every lane |
 
 #### A-0 additions to lane-A acceptance
 
@@ -370,7 +428,8 @@ allowlists and their real-Node tests) also accepts only when:
 - [ ] `S3.in.has.named-handler` (AUD-01) is `UNKNOWN`. **ADR 0008 as
       written does not close it**; this criterion depends on Amendment
       A-0 part A (retaining builtins), which awaits a project-owner
-      decision.
+      decision. *(Update, 2026-09-27: part A is accepted; see the
+      criteria below.)*
 - [ ] `S4.Array.isArray`, `S4.Object.is` stay `NOT_AFFECTED` (precision
       controls: both builtins pass the admission test and store nothing).
 - [ ] `S2.defineProperty.*` (a default, non-enumerable getter; real Node
@@ -378,8 +437,45 @@ allowlists and their real-Node tests) also accepts only when:
       expected, sound precision cost of the escape row.
 - [ ] `S2.literal.*` stay `AFFECTED` or `UNKNOWN`, never `NOT_AFFECTED`.
 
+Added 2026-09-27: Amendment A-0 part A is accepted with a condition (ADR
+0008, "Decision record — Amendment A-0"). **A-3** also accepts only when:
+
+- [ ] A builtin is admitted as a `NonInvokingBuiltin` only if it runs no
+      user code through any path at the call (Decision 1) **and** is
+      non-retaining: it does not return or store an object through which
+      a later operation can invoke user code taken from its arguments.
+- [ ] `new Proxy` and `Proxy.revocable` are excluded from the allowlist
+      by name.
+- [ ] The escape rule takes precedence over every allowlist entry: no
+      entry removes an edge the escape row gives.
+- [ ] **Mechanical admission.** Every allowlist entry has a passing H-0
+      builtin-probe test, run in CI, so that an entry whose probe fires
+      cannot be admitted by hand. Examples whose probe fires: `console.*`,
+      `util.inspect`, `util.format`, `Object.keys`,
+      `Object.getOwnPropertyNames`, `JSON.stringify`, `Object.assign`,
+      `Object.entries`. PRM-117's closure and the closure of
+      `S3.Object.keys.ownKeys.named-handler` depend on this criterion.
+      Two facts measured on 2026-09-27 bear on it:
+      - **CI does not run the probe today.** `.github/workflows/ci.yml`
+        runs `npm test` (`src/**/*.test.ts` only), not `npm run
+        test:oracle`, and `tests/oracle/builtin-probe.test.ts` is not
+        under `src/`. A-3 must make CI run the admission probes.
+      - **The probe reports a throwing builtin as `ranUserCode: true`**
+        (see "Note on the H-0 builtin probe", above the table). The
+        admission test must read which hooks fired, not `ranUserCode`
+        alone.
+- [ ] RWB-07's verdict is reported. § 5 measured that without the
+      allowlist RWB-07 loses its correct `NOT_AFFECTED`. The only builtin
+      call in its source (`src/config.js`) is `JSON.parse(text)`, and
+      `JSON.parse`'s probe fires `toString`, `Symbol.toPrimitive` and the
+      Proxy `get` trap (measured 2026-09-27). If `JSON.parse` is not
+      admissible under this criterion, the expected cost is RWB-07
+      `NOT_AFFECTED → UNKNOWN`. A-3 reports the result and does not relax
+      the criterion to avoid it.
+
 **A-4** (protocol members) also accepts only when, **if** Amendment A-0
-part B (accessor bodies) is accepted:
+part B (accessor bodies) is accepted *(update, 2026-09-27: part B is
+accepted, with two conditions; the criteria after this list apply)*:
 
 - [ ] `S2.class-instance.*` and `S2.class-static.*` (PRM-118: eight false
       `AFFECTED`) are `UNKNOWN`. ADR 0008 as written closes none of them.
@@ -387,6 +483,26 @@ part B (accessor bodies) is accepted:
       That is, an accessor body is given a possible edge, never no edge.
 - [ ] The RWB-09 validation case is re-measured, since its `semver` and
       `lru-cache` code contains accessors.
+
+Added 2026-09-27: Amendment A-0 part B is accepted with two conditions
+(ADR 0008, "Decision record — Amendment A-0"). **A-4** also accepts only
+when:
+
+- [ ] A getter or setter (object literal or class, instance or static) is
+      its own owner, reached from its defining owner by a *possible*
+      edge. No accessor ever gets no edge.
+- [ ] **Condition 1: precision cost measured before merge**, with ADR
+      0008 § 5's method: the adversarial table, the validation tables and
+      the finding-level dump by (case, advisory, instance), each movement
+      reported case by case. RWB-09a and RWB-09b (`semver`,
+      `lru-cache`), the full validation results (against OPEN-DEBTS
+      D-09's known failures) and the full adversarial results are
+      reported explicitly.
+- [ ] **Condition 2: the precision task is scheduled.** A-7 (§ 5a, order
+      30: reader builtins invoke the own enumerable accessors of
+      attributable objects) stays in the plan. A-4's report lists each
+      correct `AFFECTED` it turned into `UNKNOWN`, since those are the
+      results A-7 must restore.
 
 A lane-A task that makes any of these cases `UNKNOWN` earlier than
 listed deletes that case's record in the same way.
