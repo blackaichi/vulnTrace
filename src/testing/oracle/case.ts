@@ -93,6 +93,118 @@ export interface OracleCaseResult {
   readonly controlsInapplicableReason?: string;
 }
 
+/**
+ * Thrown by {@link runOracleCase} when a case is malformed BEFORE anything
+ * is scanned or run: no bound names, a missing control, or no ground
+ * truth.
+ */
+export class OracleCaseViolation extends Error {
+  constructor(
+    readonly caseId: string,
+    readonly problems: readonly string[],
+  ) {
+    super(
+      `oracle case ${JSON.stringify(caseId)} is malformed: ${problems.join("; ")}`,
+    );
+    this.name = "OracleCaseViolation";
+  }
+}
+
+function groundTruthCommandProblem(
+  where: string,
+  command: unknown,
+): string | undefined {
+  if (
+    !Array.isArray(command) ||
+    command.length === 0 ||
+    typeof command[0] !== "string" ||
+    command[0].trim() === "" ||
+    command.some((part) => typeof part !== "string")
+  ) {
+    return `${where}: no ground-truth command (got ${JSON.stringify(command)})`;
+  }
+  return undefined;
+}
+
+function variantProblems(where: string, variant: unknown): string[] {
+  const v = variant as Partial<OracleVariant> | undefined | null;
+  if (v === undefined || v === null || typeof v !== "object") {
+    return [`${where}: missing`];
+  }
+  const problems: string[] = [];
+  if (
+    v.project === undefined ||
+    v.project === null ||
+    typeof v.project.files !== "object" ||
+    v.project.files === null
+  ) {
+    problems.push(`${where}: no project`);
+  }
+  if (v.groundTruthCommand !== undefined) {
+    const problem = groundTruthCommandProblem(
+      `${where}.groundTruthCommand`,
+      v.groundTruthCommand,
+    );
+    if (problem !== undefined) problems.push(problem);
+  }
+  return problems;
+}
+
+/**
+ * Every reason `kase` is malformed, checked at RUNTIME (task A-0 step 1).
+ *
+ * The types above already forbid each of these shapes, but a type is only
+ * a guarantee where a gate type-checks the file: a case built with a cast,
+ * from untyped JSON, or in a file no `tsc` run covers would otherwise be
+ * accepted -- an empty `boundNames` makes the loud-fixture check vacuous
+ * (it checks nothing and passes), and a missing control or ground-truth
+ * command removes the evidence the case's result rests on. So the runner
+ * re-checks them, and refuses to run the case at all.
+ */
+export function oracleCaseProblems(kase: OracleCase): readonly string[] {
+  const problems: string[] = [];
+  const boundNames = (kase.loudFixture as Partial<LoudFixtureCheck> | undefined)
+    ?.boundNames as unknown;
+  if (!Array.isArray(boundNames) || boundNames.length === 0) {
+    problems.push(
+      `loudFixture.boundNames is empty (got ${JSON.stringify(boundNames)}) -- the loud-fixture check would assert nothing`,
+    );
+  } else if (
+    boundNames.some((name) => typeof name !== "string" || name.trim() === "")
+  ) {
+    problems.push(
+      `loudFixture.boundNames has a non-name entry: ${JSON.stringify(boundNames)}`,
+    );
+  }
+
+  const gt = groundTruthCommandProblem(
+    "groundTruthCommand",
+    kase.groundTruthCommand,
+  );
+  if (gt !== undefined) problems.push(gt);
+
+  problems.push(...variantProblems("variant", kase.variant));
+
+  const controls = kase.controls as Partial<ControlsDeclaration> | undefined;
+  if (controls?.kind === "controls") {
+    const pair = (controls as { controls?: Partial<OracleControls> }).controls;
+    problems.push(...variantProblems("controls.positive", pair?.positive));
+    problems.push(...variantProblems("controls.negative", pair?.negative));
+  } else if (controls?.kind === "inapplicable") {
+    const reason = (controls as { reason?: unknown }).reason;
+    if (typeof reason !== "string" || reason.trim() === "") {
+      problems.push(
+        `controls declared inapplicable with no reason (got ${JSON.stringify(reason)})`,
+      );
+    }
+  } else {
+    problems.push(
+      `no controls: neither a positive/negative pair nor a declared inapplicable reason (got ${JSON.stringify(controls)})`,
+    );
+  }
+  return problems;
+}
+
 async function runVariant(
   kase: Pick<
     OracleCase,
@@ -137,6 +249,11 @@ function describeVariant(result: OracleVariantResult): string {
 export async function runOracleCase(
   kase: OracleCase,
 ): Promise<OracleCaseResult> {
+  const problems = oracleCaseProblems(kase);
+  if (problems.length > 0) {
+    throw new OracleCaseViolation(String(kase.id), problems);
+  }
+
   const variant = await runVariant(kase, kase.variant);
 
   if (kase.expectation) {
