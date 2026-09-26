@@ -702,6 +702,35 @@ decisions for the design, and § 5a its single sequential implementation
 schedule. None of it is implemented yet; this entry's "the soundness
 contract does not hold on `main` today" therefore still stands.
 
+**Updated counts, added by task `A-0` (2026-09-27).** Task A-0
+(`docs/tasks/A-0-adr0008-coverage-reproduction.md`) registered three
+more findings in `tests/validation/FINDINGS.md`: `PRM-117` (false
+`NOT_AFFECTED`), `PRM-118` (false `AFFECTED`) and `RWF-051` (tooling).
+Its eleven other false-`NOT_AFFECTED` reproductions are attached to
+`AUD-01` and add no finding. Counted the same way as the table above,
+from the **Failure class** field of each `AUD`, `PRM` and `RWF-051`
+section in the register (70 findings; a finding with more than one
+class is counted in each of its rows):
+
+| Failure class | Count | IDs |
+| --- | --- | --- |
+| false `NOT_AFFECTED` | 47 | `AUD-01,02,03,04`; `PRM-12..33,37,38,60,61,62,63,101..109,112..117` |
+| silent drop | 11 | unchanged |
+| false `AFFECTED` | 7 | `AUD-05,13,14`; `PRM-25,61,107,118` |
+| false reason | 4 | unchanged |
+| scan abort | 2 | unchanged |
+| disclosure | 2 | unchanged |
+| tooling | 1 | `RWF-051` |
+
+`PRM-118` is a fabricated call edge, and a false `AFFECTED`, not a false
+`NOT_AFFECTED`. It is counted because AGENTS.md § E makes a fabricated
+edge a soundness defect. `RWF-051` is a gate gap, not a verdict defect:
+the type-level half of a test guard under `tests/` is enforced by no
+gate. The table above is left as it was measured. The project owner
+accepted ADR 0008's Amendment A-0 on 2026-09-27; `PRM-117` and `PRM-118`
+are mapped in `docs/REMEDIATION-PLAN.md` § 2.5, and `RWF-051` is § 5a
+order 1b. None of it is implemented, so this entry still stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
