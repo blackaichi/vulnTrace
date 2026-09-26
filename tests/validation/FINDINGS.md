@@ -155,6 +155,74 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-041 | the `unsupported_construct` uncertainty token (P1-B1 / P1-B2) | One undifferentiated token covered eight different frontend gaps, so P1-B had nothing to prioritise from | **Observability** — no coverage change, no verdict moved, no gap closed by it | **Fixed** (P1-B1 / P1-B2: the token is decomposed into measured subtypes) — see below |
 | RWF-048 | the binding-form grammar (`tests/binding-grammar/`) | A standing sweep of every binding form against every attribution mechanism: 264 cells, no class-A, B or C finding, 89 `honest-unknown` refusals in eight families | **Precision** — every disagreement is a refusal toward `UNKNOWN` | Open — the section is an instrument record and states no status; its eight refusal families are recorded, not resolved — see below |
 | RWF-049 | any CommonJS export written with a quoted or numeric key (`module.exports = { "1": f }`) | The export model records no export for a quoted or numeric object-literal key, while the member-reading path does | **Precision debt, not a soundness defect** — fails toward `unresolved_target` (the section's classification) | Open — the section's own heading is "Not fixed": recorded only — see below |
+| AUD-01 | `vuln-lib` (synthetic fixture) | A function-valued argument to an ambient builtin (setTimeout, new Promise, process.nextTick, Array.from, …) gets no call-graph edge | false NOT_AFFECTED — see below | Open |
+| AUD-02 | `vuln-lib` (synthetic fixture) | A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge | false NOT_AFFECTED — see below | Open |
+| AUD-03 | `vuln-lib` (synthetic fixture) | `process.getBuiltinModule(spec)` loads a builtin while the module-load closure reports complete | false NOT_AFFECTED — see below | Open |
+| AUD-04 | `vuln-lib` (synthetic fixture) | `inspector.Session#post('Runtime.evaluate', {includeCommandLineAPI:true})` is an unmodeled eval surface | false NOT_AFFECTED — see below | Open |
+| AUD-05 | `vuln-lib` (synthetic fixture), prerelease version | `semver.coerce` strips prereleases, dropping a vulnerable installed prerelease and falsely flagging an unaffected one | silent drop (recorded as a false "not applicable"); also false AFFECTED in the reverse direction — see below | Open |
+| AUD-06 | `vuln-lib` (synthetic fixture), cache | The OSV cache has no TTL or staleness signal, so an advisory published after the first scan is silently never seen | silent drop — see below | Open |
+| AUD-07 | `vuln-lib` (synthetic fixture), cache | The default OSV cache directory lives inside the scanned project's own tree, and its contents are trusted unvalidated | silent drop — see below | Open |
+| AUD-08 | `vuln-lib` (synthetic fixture), lockfile/disk mismatch | A package really loaded from disk but missing from `package-lock.json` is never queried or reported | silent drop — see below | Open |
+| AUD-09 | `vuln-lib` (synthetic fixture) | A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected | silent drop (false "not applicable") — see below | Open |
+| AUD-10 | `vuln-lib` (synthetic fixture) | A malformed OSV record is dropped to diagnostics only, with no `unreportedCandidates` entry | silent drop (product/observability) — see below | Open |
+| AUD-11 | `vuln-lib` (synthetic fixture) | A single OSV record with an empty `id` string fails schema validation and discards the whole report | scan abort — see below | Open |
+| AUD-12 | `vuln-lib` (synthetic fixture) | An all-UNKNOWN scan exits 0, identical to a clean scan, with no machine-readable signal that nothing was decided | false reason / product — see below | Open |
+| AUD-13 | `vuln-lib` (synthetic fixture) | Babel-style `__esModule` interop is not modeled for a default ESM import of a CommonJS module | false AFFECTED — see below | Open |
+| AUD-14 | `vuln-lib` (synthetic fixture) | An OSV record's `withdrawn` field is not parsed; a withdrawn advisory is still analyzed | false AFFECTED — see below | Open |
+| AUD-15 | `vuln-lib` (synthetic fixture) | An UNKNOWN's reason text falsely claims a package "was never traversed" when the true cause is that no rule names it | false reason — see below | Open |
+| AUD-16 | `vuln-lib` (synthetic fixture) | Two README sentences and two HTML-report sentences describe cache/no-finding behavior that AUD-05/06/07/08/09 show is false | disclosure — see below | Open |
+| PRM-12 | `vuln-lib` (synthetic fixture) | A call/`new` whose callee resolves to a Node builtin, but which receives a function-valued argument, emits no edge | false NOT_AFFECTED — see below | Open |
+| PRM-13 | `vuln-lib` (synthetic fixture) | VT-213's inline-callback rescue displaces the unresolved edge for an otherwise-unattributable callee instead of adding to it | false NOT_AFFECTED — see below | Open |
+| PRM-14 | `vuln-lib` (synthetic fixture) | Loose equality (`==`/`!=`) is evaluated as if it were strict, pruning a branch real Node does not prune | false NOT_AFFECTED — see below | Open |
+| PRM-15 | `vuln-lib` (synthetic fixture) | A same-file `const require = ...` shadow is matched by identifier text before the lexical authority runs | false NOT_AFFECTED — see below | Open |
+| PRM-16 | `vuln-lib` (synthetic fixture) | A same-file caller is treated as the unique call site of an exported higher-order parameter, even with cross-file callers | false NOT_AFFECTED — see below | Open |
+| PRM-17 | `vuln-lib` (synthetic fixture) | A higher-order parameter's reassignment inside the function body is never checked before its call sites are treated as authoritative | false NOT_AFFECTED — see below | Open |
+| PRM-18 | `vuln-lib` (synthetic fixture) | The TypeScript checker's static apparent type of a receiver is used as the runtime receiver, even when reassigned | false NOT_AFFECTED — see below | Open |
+| PRM-19 | `vuln-lib` (synthetic fixture) | A derived class's synthesized implicit default constructor gets no edge to the resolved base constructor | false NOT_AFFECTED — see below | Open |
+| PRM-20 | `vuln-lib` (synthetic fixture) | `bindCallee` resolves a trailing method chain (`x.y()`) to the receiver `x` itself, discarding which method was called | false NOT_AFFECTED — see below | Open |
+| PRM-21 | `vuln-lib` (synthetic fixture) | A same-file `const` binding shadows an ambient global (`require`, `eval`, `process`, `module`) for the whole file | false NOT_AFFECTED — see below | Open |
+| PRM-22 | `vuln-lib` (synthetic fixture) | The loader classifier's alias lookup for module/eval/vm-style capabilities is first-match and scope-blind | false NOT_AFFECTED — see below | Open |
+| PRM-23 | `vuln-lib` (synthetic fixture) | A truncated module-load closure (`traversal_truncated`) does not block families B/C, missing a closure-widening hook outside the truncated file set | false NOT_AFFECTED — see below | Open |
+| PRM-24 | `vuln-lib` (synthetic fixture) | A builtin loader that starts new execution (`cluster.fork`/`setupPrimary`) is not classified as a loader | false NOT_AFFECTED — see below | Open |
+| PRM-25 | `vuln-lib` (synthetic fixture) | A configured `{file, symbol}` entrypoint is matched by node-name text; an unmatched symbol still reports the entrypoint root complete | false NOT_AFFECTED and false AFFECTED — see below | Open |
+| PRM-26 | `vuln-lib` (synthetic fixture) | Export-to-function mapping takes the first same-named match in file-scan order, not the declaration the export site binds to | false NOT_AFFECTED — see below | Open |
+| PRM-27 | `vuln-lib` (synthetic fixture) | A later string-key or getter property in an object-literal export is ignored; the earlier plain-key value is still published | false NOT_AFFECTED — see below | Open |
+| PRM-28 | `vuln-lib` (synthetic fixture) | A computed export key (`[K]: danger`) is resolved against a same-file `const` binding chosen scope-blind | false NOT_AFFECTED — see below | Open |
+| PRM-29 | `vuln-lib` (synthetic fixture) | A property write inside a called `configure()` function is not seen as competing with the export map | false NOT_AFFECTED — see below | Open |
+| PRM-30 | `vuln-lib` (synthetic fixture) | A `module.exports = {...}` literal unpacking wins over a later `module.exports.run = danger` member write | false NOT_AFFECTED — see below | Open |
+| PRM-31 | `vuln-lib` (synthetic fixture) | Root-requirement materialization matches a candidate node by AST name text, so a same-named decoy elsewhere satisfies it | false NOT_AFFECTED — see below | Open |
+| PRM-32 | `vuln-lib` (synthetic fixture) | `this.X = ...` at module scope and an aliased `const api = module.exports; api.run = ...` are invisible to root-requirement detection | false NOT_AFFECTED — see below | Open |
+| PRM-33 | `vuln-lib` (synthetic fixture), tsconfig | Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map | false NOT_AFFECTED — see below | Open |
+| PRM-34 | `lodash` (`file:`-vendored, real npm 10.9.0 lockfile) | A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely | silent drop — see below | Open |
+| PRM-35 | `vuln-lib` (synthetic fixture), cache | A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic | scan abort — see below | Open |
+| PRM-36 | `vuln-lib` (synthetic fixture), workspaces | The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set | false reason — see below | Open |
+| PRM-37 | `vuln-lib` (synthetic fixture) | A tagged-template call (`` tag`x` ``) gets no call-graph edge at all | false NOT_AFFECTED — see below | Open |
+| PRM-38 | `vuln-lib` (synthetic fixture) | Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-60 | `vuln-lib` (synthetic fixture) | `unsupported_*` reasons are treated as never widening the closure, but four capability-receiver shapes let them load a new module | false NOT_AFFECTED — see below | Open |
+| PRM-61 | `vuln-lib` (synthetic fixture) | Export forwarding resolves to the first "own" binding of a name, which a later `module.exports` replacement or property write can make stale | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below | Open |
+| PRM-62 | `vuln-lib` (synthetic fixture) | An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value | false NOT_AFFECTED — see below | Open |
+| PRM-63 | `vuln-lib` (synthetic fixture) | Several ways of replacing/mutating `module.exports` (bracket member write, module-alias write, `Object.assign(module.exports, …)`) are not recognized as export writes | false NOT_AFFECTED (for the uncompensated shapes) — see below | Open |
+| PRM-64 | `foo` (synthetic workspace fixture) | A versionless package instance is evaluated only against advisories its own (missing) version would filter to | silent drop — see below | Open |
+| PRM-65 | `vuln-lib` (synthetic fixture), paginated OSV response | The real `OsvProvider` sends one request with no `page_token`, so a paginated OSV response's later pages are silently never seen | silent drop — see below | Open |
+| PRM-66 | `bad` (synthetic workspace fixture) | A workspace member with a malformed manifest is silently skipped only when its lockfile entry is versionless | silent drop (versionless lock entry only) — see below | Open |
+| PRM-67 | `vuln-lib` (synthetic fixture) | `SUPPORTED_MODEL_EXCLUSIONS` omits `--conditions` and `--import`/preload flags, so the model's stated scope is false | disclosure — see below | Open |
+| PRM-101 | `vuln-lib` (synthetic fixture) | Site B hands a phantom target to reachability with no closure corroboration, certifying export-*-only code unreachable although its top level runs | false NOT_AFFECTED — see below | Open |
+| PRM-102 | `vuln-lib-fork` (synthetic fixture, manifest name mismatch) | Site A/B selection is keyed by advisory package NAME, not by exact `PackageInstance` | false NOT_AFFECTED (realistic for a lock entry whose manifest name differs from the queried name) — see below | Open |
+| PRM-103 | `vuln-lib` (synthetic fixture) | A cyclic `require` observes an intermediate `module.exports` value mid-cycle, but last-write-wins attribution only considers the final write | false NOT_AFFECTED — see below | Open |
+| PRM-104 | `vuln-lib` (synthetic fixture) | A `FunctionDeclaration` binding used as an export has no reassignment check, unlike the class/function-expression branches next to it | false NOT_AFFECTED — see below | Open |
+| PRM-105 | `vuln-lib` (synthetic fixture) | Member access and call results are treated as opaque in the escape sweep, hiding a capability reached through `[x][0]`, `.at(0)`, a computed key or `Reflect.get` | false NOT_AFFECTED — see below | Open |
+| PRM-106 | `vuln-lib` (synthetic fixture) | `require.bind(...)` is deliberately excluded from the capability-receiver check | false NOT_AFFECTED — see below | Open |
+| PRM-107 | `vuln-lib` (synthetic fixture), nested + top instance | `module.paths` is recognized only through a small, fully-enumerated set of literal method-name calls | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below | Open |
+| PRM-108 | `vuln-lib` (synthetic fixture) | A destructured builtin binding's imported name falls back to the local name for a string-literal or computed property key | false NOT_AFFECTED — see below | Open |
+| PRM-109 | `vuln-lib` (synthetic fixture) | `graph.ts` restates the same "`unsupported_*` reasons cannot introduce a new module" premise PRM-60 disproves | false NOT_AFFECTED — see below | Open |
+| PRM-110 | `vuln-lib` (synthetic fixture) | The HTML report's per-finding summary reads only the first `unknownReasons` entry, so a rule mismatch reads as "no reason recorded" | false reason — see below | Open |
+| PRM-111 | `vuln-lib` (synthetic fixture) | An empty `--cve` value (`--cve ""`) is accepted and silently returns zero findings rather than being rejected | silent drop — see below | Open |
+| PRM-112 | `vuln-lib` (synthetic fixture) | `instanceof` against a class defining a static `[Symbol.hasInstance]` invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-113 | `vuln-lib` (synthetic fixture) | `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | Open |
+| PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | Open |
+| RWF-050 | n/a — a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) has no register row of its own | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below | Open |
 
 ---
 
@@ -14564,6 +14632,9 @@ a description of current behaviour.
   destructuring declaration owns a bound name*, RWF-046 decides *which
   module the exact source identifier denotes*. RWF-045 remains open and
   name-keyed in `findDestructuredBindingSource`; nothing here touches it.
+  **Correction, added by task `record-soundness-audits`:** RWF-045 has
+  since merged — see "RWF-045 — REMEDIATED" below. This sentence is left
+  as written because it was true when this section was recorded.
 - **RWF-044, RWF-006, RWF-001, RWF-043/VT-210** — unchanged.
 - **ESM import identity** — unchanged in behaviour; the ESM cases now
   read their specifier off the same declaration node instead of the
@@ -14795,6 +14866,11 @@ is caught by NAMED tests:
 
 **Fixed (RWF-046a).** RWF-045 is untouched and remains open; the two
 remain separate authority layers.
+
+**Correction, added by task `record-soundness-audits`:** RWF-045 has
+since merged — see "RWF-045 — REMEDIATED" above. This section is left as
+written because it was true when this section was recorded, before that
+merge.
 
 ### Test obligation owed by this PR
 
@@ -15342,6 +15418,31 @@ reworded cell turns a test red rather than reporting a finding as fixed,
 but it is a second status vocabulary that can drift from the first. It is
 recorded here, not changed.
 
+### 10. A second surface, found by the comment-premise sweep (PRM-11)
+
+Appended by task `record-soundness-audits`. The premise-sweep round 1
+report (`docs/audits/2026-09-premise-sweep-round-1.md`, `PRM-11`) found a
+second surface of this same defect, reproduced against `62b52b9`: it is
+recorded here rather than as a new ID, per that task's instructions.
+
+`commonjs-reexports.ts` (comment quoted verbatim by the sweep, `:120-121,
+427-430`) excludes property mutation ("`x.y = ...` is excluded: it
+changes the object, not the binding") from re-export origin tracing, on
+the same reasoning this section's own defect already disproves for a
+member READ. The sweep's `reexport-patched-sibling` fixture — a package
+whose `index.js` does `const impl = require("./impl"); impl.run =
+danger; exports.run = impl.run;` — reproduces a false `NOT_AFFECTED`
+through the RE-EXPORT path specifically: `exports.run` is traced back to
+`impl.run`'s ORIGINAL declaration in `impl.js`, not to the value
+`impl.run` holds after the patch, giving the same complete Family C
+proof over a `danger` call real Node executes. This is the identical
+class-B mechanism as the section above — a member write on an
+object whose STATIC declaration is substituted for its RUNTIME value —
+reached through re-export tracing instead of a direct `require`-bound
+receiver. Not independently remediated here; see
+`docs/audits/2026-09-premise-sweep-round-1.md` § 3 (`PRM-11`) for the
+full reproduction.
+
 ---
 
 ## RWF-048 — The binding-form grammar, swept: 264 cells, zero fabrications, eight refusal families
@@ -15574,7 +15675,19 @@ in the matrix and in `REPORT.md`:** these cells are exercised in the
 **refusal direction only**. A non-identifier key resolves in NO
 position anywhere in the engine, so no source spelling exercises the
 positive direction and none of these cells has ever been observed
-passing. Measured, all three layers:
+passing.
+
+**Correction, added by task `record-soundness-audits`:** the claim above
+— "a non-identifier key resolves in NO position anywhere in the engine"
+— is false for a STRING-LITERAL key. `module.exports = { "1": f }` is a
+real export named `"1"` that the member-reading path resolves
+(`named-bindings.ts`), and RWF-046a's own shape-boundary comment made
+the identical false claim about a numeric key, corrected in RWF-046a
+itself ("Consequence already recorded elsewhere"). It remains true that
+none of the SPECIFIC cells in the table below has ever been observed
+passing, because each one is a NUMERIC or COMPUTED key, not a
+string-literal one; the general claim in the sentence above is what is
+false, not the cells' own measured history. Measured, all three layers:
 
 | position | spelling | result |
 | --- | --- | --- |
@@ -15798,3 +15911,1053 @@ destructured require binding. The scoped re-audit measured them on
 separately from RWF-046a's own array case because they were on `main` and
 that case was not. Read RWF-046a for the reproductions, the measurements
 and the closure.
+
+---
+
+## AUD-01 — A function-valued argument to an ambient builtin (setTimeout, new Promise, process.nextTick, Array.from, …) gets no call-graph edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B
+**Proof family affected:** C
+**Severity:** Critical
+**Fix lane:** A — call graph
+
+A callback handed to an ambient global/builtin (`setTimeout`, `new Promise`'s executor, `process.nextTick`, `queueMicrotask`, `setImmediate`, `Array.from`, the `JSON.parse` reviver, `Reflect.apply`, a `global`/`globalThis` store, `process.on`+`emit`, or a named local) is matched by identifier text against a fixed global-name list before VT-213's inline-callback rescue runs, so no edge — resolved or unresolved — is ever emitted to it. Family C then certifies the callback's own code unreachable, although real Node invokes it.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-01"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-02 — A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B
+**Proof family affected:** C
+**Severity:** Critical
+**Fix lane:** A — call graph
+
+The same early return that drops AUD-01's callback edges also fires when a module calls its own `exports.danger(x)`, `module.exports.danger(x)` or `exports['danger'](x)` — the root identifiers `exports`/`module` are on the same exempted list. Family C then certifies the target unreachable while Node's own `require` of the package calls it. Not RWF-047: this is the package writing and reading its own export inside one file, not a consumer mutating a required module object.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-02"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-03 — `process.getBuiltinModule(spec)` loads a builtin while the module-load closure reports complete
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B
+**Proof family affected:** A
+**Severity:** Critical
+**Fix lane:** C — capability flow and resolution
+
+`process.getBuiltinModule('module'|'child_process'|'worker_threads')` (every spelling: destructured, via `node:process`, stored and used later, from ESM) is absent from the builtin/loader specifier table, so the closure never widens for it and reports `complete: true` with no `vuln-lib` present. Family A then certifies the package absent from the load closure while Node genuinely loads and calls it through `Module.createRequire`.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-03"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-04 — `inspector.Session#post('Runtime.evaluate', {includeCommandLineAPI:true})` is an unmodeled eval surface
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B
+**Proof family affected:** A
+**Severity:** Critical
+**Fix lane:** C — capability flow and resolution
+
+`inspector` (and `node:inspector`, `inspector/promises`) is entirely absent from the builtin/capability table, so a `Runtime.evaluate` call with `includeCommandLineAPI` (which hands the evaluated string a working `require`) never widens the closure. Family A certifies the package absent although Node's own `require` inside the evaluated string loads and calls it.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-04"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-05 — `semver.coerce` strips prereleases, dropping a vulnerable installed prerelease and falsely flagging an unaffected one
+
+**Status:** Open
+**Failure class:** silent drop (recorded as a false "not applicable"); also false AFFECTED in the reverse direction
+**Defect class:** B
+**Proof family affected:** not applicable
+**Severity:** Critical
+**Fix lane:** B — intake, cache, output
+
+`version-matching.ts` coerces both the installed version and every advisory bound through `semver.coerce` before comparing, which strips prerelease identifiers. An installed `2.0.0-rc.1` against a `fixed: 2.0.0` advisory is reported `not_applicable` (dropped) although `semver.lt('2.0.0-rc.1','2.0.0')` is true under OSV's own SEMVER precedence; the reverse direction (`1.5.0-beta.3` outside a `1.5.0-beta.1`..`1.5.0-beta.2` range) gives a false AFFECTED. No test exercises a prerelease.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-05"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-06 — The OSV cache has no TTL or staleness signal, so an advisory published after the first scan is silently never seen
+
+**Status:** Open
+**Failure class:** silent drop
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Critical
+**Fix lane:** B — intake, cache, output
+
+`osv-cache.ts` records no fetched-at timestamp and no TTL. Once a scan caches an empty provider response, every later scan reuses it forever with zero provider queries, no finding and no diagnostic — even after the provider starts returning a real advisory. `--no-cache` is the only escape.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-06"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-07 — The default OSV cache directory lives inside the scanned project's own tree, and its contents are trusted unvalidated
+
+**Status:** Open
+**Failure class:** silent drop
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Critical
+**Fix lane:** B — intake, cache, output
+
+The cache defaults to `<projectRoot>/.vulntrace-cache/osv`, and its comment's premise that "its shape is entirely controlled by VulnTrace itself" is false — the directory belongs to the target project being scanned, not to VulnTrace. A committed empty-array cache file suppresses every advisory for that key with zero provider queries; a truncated file is treated as a miss, but a wrong-shaped one (`{}`, `5`, `true`) throws.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-07"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-08 — A package really loaded from disk but missing from `package-lock.json` is never queried or reported
+
+**Status:** Open
+**Failure class:** silent drop
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Critical
+**Fix lane:** B — intake, cache, output
+
+The dependency inventory is built from `package-lock.json` alone; a package present and required on disk but absent from the lockfile produces zero findings, zero `unreportedCandidates` and zero diagnostics, although Node loads and runs it. A nested on-disk-only copy shadowing a hoisted lockfile entry is silently skipped the same way while Node runs the nested one.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-08"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-09 — A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected
+
+**Status:** Open
+**Failure class:** silent drop (false "not applicable")
+**Defect class:** B
+**Proof family affected:** not applicable
+**Severity:** High
+**Fix lane:** B — intake, cache, output
+
+A GIT-type range's fixed commit hash is run through `semver.coerce` (e.g. `coerce('3f2a9c1b0d')` = `'3.0.0'`), so an installed `5.0.0` is reported `not_applicable` against a range that cannot legitimately be interpreted as semver at all. An affected entry with no ranges and no versions list is likewise read as `not_affected` rather than indeterminate. The file's own comment already admits the GIT case is "silently miscompared".
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-09"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-10 — A malformed OSV record is dropped to diagnostics only, with no `unreportedCandidates` entry
+
+**Status:** Open
+**Failure class:** silent drop (product/observability)
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Medium
+**Fix lane:** B — intake, cache, output
+
+`normalizeOsvVulnerability`'s catch logs "skipping malformed vulnerability record" to diagnostics and the scan exits 0, but nothing is recorded in `unreportedCandidates` — the one channel that exists to account for a candidate that produced no finding.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-10"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-11 — A single OSV record with an empty `id` string fails schema validation and discards the whole report
+
+**Status:** Open
+**Failure class:** scan abort
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Medium
+**Fix lane:** B — intake, cache, output
+
+The normalizer accepts `id: z.string()` without `.min(1)`. One record with `id: ""`, even for an unrelated package, fails `result.schema.json` validation at output time: exit 3, and the entire report — including real AFFECTED findings for other packages — is lost rather than that one record being skipped.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-11"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-12 — An all-UNKNOWN scan exits 0, identical to a clean scan, with no machine-readable signal that nothing was decided
+
+**Status:** Open
+**Failure class:** false reason / product
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Medium
+**Fix lane:** B — intake, cache, output
+
+Exit code 0 means only "no AFFECTED finding"; a scan where every candidate resolved to UNKNOWN exits identically to a genuinely clean one, so a CI gate cannot distinguish "nothing vulnerable" from "nothing was decided" without parsing `findings[].verdict` itself.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-12"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-13 — Babel-style `__esModule` interop is not modeled for a default ESM import of a CommonJS module
+
+**Status:** Open
+**Failure class:** false AFFECTED
+**Defect class:** B
+**Proof family affected:** not applicable
+**Severity:** Low
+**Fix lane:** E — export model
+
+For a library with `exports.__esModule = true; exports.default = realDanger`, Node's real ESM default import binds the whole `module.exports` object (an object, not a function); an app that branches `typeof def === 'function' ? def(1) : def.safe(1)` therefore calls the safe path. The analyzer does not model this Node ESM/CJS interop rule and reports AFFECTED.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-13"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-14 — An OSV record's `withdrawn` field is not parsed; a withdrawn advisory is still analyzed
+
+**Status:** Open
+**Failure class:** false AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Low
+**Fix lane:** B — intake, cache, output
+
+The normalizer schema has no field for `withdrawn`; a record carrying `withdrawn: "2026-01-01…"` is analyzed exactly like a live advisory rather than being reported as an `unreportedCandidates` disposition.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-14"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-15 — An UNKNOWN's reason text falsely claims a package "was never traversed" when the true cause is that no rule names it
+
+**Status:** Open
+**Failure class:** false reason
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Low
+**Fix lane:** B — intake, cache, output
+
+When one advisory affects two packages but the rule only targets one of them, the untargeted package's finding is UNKNOWN — the verdict is sound — but its reason text (`package_instance_absence`, "was never traversed") is false: the package was traversed; no rule names it. A rule's `package.name` is never compared against the resolved target, so this mismatch is silent.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-15"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## AUD-16 — Two README sentences and two HTML-report sentences describe cache/no-finding behavior that AUD-05/06/07/08/09 show is false
+
+**Status:** Open
+**Failure class:** disclosure
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** Low
+**Fix lane:** D — disclosure
+
+README says the cache directory is "(gitignored)" — true only of VulnTrace's own `.gitignore`, not a scanned project's — and that a different build's cache entry "is never reused" — the key is the literal `package.json` version string, not a build identity, so two builds sharing that string collide. `html-report.ts`'s summaries for "not applicable" and "no findings" describe behavior AUD-05/06/07/08/09 show is not what happens. The two README sentences are corrected by this task (see README.md); the HTML report's own sentences are left to a later, code-owned fix, per this task's instructions.
+
+Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-16"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-12 — A call/`new` whose callee resolves to a Node builtin, but which receives a function-valued argument, emits no edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** same mechanism as AUD-01 (there labeled class B); not separately labeled in this report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`fs.readFile(__filename, lib.parse)` and similar builtin-bound calls emit no edge to the function-valued argument at all, so family C certifies `lib.parse` unreachable although Node invokes it. Reproduced end to end (`builtin-callback` fixture, part of 96/96 loud-fixture-verified cases). An existing test (`call-graph.test.ts:274`/`:380`) covers builtins with no callback and an inline-callback-only case, but not this failing shape.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-12`) and § 4 (`builtin-callback`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-13 — VT-213's inline-callback rescue displaces the unresolved edge for an otherwise-unattributable callee instead of adding to it
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+When a call's callee cannot be attributed but exactly one argument is an inline arrow, VT-213 resolves the call to that arrow and the callee's own unknown edge is never emitted, so family C certifies the callee-side target unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-13`) and § 4 (`inline-callback-displacement`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Pinned test:** `call-graph.test.ts` VT-213 ("someUtterlyArbitraryMethodName") expects exactly this displacement as its recorded result; AGENTS.md § G forbids pinning a false premise as an expected result going forward.
+
+---
+
+## PRM-14 — Loose equality (`==`/`!=`) is evaluated as if it were strict, pruning a branch real Node does not prune
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`evaluateConstantBoolean` folds `1 == "1"` the same as `1 === 1`, pruning the branch containing `lib.parse("x")` as dead code, although loose equality across types makes the branch live. Family C certifies the call unreachable; Node executes it.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-14`) and § 4 (`loose-equality`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-15 — A same-file `const require = ...` shadow is matched by identifier text before the lexical authority runs
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`isStaticRequireCall` matches `require("literal")` by name before checking whether `require` resolves to any lexical declaration in scope; a function-local `function require(name){ return lib.parse(name); }` shadow is read as the real module loader, and the call is treated as import setup with no edge, rather than as a call to the shadow. Family C certifies the target unreachable; Node calls the shadow, which calls `lib.parse`.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-15`) and § 4 (`local-require-shadow`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-16 — A same-file caller is treated as the unique call site of an exported higher-order parameter, even with cross-file callers
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+VT-210's higher-order resolution accepts a same-file call site as authoritative for a parameter's value even when the enclosing function is exported (and so has importers whose call sites are unaccounted for). `lib.each(lib.parse, "x")` resolves `fn` from an unrelated same-file call, certifying `lib.parse` unreachable inside `each`'s body.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-16`) and § 4 (`higher-order-cross-file-callers`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-17 — A higher-order parameter's reassignment inside the function body is never checked before its call sites are treated as authoritative
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (explicitly labeled class C in the report)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+VT-210's invariant requires every call site to be accounted for, but does not check whether the parameter itself is reassigned inside the function (`fn = fn || lib.parse; return fn("x")`). The reassignment collapses to the call-site value and misses the reassigned one. The same mechanism resurfaces later through the `arguments[0]` alias (round 2, KNOWN PRM-17).
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-17`) and § 4 (`higher-order-reassigned-parameter`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-18 — The TypeScript checker's static apparent type of a receiver is used as the runtime receiver, even when reassigned
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B (explicitly labeled class B in the report)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`let inst = new Safe()` later reassigned to `new Danger()` before `inst.run()` is resolved through the checker's static apparent type of `inst` at its declaration, not its actual runtime value, so the resolution follows `Safe#run` and certifies `Danger#run` (which calls `lib.parse`) unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-18`) and § 4 (`checker-static-type-receiver`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-19 — A derived class's synthesized implicit default constructor gets no edge to the resolved base constructor
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`source-index.ts`'s implicit-constructor synthesis assumes an implicit constructor "provably does nothing" and gives the synthesized node no outgoing edges; but a base class's real constructor still runs via the implicit `super()` call. `class Sub extends Base {}` with `new Sub()` certifies `Base`'s constructor body (which calls `lib.parse`) unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-19`) and § 4 (`implicit-super-constructor`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-20 — `bindCallee` resolves a trailing method chain (`x.y()`) to the receiver `x` itself, discarding which method was called
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+A trailing property chain (`api.parse()`, `lib.api.parse()`) is resolved to an edge on the already-bound receiver (`api`, `lib.api`) rather than the specific member, on the stated premise that the chain "is intentionally not consulted". Family C then certifies the real target `parse` unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-20`) and § 4 (`named-binding-trailing-chain`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Pinned test:** `symbol-binder.test.ts` ("ignores a trailing method chain") expects exactly this as its recorded result; AGENTS.md § G forbids pinning it as expected going forward.
+
+---
+
+## PRM-21 — A same-file `const` binding shadows an ambient global (`require`, `eval`, `process`, `module`) for the whole file
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+A same-file `const lib = r(name)` (where `r = require`) is read by `loader-constructs.ts` as a shadow of the ambient `require` identifier for the whole file, which never widens the module-load closure. Family A certifies the package absent from the closure, although `require` is not actually reassigned or made inaccessible. Reproduced together with PRM-22 as the `wholefile-shadow-require-alias` fixture.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-21`) and § 4 (`wholefile-shadow-require-alias`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-22 — The loader classifier's alias lookup for module/eval/vm-style capabilities is first-match and scope-blind
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+`resolveSingleAssignmentValue` in `loader-constructs.ts` uses the same first-match, scope-blind alias lookup that comparable fixes already removed from other resolution paths; here it still governs whole-file capability shadowing. Not independently reproduced beyond PRM-21's shared fixture; the comment justifying it cites two precedents both since removed as soundness defects.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-22`) and § 4 (`wholefile-shadow-require-alias`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-23 — A truncated module-load closure (`traversal_truncated`) does not block families B/C, missing a closure-widening hook outside the truncated file set
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a closure that is a strict subset of the true reachable set is treated as though it were the whole one)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** V — verdict corroboration
+
+`traversal_truncated` is documented to block only family A, on the premise that "a truncated closure is accompanied by a truncated graph and the correct guard engages anyway". With `analysis.limits.maxFiles` set low relative to project size, a `require` hook installed in a file outside the truncated set (which patches a sibling file to load `vuln-lib` instead) is missed, and family C still certifies the real target unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-23`) and § 4 (`closure-truncation-hides-hook`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Pinned test:** `verdict.negative-proof.test.ts` "case 10b" restates the false premise in its own comment as the expected result; AGENTS.md § G forbids pinning it as expected going forward.
+
+---
+
+## PRM-24 — A builtin loader that starts new execution (`cluster.fork`/`setupPrimary`) is not classified as a loader
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`cluster.fork()`/`setupPrimary({exec})` executes a separate worker file, but `cluster` is absent from the builtin loader-widening table, so the closure reports complete and family A certifies the worker's `vuln-lib` call unreachable. The comparable `child_process.fork()` of the same worker file IS treated as widening — the report flags this as a policy inconsistency (`SUPPORTED_MODEL_EXCLUSIONS` item 6 could be read either way), not a settled defect on its own.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-24`) and § 4 (`cluster-fork`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-25 — A configured `{file, symbol}` entrypoint is matched by node-name text; an unmatched symbol still reports the entrypoint root complete
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED and false AFFECTED
+**Defect class:** A
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** V — verdict corroboration
+
+A `{file, symbol: "main"}` entrypoint is matched against AST node names as text rather than through export/root-candidate resolution. When the real exported `main` is never found (`symbol-entry-unmaterialized`), the root is still reported complete and family C certifies the real handler unreachable. When a same-named decoy exists elsewhere in the file (`symbol-entry-name-match`), resolution can land on the decoy and issue a false AFFECTED for code Node never calls through that entrypoint.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-25`) and § 4 (`symbol-entry-unmaterialized`, `symbol-entry-name-match`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-26 — Export-to-function mapping takes the first same-named match in file-scan order, not the declaration the export site binds to
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A (explicitly labeled class A in the report)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+`index.functions.find(fn => fn.name === localKey)` returns the first function sharing a name in file-scan order, so `class H { run(x){...} }` (a decoy method named `run`) out-answers the real exported `function run(x){ return danger(x); }`. Family C certifies the real implementation unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-26`) and § 4 (`export-map-first-match-class-method`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-27 — A later string-key or getter property in an object-literal export is ignored; the earlier plain-key value is still published
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+Spread elements are (correctly) skipped as unresolvable, but the same path also skips a later string-literal key (`run: safe, "run": danger`) or getter override (`get run(){ return danger; }`), so the earlier `safe` value is kept as the published export although JavaScript's last-write-wins semantics make `danger` the real one.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-27`) and § 4 (`export-map-string-key-override`, `export-map-getter-override`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-28 — A computed export key (`[K]: danger`) is resolved against a same-file `const` binding chosen scope-blind
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+`module.exports = { ..., [K]: danger }` resolves `K` to whichever same-file `const K` binding is found first, regardless of which one is actually in scope at that literal (a function-local `const K = "other"` can be picked over the module-scope `const K = "run"` really in effect). Family C certifies the real `run` export unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-28`) and § 4 (`export-map-computed-key-scope`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-29 — A property write inside a called `configure()` function is not seen as competing with the export map
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (explicitly labeled class C in the report)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+`exports.configure = function(){ exports.run = danger; }; exports.run = safe; exports.configure();` has `exports.run = safe` textually last, but the deferred write inside `configure()` (invoked before the module finishes) actually wins at runtime. The export map's last-write-wins rule only looks at source position, not execution order.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-29`) and § 4 (`export-map-configure-write`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-30 — A `module.exports = {...}` literal unpacking wins over a later `module.exports.run = danger` member write
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+`module.exports = { parse, safe, run: safe }; module.exports.run = danger;` keeps the literal-unpacked `safe` as the published `run` rather than the later member write `danger`, because the two write forms are not ordered against each other by source position. Family C certifies `danger` unreachable although it is the module's real last-written, real-called export.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-30`) and § 4 (`export-map-literal-then-member-write`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-31 — Root-requirement materialization matches a candidate node by AST name text, so a same-named decoy elsewhere satisfies it
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+A `class Cli { run() { return "decoy"; } }` (an unrelated method named `run`) satisfies the root-witness requirement for an `exports.run = registry.impl` entrypoint, because the witness check matches by name text rather than declaration identity. With the requirement satisfied by the decoy, the real `registry.impl` root is never registered and family C certifies it unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-31`) and § 4 (`entry-root-decoy`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-32 — `this.X = ...` at module scope and an aliased `const api = module.exports; api.run = ...` are invisible to root-requirement detection
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+Root detection recognizes `module.exports = X` and `exports.X = ...` forms, but `this.run = run` at module scope and an aliased `const api = module.exports; api.run = run` are both invisible, so the module is reported as having zero export roots (complete, none missing) although Node runs exactly this code as the module's real export. Family C certifies the real handler unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-32`) and § 4 (`entry-root-unseen-export-writes`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-33 — Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+With a project `tsconfig.json` specifying `module: commonjs`, `module-resolver.ts`'s `noDts` resolution falls back to legacy main-field/node10 resolution rather than the package's real conditional `exports` map, resolving to `legacy.js` instead of the exports-declared file Node actually loads. The vulnerable code is then outside the model's view and family A certifies it absent. Without the tsconfig, the same fixture correctly resolves and gives AFFECTED.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-33`) and § 4 (`tsconfig-commonjs-ignores-exports`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-34 — A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely
+
+**Status:** Open
+**Failure class:** silent drop
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** B — intake, cache, output
+
+For a `package.json` dependency declared as `file:vendor/lodash`, real npm 10.9.0 writes a lockfile entry (`vendor/lodash`) with no `name` field, plus a `node_modules/lodash` link entry. `package-lock.ts`'s comment assumes npm "always writes an explicit name" for such entries; when it does not, a `continue` branch drops the package from the registry entirely — no finding, no `unreportedCandidates` entry, exit 0 — although Node loads and runs the vulnerable code. Reproduced against a real npm-generated lockfile, not a synthetic one.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 4, "PRM-34: silent drop (real npm lockfile)"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-35 — A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic
+
+**Status:** Open
+**Failure class:** scan abort
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** B — intake, cache, output
+
+`osv-cache.ts`'s comment states that losing the cache "must never be able to abort an otherwise-successful scan", but only the read path (`get()`) is guarded; a `set()` failure propagates and the scan exits 4 with a vulnerability-provider-failure diagnosis, misdiagnosing a local filesystem problem as a provider failure.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 4, "PRM-35: cache write aborts the scan"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-36 — The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set
+
+**Status:** Open
+**Failure class:** false reason
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** B — intake, cache, output
+
+Filtering with `--cve CVE-Y` on a package for which `GHSA-x` (`CVE-X`) was really discovered still reports the `unreportedCandidates` detail as "no advisory was discovered for any sibling instance" — false, since `GHSA-x` was discovered and then filtered out by `--cve`, not because none exists.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 4, "PRM-36: false reason under --cve"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-37 — A tagged-template call (`` tag`x` ``) gets no call-graph edge at all
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`walkFile` classifies only `CallExpression` and `NewExpression` nodes; a `TaggedTemplateExpression` (`` lib.parse`x` ``) is neither, so it receives no edge at all — not even an unresolved one. Family C certifies the tagged function unreachable although Node invokes it. **ID assigned by task `record-soundness-audits`** from an unnumbered mechanism in round 1 § 5 item 1, per that task's Step 2.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 5 item 1 ("tagged template")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-38 — Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+The same `walkFile` gap as PRM-37 means an object's `toString()` invoked by string coercion, a thenable's `then()` invoked by `await`, and a `[Symbol.iterator]()` generator invoked by `for…of` all run real code with no edge at all, so family C certifies each unreachable. Round 1 reproduced `toString` coercion, thenable/`await` and the iterator protocol via `for…of`; the same mechanism also covers spread, destructuring, `yield*` and `Array.from` over an iterable (not independently reproduced there). Round 2 separately reproduces and numbers `Symbol.hasInstance` (PRM-112) and `Symbol.asyncIterator` (PRM-113). **ID assigned by task `record-soundness-audits`** from an unnumbered mechanism in round 1 § 5 item 2, per that task's Step 2.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 5 item 2 ("implicit protocol calls")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-60 — `unsupported_*` reasons are treated as never widening the closure, but four capability-receiver shapes let them load a new module
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A (same premise as PRM-105/106: a member/call result on a capability is treated as opaque rather than as the capability itself)
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+`module-load-closure.ts`'s premise is that `unsupported_construct`/`dynamic_member_access` reasons are "bounded to values and modules already discovered" and so cannot introduce a new module. Of 22 capability-routing shapes tested, 4 give a family-A false NOT_AFFECTED: `[require][0](name)`, `require.bind(null)`, `[Function][0]`, and `Function` reached by a computed key or `Reflect.get`. Root causes are PRM-105 and PRM-106; the same premise restated at `graph.ts` is PRM-109.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-60 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-61 — Export forwarding resolves to the first "own" binding of a name, which a later `module.exports` replacement or property write can make stale
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run)
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+`export-forwarding.ts` takes the first own binding per name, while the export map used elsewhere takes last-write-wins; when a module first sets `exports.run = require('./a').run` and then replaces the whole `module.exports = {...}` object (or the reverse order), the forwarding hop can point at a binding a later write superseded. Round 1 left this UNVERIFIED; round 2 settles it FALSE (`p2-61-stale-exports-after-replace`, `p2-61-replace-after-property`).
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-61 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-62 — An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a reassignable binding treated as single-valued)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+`export let run = function(x){ return safe(x); }; run = function(x){ return danger(x); };` is attributed to the initializer's stale `safe` value, with no reassignment refusal comparable to the CommonJS side's. A `configure()`-style deferred reassignment gives the same result. Round 1 left this UNVERIFIED because ESM function-expression export attribution did not yet exist to reproduce it against; round 2 confirms that attribution now exists and both variants give family C.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-62 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-63 — Several ways of replacing/mutating `module.exports` (bracket member write, module-alias write, `Object.assign(module.exports, …)`) are not recognized as export writes
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (for the uncompensated shapes)
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+`module["exports"] = …`, `module[k] = …`, `Object.assign(module, …)` and `Reflect.set(module, "exports", …)` are all compensated: the closure's `loader_capability_escape` flag correctly withdraws to UNKNOWN. But `module["exports"].run = …`, `module.exports["run"] = …` (the PRM-30 mechanism through a bracket), `const m = module; m.exports = …` (the PRM-32 mechanism through an alias), and `Object.assign(module.exports, { run })` are not compensated and give family C over the real `danger` export.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-63 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-64 — A versionless package instance is evaluated only against advisories its own (missing) version would filter to
+
+**Status:** Open
+**Failure class:** silent drop
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** B — intake, cache, output
+
+`package-instances.ts`'s comment states a versionless instance is "still evaluated against whatever the siblings' queries return", but the synthetic provider (modeling OSV's documented per-version filtering) is queried once at the one concrete version present; a sibling advisory that a different, unversioned query would have returned is never considered and nothing records that it was skipped.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-64 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-65 — The real `OsvProvider` sends one request with no `page_token`, so a paginated OSV response's later pages are silently never seen
+
+**Status:** Open
+**Failure class:** silent drop
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** B — intake, cache, output
+
+`OsvProvider` never follows `next_page_token`, so an advisory on a second results page is never fetched. Reproduced with a synthetic paginated response; depends on OSV emitting `next_page_token` for large result sets, which OSV documents.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-65 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-66 — A workspace member with a malformed manifest is silently skipped only when its lockfile entry is versionless
+
+**Status:** Open
+**Failure class:** silent drop (versionless lock entry only)
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** B — intake, cache, output
+
+For a versioned lockfile entry, a malformed workspace manifest is correctly recorded as `installed_manifest_untrusted`. For a versionless entry, the same malformed manifest instead gives `findings: []` and `unreportedCandidates: []` with no record at all. Node itself refuses to load the package (`ERR_INVALID_PACKAGE_CONFIG`), so there is no runtime exposure — but the silent-drop contract is still violated for the versionless case.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-66 FALSE only for a versionless lock entry")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-67 — `SUPPORTED_MODEL_EXCLUSIONS` omits `--conditions` and `--import`/preload flags, so the model's stated scope is false
+
+**Status:** Open
+**Failure class:** disclosure
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** D — disclosure
+
+`node --conditions=custom` (loading a package's custom exports condition) and `node --import ./preload.mjs` both call the vulnerable code on the fixture used, and both scans give a family-A NOT_AFFECTED correct for default Node runtime settings — but neither flag is disclosed as a scope limitation in `SUPPORTED_MODEL_EXCLUSIONS`. Recorded as a false disclosure statement, not a false verdict for the default case.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-67 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-101 — Site B hands a phantom target to reachability with no closure corroboration, certifying export-*-only code unreachable although its top level runs
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a phantom node fed to reachability with no cross-check against the available, complete closure)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** V — verdict corroboration
+
+`verdict.ts`'s Site B premise is that a genuinely reachable target's file would already be indexed, so a phantom (unindexed) target's absence from reachability search is itself correct. A package loaded only via `export * from vuln-lib` runs its top-level call on real Node module evaluation, but never gets an indexed graph node, so the phantom-fed search reports unreachable with no corroboration from the closure. Family C certifies it unreachable regardless.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-101`) and § 4 (`r2-phantom-export-star-barrel`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-102 — Site A/B selection is keyed by advisory package NAME, not by exact `PackageInstance`
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (realistic for a lock entry whose manifest name differs from the queried name)
+**Defect class:** A (name-text match substituting for exact instance identity)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** V — verdict corroboration
+
+`verdict.ts`'s Site B fallback ("no node of this name") is keyed by the advisory's package name string; when a lock entry's real installed manifest name differs from the name it is queried under, the graph-node lookup by name misses the real node set and family C certifies the package unreachable although Node loads and calls it under its real name.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-102`) and § 4 (`r2-siteB-name-mismatch-forwarded`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-103 — A cyclic `require` observes an intermediate `module.exports` value mid-cycle, but last-write-wins attribution only considers the final write
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (multiple runtime values across the cycle collapsed to the final write)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** E — export model
+
+`module-model.ts`'s last-write-wins premise is stated as Node's real semantics "for straight-line module-scope code and nothing else" — but a require cycle is not straight-line: a required file mid-cycle observes whatever `module.exports` held at that point, which can differ from the final value. Both a whole-module and a property-write cyclic-observer fixture certify the intermediate, `danger`-calling value unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-103`) and § 4 (`r2-cyclic-observer-*`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-104 — A `FunctionDeclaration` binding used as an export has no reassignment check, unlike the class/function-expression branches next to it
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a reassignable binding treated as single-valued, the same class as PRM-62)
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`named-bindings.ts` reasons that "a function declaration needs no order check: hoisting is complete" and returns the declaration binding with no `isAssignedWithin` check. `function run(x){...} run = lib.parse; run("x");` (and the same through a deferred `setup()` call) both attribute `run` to its original declaration and certify the real, reassigned `lib.parse` target unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-104`) and § 4 (`r2-function-declaration-reassigned`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-105 — Member access and call results are treated as opaque in the escape sweep, hiding a capability reached through `[x][0]`, `.at(0)`, a computed key or `Reflect.get`
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A (the capability's identity is lost by treating any member/call result as opaque)
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+`loader-constructs.ts`'s premise is that "a call's value is whatever the callee returns — never one of the operands by construction", treating member/call results as opaque. But `[require][0](name)`, `[require].at(0)(name)`, `[Function][0](src)()`, and `Function`/`require` reached via a computed key or `Reflect.get` all really do yield the capability itself; the closure never widens and family A certifies the loaded package absent. Same underlying premise as PRM-60/PRM-109.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-105`) and § 4 (`p2-60-literal-receiver`, `r2-esc-*`, `r2-function-ctor-computed-key`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-106 — `require.bind(...)` is deliberately excluded from the capability-receiver check
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+`loader-constructs.ts` deliberately excludes the ambient `require` function from the capability-receiver check, on the premise that `require` has no unknown-member surface worth failing closed on. `const r2 = require.bind(null); r2(name);` is itself a capability, but the closure never widens for it and family A certifies the package absent.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-106`) and § 4 (`p2-60-bind`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-107 — `module.paths` is recognized only through a small, fully-enumerated set of literal method-name calls
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance)
+**Defect class:** A (the mutator is matched by exact literal call shape, not by what `module.paths` actually is)
+**Proof family affected:** B
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+`resolveLoaderCapability` has no capability kind for `module.paths` beyond a small enumerated set of literal `module.paths.<mutator>(…)` call shapes. `const p = module.paths; p.unshift(dir);` and `Array.prototype.unshift.call(module.paths, dir);` both escape that enumeration: the nested `vuln-lib` copy that becomes resolvable through the mutated path list is certified NOT_AFFECTED (family B), while the direct, recognized `module.paths.unshift(dir)` form instead gives UNKNOWN.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-107`) and § 4 (`paths2`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-108 — A destructured builtin binding's imported name falls back to the local name for a string-literal or computed property key
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A (the local alias's text substitutes for the real imported member name)
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph (origin); consumer effect in C
+
+`source-index.ts` derives a destructured import's name as the local name whenever the property key is not a plain `Identifier`. `const { "fork": f } = require("child_process")` and `const { ["fork"]: f } = require("child_process")` are both read as importing a member literally named `f` rather than `fork`, so the loader classifier never recognizes `f(...)` as `child_process.fork` and the closure never widens. The identifier-key form (`{ fork: f }`) is correctly recognized and gives UNKNOWN.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-108`) and § 4 (`r2-builtin-destructure-string-key`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-109 — `graph.ts` restates the same "`unsupported_*` reasons cannot introduce a new module" premise PRM-60 disproves
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** same as PRM-60/PRM-105
+**Proof family affected:** A
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** C — capability flow and resolution
+
+`graph.ts` states, independently of `module-load-closure.ts`, that `unsupported_construct`/`dynamic_member_access` "can only ever reach a function value already in scope, from a module already loaded". This is the same false premise as PRM-60, restated at a second site; PRM-105/PRM-106 are its concrete reproductions. Recorded separately because the false premise is asserted twice, in two files, and both need correcting together.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-109`), cf. § 5 ("PRM-60 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-110 — The HTML report's per-finding summary reads only the first `unknownReasons` entry, so a rule mismatch reads as "no reason recorded"
+
+**Status:** Open
+**Failure class:** false reason
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** B — intake, cache, output
+
+`html-report.ts`'s `summaryOf` falls back to "no reason recorded" whenever `evidence.reasons[0]` is absent, without checking `f.unknownReasons` — so an UNKNOWN with a real, recorded `no_vulnerable_symbol_rule` reason renders as though no reason existed, while the JSON output for the identical scan carries the real reason.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-110`) and § 4 ("HTML case")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-111 — An empty `--cve` value (`--cve ""`) is accepted and silently returns zero findings rather than being rejected
+
+**Status:** Open
+**Failure class:** silent drop
+**Defect class:** not classified in the report
+**Proof family affected:** not applicable
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** B — intake, cache, output
+
+`run.ts`'s `--cve` guard rejects only a non-string value; an empty string passes the guard and is used as a filter matching nothing, so `findings` is empty and exit is 0 with no diagnostic — indistinguishable from a genuinely clean scan.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-111`) and § 4 ("intake --cve \"\"")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-112 — `instanceof` against a class defining a static `[Symbol.hasInstance]` invokes it with no call-graph edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`class C { static [Symbol.hasInstance](x) { return !!lib.parse(x); } }; ({}) instanceof C` invokes the `hasInstance` method with no edge emitted, the same `walkFile` gap as PRM-37/PRM-38 for a distinct protocol; family C certifies `lib.parse` unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-112`) and § 4 (`p3-symbol-hasInstance`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-113 — `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`const it = { async *[Symbol.asyncIterator]() { yield lib.parse("x"); } }; for await (const x of it) {}` invokes the async iterator with no edge; family C certifies `lib.parse` unreachable although Node drives the generator to yield its value.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-113`) and § 4 (`p3-symbol-asyncIterator`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-114 — Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`Error.prepareStackTrace = function(e, frames) { lib.parse("x"); return ""; }; new Error("e").stack` invokes the assigned hook with no edge; family C certifies `lib.parse` unreachable.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-114`) and § 4 (`p3-prepareStackTrace`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-115 — TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`@logged class X {}` (both the legacy `experimentalDecorators` form and the standard TC39 decorator form) invokes the decorator function at class-definition time; the analyzer emits no edge for either form, and family C certifies the decorator body (which calls `lib.parse`) unreachable, although `tsc`-transpiled output run under real Node executes it.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-115`) and § 4 (`p3-ts-decorator-*`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## PRM-116 — A JSX element is a call to its configured factory with no modeled edge
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** not classified in the report
+**Proof family affected:** C
+**Severity:** not rated in the report (report verdict: `CRITICAL_FINDINGS`)
+**Fix lane:** A — call graph
+
+`<App />` compiles, via the project's configured `jsxFactory`, to a call that really invokes `App()`, but the analyzer emits no edge for a JSX element to its factory function; family C certifies `App` (which calls `lib.parse`) unreachable. Needs a JSX factory that actually invokes the component, which is the normal shape for real renderers.
+
+Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-116`) and § 4 (`p3-tsx-jsx-factory`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+---
+
+## RWF-050 — RWF-026's inherited MAY-execute conditional/logical abrupt-operand gap, given a register row
+
+**Status:** Open — **UNCLASSIFIED**
+**Failure class:** possible false `NOT_AFFECTED` (not independently reproduced; awaiting reproduction)
+**Defect class:** not classified — unclassified
+**Proof family affected:** not classified — unclassified (plausibly C, by analogy with RWF-016/RWF-026's own family, but not confirmed)
+**Severity:** not rated — unclassified
+**Fix lane:** none assigned. RWF-026's own text calls closing this "a design question this task was explicitly scoped away from"; it is the natural candidate for whichever task takes the conditional-operand axis next.
+
+RWF-026 closed the "definitely-abrupt call in a necessarily-evaluated
+expression position" family, but its own "Remaining limitations"
+section states explicitly that a **MAY-execute** conditional or logical
+operand (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) is a
+"separate, INHERITED family" that RWF-026 "neither introduces nor
+widens" and does not close: on a truthy `flag`, the later export really
+is unreached in real Node, exactly as in RWF-026's own MUST-execute
+cases, but `mayEndModuleEvaluation`'s MAY relation does not extend to a
+conditional operand the way it already does to an `if`/loop body. RWF-026
+calls this "a real, tracked gap, not a settled one" and leaves deciding
+whether the operand model should become MAY like the statement model to
+a future task.
+
+This entry gives that gap a register row, per `AGENTS.md` § E ("no known
+path to a false `NOT_AFFECTED`" is a claim the register must be able to
+state truthfully) and this task's instructions. It is recorded as
+**UNCLASSIFIED** rather than as a confirmed defect: none of the three
+audits behind this task independently reproduced it end to end against
+real Node, and no defect class, proof family, severity or fix lane can
+be honestly assigned without that reproduction. A future task should
+reproduce it (or show it does not reach a real verdict) before
+classifying it further.
+
+Full account: `tests/validation/FINDINGS.md`, "RWF-026 ...", section
+"Remaining limitations (deliberately not fixed here)" (this same file,
+above) — this is a correction to the register's own stated gap, not new
+report content from `docs/audits/`.
