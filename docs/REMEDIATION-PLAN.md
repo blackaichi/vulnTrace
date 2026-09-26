@@ -281,6 +281,12 @@ the new capability-grammar and write-set-grammar sweeps (ADR 0010 § 2,
 ADR 0009 § 2), and every lane's own suites. No existing behaviour changes;
 this is test infrastructure only.
 
+Status: **done** — built as `src/testing/oracle/` (the library, excluded
+from the build like `open-soundness-defect.ts`) plus `tests/oracle/` (the
+dedicated suite, `npm run test:oracle`), rather than the illustrative
+`tests/real-node-oracle/` location above. See
+[`docs/tasks/H-0-real-node-oracle-harness.md`](tasks/H-0-real-node-oracle-harness.md).
+
 | Order | Task | Lane | Reasoning |
 | --- | --- | --- | --- |
 | 1 | H-0 | — | every later task's failing-first tests, precision measurements (§ 4, § 9) and grammar sweeps (ADR 0009 § 2, ADR 0010 § 2) need real-Node ground truth; building the shared harness once, first, avoids each lane reimplementing its own ad hoc version, which is what § 9's method describes happening already |
