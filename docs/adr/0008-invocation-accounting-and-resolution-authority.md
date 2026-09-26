@@ -493,3 +493,105 @@ default alone. That closure holds only while Decision 1 keeps
 lane A's acceptance criteria in `docs/REMEDIATION-PLAN.md` § 5a, which
 require these cases to become `UNKNOWN`. The open-defect records alone
 do not.
+
+## Decision record — Amendment A-0 (project owner, 2026-09-27)
+
+Recorded by task
+[`A-0`](../tasks/A-0-adr0008-coverage-reproduction.md), on the project
+owner's decision of the `NEEDS_DECISION` that task reported. This ADR's
+body, its first Decision record and the text of "Amendment A-0" above are
+unchanged; this section is appended.
+
+**Status of Amendment A-0: ACCEPTED**, parts A and B, each with the
+conditions below. The acceptance criteria that carry the conditions are
+in `docs/REMEDIATION-PLAN.md` (§ 5a, "A-0 additions to lane-A
+acceptance"). This ADR's § 8 table is not rewritten.
+
+**Part A (retaining builtins; task A-3). Accepted, with a condition.**
+
+- A builtin is admitted as a `NonInvokingBuiltin` only if it runs no user
+  code through any path at the call (Decision 1), **and** it is
+  non-retaining: it does not return or store an object through which a
+  later operation can invoke user code taken from its arguments.
+- `new Proxy` and `Proxy.revocable` are excluded by name.
+- The escape rule (§ 2's escape row) always takes precedence over any
+  allowlist entry.
+- **Condition: mechanical admission.** Every allowlist entry must have a
+  passing H-0 builtin-probe test, run in CI, so that an entry whose probe
+  fires cannot be admitted by hand. Examples of builtins whose probe
+  fires: `console.*`, `util.inspect`, `util.format`, `Object.keys`,
+  `Object.getOwnPropertyNames`, `JSON.stringify`, `Object.assign`,
+  `Object.entries`. The closure of PRM-117 and of the named-handler
+  `Object.keys` case depends on this condition. It is a stated acceptance
+  criterion of A-3, the task that builds the allowlist.
+
+**Part B (accessor bodies; task A-4). Accepted, with two conditions.**
+
+- A getter or setter becomes its own owner, reached from its defining
+  owner by a *possible* edge. It never gets no edge.
+- **Condition 1.** Before merging, A-4 measures the precision cost with
+  § 5's method, and reports explicitly RWB-09 (`semver`, `lru-cache`) and
+  the full validation and adversarial results.
+- **Condition 2.** The plan gains a later precision task, after the
+  lanes: model the reader builtins (`JSON.stringify`, `Object.assign`,
+  object spread, `Object.entries` and similar) as invoking the own
+  enumerable accessors of attributable objects. Correct `AFFECTED`
+  results that Part B turns into `UNKNOWN` then become proven `AFFECTED`
+  again.
+
+**Considered and rejected.** Extending the escape rule to the members of
+any object passed to any builtin. This would break the S4 precision
+controls (`Array.isArray(obj)`, `Object.is(obj, x)`), as the amendment's
+"Not proposed" paragraph states.
+
+## Corrections to two statements in this ADR (appended 2026-09-27)
+
+Recorded by task
+[`A-0`](../tasks/A-0-adr0008-coverage-reproduction.md). The original text
+is not rewritten. Each item says what is true instead, with a pointer to
+the evidence. Both statements are also named in "Amendment A-0", "Two
+statements in this ADR that the reproduction shows are inaccurate".
+
+1. **The Decision record of 2026-09-26, "Proxy traps" row**, says: "A
+   Proxy `get` trap firing because the builtin accesses one of the six
+   named protocol members is covered transitively (accessing that member
+   is itself enumerated)." **This is not true.** § 2's protocol row gives
+   an account to a *definition* with a listed name: a method or
+   function-valued property named `toJSON`, and so on. The row does not
+   account for a property *access*. A Proxy's `get` trap is a definition
+   named `get`, so the row gives it no account, whichever property the
+   builtin reads. The list also has ten entries, not six. In fact:
+   - with an inline handler, the trap is a function-valued member of an
+     argument of `new Proxy`, so § 2's escape row gives it a possible
+     edge;
+   - with a handler passed by name, the escape row as written gives
+     nothing. The case is closed by Amendment A-0 part A (accepted
+     above), which excludes `new Proxy` / `Proxy.revocable` from the
+     allowlist, so the creation site gets an unknown edge (§ 3).
+
+   Evidence: `S3.JSON.stringify.get` (the trap fires on the `toJSON`
+   read; `main` answers `NOT_AFFECTED`) and the two `named-handler`
+   cases in `tests/oracle/adr0008-coverage.test.ts`; AUD-01's appended
+   text in `tests/validation/FINDINGS.md`.
+
+2. **"Inspection is covered by the protocol-member rule."** This
+   statement is in § 2's `NonInvokingBuiltin` bullet ("coercion and
+   inspection are covered by the protocol-member rule instead"). It is
+   in the ADR body, not in the Decision record. The Decision record's
+   own table already contradicts it (`util.inspect.custom`: "Not
+   covered"). **The inspection half is not true.** § 2's protocol row
+   covers coercion (`valueOf`, `toString`, `Symbol.toPrimitive`) and
+   serialization (`toJSON`) by name. It does not cover inspection:
+   `util.inspect.custom`, which `console.log`, `util.inspect` and
+   `util.format("%o")` run, is not a listed name. A method of an object
+   passed by name is not "an object/array member of an argument", so the
+   escape row does not reach it either. Inspection is closed only by the
+   fail-closed default (§ 3), and only while the inspecting builtins stay
+   off the allowlist. Amendment A-0 part A's mechanical-admission
+   condition (accepted above) is what now enforces that. § 4's clause
+   "the protocol-member rule covers the coercion these builtins do" is
+   about coercion only, and is not corrected here.
+
+   Evidence: PRM-117 in `tests/validation/FINDINGS.md`; the cases
+   `S1.console.log`, `S1.util.inspect` and `S1.util.format-o` in
+   `tests/oracle/adr0008-coverage.test.ts`.
