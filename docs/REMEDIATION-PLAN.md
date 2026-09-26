@@ -194,6 +194,14 @@ invariant.
 
 ## 5. Lane ordering
 
+**Superseded 2026-09-26** by § 5a's single sequential schedule (project
+owner decision 12, § 6.1: the project owner runs one task at a time, not
+two concurrent slots). This section's text, table and reasoning are kept
+unchanged, because § 5a's single order is built directly from the
+prevalence, criticality, dependency and file-overlap reasoning stated
+here — it resolves each wave's two slots into one sequence instead of
+replacing the reasoning.
+
 At most two lanes run at a time, in two slots:
 
 | Wave | Slot 1 (call-graph side) | Slot 2 (proof and intake side) |
@@ -238,6 +246,72 @@ Reasoning:
 | V ∥ E | root derivation (`verdict.ts` V-3, `module-model.ts` E-3) | **no**: E after V |
 | V ∥ B | `verdict.ts` (B-6 only) | **yes** except B-6, which follows V |
 | B ∥ D | `src/cli/html-report.ts` (B-5, D-1) | **no**: D after B |
+
+### 5a. Single sequential schedule (decided 2026-09-26)
+
+Recorded by task
+[`remediation-reconciliation`](tasks/remediation-reconciliation.md),
+per decision 12 (§ 6.1): the project owner runs **one task at a time**.
+This replaces § 5's two-slot table with one order. It is built from § 5's
+own reasoning and § 5.1's file-overlap table, resolved into a single
+sequence by, in order: (1) hard dependencies (§ 5.1: a task that must
+follow another is never moved earlier); (2) prevalence of the
+false-`NOT_AFFECTED`/silent-drop shape in real code, as § 5's own
+"Prevalence first" and "Criticality" bullets already argue; (3) task size,
+preferring a small task first when (1) and (2) do not decide the order.
+`RWF-050-repro` (§ 2.4) is placed immediately before **E-1**: it has no
+file dependency on any other task (it is a reproduction, not a fix), so
+it can run anywhere, and its plausible mechanism sits inside lane E's
+scope (ADR 0009 § 1 clause 3) — placing it immediately before lane E
+starts is the earliest point at which a scope change it finds is still
+free to fold into E's own task files, rather than requiring rework of an
+E task already drafted.
+
+**H-0, the shared real-Node oracle harness.** Not previously in this plan;
+added here as its first task, per the task prompt that produced this
+schedule. Scope: one shared library, callable from any suite, that runs a
+fixture package's assertion against real, installed Node (spawn or
+`vm`-isolated, never the analyzer) and reports whether the fixture's
+bound name is really invoked/reached/loaded — the exact "loud fixture,
+real-Node ground truth" check that AGENTS.md § G requires and that every
+audit reproduction in `docs/audits/` and § 9's measurement method already
+does by hand, ad hoc, per lane. Files: a new module under `tests/` (for
+example `tests/real-node-oracle/`), consumed by `tests/binding-grammar/`,
+the new capability-grammar and write-set-grammar sweeps (ADR 0010 § 2,
+ADR 0009 § 2), and every lane's own suites. No existing behaviour changes;
+this is test infrastructure only.
+
+| Order | Task | Lane | Reasoning |
+| --- | --- | --- | --- |
+| 1 | H-0 | — | every later task's failing-first tests, precision measurements (§ 4, § 9) and grammar sweeps (ADR 0009 § 2, ADR 0010 § 2) need real-Node ground truth; building the shared harness once, first, avoids each lane reimplementing its own ad hoc version, which is what § 9's method describes happening already |
+| 2 | A-1 | A | first task of the most prevalent lane (§ 5 "Prevalence first": timer/Promise callbacks, JSX, decorators, derived classes are ordinary code); a hard dependency of A-2/A-3/A-4 (ADR 0008 § 8) |
+| 3 | A-2 | A | hard dependency: A-3 and A-4 emit `possible` edges that A-2 defines (ADR 0008 § 8) |
+| 4 | A-3 | A | prevalent shapes (escaped callbacks, JSX, own-export calls); depends on A-1, A-2 |
+| 5 | A-4 | A | prevalent shapes (coercion, thenables, iterators); depends on A-1, A-2 |
+| 6 | A-5 | A | independent of A-2 per ADR 0008 § 8, but has no reason to move earlier than A-3/A-4; closes six PRM reproductions including the two pinned-test corrections |
+| 7 | A-6 | A | independent of A-2; scheduled last in lane A because C-4 (order 27) and E-4 (order 23) both consume its import-name and trailing-chain fix, so it must finish before either, which it does either way once A-1..A-5 are done |
+| 8 | V-1 | V | § 5 "Prevalence first": `export *` barrels are ordinary code; V is the smallest lane, zero measured cost, and has no dependency on A, so it follows A only because A was judged more prevalent, not because it must |
+| 9 | V-2 | V | depends only on V-1 in ADR 0011 § 8's own order |
+| 10 | V-3 | V | depends on V-1, V-2; E-3 (order 22) depends on V-3, so V must finish before E |
+| 11 | V-4 | V | "locks V-1..V-3" per ADR 0011 § 8; last in the lane by construction |
+| 12 | C-1 | C | § 5 "pulled forward to follow V": ordinary code (a TypeScript project with `module: commonjs`), touches only two files, no dependency on A or V |
+| 13 | B-1 | B | § 5 "Criticality": lane B's silent drops are critical failures under the contract; B has no dependency on A, V or C-1 (§ 5.1: A ∥ B yes), so it runs as soon as V and C-1 (already ahead of it for prevalence reasons) are done |
+| 14 | B-2 | B | independent point fix within lane B; order among B-1..B-5 follows § 7's own table order, since no dependency or prevalence distinction is stated between them |
+| 15 | B-3 | B | as B-2 |
+| 16 | B-4 | B | as B-2; closes four of lane B's five silent drops (PRM-34, PRM-64, PRM-66, AUD-08) |
+| 17 | B-5 | B | as B-2; carries decision 3's exit-code scheme (§ 6.1 item 3) |
+| 18 | B-6 | B | hard dependency: edits `verdict.ts` after V (§ 5.1) |
+| 19 | RWF-050-repro | none yet | placed immediately before lane E starts (see above); has no file dependency, so this is the latest point that still lets its result change E's scope before E's own tasks are drafted |
+| 20 | E-1 | E | hard dependency: after A (symbol-binder.ts is shared with A-6, and A-1's `ExportWriteKind` work needs nothing from A, but E-1 also needs the abrupt-completion machinery RWF-050-repro just checked); largest and first task of lane E per ADR 0009 § 8's own order |
+| 21 | E-2 | E | depends on E-1 (forwarding hops consult the write set E-1 builds), per ADR 0009 § 8 |
+| 22 | E-3 | E | hard dependency: builds on V-3 (order 10), already done; per ADR 0009 § 8's own order |
+| 23 | E-4 | E | hard dependency: consumes A-6 (order 7), already done; per ADR 0009 § 8's own order |
+| 24 | E-5 | E | last in lane E per ADR 0009 § 8; scope to be determined from the (not-yet-in-repository) independent audit report |
+| 25 | C-2 | C | § 5 "Lane C's heavy tasks go last": remaining lane-C shapes are deliberate capability laundering and carry the performance requirement (§ 4, § 9); no dependency forces it later than this, but nothing forces it earlier either |
+| 26 | C-3 | C | depends on C-2's total value-flow table, per ADR 0010 § 8's own order |
+| 27 | C-4 | C | hard dependency: consumes A-6 (order 7), already done |
+| 28 | C-5 | C | depends on C-4's loader-table work (`verdict.ts` path check reads the loader-mutation reason C-4 introduces), per ADR 0010 § 8's own order |
+| 29 | D-1 | D | hard dependency: edits `html-report.ts` after B-5 (order 17), per § 5.1 |
 
 ## 6. Decisions for the user
 
