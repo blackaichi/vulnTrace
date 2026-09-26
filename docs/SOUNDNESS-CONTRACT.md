@@ -8,6 +8,15 @@ Companion documents: [`ARCHITECTURE.md`](ARCHITECTURE.md) (identity,
 uncertainty, caches, workflows), [`SCORECARD.md`](SCORECARD.md) (measured
 state), [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (what is knowingly unfinished).
 
+> **Implementation status.** This contract is unchanged by this note.
+> The current implementation **violates it in recorded ways**: three
+> read-only audits reproduced dozens of false `NOT_AFFECTED` verdicts
+> and silently dropped findings against real Node on `main`, none of
+> them corpus differentials. See [`OPEN-DEBTS.md`](OPEN-DEBTS.md) D-17
+> for the count by failure class and
+> [`../tests/validation/FINDINGS.md`](../tests/validation/FINDINGS.md)
+> for the full, reproduced register.
+
 ---
 
 ## 1. The verdict contract
