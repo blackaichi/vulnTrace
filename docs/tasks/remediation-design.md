@@ -2,10 +2,18 @@
 
 ## Status
 
-- **Status**: in-progress
+- **Status**: done
 - **Branch**: `remediation-design`
 - **Base SHA**: `62b52b90cb5fead842534e1743519ca3da411945`
 - **Commits**:
+  - [`0c2c58f`](https://github.com/blackaichi/vulnTrace/commit/0c2c58f) — this task file, in progress
+  - [`a79a39c`](https://github.com/blackaichi/vulnTrace/commit/a79a39c) — ADR 0008, lane A
+  - [`5efc6e2`](https://github.com/blackaichi/vulnTrace/commit/5efc6e2) — ADR 0009, lane E
+  - [`7678ff9`](https://github.com/blackaichi/vulnTrace/commit/7678ff9) — ADR 0010, lane C
+  - [`4efdd83`](https://github.com/blackaichi/vulnTrace/commit/4efdd83) — ADR 0011, lane V
+  - [`96a893c`](https://github.com/blackaichi/vulnTrace/commit/96a893c) — `docs/REMEDIATION-PLAN.md`
+  - [`fff4657`](https://github.com/blackaichi/vulnTrace/commit/fff4657) — lane E revised on unit-suite evidence; per-lane unit results
+  - the commit setting this status to done
 - **Superseded by**:
 
 ## Project context
@@ -124,3 +132,28 @@ verdicts.
 In the format of `AGENTS.md` section J, plus: 11. DECISIONS FOR THE USER
 (every policy choice the design needs, with options, recommendation and
 cost) and 12. PREMISES (every claim in the prompt checked, and the result).
+
+## Corrections
+
+2026-09-26. Premise verification (AGENTS.md section D) against the code and
+the sweep reports found these errors in the prompt that produced this task;
+the design follows the measured facts, and the deviations are reported in
+the task report:
+
+- PRM-14 (`==` folded as `===`) was listed under A2 (resolution authority).
+  It is an invocation-accounting defect (a live branch is pruned without a
+  proof), so ADR 0008 files it under A1. PRM-15 (static `require` matched by
+  text) was listed under A1; it is a binding-identity defect, filed under A2.
+- PRM-23 lives in `src/analysis/module-load-closure.ts`, a lane C file, but
+  is a lane V invariant; the plan assigns it to V and records the file
+  overlap.
+- AUD-01 … AUD-16 are mapped from one-line summaries only; the audit report
+  is not in the repository. AUD-13's task (E-5) must take its reproduction
+  from that report.
+- The candidate lane E invariant ("attribution withdrawn unless the write
+  is provably the last effective write") was first drafted as "the write set
+  has exactly one member". The prototype of that rule failed 303 existing,
+  sound precision controls; ADR 0009 was revised to keep the RWF-013 …
+  RWF-028 last-effective-write machinery and to withdraw only on an
+  incomplete write set, a stale export object, an observation point between
+  writes, or attribution by name.
