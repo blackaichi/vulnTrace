@@ -271,3 +271,58 @@ The call graph gains one edge kind and loses every silent `return
 undefined`. Proof families keep their definitions. Some findings that were
 confidently `NOT_AFFECTED` because an invocation was invisible become
 `UNKNOWN` or `AFFECTED`, which is the point.
+
+## Decision record — project owner, 2026-09-26
+
+Recorded by task
+[`remediation-reconciliation`](../tasks/remediation-reconciliation.md)
+(`docs/REMEDIATION-PLAN.md` § 6.1). This ADR's body above is unchanged;
+this section is appended, not a revision.
+
+**Decision 1 (non-invoking builtin allowlist, `REMEDIATION-PLAN.md` § 6
+item 1).** Accepted, with a stricter entry rule than § 4's text states on
+its own. An allowlist entry is admitted only if it runs no user code
+through **any** path on its arguments: it does not call, coerce
+(`valueOf` / `toString` / `Symbol.toPrimitive`), read properties or
+getters of, serialize (`toJSON`), inspect (`util.inspect.custom`), or
+trigger Proxy traps on the argument — OR § 2's protocol-member rule
+provably covers the path in question. Every entry's real-Node test (§ 2,
+"Non-invoking allowlist") must pass function, getter, `valueOf`,
+`toString`, `Symbol.toPrimitive`, `toJSON`, `util.inspect.custom` and
+Proxy arguments, and confirm none of them runs user code.
+
+**§ 2's protocol-member rule, checked path by path against the seven
+required test paths.** § 2's protocol-member row names a closed set:
+`toString`, `valueOf`, `toJSON`, `then`, and the computed
+`Symbol.iterator`, `Symbol.asyncIterator`, `Symbol.hasInstance`,
+`Symbol.toPrimitive`, `Symbol.dispose`, `Symbol.asyncDispose`. § 4 states
+this rule "covers the coercion these builtins do."
+
+| Path | Covered by § 2's enumeration? |
+| --- | --- |
+| function (the builtin calls the argument directly) | Not applicable — a builtin that calls its argument fails the base non-invoking requirement (§ 4) before the protocol-member rule is even relevant; this path is not a coercion/inspection path the rule needs to cover |
+| getter (a plain, non-protocol-named accessor property read on the argument) | **Not covered.** § 2's enumeration is a closed list of *named* members and symbols; a generic getter under an arbitrary property name is outside it. A separate real-Node test is required per allowlist entry that reads any such property |
+| `valueOf` | **Covered.** Named explicitly |
+| `toString` | **Covered.** Named explicitly |
+| `Symbol.toPrimitive` | **Covered.** Named explicitly |
+| `toJSON` | **Covered.** Named explicitly |
+| `util.inspect.custom` | **Not covered.** It appears in neither § 2's enumeration nor § 4's exception list. A separate real-Node test is required per allowlist entry that could inspect its argument |
+| Proxy traps | **Partially covered.** A Proxy `get` trap firing because the builtin accesses one of the six named protocol members is covered transitively (accessing that member is itself enumerated). A trap firing on an arbitrary, non-protocol-named property, or `has`/`ownKeys`/`getOwnPropertyDescriptor` firing during enumeration (for example a builtin that spreads or `Object.keys`-enumerates its argument), is **not** covered by name |
+
+This ADR's § 2 protocol-member rule and § 4 non-invoking-allowlist text
+are unchanged by this decision; the rule above is not rewritten, per the
+project owner's instruction. The stricter entry rule is an additional
+admission test for the non-invoking allowlist, layered on top of what § 2
+and § 4 already state.
+
+**Decision 2 ("possible" edge kind, `REMEDIATION-PLAN.md` § 6 item 2).**
+Accepted as designed (§ 1's option (a)). Task **A-1** (§ 8, above) gains
+an acceptance criterion: it must also amend `docs/SOUNDNESS-CONTRACT.md`
+and the invariant map to state that an `AFFECTED` path consists of
+resolved edges only; a `possible` edge counts as reachable for family-C
+completeness (the code behind it is searched, and its own unknown edges
+count) but can never be part of an `AFFECTED` path; a target reached only
+through `possible` edges is `UNKNOWN`. `docs/SOUNDNESS-CONTRACT.md` itself
+is not amended by the `remediation-reconciliation` task — that is A-1's
+work, once implemented, per `REMEDIATION-PLAN.md` § 6.1 item 2. This
+ADR's § 8 table is not rewritten.
