@@ -177,6 +177,11 @@ loaders; NodeNext runtime resolution.
 | targeted reproductions | all flip: 10 cases to `UNKNOWN`, and the PRM-33 tsconfig case to a correct `AFFECTED` |
 | **wall time**, validation suite run alone | **337 s vs 115 s baseline (≈ 2.9×)**; RWB-09a 31 s vs 14 s, which exceeded the runner's 30 s timeout |
 
+The repository's own suite (`npx vitest run`, 4,480 tests) under the
+prototype: 5 failures, all assigned in § 8 (two precision controls the
+prototype over-flagged, one fail-closed cyclic-alias control it broke, two
+RWB-09 scan tests that timed out).
+
 The verdict cost is zero on both corpora. The wall-time cost is real and
 comes from the prototype calling `resolveNamedBinding` per identifier and
 re-walking composite receivers per member access, without a per-file memo.
