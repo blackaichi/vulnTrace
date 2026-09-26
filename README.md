@@ -77,6 +77,16 @@ else is negotiable. When an analysis cannot establish something it **fails
 closed** to `UNKNOWN`, which is a first-class result — not an error, and
 not a soft `NOT_AFFECTED`.
 
+> **Current status (not ready for production use).** This is the design
+> goal, not the measured state of `main` today. Three read-only audits
+> reproduced known, open soundness defects against real Node, including
+> false `NOT_AFFECTED` verdicts and silently dropped findings — see
+> [`docs/OPEN-DEBTS.md`](docs/OPEN-DEBTS.md) D-17,
+> [`tests/validation/FINDINGS.md`](tests/validation/FINDINGS.md) and
+> [`docs/audits/`](docs/audits/) for the full, reproduced register. Until
+> the soundness remediation this work motivates has closed, **treat every
+> `NOT_AFFECTED` this analyzer reports as `UNKNOWN`.**
+
 ## Documentation
 
 | Document | Owns |
@@ -365,12 +375,18 @@ plus `coverage/lcov.info` and an HTML report).
 Every scan reports per-phase timing (`timings` in the JSON output —
 parsing, resolution, graph construction, reachability, provider,
 cache hit/miss; see `docs/SDD.md § 30`). OSV responses are cached by
-default at `<project>/.vulntrace-cache/osv/` (gitignored), keyed by
-`{tool version, ecosystem, package name, version}` so a cache entry
-from a different VulnTrace build is never reused; disable with
-`--no-cache` or `vulnerabilities.cache.enabled: false` in
-`vulntrace.yml`. `src/cli/scan-performance.test.ts` is the regression
-guard: a synthetic ~300-file project must scan in under 5 seconds.
+default at `<project>/.vulntrace-cache/osv/` — gitignored in *this*
+repository, but not in a scanned project, whose own `.gitignore` (if
+any) is not consulted — keyed by `{tool version, ecosystem, package
+name, version}`, where "tool version" is the literal `package.json`
+version string rather than a build identity, so two different builds
+that happen to share that version string **do** reuse each other's
+cache entries; disable with `--no-cache` or
+`vulnerabilities.cache.enabled: false` in `vulntrace.yml`. The cache
+directory is not schema-validated on read (see `docs/OPEN-DEBTS.md`
+D-17, `AUD-06`/`AUD-07`). `src/cli/scan-performance.test.ts` is the
+regression guard: a synthetic ~300-file project must scan in under 5
+seconds.
 
 ## Known limitations
 
