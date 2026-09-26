@@ -243,6 +243,113 @@ the recommended options.
 | 11 | PRM-67: runtime flags | (a) disclose `--import`, `--experimental-loader`, `--conditions` and `NODE_OPTIONS` equivalents in `SUPPORTED_MODEL_EXCLUSIONS` now; (b) also model `--conditions` through configuration | **(a)** now, **(b)** as later coverage work | none for (a) |
 | 12 | The lane ordering in § 5 | as proposed, or another split | **as proposed** | — |
 
+### 6.1 Decisions, as decided by the project owner (2026-09-26)
+
+Recorded by task
+[`remediation-reconciliation`](tasks/remediation-reconciliation.md). Each
+decision below is final; the table above is kept as the design's original
+proposal and recommendation, for the record.
+
+1. **Builtin allowlist — accepted, with a stricter entry rule than § 4's
+   original text states.** An allowlist entry (ADR 0008 § 4) is admitted
+   only if it runs no user code through **any** path on its arguments: it
+   does not call, coerce (`valueOf` / `toString` / `Symbol.toPrimitive`),
+   read properties or getters of, serialize (`toJSON`), inspect
+   (`util.inspect.custom`), or trigger Proxy traps on its arguments — OR
+   ADR 0008 § 2's protocol-member rule provably covers the path in
+   question. Every entry's real-Node test must pass function, getter,
+   `valueOf`, `toString`, `Symbol.toPrimitive`, `toJSON`,
+   `util.inspect.custom` and Proxy arguments and confirm none of them runs
+   user code. This decision does not change ADR 0008's protocol-member
+   rule (§ 2) or its non-invoking-allowlist text (§ 4); it adds an
+   admission test on top of them. **ADR 0008's protocol-member rule,
+   checked path by path against the seven required test paths** (full
+   reasoning in ADR 0008's appended decision record):
+
+   | Path | Covered by § 2's protocol-member enumeration? |
+   | --- | --- |
+   | function (direct call) | Not applicable — this is the base non-invoking requirement itself, not a coercion/inspection path |
+   | getter (a plain, non-protocol-named accessor) | **Not covered.** § 2 enumerates only named members/symbols; a generic getter under an arbitrary name is outside that list |
+   | `valueOf` | **Covered** — named explicitly in § 2; § 4 states the protocol-member rule covers the coercion these builtins do |
+   | `toString` | **Covered** — named explicitly |
+   | `Symbol.toPrimitive` | **Covered** — named explicitly |
+   | `toJSON` | **Covered** — named explicitly |
+   | `util.inspect.custom` | **Not covered.** Absent from both § 2's enumeration and § 4's exception list |
+   | Proxy traps | **Partially covered.** A trap firing through access to one of the six named protocol members is covered transitively; a trap firing on an arbitrary property, or `has`/`ownKeys`/`getOwnPropertyDescriptor` during enumeration, is not |
+
+   A decision record is appended to ADR 0008 recording this exactly; ADR
+   0008's body is unchanged.
+
+2. **"Possible" edge kind — accepted, as designed (§ 1 option (a)).** Task
+   **A-1** (ADR 0008 § 8) gains an acceptance criterion: it must also
+   amend `docs/SOUNDNESS-CONTRACT.md` and the invariant map to state that
+   an `AFFECTED` path consists of resolved edges only; a `possible` edge
+   counts as reachable for family-C completeness (the code behind it is
+   searched, and its own unknown edges count) but can never be part of an
+   `AFFECTED` path; a target reached only through `possible` edges is
+   `UNKNOWN`. `docs/SOUNDNESS-CONTRACT.md` itself is not amended by this
+   task — that is A-1's work, once implemented. A decision record is
+   appended to ADR 0008 recording this acceptance criterion; ADR 0008's
+   § 8 table is not rewritten.
+
+3. **AUD-12 exit codes — decided differently from the design's
+   recommendation.** Exit 0 only when no candidate is `AFFECTED` and every
+   candidate is decided (`NOT_AFFECTED`, or a determinate not-applicable
+   disposition). Exit 1 when at least one candidate is `AFFECTED`. A new,
+   distinct exit code when nothing is `AFFECTED` but at least one
+   candidate is undecided (any `UNKNOWN` finding, or any unreported
+   candidate whose disposition is indeterminate). A command-line flag
+   restores the lenient behaviour (exit 0 whenever nothing is `AFFECTED`).
+   The JSON output always carries a summary of counts by verdict and
+   disposition. Existing error exit codes keep their meaning. Task **B-5**
+   (§ 7 below), which owns `AUD-12`, is updated with this exact scheme in
+   place of the original recommendation's "(b) a distinct non-zero code
+   for no AFFECTED, some UNKNOWN".
+4. **PRM-64 versionless instances — accepted as recommended.** Query OSV
+   without a version for a versionless instance, and evaluate every
+   advisory for the name against it (all `UNKNOWN` with
+   `installed_version_unavailable`). Already the text task **B-4** (§ 7)
+   describes; no further edit needed.
+5. **PRM-65 OSV pagination — accepted as recommended.** Follow
+   `page_token` until exhausted, with a page cap that fails as a provider
+   error. Already the text task **B-1** (§ 7) describes; no further edit
+   needed.
+6. **C-5 `AFFECTED` under a reachable loader mutation — accepted as
+   recommended.** A reachable `loader_hook_mutation` on the path makes a
+   static `require` resolution non-authoritative for `AFFECTED`; the
+   finding becomes `UNKNOWN`. This is exactly ADR 0010 § 7's own proposal
+   for task C-5; no ADR text changes, and no decision record is appended
+   to ADR 0010 for this item.
+7. **C2 tsconfig `paths`/`baseUrl` — accepted as recommended.** Node
+   resolution is authoritative; a divergence with a tsconfig `paths`
+   mapping makes the closure incomplete for that specifier. This is
+   exactly ADR 0010 § 1's C2 invariant and § 8's task C-1; no ADR text
+   changes, and no decision record is appended to ADR 0010 for this item.
+8. **AUD-06/07 OSV cache — accepted as recommended.** Moved out of the
+   scanned tree (for example `$XDG_CACHE_HOME`), every entry validated
+   against the provider schema, default 24-hour expiry, configurable.
+   Already the text task **B-3** (§ 7) describes; no further edit needed.
+9. **AUD-08 lockfile-only inventory — accepted as recommended.**
+   Cross-check the installed tree against the lockfile; an on-disk
+   package the lockfile does not list becomes an `unreportedCandidates`
+   entry. Already the text task **B-4** (§ 7) describes; no further edit
+   needed.
+10. **AUD-14 withdrawn advisories — accepted as recommended.** A new
+    `unreportedCandidates` disposition `withdrawn`, with an output schema
+    version bump. Already the text task **B-1** (§ 7) describes; no
+    further edit needed.
+11. **PRM-67 runtime flags — accepted as recommended.** Disclose
+    `--import`, `--experimental-loader`, `--conditions` and their
+    `NODE_OPTIONS` equivalents in `SUPPORTED_MODEL_EXCLUSIONS` now; model
+    `--conditions` through configuration as later coverage work, not part
+    of this remediation. Already the text task **D-1** (§ 7) describes; no
+    further edit needed.
+12. **Schedule — changed.** The project owner runs one task at a time.
+    § 5's two-slot schedule is superseded by § 5a's single sequential
+    schedule, below. § 5's text and reasoning are kept, dated superseded,
+    because the new schedule reuses its prevalence, criticality and
+    file-overlap reasoning to produce one order.
+
 ## 7. Lanes B and D: point-fix tasks
 
 Each task is one branch, with its own task file. Acceptance for each is
@@ -255,7 +362,7 @@ section G).
 | **B-2** version applicability | AUD-05, AUD-09 | `src/vulnerabilities/version-matching.ts`, `osv-normalizer.ts` | compare SEMVER ranges with prerelease semantics, never `semver.coerce`; a non-SEMVER range type (GIT, ECOSYSTEM) or an `affected` entry with no ranges and no versions is `indeterminate`, never `not_applicable` |
 | **B-3** cache | AUD-06, AUD-07, PRM-35 | `src/cache/osv-cache.ts`, `src/cli/scan.ts` | decision 8; a cache write failure is a diagnostic, never exit 4 |
 | **B-4** inventory and identity drops | PRM-34, PRM-64, PRM-66, AUD-08 | `src/dependencies/dependency-graph.ts`, `package-lock.ts`, `package-instances.ts`, `workspaces.ts`, `src/cli/scan.ts` | a nameless non-`node_modules` lock entry takes its name from the linking `node_modules/<name>` entry or its own manifest, and otherwise becomes an identity `unreportedCandidates` entry instead of `continue`; decision 4; a malformed workspace manifest is recorded even when versionless; decision 9 |
-| **B-5** CLI and output | AUD-12, PRM-36, PRM-110, PRM-111 | `src/cli/run.ts`, `scan.ts`, `html-report.ts` | decision 3; reject an empty `--cve`, and report when a filter matched nothing; compute the "no advisory discovered" condition from the unfiltered set; the HTML summary falls back to the first `unknownReasons` entry |
+| **B-5** CLI and output | AUD-12, PRM-36, PRM-110, PRM-111 | `src/cli/run.ts`, `scan.ts`, `html-report.ts` | **decision 3, decided 2026-09-26 (§ 6.1 item 3), in place of the original recommendation:** exit 0 only when nothing is `AFFECTED` and every candidate is decided; exit 1 when at least one candidate is `AFFECTED`; a new, distinct exit code when nothing is `AFFECTED` but at least one candidate is undecided (any `UNKNOWN` finding, or an indeterminate unreported candidate); a flag restores the lenient exit-0-whenever-nothing-AFFECTED behaviour; the JSON output always carries a summary of counts by verdict and disposition; existing error exit codes keep their meaning; reject an empty `--cve`, and report when a filter matched nothing; compute the "no advisory discovered" condition from the unfiltered set; the HTML summary falls back to the first `unknownReasons` entry |
 | **B-6** rule/package mismatch reason | AUD-15 | `src/analysis/verdict.ts` (after V) | the reason names the mismatch, not a family-B-shaped absence |
 | **D-1** disclosure | PRM-67, AUD-16 | `src/domain/evidence.ts`, `README.md`, `src/cli/html-report.ts` (after B-5) | decision 11; correct the README and HTML sentences the audit identified (for example NOT_AFFECTED rendered as "advisory does not apply", and "no installed dependency matched"). The HTML family C sentence ("the resolved, attributed vulnerable target has no call path…") needs no text change: it is false today only for a phantom target, and V-1 removes that case |
 
