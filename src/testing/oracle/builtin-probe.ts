@@ -17,7 +17,16 @@ import { execFileSync } from "node:child_process";
  * - `toJSON`: the hook `JSON.stringify` consults before enumerating properties;
  * - `inspectCustom`: the hook `util.inspect` (and therefore `console.log`) consults;
  * - `proxy`: every one of the 13 proxy traps, instrumented at once, wrapping
- *   a callable target so `apply`/`construct` are reachable too.
+ *   a callable target so `apply`/`construct` are reachable too;
+ * - `proxyPlainObject`: the same instrumented handler around a PLAIN OBJECT
+ *   target with one own enumerable data property. Added by task A-0: a
+ *   builtin may treat a callable argument differently from a plain object
+ *   -- `JSON.stringify` returns early for a callable after reading
+ *   `toJSON`, so the callable `proxy` kind shows only the `get` trap and
+ *   never the `ownKeys` / `getOwnPropertyDescriptor` / `get` enumeration a
+ *   plain-object Proxy triggers. A probe that exercised only one of the
+ *   two would under-report exactly what an allowlist entry must be proven
+ *   not to do.
  *
  * This module does not decide any allowlist entry (task H-0 boundary) --
  * it only gives a later task the tool to do so, plus a self-test proving
@@ -31,7 +40,8 @@ export type BuiltinArgKind =
   | "toPrimitive"
   | "toJSON"
   | "inspectCustom"
-  | "proxy";
+  | "proxy"
+  | "proxyPlainObject";
 
 export const ALL_BUILTIN_ARG_KINDS: readonly BuiltinArgKind[] = [
   "function",
@@ -42,6 +52,7 @@ export const ALL_BUILTIN_ARG_KINDS: readonly BuiltinArgKind[] = [
   "toJSON",
   "inspectCustom",
   "proxy",
+  "proxyPlainObject",
 ];
 
 /** Every proxy trap (all 13 fundamental internal methods a Proxy handler can intercept). */
@@ -79,14 +90,19 @@ function argumentSource(argKind: BuiltinArgKind): string {
       return `({ toJSON(){ __mark("toJSON"); return "probe"; } })`;
     case "inspectCustom":
       return `({ [util.inspect.custom](){ __mark("inspectCustom"); return "probe"; } })`;
-    case "proxy": {
-      const body = PROXY_TRAPS.map(
-        (trap) =>
-          `${trap}(...a){ __mark(${JSON.stringify(`proxy:${trap}`)}); return Reflect.${trap}(...a); }`,
-      ).join(",\n    ");
-      return `new Proxy(function probeTarget(){}, {\n    ${body}\n  })`;
-    }
+    case "proxy":
+      return `new Proxy(function probeTarget(){}, {\n    ${instrumentedHandlerBody()}\n  })`;
+    case "proxyPlainObject":
+      return `new Proxy({ probe: 1 }, {\n    ${instrumentedHandlerBody()}\n  })`;
   }
+}
+
+/** A handler instrumenting every one of {@link PROXY_TRAPS}, each marking `proxy:<trap>`. */
+function instrumentedHandlerBody(): string {
+  return PROXY_TRAPS.map(
+    (trap) =>
+      `${trap}(...a){ __mark(${JSON.stringify(`proxy:${trap}`)}); return Reflect.${trap}(...a); }`,
+  ).join(",\n    ");
 }
 
 export interface BuiltinProbeResult {

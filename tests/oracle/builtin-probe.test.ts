@@ -55,6 +55,19 @@ describe("probeBuiltinInvocation: detects every listed real-Node invocation surf
     expect(result.fired).toContain("proxy:ownKeys");
   });
 
+  it("JSON.stringify(arg) enumerates a plain-object Proxy (ownKeys), which the callable proxy kind cannot show", () => {
+    // Task A-0: JSON.stringify returns early for a callable, so the
+    // callable `proxy` kind fires only the `get` for "toJSON".
+    const callable = probeBuiltinArgKind("JSON.stringify(__ARG__)", "proxy");
+    expect(callable.fired).not.toContain("proxy:ownKeys");
+    const plain = probeBuiltinArgKind(
+      "JSON.stringify(__ARG__)",
+      "proxyPlainObject",
+    );
+    expect(plain.fired).toContain("proxy:ownKeys");
+    expect(plain.fired).toContain("proxy:get");
+  });
+
   it("Array.isArray(arg) runs no user code, for every argument kind", () => {
     const results = probeBuiltinInvocation(
       "Array.isArray(__ARG__)",
