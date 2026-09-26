@@ -14,8 +14,11 @@ investigations that reproduced them are the source:
 
 - the independent audit, **AUD-01 … AUD-16** (its report is not in the
   repository; only its one-line summaries were available to this design);
-- the comment-premise sweep, round 1, **PRM-11 … PRM-36** (FALSE items;
-  PRM-11 is RWF-047 on a new surface);
+- the comment-premise sweep, round 1, **PRM-11 … PRM-38** (FALSE items;
+  PRM-11 is RWF-047 on a new surface; PRM-37/38 are the two round-1
+  mechanisms this plan originally left unnumbered, matched to the IDs
+  `record-soundness-audits` assigned by task
+  [`remediation-reconciliation`](tasks/remediation-reconciliation.md));
 - the comment-premise sweep, round 2, **PRM-101 … PRM-116**, with
   **PRM-60 … PRM-67** settled FALSE.
 
@@ -93,8 +96,8 @@ below.
 | PRM-34 | nameless lock entry for a `file:` dependency silently dropped | silent drop | B | point fix | B-4 |
 | PRM-35 | a cache write failure aborts the scan | wrong exit code | B | point fix | B-3 |
 | PRM-36 | `--cve` produces a false "no advisory discovered" reason | false reason | B | point fix | B-5 |
-| round 1, no ID | tagged templates emit no edge | FNA | A | A1 | A-1 |
-| round 1, no ID | implicit protocol calls: coercion (`toString`; `valueOf`/`Symbol.toPrimitive` share the mechanism but were not separately reproduced), thenables, `Symbol.iterator` (`for…of`) | FNA | A | A1 protocol members | A-4 |
+| PRM-37 | tagged templates emit no edge | FNA | A | A1 | A-1 |
+| PRM-38 | implicit protocol calls: coercion (`toString`; `valueOf`/`Symbol.toPrimitive` share the mechanism but were not separately reproduced), thenables, `Symbol.iterator` (`for…of`) | FNA | A | A1 protocol members | A-4 |
 
 ### 2.3 Comment-premise sweep, round 2
 
@@ -131,6 +134,20 @@ below.
 | Finding | Summary | Impact | Lane | Closed by | Task |
 | --- | --- | --- | --- | --- | --- |
 | RWF-047 (OPEN-DEBTS D-16) | a member write on a require-bound module object keeps its static attribution | FNA and FA | E | E writes by other modules | E-4 |
+| RWF-050 | RWF-026's inherited MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`), given a register row but not independently reproduced | possible FNA — UNCLASSIFIED | none yet: plausibly E (export attribution's abrupt-completion machinery, by analogy with RWF-026's own family — `FINDINGS.md` RWF-050) | reproduce end to end against real Node first; only then classify (defect class, proof family, lane) | **RWF-050-repro** (added by `remediation-reconciliation`; see § 5a) |
+
+Added by task
+[`remediation-reconciliation`](tasks/remediation-reconciliation.md):
+`RWF-050` was missing from this plan entirely. It is registered in
+`tests/validation/FINDINGS.md` as UNCLASSIFIED — none of the three audits
+behind this plan independently reproduced it, so it cannot honestly be
+assigned a lane yet. `RWF-050-repro` is a reproduce-first task (§ 5a): its
+job is to establish, against real Node, whether the gap reaches a real
+verdict at all, and only then to classify it. Its likely home is lane E,
+because the mechanism it inherits from RWF-026 (`mayEndModuleEvaluation`'s
+abrupt-completion reachability) is the same machinery ADR 0009 § 1
+clause 3 (E-1's scope) keeps and narrows; this is a hypothesis for
+scheduling purposes only; the task itself decides.
 
 ## 3. The three tests that pin a false premise
 
