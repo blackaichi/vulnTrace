@@ -305,8 +305,8 @@ field and the vocabulary are documented next to the table.
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 50 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 6 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Findings recorded | 118 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 74 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-01, AUD-02, AUD-03, AUD-04, AUD-05, AUD-06, AUD-07, AUD-08, AUD-09, AUD-10, AUD-11, AUD-12, AUD-13, AUD-14, AUD-15, AUD-16, PRM-12, PRM-13, PRM-14, PRM-15, PRM-16, PRM-17, PRM-18, PRM-19, PRM-20, PRM-21, PRM-22, PRM-23, PRM-24, PRM-25, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-31, PRM-32, PRM-33, PRM-34, PRM-35, PRM-36, PRM-37, PRM-38, PRM-60, PRM-61, PRM-62, PRM-63, PRM-64, PRM-65, PRM-66, PRM-67, PRM-101, PRM-102, PRM-103, PRM-104, PRM-105, PRM-106, PRM-107, PRM-108, PRM-109, PRM-110, PRM-111, PRM-112, PRM-113, PRM-114, PRM-115, PRM-116, RWF-050 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 1 — RWF-002 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
 | Recorded as fixed | 43 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
 
@@ -324,6 +324,74 @@ this table except the category.
 | RWF-047 | open | Open — classified as a CLASS-B soundness defect, both directions reproduced; deliberately NOT remediated here, because RWF-047's own record required the class to be established first and the remedy differs by class. See `docs/OPEN-DEBTS.md` D-16 | **Soundness, CLASS B (correct binding identity, wrong runtime-value semantics), BOTH directions** — classified by reproduction on `a40ce49`, not by argument. False `AFFECTED`: `AFFECTED` on a RESOLVED edge into an export the program overwrote before calling, which real `node` never enters. False `NOT_AFFECTED`: the displacement chain CLOSES — the stale attribution supplies a resolved edge where the honest answer is unresolved, removing the `unknown` blocker, orphaning the real caller, and certifying a complete Family C proof (`reachableSubgraphComplete: true`, zero unresolved edges) over an export `node` executes. NOT class A (no local text reaches an export name — asserted against a fixture exporting `patched`) and NOT class C (with the write unconditionally above the call there is exactly one determinate runtime value). 7 of 10 widened shapes reach it |
 | RWF-048 | open | Open — the section is an instrument record and states no status; its eight refusal families are recorded, not resolved — see below | **Precision** — every disagreement is a refusal toward `UNKNOWN` |
 | RWF-049 | open | Open — the section's own heading is "Not fixed": recorded only — see below | **Precision debt, not a soundness defect** — fails toward `unresolved_target` (the section's classification) |
+| AUD-01 | open | Open | false NOT_AFFECTED — see below |
+| AUD-02 | open | Open | false NOT_AFFECTED — see below |
+| AUD-03 | open | Open | false NOT_AFFECTED — see below |
+| AUD-04 | open | Open | false NOT_AFFECTED — see below |
+| AUD-05 | open | Open | silent drop (recorded as a false "not applicable"); also false AFFECTED in the reverse direction — see below |
+| AUD-06 | open | Open | silent drop — see below |
+| AUD-07 | open | Open | silent drop — see below |
+| AUD-08 | open | Open | silent drop — see below |
+| AUD-09 | open | Open | silent drop (false "not applicable") — see below |
+| AUD-10 | open | Open | silent drop (product/observability) — see below |
+| AUD-11 | open | Open | scan abort — see below |
+| AUD-12 | open | Open | false reason / product — see below |
+| AUD-13 | open | Open | false AFFECTED — see below |
+| AUD-14 | open | Open | false AFFECTED — see below |
+| AUD-15 | open | Open | false reason — see below |
+| AUD-16 | open | Open | disclosure — see below |
+| PRM-12 | open | Open | false NOT_AFFECTED — see below |
+| PRM-13 | open | Open | false NOT_AFFECTED — see below |
+| PRM-14 | open | Open | false NOT_AFFECTED — see below |
+| PRM-15 | open | Open | false NOT_AFFECTED — see below |
+| PRM-16 | open | Open | false NOT_AFFECTED — see below |
+| PRM-17 | open | Open | false NOT_AFFECTED — see below |
+| PRM-18 | open | Open | false NOT_AFFECTED — see below |
+| PRM-19 | open | Open | false NOT_AFFECTED — see below |
+| PRM-20 | open | Open | false NOT_AFFECTED — see below |
+| PRM-21 | open | Open | false NOT_AFFECTED — see below |
+| PRM-22 | open | Open | false NOT_AFFECTED — see below |
+| PRM-23 | open | Open | false NOT_AFFECTED — see below |
+| PRM-24 | open | Open | false NOT_AFFECTED — see below |
+| PRM-25 | open | Open | false NOT_AFFECTED and false AFFECTED — see below |
+| PRM-26 | open | Open | false NOT_AFFECTED — see below |
+| PRM-27 | open | Open | false NOT_AFFECTED — see below |
+| PRM-28 | open | Open | false NOT_AFFECTED — see below |
+| PRM-29 | open | Open | false NOT_AFFECTED — see below |
+| PRM-30 | open | Open | false NOT_AFFECTED — see below |
+| PRM-31 | open | Open | false NOT_AFFECTED — see below |
+| PRM-32 | open | Open | false NOT_AFFECTED — see below |
+| PRM-33 | open | Open | false NOT_AFFECTED — see below |
+| PRM-34 | open | Open | silent drop — see below |
+| PRM-35 | open | Open | scan abort — see below |
+| PRM-36 | open | Open | false reason — see below |
+| PRM-37 | open | Open | false NOT_AFFECTED — see below |
+| PRM-38 | open | Open | false NOT_AFFECTED — see below |
+| PRM-60 | open | Open | false NOT_AFFECTED — see below |
+| PRM-61 | open | Open | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below |
+| PRM-62 | open | Open | false NOT_AFFECTED — see below |
+| PRM-63 | open | Open | false NOT_AFFECTED (for the uncompensated shapes) — see below |
+| PRM-64 | open | Open | silent drop — see below |
+| PRM-65 | open | Open | silent drop — see below |
+| PRM-66 | open | Open | silent drop (versionless lock entry only) — see below |
+| PRM-67 | open | Open | disclosure — see below |
+| PRM-101 | open | Open | false NOT_AFFECTED — see below |
+| PRM-102 | open | Open | false NOT_AFFECTED (realistic for a lock entry whose manifest name differs from the queried name) — see below |
+| PRM-103 | open | Open | false NOT_AFFECTED — see below |
+| PRM-104 | open | Open | false NOT_AFFECTED — see below |
+| PRM-105 | open | Open | false NOT_AFFECTED — see below |
+| PRM-106 | open | Open | false NOT_AFFECTED — see below |
+| PRM-107 | open | Open | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below |
+| PRM-108 | open | Open | false NOT_AFFECTED — see below |
+| PRM-109 | open | Open | false NOT_AFFECTED — see below |
+| PRM-110 | open | Open | false reason — see below |
+| PRM-111 | open | Open | silent drop — see below |
+| PRM-112 | open | Open | false NOT_AFFECTED — see below |
+| PRM-113 | open | Open | false NOT_AFFECTED — see below |
+| PRM-114 | open | Open | false NOT_AFFECTED — see below |
+| PRM-115 | open | Open | false NOT_AFFECTED — see below |
+| PRM-116 | open | Open | false NOT_AFFECTED — see below |
+| RWF-050 | open | Open | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below |
 | RWF-002 | open in part | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model |
 
 ## 9. Commands referenced by the documentation
