@@ -187,6 +187,7 @@ Every task runs the full set, unrelaxed:
 | performance smoke | `npm run test:performance` |
 | real-world validation | `npm run test:validation` |
 | binding-form grammar sweep | `npm run test:binding-grammar` |
+| real-Node oracle harness suite | `npm run test:oracle` |
 | typecheck | `npm run typecheck` |
 | lint | `npm run lint` |
 | prettier | `npm run format` |
