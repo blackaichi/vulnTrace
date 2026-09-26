@@ -31,6 +31,7 @@
     "test:binding-grammar": "vitest run --config vitest.binding-grammar.config.ts",
     "test:validation": "vitest run --config vitest.validation.config.ts",
     "test:foundation": "vitest run --config vitest.foundation.config.ts",
+    "test:oracle": "vitest run --config vitest.oracle.config.ts",
     "lint": "eslint .",
     "format": "prettier --check .",
     "format:write": "prettier --write .",
