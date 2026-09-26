@@ -2,11 +2,21 @@
 
 ## Status
 
-- **Status**: in-progress
+- **Status**: done
 - **Branch**: `h0-real-node-oracle-harness`
 - **Base SHA**: `ede37afcf2d2ebeff78ff5cd7d92d9fa131081f4` (main after
   `docs(tasks): mark remediation-reconciliation done`)
-- **Commits**: <!-- filled in when done -->
+- **Commits**:
+  - `762d86e` — this task file, in-progress
+  - `28a295a` — the harness library (`src/testing/oracle/`)
+  - `243a57a` — the self-test suite (`tests/oracle/`), its vitest config
+    and `npm run test:oracle`, plus the compile-time structural guards
+    (`src/testing/oracle/case.guards.test.ts`)
+  - `7d46cee` — `AGENTS.md` gate-list line; `docs/REMEDIATION-PLAN.md`
+    H-0 status line
+  - `e257778` — prettier formatting
+  - `faa3d22` — regenerated `docs/SCORECARD.md`
+  - the commit setting this status to done
 - **Superseded by**:
 
 ## Project context
@@ -123,19 +133,31 @@ context.)
 
 ## Acceptance criteria
 
-- [ ] Task file committed first and marked done at the end
-- [ ] Existing oracle machinery discovered and reused where possible
-- [ ] Harness supports every shape listed in step 1
-- [ ] Loud fixture, controls and ground truth enforced by the type system
+- [x] Task file committed first and marked done at the end
+- [x] Existing oracle machinery discovered and reused where possible
+      (`open-soundness-defect.ts`'s `VERDICT_DOMAIN`/`VerdictObservation`;
+      VT-307 confirmed to answer a different question and left untouched)
+- [x] Harness supports every shape listed in step 1
+      (`tests/oracle/shapes.test.ts`: nested + same-name-same-version
+      twin installs, an ESM package installed via a symlinked `file:`
+      dependency, a TypeScript entrypoint compiled with the repository's
+      own TypeScript for ground truth, a `{file, symbol}` entrypoint with
+      `analysis.limits.maxFiles`, the real `OsvProvider` driven by an
+      injected `fetch`, and a verbatim hand-written `package-lock.json`
+      with a nameless linked entry)
+- [x] Loud fixture, controls and ground truth enforced by the type system
       or the harness, not by convention
-- [ ] Hermetic: no network, per-case temp dirs, parallel-safe
-- [ ] Open-defect helper provided; no record created
-- [ ] Builtin probe provided, with its self-test covering the listed cases
-- [ ] Self-test covers all cases in step 4, including the mutations
-- [ ] Dedicated suite and npm script; `AGENTS.md` gate list updated (one line)
-- [ ] No failing reproduction ported; no analyzer file changed
-- [ ] Differentials zero; gates green; validation at the five known failures
-- [ ] Pushed; no PR; no merge; clean commit metadata
+- [x] Hermetic: no network, per-case temp dirs, parallel-safe
+- [x] Open-defect helper provided; no record created
+- [x] Builtin probe provided, with its self-test covering the listed cases
+- [x] Self-test covers all cases in step 4, including the mutations
+- [x] Dedicated suite and npm script; `AGENTS.md` gate list updated (one line)
+- [x] No failing reproduction ported; no analyzer file changed
+- [x] Differentials zero (no analyzer file changed, so none to differ);
+      gates green; validation at exactly the five documented failures
+      (VAL-002, VAL-003, RWB-03, RWB-05, RWB-09b — same verdicts as the
+      OPEN-DEBTS D-09 baseline)
+- [x] Pushed; no PR; no merge; clean commit metadata
 
 ## Gates
 
