@@ -2,11 +2,23 @@
 
 ## Status
 
-- **Status**: in-progress
+- **Status**: done (verdict `NEEDS_DECISION`: ADR 0008 "Amendment A-0"
+  is proposed and awaits a project-owner decision)
 - **Branch**: `a0-adr0008-coverage-reproduction`
 - **Base SHA**: `276a208b841dba65e35424238af49aafdea6e418` (main after
   `docs(tasks): mark H-0 real-Node oracle harness done`)
-- **Commits**: <!-- filled in when done -->
+- **Commits**:
+  - `53d507d` — this task file, in-progress
+  - `b9521e5` — runtime refusal of a malformed oracle case
+    (`src/testing/oracle/`, `tests/oracle/case-guards.runtime.test.ts`)
+  - `2a7f361` — `tests/oracle/` type-checked by `npm run typecheck`
+  - `2a2f3a2` — builtin probe: a plain-object Proxy argument kind
+  - `c6812b4` — FINDINGS: PRM-117, PRM-118, RWF-051; AUD-01 appended
+  - `8018729` — the 32 A-0 cases (`tests/oracle/adr0008-coverage.*`)
+  - `ce640f1` — ADR 0008 "Amendment A-0 (PROPOSED)", appended
+  - `0ca519f` — REMEDIATION-PLAN § 5a: A-0 entry; lane-A acceptance
+  - `ed45804` — regenerated `docs/SCORECARD.md`
+  - the commit setting this status to done (with the Corrections section)
 - **Superseded by**:
 
 ## Project context
@@ -182,3 +194,41 @@ row per case (mechanism, analyzer result on `main`, ground truth, finding
 ID, the ADR 0008 rule that closes it quoted or "none"); the builtin probe
 results used; the harness hardening proof; and, if any, the proposed
 amendment (rule, soundness argument, precision cost, implementing task).
+
+## Corrections
+
+Appended 2026-09-26, per `README.md` ("once executed, a task file is not
+rewritten"). Each item is also reported under DEVIATIONS.
+
+1. **S2's premise is false for three of its four definition forms**
+   (measured in Node v22.11.0 and pinned). `JSON.stringify`,
+   `Object.assign`, object spread and `Object.entries` read only **own
+   enumerable** properties. A class instance getter (on the prototype), a
+   class static getter (non-enumerable) and a default
+   `Object.defineProperty` getter (non-enumerable) are never run by them.
+   The cases were built as specified, with that ground truth. An
+   `enumerable: true` `defineProperty` variant was added, so that the
+   mechanism the task named is actually exercised.
+2. **Two class-getter families are false `AFFECTED`, not false
+   `NOT_AFFECTED`.** The analyzer attributes accessor bodies to the
+   enclosing owner (round 1's PRM-46, recorded there as TRUE), so a
+   getter real Node never runs yields a path that does not exist. Step 3
+   asks for false `NOT_AFFECTED` only. This was registered anyway, as
+   PRM-118, and pinned the same way (admissible `UNKNOWN`/`NOT_AFFECTED`),
+   because a fabricated edge is a soundness defect (AGENTS.md § E).
+3. **Two S3 cases were added**, with the Proxy handler bound to a
+   `const` (triggered by `Object.keys` and by `in`). Step 5 has to
+   distinguish a function that is an object member of an argument from a
+   method of an object passed by name. The `in` variant is the case ADR
+   0008 as written does not close.
+4. **The H-0 builtin probe was hardened a second time** (within "hardening
+   only"). Its only Proxy argument wrapped a callable target, and
+   `JSON.stringify` returns early for a callable, so the probe could not
+   show the `ownKeys` enumeration that S3 relies on. A `proxyPlainObject`
+   argument kind was added.
+5. **The typecheck gate was widened through `package.json`'s `typecheck`
+   script** (`tsc --noEmit && tsc --noEmit -p tests/oracle/tsconfig.json`).
+   The root `tsconfig.json` has `rootDir: "src"`, so adding
+   `tests/oracle` to its `include` was not the minimal change.
+6. **A-0 is order `1a`** in `REMEDIATION-PLAN.md` § 5a, not a renumbered
+   order 2, so that the order numbers later rows cite stay valid.
