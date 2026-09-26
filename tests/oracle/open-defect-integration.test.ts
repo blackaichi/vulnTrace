@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { runOracleCase, type OracleCase } from "../../src/testing/oracle/case.js";
+import {
+  runOracleCase,
+  type OracleCase,
+} from "../../src/testing/oracle/case.js";
 import { toVerdictObservation } from "../../src/testing/oracle/scan.js";
 import { VERDICT_DOMAIN } from "../../src/testing/open-soundness-defect.js";
 import { nodeEntryCommand } from "../../src/testing/oracle/ground-truth.js";
@@ -9,7 +12,10 @@ import {
   simplePackageFiles,
   simpleRuleFile,
 } from "../../src/testing/oracle/config-files.js";
-import { HIT_HELPER_SOURCE, hitFunction } from "../../src/testing/oracle/hit.js";
+import {
+  HIT_HELPER_SOURCE,
+  hitFunction,
+} from "../../src/testing/oracle/hit.js";
 import type { ProjectSpec } from "../../src/testing/oracle/project.js";
 
 /**
@@ -63,11 +69,15 @@ function makeCase(entrySource: string): OracleCase {
       controls: {
         positive: {
           name: "positive-control",
-          project: project('const lib = require("vuln-lib");\nlib.parse("x");\n'),
+          project: project(
+            'const lib = require("vuln-lib");\nlib.parse("x");\n',
+          ),
         },
         negative: {
           name: "negative-control",
-          project: project('const lib = require("vuln-lib");\nlib.safe("x");\n'),
+          project: project(
+            'const lib = require("vuln-lib");\nlib.safe("x");\n',
+          ),
         },
       },
     },
@@ -80,7 +90,9 @@ function makeCase(entrySource: string): OracleCase {
 
 describe("toVerdictObservation: bridges a scan result into the existing VerdictObservation domain", () => {
   it("produces an observation VERDICT_DOMAIN agrees is AFFECTED, for a direct call", async () => {
-    const result = await runOracleCase(makeCase('const lib = require("vuln-lib");\nlib.parse("x");\n'));
+    const result = await runOracleCase(
+      makeCase('const lib = require("vuln-lib");\nlib.parse("x");\n'),
+    );
     const finding = result.variant.scan.findings[0];
     const coverage = result.variant.scan.output?.coverage;
     expect(finding).toBeDefined();
@@ -96,7 +108,9 @@ describe("toVerdictObservation: bridges a scan result into the existing VerdictO
   });
 
   it("produces an observation VERDICT_DOMAIN agrees is NOT_AFFECTED, with a proof family, for an unreachable target", async () => {
-    const result = await runOracleCase(makeCase('const lib = require("vuln-lib");\nlib.safe("x");\n'));
+    const result = await runOracleCase(
+      makeCase('const lib = require("vuln-lib");\nlib.safe("x");\n'),
+    );
     const finding = result.variant.scan.findings[0];
     const coverage = result.variant.scan.output?.coverage;
     expect(finding).toBeDefined();

@@ -1,4 +1,8 @@
-import type { JsonFinding, ScanOutput, UnreportedCandidate } from "../../cli/output.js";
+import type {
+  JsonFinding,
+  ScanOutput,
+  UnreportedCandidate,
+} from "../../cli/output.js";
 import type { Coverage } from "../../domain/coverage.js";
 import { runScanCommand } from "../../cli/scan.js";
 import type { VulnerabilityProvider } from "../../domain/vulnerability.js";

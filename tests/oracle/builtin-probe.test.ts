@@ -41,7 +41,10 @@ describe("probeBuiltinInvocation: detects every listed real-Node invocation surf
   });
 
   it("util.inspect(arg) invokes util.inspect.custom", () => {
-    const result = probeBuiltinArgKind("util.inspect(__ARG__)", "inspectCustom");
+    const result = probeBuiltinArgKind(
+      "util.inspect(__ARG__)",
+      "inspectCustom",
+    );
     expect(result.ranUserCode).toBe(true);
     expect(result.fired).toContain("inspectCustom");
   });
