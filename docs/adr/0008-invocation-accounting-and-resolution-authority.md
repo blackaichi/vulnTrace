@@ -326,3 +326,170 @@ through `possible` edges is `UNKNOWN`. `docs/SOUNDNESS-CONTRACT.md` itself
 is not amended by the `remediation-reconciliation` task — that is A-1's
 work, once implemented, per `REMEDIATION-PLAN.md` § 6.1 item 2. This
 ADR's § 8 table is not rewritten.
+
+## Amendment A-0 (PROPOSED — requires project-owner decision)
+
+Recorded by task
+[`A-0`](../tasks/A-0-adr0008-coverage-reproduction.md). This ADR's body
+and its Decision record above are unchanged; this section is appended,
+and nothing in it is implemented.
+
+### What was checked
+
+Task A-0 reproduced, on `main` at `276a208`, the implicit invocations
+the Decision record's table lists as not covered by § 2's protocol-member
+rule. It used the H-0 oracle harness (loud fixture, both controls,
+real-Node ground truth, Node v22.11.0) and confirmed each builtin's
+behaviour with the H-0 builtin probe. The cases are in
+`tests/oracle/adr0008-coverage.test.ts`. For each, the question was
+whether a rule of this ADR, as written, makes it `UNKNOWN`. The rules
+considered:
+
+- **Escape row** (§ 2): "a function value *escaping* into code the graph
+  does not model: an argument (or spread, or object/array member of an
+  argument) of a call or `new` whose callee is ambient, builtin,
+  unresolved or unknown; […] a property descriptor" → "resolved for a
+  documented invoking builtin, otherwise *possible* when the value is
+  attributable and unknown when it is not".
+- **Protocol row** (§ 2): "a method or function-valued property named
+  `toString`, `valueOf`, `toJSON`, `then`, or computed `Symbol.iterator`,
+  […]" → "*possible*, from the owner that evaluates the definition".
+- **Fail-closed default**: A1, "There is no fourth outcome"; § 2's closed
+  no-edge proofs, of which only `PrimitiveOnlyArguments` ("an ambient or
+  builtin call whose every argument is provably primitive") and
+  `NonInvokingBuiltin` can apply to a builtin call; § 3, "any
+  invocation-capable site not otherwise handled"; and Decision 1, "An
+  allowlist entry is admitted only if it runs no user code through
+  **any** path on its arguments". A builtin call with a non-primitive
+  argument whose builtin fails Decision 1's test therefore gets an
+  unknown edge.
+- **Accessor-body attribution**: not a rule of this ADR. It is the
+  existing call-graph behaviour: a getter's or setter's body is
+  attributed to the enclosing owner (`tests/validation/FINDINGS.md`
+  PRM-118).
+
+| Cases | `main` | real Node | Protocol row | Escape row | Fail-closed default | Closed by this ADR as written? |
+| --- | --- | --- | --- | --- | --- | --- |
+| S1: `[util.inspect.custom]()` on an object passed by name to `console.log`, `util.inspect`, `util.format("%o")` (PRM-117) | `NOT_AFFECTED` (C) | calls the target | none: not a listed name | none: the argument `obj` is not a function value, and its method is not written as "an object/array member of an argument" | **yes**: all three builtins fail Decision 1 (the probe fires `util.inspect.custom`), and `obj` is not primitive → unknown edge at the call | **yes, by the fail-closed default only** |
+| S2: object-literal getter read by `JSON.stringify` / `Object.assign` / `{...o}` / `Object.entries` | `AFFECTED` | calls the target | none | none | at the three calls (each fails Decision 1: the probe fires the getter); `{...o}` is not an invocation-capable site | nothing to close: `AFFECTED` stands, but only because of accessor-body attribution |
+| S2: class instance or static getter, the same four readers (PRM-118) | **false `AFFECTED`** | never calls it (own enumerable properties only) | — | — | — | **no.** A2 constrains which function a callee denotes, and `lib.parse` does denote one. The fault is the owner the call is attributed to, which no rule addresses |
+| S2: `Object.defineProperty` getter, default (non-enumerable) | `NOT_AFFECTED` (correct) | never calls it | — | "a property descriptor" → possible | — | becomes `UNKNOWN` (a sound precision cost) |
+| S2: `Object.defineProperty` getter, `enumerable: true` (AUD-01) | `NOT_AFFECTED` (C) | calls the target | none | **yes**: "a property descriptor" → possible | also: `Object.defineProperty` fails Decision 1 (the probe fires `has` on a Proxy descriptor) | **yes, by the escape row** |
+| S3: Proxy with an inline handler, traps `ownKeys` / `has` / `get`, triggered by `Object.keys`, `Object.getOwnPropertyNames`, `in`, `JSON.stringify` (AUD-01) | `NOT_AFFECTED` (C) | calls the target | none: `ownKeys`, `has` and `get` are not listed names | **yes**: each trap is a function-valued "object … member of an argument" of `new Proxy`, whose callee is ambient → possible | at the trigger for the three builtins (each fails Decision 1); none for `in`, which is not an invocation-capable site | **yes, by the escape row**, provided no `NonInvokingBuiltin` entry for `Proxy` pre-empts it. `new Proxy` passes Decision 1's test, and this ADR orders no precedence between the escape row and a no-edge proof |
+| S3: Proxy with a handler bound to a `const`, `Object.keys(p)` (AUD-01) | `NOT_AFFECTED` (C) | calls the target | none | none as written: the handler is passed by name | **yes**, at `Object.keys` (fails Decision 1) | **yes, by the fail-closed default only** |
+| S3: Proxy with a handler bound to a `const`, `"k" in p` (AUD-01) | `NOT_AFFECTED` (C) | calls the target | none | none as written | **none**: `in` is not in § 2's enumeration, and `new Proxy(target, handler)` passes Decision 1's test, so a `NonInvokingBuiltin` entry for it is admissible and gives "no edge" | **no** |
+| S4: an object with a method passed to `Array.isArray` / `Object.is` (precision controls) | `NOT_AFFECTED` | never calls it | — | — | both pass Decision 1 (the probe: no argument kind runs user code) | stays `NOT_AFFECTED`, as required |
+
+Probe results used above, measured by task A-0:
+
+- `new Proxy({}, h)` and `Proxy.revocable({}, h)` run no user code for
+  any of the probe's nine argument kinds (function, getter, `valueOf`,
+  `toString`, `Symbol.toPrimitive`, `toJSON`, `util.inspect.custom`, a
+  fully instrumented callable Proxy, a fully instrumented plain-object
+  Proxy). The handler's traps run later, on the operations applied to
+  the Proxy.
+- `console.log`, `util.inspect`, `util.format("%o")`: `util.inspect.custom`.
+  `JSON.stringify`: getter, `toJSON`, Proxy `get` / `ownKeys`.
+  `Object.assign`, `Object.entries`, `{...o}`: getter, Proxy `ownKeys` /
+  `getOwnPropertyDescriptor`. `Object.keys`: Proxy `ownKeys` /
+  `getOwnPropertyDescriptor`. `Object.getOwnPropertyNames`: Proxy
+  `ownKeys`. `in`: Proxy `has`.
+
+### Two statements in this ADR that the reproduction shows are inaccurate
+
+1. § 2, `NonInvokingBuiltin`: "coercion and inspection are covered by the
+   protocol-member rule instead". Inspection is not
+   (`util.inspect.custom` is not a listed name). The Decision record's
+   table already says so; PRM-117 reproduces it.
+2. The Decision record: "A Proxy `get` trap firing because the builtin
+   accesses one of the six named protocol members is covered
+   transitively (accessing that member is itself enumerated)." The
+   protocol row gives an account to a *definition* named `toJSON`
+   (and so on). A Proxy's `get` trap is a definition named `get`, so the
+   row gives it nothing. The `get`-trap case (`S3.JSON.stringify.get`,
+   whose trap fires on the `toJSON` read) is closed by the escape row
+   instead, and only for an inline handler. The list also has ten
+   entries, not six.
+
+### Proposed rule change
+
+**Part A: retaining builtins.** This closes the named-handler `in` case
+and makes the inline-handler closure unconditional.
+
+> A builtin that **retains** an argument is never a `NonInvokingBuiltin`,
+> whatever its admission test shows. To retain an argument is to return,
+> or store, an object through which a later operation (a property read
+> or write, `in`, enumeration, a call, a construction or a coercion) can
+> invoke a function reachable from that argument. Decision 1's
+> real-Node test observes only the call itself, so it cannot see a
+> deferred invocation. An entry must therefore also be shown
+> non-retaining: its real-Node test also applies those operations to the
+> call's result, and to the argument afterward, and none may run user
+> code. `new Proxy` and `Proxy.revocable` retain their handler and are
+> excluded by name. Where § 2's escape row applies, no `NonInvokingBuiltin`
+> entry removes its edge.
+
+- *Effect.* `new Proxy(target, handler)` with a handler passed by name
+  has a non-primitive argument and no no-edge proof, so it gets an unknown
+  edge (§ 3), and the case becomes `UNKNOWN`. With an inline handler, the
+  escape row's possible edges stand.
+- *Why it is sound.* It only withdraws a no-edge proof. Every site it
+  touches falls back to an outcome this ADR already defines (possible or
+  unknown), and it adds no resolved edge, so it can create no `AFFECTED`
+  path.
+- *Precision cost.* The S4 controls are unchanged: `Array.isArray` and
+  `Object.is` return a boolean and store nothing, and the probe shows no
+  argument kind runs user code, so both stay `NOT_AFFECTED`. Every
+  reachable `new Proxy` / `Proxy.revocable` whose handler is not an
+  inline literal gets an unknown edge, and blocks family C for its
+  entrypoint until RWF-002. In the corpora, `new Proxy` occurs in one
+  validation-fixture file (`rwb-05-qs-unused-api/node_modules/object-inspect/test/values.js`,
+  a test file the case does not load) and in no adversarial fixture. It
+  was not measured on a prototype.
+- *Implementing task.* **A-3**, which owns the escape row and the
+  non-invoking allowlist with its real-Node tests.
+
+**Part B: accessor bodies.** This closes PRM-118, and keeps the
+object-literal getter cases from turning into false `NOT_AFFECTED` when
+PRM-118 is closed.
+
+> A `get` or `set` accessor (object literal or class, instance or
+> static) is its own owner, like a method. Its body is invoked by a
+> *possible* edge from the owner that evaluates the definition, the same
+> account § 2 gives a protocol member. It never gets no edge.
+
+- *Effect.* A class getter that is never read reaches the target only
+  through a possible edge, so it is `UNKNOWN` (today a false `AFFECTED`).
+  An object-literal getter read by a builtin is also `UNKNOWN` (today
+  `AFFECTED`: the right verdict, on a path that does not exist).
+- *Why it is sound.* It replaces a resolved edge the program may not
+  take with a possible edge. Decision 2 makes a possible edge reachable
+  for family C, and never part of an `AFFECTED` path. Removing the
+  attribution with no replacement edge would not be sound: the
+  object-literal getter cases would become false `NOT_AFFECTED`, because
+  no rule of this ADR covers a getter read.
+- *Precision cost.* The S4 controls are unchanged (they use methods, not
+  accessors). Every `AFFECTED` whose only path runs through an accessor
+  body becomes `UNKNOWN`. That includes sweep round 2's directly read
+  object-literal getter (`const read = o.v`), unless a later task adds a
+  resolved edge for a property read of a known accessor. In the corpora,
+  accessors occur in RWB-09's `semver` / `semver-vulnerable`
+  `classes/comparator.js` and in `lru-cache`. The effect on RWB-09 is
+  unmeasured, and the implementing task must measure it (§ 5's method).
+- *Implementing task.* **A-4**, which builds the "possible, from the
+  owner that evaluates the definition" account for protocol members. An
+  accessor needs the same machinery.
+
+**Not proposed.** One option is to extend the escape row to every
+function-valued member of any object passed by name to any builtin. That
+would close S1 and both named-handler cases directly. But it makes S4
+`UNKNOWN` (the method of `obj` in `Array.isArray(obj)` would get a
+possible edge), so it fails the precision controls.
+
+S1 and the named-handler `Object.keys` case are closed by the fail-closed
+default alone. That closure holds only while Decision 1 keeps
+`console.*`, `util.inspect`, `util.format`, `Object.keys` and
+`Object.getOwnPropertyNames` off the allowlist. What enforces this is
+lane A's acceptance criteria in `docs/REMEDIATION-PLAN.md` § 5a, which
+require these cases to become `UNKNOWN`. The open-defect records alone
+do not.
