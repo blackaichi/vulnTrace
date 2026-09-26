@@ -2,10 +2,17 @@
 
 ## Status
 
-- **Status**: in-progress
+- **Status**: done
 - **Branch**: remediation-reconciliation
 - **Base SHA**: 39e5477b4fbdbd918b209820e0a3a19c2fa1d438
-- **Commits**: (filled in when done)
+- **Commits**:
+  - `05b3f23` docs(tasks): add the remediation-reconciliation task file
+  - `084d3f6` docs(REMEDIATION-PLAN): record the project owner's 12 decisions
+  - `7a51b38` docs(FINDINGS): correct two lane mismatches against REMEDIATION-PLAN.md
+  - `998c0a7` docs(REMEDIATION-PLAN): assign PRM-37/PRM-38, add RWF-050 as a task
+  - `bd53b45` docs(REMEDIATION-PLAN): replace the two-slot schedule with one sequence
+  - `e559663` docs(OPEN-DEBTS): D-17 points to the now-merged remediation plan and ADRs
+  - (this commit) docs(tasks): mark remediation-reconciliation done
 
 ## Project context
 
@@ -105,21 +112,21 @@ these occurred; see the report.
 
 ## Acceptance criteria
 
-- [ ] Task file committed first and marked done at the end
-- [ ] All 12 decisions recorded in the plan's § 6 with date and decided text
-- [ ] Decision records appended to the affected ADRs; bodies unchanged
-- [ ] A-1 and the AUD-12 task (B-5) carry the updated acceptance criteria
-- [ ] ADR 0008's protocol-rule coverage reported path by path (decision 1)
-- [ ] Every genuine lane difference found and corrected by appended text
-- [ ] `PRM-37` and `PRM-38` used in the plan; `RWF-050` added as a
+- [x] Task file committed first and marked done at the end
+- [x] All 12 decisions recorded in the plan's § 6 with date and decided text
+- [x] Decision records appended to the affected ADRs; bodies unchanged
+- [x] A-1 and the AUD-12 task (B-5) carry the updated acceptance criteria
+- [x] ADR 0008's protocol-rule coverage reported path by path (decision 1)
+- [x] Every genuine lane difference found and corrected by appended text
+- [x] `PRM-37` and `PRM-38` used in the plan; `RWF-050` added as a
       reproduce-first task
-- [ ] Matrix and `FINDINGS.md` contain exactly the same finding IDs
-- [ ] Single sequential schedule, harness first, reasoning per task;
+- [x] Matrix and `FINDINGS.md` contain exactly the same finding IDs
+- [x] Single sequential schedule, harness first, reasoning per task;
       two-slot schedule marked superseded
-- [ ] `D-17` points to the plan and ADRs
-- [ ] Only permitted files changed; differentials zero; gates green;
+- [x] `D-17` points to the plan and ADRs
+- [x] Only permitted files changed; differentials zero; gates green;
       validation at the five known failures
-- [ ] Pushed; no PR; no merge; clean commit metadata
+- [x] Pushed; no PR; no merge; clean commit metadata
 
 ## Gates
 
