@@ -11,7 +11,10 @@ import {
   simplePackageFiles,
   simpleRuleFile,
 } from "../../src/testing/oracle/config-files.js";
-import { HIT_HELPER_SOURCE, hitFunction } from "../../src/testing/oracle/hit.js";
+import {
+  HIT_HELPER_SOURCE,
+  hitFunction,
+} from "../../src/testing/oracle/hit.js";
 import type { ProjectSpec } from "../../src/testing/oracle/project.js";
 
 /**
@@ -91,9 +94,9 @@ describe("runOracleCase: the happy path", () => {
     expect(result.controls?.negative.scan.findings[0]?.verdict).toBe(
       "NOT_AFFECTED",
     );
-    expect(result.controls?.negative.groundTruth.calledMarkers.has("parse")).toBe(
-      false,
-    );
+    expect(
+      result.controls?.negative.groundTruth.calledMarkers.has("parse"),
+    ).toBe(false);
   });
 
   it("reports the declared reason for a case whose controls are inapplicable", async () => {
@@ -173,12 +176,10 @@ describe("mutations: the guarantees cannot be bypassed", () => {
     // Below runOracleCase entirely: assertLoudFixture itself, called
     // directly the way runVariant calls it internally, with no case
     // wrapper to potentially short-circuit.
-    const { assertLoudFixture } = await import(
-      "../../src/testing/oracle/loud-fixture.js"
-    );
-    const { withTempProject } = await import(
-      "../../src/testing/oracle/project.js"
-    );
+    const { assertLoudFixture } =
+      await import("../../src/testing/oracle/loud-fixture.js");
+    const { withTempProject } =
+      await import("../../src/testing/oracle/project.js");
     await expect(
       withTempProject(project(CALL_PARSE), (dir) =>
         assertLoudFixture(dir, {

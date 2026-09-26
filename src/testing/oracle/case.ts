@@ -94,7 +94,10 @@ export interface OracleCaseResult {
 }
 
 async function runVariant(
-  kase: Pick<OracleCase, "loudFixture" | "provider" | "scanOptions" | "groundTruthCommand">,
+  kase: Pick<
+    OracleCase,
+    "loudFixture" | "provider" | "scanOptions" | "groundTruthCommand"
+  >,
   variant: OracleVariant,
 ): Promise<OracleVariantResult> {
   return withTempProject(variant.project, async (dir) => {

@@ -1,6 +1,9 @@
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { withTempProject, type ProjectSpec } from "../../src/testing/oracle/project.js";
+import {
+  withTempProject,
+  type ProjectSpec,
+} from "../../src/testing/oracle/project.js";
 import { assertLoudFixture } from "../../src/testing/oracle/loud-fixture.js";
 import {
   nodeEntryCommand,
@@ -17,7 +20,10 @@ import {
   simpleRuleFile,
 } from "../../src/testing/oracle/config-files.js";
 import { compileTypeScript } from "../../src/testing/oracle/typescript-compile.js";
-import { HIT_HELPER_SOURCE, hitFunction } from "../../src/testing/oracle/hit.js";
+import {
+  HIT_HELPER_SOURCE,
+  hitFunction,
+} from "../../src/testing/oracle/hit.js";
 
 /**
  * Demonstrates the harness genuinely supports every project shape task
@@ -132,7 +138,10 @@ describe("shape: an ESM package installed via a symlink (file: dependency)", () 
               version: "1.0.0",
               dependencies: { "vuln-lib": "file:packages/vuln-lib" },
             },
-            "node_modules/vuln-lib": { resolved: "packages/vuln-lib", link: true },
+            "node_modules/vuln-lib": {
+              resolved: "packages/vuln-lib",
+              link: true,
+            },
             "packages/vuln-lib": { name: "vuln-lib", version: "1.0.0" },
           },
         }),
@@ -221,7 +230,10 @@ describe("shape: TypeScript source compiled with the repository's own TypeScript
     };
 
     await withTempProject(project, async (dir) => {
-      const groundTruth = runGroundTruth(dir, nodeEntryCommand("dist/index.js"));
+      const groundTruth = runGroundTruth(
+        dir,
+        nodeEntryCommand("dist/index.js"),
+      );
       expect(groundTruth.calledMarkers.has("parse")).toBe(true);
 
       const scan = await runOracleScan(
@@ -266,7 +278,7 @@ describe("shape: a symbol entrypoint ({file, symbol}) and analysis.limits.maxFil
         "node_modules/vuln-lib/index.js": LIB_SOURCE,
         "src/index.js":
           'const lib = require("vuln-lib");\n' +
-          "function main() { return lib.parse(\"x\"); }\n" +
+          'function main() { return lib.parse("x"); }\n' +
           "module.exports = { main };\n",
         "rules.yml": simpleRuleFile({
           id: "GHSA-symbol-entry",
@@ -384,7 +396,11 @@ describe("shape: a verbatim, non-generated package-lock.json", () => {
       const scan = await runOracleScan(
         dir,
         syntheticProvider([
-          { id: "GHSA-verbatim-lock", packageName: "vuln-lib", fixed: "99.0.0" },
+          {
+            id: "GHSA-verbatim-lock",
+            packageName: "vuln-lib",
+            fixed: "99.0.0",
+          },
         ]),
       );
       expect(typeof scan.exitCode).toBe("number");

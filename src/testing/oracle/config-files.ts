@@ -9,8 +9,7 @@
  */
 
 export type EntrypointSpec =
-  | string
-  | { readonly file: string; readonly symbol: string };
+  string | { readonly file: string; readonly symbol: string };
 
 export interface SimpleRuleSpec {
   readonly id: string;
