@@ -2,8 +2,10 @@
 
 ## Status
 
-- **Status**: done (verdict `NEEDS_DECISION`: ADR 0008 "Amendment A-0"
-  is proposed and awaits a project-owner decision)
+- **Status**: done. First verdict `NEEDS_DECISION`; the project owner
+  accepted ADR 0008 "Amendment A-0" (parts A and B, with conditions) on
+  2026-09-27, recorded by the commits listed under "Owner decision"
+  below
 - **Branch**: `a0-adr0008-coverage-reproduction`
 - **Base SHA**: `276a208b841dba65e35424238af49aafdea6e418` (main after
   `docs(tasks): mark H-0 real-Node oracle harness done`)
@@ -18,7 +20,14 @@
   - `ce640f1` — ADR 0008 "Amendment A-0 (PROPOSED)", appended
   - `0ca519f` — REMEDIATION-PLAN § 5a: A-0 entry; lane-A acceptance
   - `ed45804` — regenerated `docs/SCORECARD.md`
-  - the commit setting this status to done (with the Corrections section)
+  - `4178e9f` — this status set to done (with the Corrections section)
+  - Owner decision (2026-09-27):
+    - `c84cbd1` — ADR 0008 "Decision record — Amendment A-0" and two
+      corrections, appended
+    - `6e8dfb4` — REMEDIATION-PLAN: § 2.5 matrix rows, RWF-051-typecheck
+      (order 1b), A-7 (order 30), A-3 / A-4 conditions, probe note
+    - `b93ac27` — OPEN-DEBTS D-17: updated failure-class counts, appended
+    - the commit recording the decision in this file
 - **Superseded by**:
 
 ## Project context
@@ -232,3 +241,30 @@ rewritten"). Each item is also reported under DEVIATIONS.
    `tests/oracle` to its `include` was not the minimal change.
 6. **A-0 is order `1a`** in `REMEDIATION-PLAN.md` § 5a, not a renumbered
    order 2, so that the order numbers later rows cite stay valid.
+
+## Owner decision (appended 2026-09-27)
+
+The project owner decided the `NEEDS_DECISION` this task reported.
+Amendment A-0 is **accepted**: part A with a mechanical-admission
+condition (every non-invoking allowlist entry needs a passing H-0
+builtin-probe test, run in CI), and part B with two conditions (A-4
+measures its precision cost before merging; a later reader-builtin
+precision task is added). Extending the escape rule to every member of
+any object passed to any builtin was considered and rejected. The
+decision is recorded in ADR 0008, "Decision record — Amendment A-0". Its
+conditions are in `docs/REMEDIATION-PLAN.md` § 5a (A-3 and A-4
+acceptance; RWF-051-typecheck as order 1b; A-7 as order 30).
+
+Deviations while recording it, also reported:
+
+1. The inspection claim ("inspection is covered by the protocol-member
+   rule") is in ADR 0008 § 2, not in the Decision record, as the
+   decision prompt had it. The correction names § 2.
+2. The plan has no "Phase 4". The reader-builtin task was added as A-7,
+   order 30 in § 5a, after every lane task.
+3. Two facts measured on 2026-09-27 are recorded in A-3's acceptance and
+   were not in the decision. First, CI (`.github/workflows/ci.yml`) does
+   not run `npm run test:oracle`. Second, `JSON.parse`, the only builtin
+   call in RWB-07's source, has a firing probe (`toString`,
+   `Symbol.toPrimitive`, Proxy `get`), so mechanical admission may cost
+   RWB-07's correct `NOT_AFFECTED`.
