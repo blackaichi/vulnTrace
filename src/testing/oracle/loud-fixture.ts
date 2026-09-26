@@ -64,6 +64,15 @@ export function assertLoudFixture(
   projectDir: string,
   check: LoudFixtureCheck,
 ): LoudFixtureResult {
+  // RUNTIME half of the non-empty guarantee (task A-0 step 1): the tuple
+  // type above only protects a file some `tsc` gate type-checks. With no
+  // names the probe below checks nothing and passes vacuously.
+  const names = check.boundNames as readonly unknown[] | undefined;
+  if (!Array.isArray(names) || names.length === 0) {
+    throw new LoudFixtureViolation(check.specifier, [
+      `<no bound names declared: ${JSON.stringify(names)} -- the check would assert nothing>`,
+    ]);
+  }
   const boundNamesJson = JSON.stringify(check.boundNames);
   const specifierJson = JSON.stringify(check.specifier);
   const probe = check.esm

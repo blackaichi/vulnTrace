@@ -38,6 +38,19 @@ export function runGroundTruth(
   command: readonly [string, ...string[]],
   options?: { readonly timeoutMs?: number },
 ): GroundTruthResult {
+  // RUNTIME guard (task A-0 step 1): an empty command would otherwise make
+  // `execFileSync` throw, which the catch below records as an ordinary
+  // `threw: true` ground truth -- a missing ground truth disguised as one.
+  if (
+    !Array.isArray(command) ||
+    command.length === 0 ||
+    typeof command[0] !== "string" ||
+    command[0].trim() === ""
+  ) {
+    throw new Error(
+      `runGroundTruth: no ground-truth command (got ${JSON.stringify(command)})`,
+    );
+  }
   const [exe, ...args] = command;
   try {
     const stdout = execFileSync(exe, args, {
