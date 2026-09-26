@@ -2,10 +2,18 @@
 
 ## Status
 
-- **Status**: in-progress
+- **Status**: done
 - **Branch**: record-soundness-audits
 - **Base SHA**: d42c6ba9d6dc46c79e5b69cd40212c1021832825
-- **Commits**: (filled in when done)
+- **Commits**:
+  - `0cc9536` docs(tasks): add the record-soundness-audits task file
+  - `b14e92f` docs(audits): commit the three soundness-audit reports verbatim
+  - `8f6b2d7` test(FINDINGS): register 67 reproduced audit findings, plus RWF-050
+  - `2780a91` docs(OPEN-DEBTS): add D-17 for the audit programme; criterion 3 and P1-B now state the block plainly
+  - `63d0ca7` docs(README): factual current-status notice; correct two disproved cache sentences
+  - `d1a17dd` docs(SOUNDNESS-CONTRACT): add an implementation-status note; contract unchanged
+  - `ea86c0d` docs(SCORECARD): regenerate after registering the audit findings
+  - (this commit) docs(tasks): mark record-soundness-audits done
 
 ## Project context
 
