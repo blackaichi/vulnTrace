@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-09-27, by `TASK-0`.
+**Last updated:** 2026-09-27, by `BL-001`.
 
 ## Objective
 
@@ -49,17 +49,20 @@ said the notice did not exist, which was false).
 
 ## Current task
 
-`TASK-0` — bootstrap the task-by-task workflow
-([task file](tasks/task-0-workflow-bootstrap.md)): `READY_FOR_REVIEW`,
-its pull request awaiting the project owner.
+`BL-001` — correct the false "no README notice" record
+([task file](tasks/BL-001-readme-notice-record-correction.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. TASK-0
+(bootstrap the workflow) merged as PR #73.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After TASK-0, as
-proposed there: `BL-001` (README notice), `D-03` (hermetic advisories),
-`BL-029` (differential tool), then lane A from `A-1`.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After BL-001:
+`D-03` (hermetic advisories), `BL-029` (differential tool), then lane A
+from `A-1`.
 
 ## Recently discovered
 
-`BL-001`, `BL-017`, `BL-018` (with finding RWF-052), `BL-029`; `BL-004`
-(archived P0-Z and P0 closure probes, added by the project owner).
+`RWF-053` (the BL-001 backlog row and TASK-0's task file both falsely
+claimed README has no soundness-status notice; corrected by `BL-001`).
+`BL-017`, `BL-018` (with finding RWF-052), `BL-029`; `BL-004` (archived
+P0-Z and P0 closure probes, added by the project owner).
