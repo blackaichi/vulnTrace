@@ -47,7 +47,8 @@ dropped finding. The README does not say this yet (backlog `BL-001`).
 ## Current task
 
 `TASK-0` — bootstrap the task-by-task workflow
-([task file](tasks/task-0-workflow-bootstrap.md)).
+([task file](tasks/task-0-workflow-bootstrap.md)): `READY_FOR_REVIEW`,
+its pull request awaiting the project owner.
 
 ## Next
 

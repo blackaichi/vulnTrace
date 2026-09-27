@@ -595,3 +595,75 @@ statements in this ADR that the reproduction shows are inaccurate".
    Evidence: PRM-117 in `tests/validation/FINDINGS.md`; the cases
    `S1.console.log`, `S1.util.inspect` and `S1.util.format-o` in
    `tests/oracle/adr0008-coverage.test.ts`.
+
+## Decision record — allowlist admission ruling (project owner, 2026-09-27)
+
+Decided by the project owner on 2026-09-27; recorded by task
+[`task-0-workflow-bootstrap`](../tasks/task-0-workflow-bootstrap.md).
+This ADR's body, its earlier decision records, "Amendment A-0" and the
+"Corrections" section above are unchanged; this section is appended. It
+applies to task **A-3**, which builds the non-invoking allowlist, and is
+added to A-3's acceptance in `docs/REMEDIATION-PLAN.md` (§ 5a, "A-0
+additions to lane-A acceptance").
+
+**The ruling.** A builtin is admitted to the non-invoking allowlist **per
+argument position**. For a position to pass, every hook the H-0 builtin
+probe observes firing for that position must be:
+
+- **(a) accounted for by this ADR independently of this call**: a member
+  of § 2's protocol list (`toString`, `valueOf`, `toJSON`, `then`,
+  `Symbol.iterator`, `Symbol.asyncIterator`, `Symbol.hasInstance`,
+  `Symbol.toPrimitive`, `Symbol.dispose`, `Symbol.asyncDispose`), an
+  accessor body (Amendment A-0 part B), or a Proxy trap (Amendment A-0
+  part A, accounted at the Proxy's creation); **and**
+- **(b) proven by an oracle case**: a vulnerable call inside that hook,
+  reached through this builtin at this position, never yields
+  `NOT_AFFECTED`.
+
+Any other hook fails the position: the builtin calling a function
+argument, `util.inspect.custom`, or any method not in the protocol list.
+
+*Example.* `JSON.parse`'s first argument may be admitted, so RWB-07 keeps
+its correct `NOT_AFFECTED`; its reviver argument never can, because the
+builtin calls it.
+
+*The probe.* The H-0 builtin probe must report "threw" separately from "a
+hook fired". Today `probeBuiltinArgKind`
+(`src/testing/oracle/builtin-probe.ts`) records a thrown exception in
+`fired` as `THREW:<message>` and reports `ranUserCode: fired.length > 0`,
+so a builtin that throws reads as one that ran user code.
+
+**Checked when this record was written** (Node v22.11.0). `JSON.parse`'s
+first argument fires `toString` and `Symbol.toPrimitive` for the objects
+that define them, and Proxy `get` traps for a Proxy; for every other probe
+kind (function, getter, `valueOf` alone, `toJSON`, `util.inspect.custom`)
+it throws with no hook fired. Every hook it fires is in (a), so the
+example holds, subject to (b). The probe's reporting of a throw is as
+stated above.
+
+**How it relates to the conditions already accepted.** Recorded here so
+A-3 does not have to reconstruct it:
+
+- It **refines Decision 1** (2026-09-26), which admitted an entry only if
+  it runs no user code through any path "OR § 2's protocol-member rule
+  provably covers the path". The ruling states what "covered" means (the
+  three accounted kinds in (a)), requires a proof for each (b), and moves
+  the unit of admission from the builtin to the argument position.
+- It **keeps Amendment A-0 part A's conditions**: an admitted position
+  must still be non-retaining; `new Proxy` and `Proxy.revocable` stay
+  excluded by name; the escape row still takes precedence over every
+  allowlist entry.
+- It **keeps mechanical admission** (part A's condition): admission is
+  decided by a probe test run in CI that reads which hooks fired and
+  checks each against (a), never by hand. What changes is the reading of
+  that condition's example list. `console.*`, `util.inspect` and
+  `util.format` still fail, because their probe fires
+  `util.inspect.custom`, so PRM-117's closure stands. `Object.keys`,
+  `Object.getOwnPropertyNames`, `Object.entries` and `JSON.stringify`
+  (first argument) fire only accessor bodies, listed protocol members or
+  Proxy traps (the probe results under "Amendment A-0"), so a position of
+  theirs **may** now pass, if (b) holds and it is non-retaining. The
+  named-handler cases (`S3.Object.keys.ownKeys.named-handler`,
+  `S3.in.has.named-handler`) stay closed by part A's exclusion of
+  `new Proxy` at the creation site, which (b)'s oracle case for
+  `Object.keys` must confirm.
