@@ -3,6 +3,8 @@ name: CI
 on:
   pull_request:
     branches: [main]
+  push:
+    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -67,6 +69,20 @@ jobs:
       - name: Adversarial validation suites
         run: npm run test:adversarial
 
+      # The binding-form grammar sweep (tests/binding-grammar/) and the
+      # real-Node oracle harness's own self-tests (tests/oracle/). Neither
+      # ran in CI before RWF-051-typecheck. Both are hermetic: real local
+      # `node` subprocesses and vendored fixtures on disk, no network --
+      # confirmed by running each alone and by correcting
+      # scripts/scorecard-sources.mjs's classifier, which had wrongly
+      # marked test:oracle as reaching the live OSV API (see docs/SCORECARD.md
+      # § 9 and tests/validation/FINDINGS.md's RWF-051 entry).
+      - name: Binding-form grammar sweep
+        run: npm run test:binding-grammar
+
+      - name: Real-Node oracle harness suite
+        run: npm run test:oracle
+
       # Never ran in CI before F6, which is part of why three commits
       # carrying forbidden metadata reached main: the archive check existed
       # and nothing invoked it, and the commit-metadata check did not exist
@@ -75,3 +91,17 @@ jobs:
       # the gate degrades to checking only what a shallow clone contains.
       - name: History and commit metadata
         run: npm run validate:history
+
+      # validate:history already runs validate-commit-metadata.mjs as its
+      # second half (see package.json), so this repeats a sub-second check
+      # that already ran above. Kept as its own step so the AGENTS.md
+      # section I gate list has one CI step per named gate, not a merged
+      # pair a reader has to know about.
+      - name: Commit metadata
+        run: npm run validate:metadata
+
+      - name: Scorecard freshness
+        run: node scripts/generate-scorecard.mjs --check
+
+      - name: Documentation references
+        run: node scripts/check-docs.mjs

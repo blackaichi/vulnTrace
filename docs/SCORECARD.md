@@ -421,7 +421,7 @@ points at an offline config reaches OSV.
 | `npm run test:coverage` | no — includes the live OSV provider integration suite | **yes — live OSV** |
 | `npm run test:foundation` | yes | no |
 | `npm run test:integration` | no — includes the live OSV provider integration suite | **yes — live OSV** |
-| `npm run test:oracle` | no — includes the live OSV provider integration suite | **yes — live OSV** |
+| `npm run test:oracle` | yes | no |
 | `npm run test:performance` | no — wall-clock: shape deterministic, timing environmental | no |
 | `npm run test:unit` | yes | no |
 | `npm run test:validation` | no — live OSV | **yes — live OSV** |
