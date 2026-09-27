@@ -227,6 +227,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | Open |
 | RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | **Fixed** (RWF-051-typecheck) — see below |
 | RWF-052 | n/a — the repository's own debt register | `docs/OPEN-DEBTS.md` D-14 still describes RWF-046's file-scope `require` collapse as present and open, although RWF-046 closed it | record — a register entry overstates an open defect — see below | Open |
+| RWF-053 | n/a — the repository's own backlog and task records | `docs/tasks/BACKLOG.md`'s BL-001 row and `task-0-workflow-bootstrap.md`'s premise-verification note both claim `README.md` has no soundness-status notice, although it has had one since `ae82d33`, a day before that task started | record — two records overstate a missing notice — see below | **Fixed** (BL-001) — see below |
 
 ---
 
@@ -17229,3 +17230,65 @@ who trusts D-14's present-tense reproduction over the code.
 RWF-046, the fix location and the pinning test, the way D-07's heading
 records its closure. Do not rewrite D-14's original text. Backlog task
 `BL-018`.
+
+---
+
+## RWF-053 — Two records claim README.md has no soundness-status notice, although it has had one since before either was written
+
+**Status:** **Fixed** (task `BL-001`, 2026-09-27) — see below
+**Failure class:** record — two register entries state, in the present
+tense, that a document is missing content it already carries
+**Defect class:** not applicable (documentation)
+**Proof family affected:** none
+**Severity:** Low
+**Fix lane:** none assigned (records)
+
+**Discovered:** by task `BL-001` (`bl-001-readme-notice-correction`),
+while verifying the premise of the backlog row it was about to execute
+(AGENTS.md § D: verify a factual claim before acting on it).
+
+`docs/tasks/BACKLOG.md`'s BL-001 row, added by task
+`task-0-workflow-bootstrap` ("discovered in TASK-0"), read: "README
+soundness status notice: until the remediation closes, treat
+`NOT_AFFECTED` as `UNKNOWN`", with the note "The workflow prompt assumed
+this notice exists; it does not. README's Status section says Foundation
+is closed and does not mention OPEN-DEBTS D-17." The same task's own task
+file, `docs/tasks/task-0-workflow-bootstrap.md` ("Premise verification"),
+asserted: "**'The README status notice ...' (Part 8).** **False.**
+`README.md` has no such notice."
+
+Both are wrong. Measured against `main` at `ace0139` (the base SHA task
+`BL-001` branched from):
+
+- `README.md:80-88` carries the notice, beside the soundness-priority
+  guarantee: "**Current status (not ready for production use).** ...
+  Until the soundness remediation this work motivates has closed, **treat
+  every `NOT_AFFECTED` this analyzer reports as `UNKNOWN`.**", with a link
+  to `docs/OPEN-DEBTS.md` D-17, `tests/validation/FINDINGS.md` and
+  `docs/audits/`;
+- `git log -p` for that range shows it was added by commit `ae82d33`
+  ("docs(README): factual current-status notice; correct two disproved
+  cache sentences"), dated 2026-09-26 — one day before
+  `task-0-workflow-bootstrap` started (its first commit, `2d5b666`, is
+  dated 2026-09-27 per `git log`);
+- one clause of the surrounding claim is true and stands: README's
+  `## Status` section (`README.md:102-108`) says "Foundation is closed"
+  and, on its own, does not point a reader to the notice a few lines
+  above it or to D-17.
+
+**Why it is registered.** AGENTS.md § C: "Before you rely on a documented
+claim for a soundness decision, verify it against the code ... If the
+document is wrong, the correction is itself a finding." No verdict, proof
+or finding-accounting path is touched by the error itself; the cost is
+that a later reader (human or agent) trusts the backlog and task-file
+record instead of `README.md`, and either re-adds a duplicate notice or
+spends time looking for a gap that the file does not have.
+
+**How it was closed.** Task `BL-001`: corrected the BL-001 backlog row's
+notes to state the narrower, real gap (the `## Status` section does not
+point to the existing notice); appended a dated Corrections section to
+`task-0-workflow-bootstrap.md` rather than rewriting its original text
+(`docs/tasks/README.md`, "Once executed, a task file is not rewritten");
+corrected `docs/progress.md`'s "Known limitations" section, which repeated
+the same false claim; and added a pointer from README's `## Status`
+section to the existing notice.
