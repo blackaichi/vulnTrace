@@ -8,11 +8,12 @@ section instead (see README.md).
 
 ## Status
 
-- **Status**: planned <!-- planned | in-progress | done | superseded -->
+- **Status**: TODO <!-- TODO | IN_PROGRESS | BLOCKED | READY_FOR_REVIEW | MERGED | CANCELLED (README.md) -->
+- **Backlog ID**: <!-- the task's ID in BACKLOG.md -->
 - **Branch**: <!-- branch name, once created -->
 - **Base SHA**: <!-- main at branch creation -->
-- **Commits**: <!-- filled in when done: the commits implementing this task -->
-- **Superseded by**: <!-- only when superseded: the replacing task file -->
+- **Commits**: <!-- filled in by the last commit (READY_FOR_REVIEW): the commits implementing this task -->
+- **Superseded by**: <!-- only when CANCELLED in favour of another task: the replacing task file -->
 
 ## Project context
 
@@ -70,5 +71,5 @@ differentials or the validation baseline (OPEN-DEBTS D-09).
 
 ## Report
 
-In the format of `AGENTS.md` section J, in exactly that order. Add any
-task-specific report items here.
+In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5), in
+exactly that order. Add any task-specific report items here.

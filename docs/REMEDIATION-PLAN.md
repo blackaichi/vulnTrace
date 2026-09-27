@@ -691,3 +691,17 @@ designs). For each clone and for an unmodified baseline clone:
 
 The first implementation task of each lane repeats steps 1–3 on the real
 implementation and reports any movement case by case.
+
+## 10. Where task order and status are tracked (added 2026-09-27)
+
+Added by task
+[`task-0-workflow-bootstrap`](tasks/task-0-workflow-bootstrap.md). From
+this date, the **order** and **status** of every task in this plan are
+tracked in [`docs/tasks/BACKLOG.md`](tasks/BACKLOG.md), together with the
+tasks that are not part of the remediation. § 5a's order is carried into
+the backlog unchanged; a later change of order is made there, with its
+reason. This plan stays authoritative for each task's **specification**
+(§ 5a, § 7, the "A-0 additions to lane-A acceptance", and the ADRs' § 8
+tables), for the finding matrix (§ 2) and for the project owner's
+decisions (§ 6.1). The status lines inside § 5a (for example "Status:
+**done**") are kept as a record and are not updated further.
