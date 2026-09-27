@@ -50,8 +50,10 @@ import { runScanCommand } from "./scan.js";
  * absence proof.
  *
  * Uses a fake vulnerability provider -- the closure is built before, and
- * independently of, any advisory query, so no network boundary is involved
- * here (unlike the validation suite, which deliberately hits live OSV).
+ * independently of, any advisory query, so no provider boundary is
+ * involved here at all (the validation suite, `tests/validation/`, does
+ * query a provider -- since D-03, a recorded OSV snapshot rather than
+ * live OSV).
  *
  * Each fixture is copied to a fresh OS-temp directory before scanning, for
  * exactly the reason VT-302/RWF-010 documents in

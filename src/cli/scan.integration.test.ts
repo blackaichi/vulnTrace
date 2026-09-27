@@ -3,22 +3,27 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { runScanCommand } from "./scan.js";
+import { SnapshotOsvProvider } from "../testing/snapshot-osv-provider.js";
 
 /**
- * Exercises `runScanCommand` against the real OSV network (see
+ * D-03: replays a real, recorded OSV answer for lodash@4.17.4
+ * (`tests/validation/osv-snapshot.json`, via `SnapshotOsvProvider`)
+ * instead of querying OSV live -- this file `new OsvProvider()`'d with no
+ * stub and was not named by OPEN-DEBTS D-03's original "What"; found by
+ * this task's own premise check (AGENTS.md § D). lodash@4.17.4 is a
+ * known-old, historically vulnerable real package version (see
  * src/vulnerabilities/osv-provider.integration.test.ts,
- * src/vulnerabilities/version-matching.integration.test.ts, which establish
- * lodash@4.17.4 as a known-old, historically vulnerable real package
- * version). No vulnerable-symbol rule targets lodash, so every match
- * degrades to UNKNOWN ("vulnerable target known? NO") rather than AFFECTED
- * — this test proves the real dependency-graph -> real OSV network ->
- * real normalizer -> real version match -> JSON-output wiring end to end
+ * src/vulnerabilities/version-matching.integration.test.ts). No
+ * vulnerable-symbol rule targets lodash, so every match degrades to
+ * UNKNOWN ("vulnerable target known? NO") rather than AFFECTED — this
+ * test proves the real dependency-graph -> real OSV data -> real
+ * normalizer -> real version match -> JSON-output wiring end to end
  * through the CLI, not reachability itself (already covered against real
  * data by src/cli/scan.test.ts with an injected provider, since no real
  * OSV-tracked CVE has a reachable/unreachable target inside a throwaway
  * fixture project).
  */
-describe("runScanCommand against the real OSV network", () => {
+describe("runScanCommand against a recorded real OSV response", () => {
   let tmpDir: string | undefined;
 
   afterEach(() => {
@@ -60,6 +65,7 @@ describe("runScanCommand against the real OSV network", () => {
 
     const exitCode = await runScanCommand({
       projectPathArg: tmpDir,
+      provider: new SnapshotOsvProvider(),
       io: {
         stdout: (t) => stdout.push(t),
         stderr: (t) => stderr.push(t),
@@ -85,7 +91,7 @@ describe("runScanCommand against the real OSV network", () => {
           finding.package === "lodash" && finding.verdict === "UNKNOWN",
       ),
     ).toBe(true);
-    // Against the REAL OSV API: every UNKNOWN carries a structured reason,
+    // Against a real, recorded OSV response: every UNKNOWN carries a structured reason,
     // and it is the same one, because they all stop at the same place.
     expect(
       output.findings.every(

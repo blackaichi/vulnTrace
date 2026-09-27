@@ -22,7 +22,7 @@
  * WHAT IS DELIBERATELY ABSENT.
  *
  * Nothing here is a wall-clock measurement, and nothing here needs a
- * network. The live OSV validation suite (`tests/validation/`) owns no
+ * network. The real-world validation suite (`tests/validation/`) owns no
  * invariant in this map on purpose — see {@link LIVE_SIGNALS}.
  */
 
@@ -380,10 +380,15 @@ export const LIVE_SIGNALS: readonly {
     id: "live-osv-validation",
     command: "npm run test:validation",
     why:
-      "Hits the real OSV API over the network against real npm packages. " +
-      "Integration evidence that the analyzer works against advisories " +
-      "nobody wrote for it — and a provider-movement detector, not a " +
-      "correctness oracle. Not removed; classified.",
+      "Real npm packages against real advisories, replayed from a recorded " +
+      "OSV snapshot since D-03 (was live, unconditionally, over the " +
+      "network). Not excluded for network reasons any more: five cases " +
+      "are deliberately kept failing (OPEN-DEBTS D-09) and the suite " +
+      "asserts the expected verdict unconditionally, so it is not meant " +
+      "to be all-green. Integration evidence that the analyzer works " +
+      "against advisories nobody wrote for it, and a provider-movement " +
+      "detector across re-recordings — not a correctness oracle. Not " +
+      "removed; classified.",
   },
   {
     id: "adversarial-suites",

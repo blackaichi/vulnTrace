@@ -160,6 +160,18 @@ async function recordValidationSnapshot() {
     }
   }
 
+  // src/cli/scan.integration.test.ts queries lodash@4.17.4 directly (a
+  // known-old historically-vulnerable version, no cases.json fixture uses
+  // it) -- recorded into the same snapshot rather than a separate file,
+  // since it is the same SnapshotOsvProvider/VulnerabilityProvider
+  // interface that test uses.
+  process.stderr.write("recording scan.integration.test.ts's lodash@4.17.4...\n");
+  await provider.queryPackage({
+    ecosystem: "npm",
+    name: "lodash",
+    version: "4.17.4",
+  });
+
   const sorted = Object.fromEntries(
     [...answers.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)),
   );

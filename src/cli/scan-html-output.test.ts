@@ -22,9 +22,11 @@ import { runScanCommand } from "./scan.js";
  *
  * Argument handling goes through `runCli` (the exact parsing a user hits);
  * the scans themselves go through `runScanCommand` with an injected
- * provider, so every case here stays hermetic — `runCli` would construct a
- * real `OsvProvider` and reach the network (see
- * src/cli/scan.integration.test.ts, the suite that is allowed to).
+ * provider, so every case here stays hermetic — `runCli` would construct
+ * a real, network-reaching `OsvProvider` by default in production use
+ * (`src/cli/scan.integration.test.ts` proves that request/response path
+ * against a real, recorded OSV answer since D-03, without needing the
+ * network at test time).
  *
  * What these cases exist to pin down, beyond "a file appears":
  *
