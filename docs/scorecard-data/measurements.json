@@ -37,13 +37,13 @@
   },
   "fullSuite": {
     "command": "npm test",
-    "commit": "p1-b1-unsupported-construct-decomposition (base 094b4b9)",
-    "measuredAt": "2026-09-17",
-    "deterministic": false,
+    "commit": "d-03-hermetic-osv-validation (base a87faa2)",
+    "measuredAt": "2026-09-27",
+    "deterministic": true,
     "status": "PASS",
-    "files": 170,
-    "tests": 4221,
-    "durationSeconds": 204.97
+    "files": 188,
+    "tests": 4525,
+    "durationSeconds": 295.0
   },
   "adversarial": {
     "command": "npm run test:adversarial",
@@ -106,19 +106,19 @@
   },
   "liveValidation": {
     "$comment": [
-      "LIVE. Reproduced in tests/validation/REPORT.md, which the suite",
-      "regenerates on every run. The committed REPORT.md was last written",
-      "at 0e7ec1c (2026-09-12); F7 re-ran the suite at its own base and the",
-      "regenerated report was BYTE-IDENTICAL, so the committed record is",
-      "confirmed current rather than merely old.",
-      "",
-      "Five failures are KNOWN and kept deliberately red -- see",
-      "docs/OPEN-DEBTS.md D-09. Zero unexpected failures."
+      "Hermetic since task D-03 (OPEN-DEBTS D-03, CLOSED): replays",
+      "tests/validation/osv-snapshot.json instead of querying live OSV.",
+      "Reproduced in tests/validation/REPORT.md, which the suite",
+      "regenerates on every run. D-03 re-ran the suite against the new",
+      "snapshot: 12 passed / 5 failed (all known), byte-identical to the",
+      "prior live-OSV baseline -- exactly OPEN-DEBTS D-09's five known",
+      "failures, case by case, for the same reason each. Zero unexpected",
+      "failures, zero movement."
     ],
     "command": "npm run test:validation",
-    "commit": "foundation-f7-docs-scorecard (base dcb5da1)",
-    "measuredAt": "2026-09-17",
-    "deterministic": false,
+    "commit": "d-03-hermetic-osv-validation (base a87faa2)",
+    "measuredAt": "2026-09-27",
+    "deterministic": true,
     "status": "12 passed / 5 failed (all known)",
     "total": 17,
     "passed": 12,

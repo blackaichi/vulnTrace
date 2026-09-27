@@ -443,10 +443,10 @@ correctness oracle.
 | Command | Deterministic? | Network? | What it is |
 | --- | --- | --- | --- |
 | `npm run test:foundation` | **yes** | **no** | The deterministic Foundation gate. The subset of `npm test` that owns a named Foundation invariant. The project's oracle. |
-| `npm test` | **no** | **yes** | The full unit/integration/e2e suite. One suite inside it, `src/vulnerabilities/osv-provider.integration.test.ts`, queries the live OSV API unconditionally, so this run is **not** fully offline. Recorded as a debt, not fixed. |
+| `npm test` | **yes** | **no** | The full unit/integration/e2e suite. Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API (`osv-provider.integration.test.ts` and two more D-03 found by the same premise check, `osv-normalizer.integration.test.ts` and `version-matching.integration.test.ts`) now replays a recorded snapshot of real OSV answers instead. |
 | `npm run test:adversarial` | yes | no | Two independent suites (v1: 34 scenarios, v2: 45, built to detect overfitting to v1). A research and coverage signal, **not a contract owner**: both deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | shape yes, value environmental | no | Wall-clock catastrophic-regression smoke against generous ceilings. Answers "did something explode", never "is the complexity contract intact". |
-| `npm run test:validation` | **no** | **yes** | Real npm-installed packages against real advisories over the real OSV API. Integration evidence and a provider-movement detector, never a correctness oracle. |
+| `npm run test:validation` | **yes** | **no** | Real npm-installed packages against real advisories, replayed from a recorded OSV snapshot since `D-03` (was live). Integration evidence and a provider-movement detector across re-recordings, never a correctness oracle — five cases are deliberately kept failing (OPEN-DEBTS D-09). |
 
 The **complexity contract** is a separate, exact operation-count gate
 (`src/analysis/scan-caches.f5-multiplier.test.ts`) with no threshold to

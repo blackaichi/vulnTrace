@@ -16,10 +16,12 @@ A (owner: P1–P2, 'consider doing it early')". **Premise check (AGENTS.md §
 D): the "Appendix A" citation is false.** No document in this repository
 contains the string "Appendix" anywhere (`grep -rin appendix docs/*.md
 tests/validation/FINDINGS.md` returns nothing). The same broken citation
-also appears in the `D-12`, `BL-022` and `E-4` rows. This is not fixed by
-this task — determining what "Appendix A" was meant to reference (most
-likely a lost or never-committed document, the same shape of defect as
-`OPEN-DEBTS.md` D-10) is its own piece of work — but it is registered
+also appears in **39** rows total (`grep -n "Appendix A" docs/tasks/BACKLOG.md`
+— roughly a third of the backlog; see RWF-055 for the full list), not
+merely a handful. This is not fixed by this task — determining what
+"Appendix A" was meant to reference (most likely a lost or
+never-committed document, the same shape of defect as
+`OPEN-DEBTS.md` D-10, but far wider) is its own piece of work — but it is registered
 below (RWF-055) and given a backlog row, per AGENTS.md § C: "the
 correction is itself a finding... Report it. Do not work around it
 silently."

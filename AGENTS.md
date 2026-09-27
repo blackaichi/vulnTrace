@@ -226,21 +226,25 @@ Every task runs the full set, unrelaxed:
 | documentation references | `node scripts/check-docs.mjs` | yes |
 
 - Do not change thresholds, skip tests or edit configuration to get green.
-- `npm test` and `npm run test:validation` use the network (OPEN-DEBTS
-  D-03, ARCHITECTURE § 10). A network failure is reported as one. It is
-  not a pass.
+- `npm test` and `npm run test:validation` are both fully offline since
+  task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query
+  the live OSV API replays a recorded snapshot of real OSV answers
+  instead (`tests/validation/osv-snapshot.json`,
+  `src/vulnerabilities/osv-provider.fixtures.json`, both produced by
+  `scripts/record-osv-snapshot.mjs`). `npm run test:validation` stays
+  local-only regardless (see below) — hermeticity was never the only
+  reason.
 - `npm run test:validation` has documented known failures (OPEN-DEBTS
   D-09). Compare them case by case, verdict by verdict, against that
   baseline. Do not ignore them. A known failure that changes verdict, or
   a new failure, is a finding.
 - Every gate above marked "yes" runs in `.github/workflows/ci.yml`, on
-  every pull request and on every push to `main` (task RWF-051-typecheck).
-  `npm run test:validation` is the one gate that stays local-only: it
-  queries the live OSV API unconditionally (OPEN-DEBTS D-03), so CI
-  running it would make a passing PR depend on an external service's
-  availability at that moment, not on the code. `npm test` also reaches
-  the network (one integration suite, same debt) but already ran in CI
-  before this task and is left as it is, per the same debt.
+  every pull request (task RWF-051-typecheck). `npm run test:validation`
+  is the one gate that stays local-only: five of its cases are
+  deliberately kept failing (OPEN-DEBTS D-09), and the suite asserts the
+  expected verdict unconditionally, so it exits non-zero by design —
+  there is no meaningful red/green state for CI to gate on until that is
+  addressed (backlog: the D-03-discovered CI-promotion task).
 
 ## J. Report format
 

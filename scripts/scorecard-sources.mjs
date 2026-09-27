@@ -495,17 +495,23 @@ function sectionRowProblems(lines, rows) {
  * Whether an npm script reaches the network, derived from what it runs
  * rather than from a list of names somebody has to remember to update.
  *
- * The one live suite inside the default vitest run is
- * `src/vulnerabilities/osv-provider.integration.test.ts`, which queries
- * OSV unconditionally. So any vitest invocation that does not exclude the
- * integration tests, and does not point at an offline config, includes it.
+ * Task D-03 (OPEN-DEBTS D-03, CLOSED) made every vitest suite offline:
+ * the suites that used to query OSV unconditionally
+ * (`osv-provider.integration.test.ts`, `osv-normalizer.integration.test.ts`,
+ * `version-matching.integration.test.ts`, and every `test:validation`
+ * case via `runScanCommand`'s default provider) all now replay a recorded
+ * snapshot of real OSV answers (`scripts/record-osv-snapshot.mjs`)
+ * instead. `vitest.validation.config.ts` keeps its own branch below only
+ * because `npm run test:validation` is still not a **correctness**
+ * oracle (OPEN-DEBTS D-09's five deliberately-kept-failing cases), not
+ * because it reaches the network.
  */
 export function classifyScript(name, command) {
   if (!/\bvitest\b/.test(command)) {
     return { deterministic: true, network: false };
   }
   if (/vitest\.validation\.config\.ts/.test(command)) {
-    return { deterministic: false, network: true, why: "live OSV" };
+    return { deterministic: true, network: false };
   }
   if (/vitest\.performance\.config\.ts/.test(command)) {
     return {
@@ -514,21 +520,7 @@ export function classifyScript(name, command) {
       why: "wall-clock: shape deterministic, timing environmental",
     };
   }
-  if (
-    /vitest\.foundation\.config\.ts|vitest\.adversarial\.config\.ts|vitest\.binding-grammar\.config\.ts|vitest\.oracle\.config\.ts/.test(
-      command,
-    )
-  ) {
-    return { deterministic: true, network: false };
-  }
-  if (/--exclude\s+\\?"?\*\*\/\*\.integration\.test\.ts/.test(command)) {
-    return { deterministic: true, network: false };
-  }
-  return {
-    deterministic: false,
-    network: true,
-    why: "includes the live OSV provider integration suite",
-  };
+  return { deterministic: true, network: false };
 }
 
 /** The recorded results of commands that had to actually be run. */

@@ -10,7 +10,11 @@ This suite is the next phase after the two adversarial validation suites
 Where the adversarial suites test *synthetic* scenarios designed to probe
 specific analyzer mechanisms, this suite tests VulnTrace against *real*,
 previously-published CVEs/GHSAs in real, npm-installed open-source
-packages — including hitting the real, live OSV API (not stubbed).
+packages. The vulnerability provider is `SnapshotOsvProvider`
+(D-03, `src/testing/snapshot-osv-provider.ts`), which replays a recorded
+snapshot of real OSV API answers (`osv-snapshot.json`) rather than
+querying OSV live at test time — see `scripts/record-osv-snapshot.mjs`
+for how the snapshot is produced and refreshed.
 
 ## Layout
 
@@ -55,21 +59,28 @@ packages — including hitting the real, live OSV API (not stubbed).
 npm run test:validation
 ```
 
-Requires network access — the OSV query in every case is live, not
-stubbed (the point is validating the real integration, not just the
-call-graph/verdict logic already covered by the adversarial suites).
+Hermetic since D-03: no network access required. The vulnerability
+provider is `SnapshotOsvProvider`, replaying a recorded snapshot of real
+OSV answers (see "Layout" above) rather than querying OSV live — the
+point is still validating the real integration against real,
+previously-published CVEs, just without a live query on every run.
 Fixtures themselves are fully vendored (real `node_modules/` committed),
-so no `npm install` step is needed at run time.
+so no `npm install` step is needed at run time either. Re-record the
+snapshot with `npm run build && node scripts/record-osv-snapshot.mjs`
+after adding or changing a fixture or case.
 
-Currently exits non-zero: 7 of 17 cases pass; the other 10 are known,
-tracked failures (see `FINDINGS.md` RWF-001 through RWF-004, RWF-006, and
-RWF-012 -- RWF-005/RWF-007/RWF-009 were fixed by VT-304/VT-305/VT-306
-respectively, see below) — this is expected and not a regression.
-`REPORT.md`'s own "Unexpected failures" count is the actual regression
-signal to watch, and is currently `0`. Not part of `npm test`/CI's default
-gate, and not yet added to CI at all (unlike `test:adversarial`, which is
-100% clean) — there'd be nothing meaningful for a red/green CI gate to
-report while known failures are expected.
+Currently exits non-zero: 12 of 17 cases pass; the other 5 are known,
+tracked failures (`OPEN-DEBTS.md` D-09: `RWB-03`, `RWB-05`, `RWB-09b`,
+`VAL-002`, `VAL-003`, caused by `FINDINGS.md` RWF-001 and RWF-006) — this
+is expected and not a regression. (Corrected by D-03: this section
+previously said "7 of 17... the other 10", citing RWF-001 through
+RWF-004, RWF-006 and RWF-012 -- a stale count from before those other
+gaps were fixed; RWF-002's remaining case, `RWB-05`, is D-06's separate,
+still-open unresolved-edges gap, not a fixed one.) `REPORT.md`'s own
+"Unexpected failures" count is the actual regression signal to watch, and
+is currently `0`. Not part of `npm test`/CI's default gate; hermetic
+since D-03 but not yet added to CI (unlike `test:adversarial`, which is
+100% clean) — see the D-03 task file's "Explicitly out of scope" for why.
 
 `RWB-01` (`trim-newlines`) was RWF-005's own exhibit: TypeScript's module
 resolver used to prefer the package's hand-authored `index.d.ts` over its

@@ -333,22 +333,23 @@ or if the gate runs a file the map does not account for.
 | build / typecheck / lint / prettier / history | | ✓ |
 
 **Deterministic vs. live.** The Foundation gate is entirely deterministic
-and offline. Two signals are deliberately *not* part of it and are reported
-separately:
+and offline. Since task `D-03` (OPEN-DEBTS D-03, CLOSED), so is every other
+gate: `npm test` and `npm run test:validation` both replay a recorded
+snapshot of real OSV answers (`scripts/record-osv-snapshot.mjs`) instead
+of querying the network at test time. `test:foundation` contains no
+network access at all (verified by running it with the network disabled),
+same as the rest — it remains the deterministic *oracle* not because it is
+the only offline gate, but because `npm run test:validation` is still not
+a correctness oracle for a different reason:
 
-- `npm run test:validation` hits the **real OSV API over the network**. It
-  is integration evidence and a provider-movement detector, not a
-  correctness oracle — advisory-database movement must not be able to make
-  core CI flaky.
-- **`npm test` is not itself fully offline.** One suite inside it,
-  `src/vulnerabilities/osv-provider.integration.test.ts`, queries the live
-  OSV API unconditionally, so a provider or network outage can turn the
-  full run — and therefore CI — red for reasons unrelated to any change.
-  This predates the Foundation gate and is recorded rather than fixed
-  here; isolating or stubbing it is a follow-up. `test:foundation`
-  contains no network access at all (verified by running it with the
-  network disabled), which is why it, and not `npm test`, is the
-  deterministic oracle.
+- `npm run test:validation` replays real, previously-recorded OSV answers,
+  but is deliberately not a **correctness** oracle even so: five of its
+  cases are known, tracked disagreements (OPEN-DEBTS D-09) that the suite
+  asserts on unconditionally, so it is not meant to be all-green, and
+  re-recording the snapshot could someday retire a known failure or
+  surface a new advisory — it is integration evidence and a
+  provider-movement detector across re-recordings, not a gate that must
+  pass.
 - `npm run test:performance` measures **wall-clock time**. Its thresholds
   are coarse catastrophic-regression ceilings that answer "did something
   explode", never "is the complexity contract intact". The complexity
