@@ -174,28 +174,40 @@ closing.
 - Force-push only your own unmerged branch, and only when a rebase was
   instructed.
 - Do not touch, unlock or remove another task's worktree.
+- **One commit per micro-task, and no more.** The first commit is the
+  task file, status in-progress. After that, exactly one commit per
+  micro-task — a self-contained, logical unit of the work (for example:
+  (1) the core fix, (2) the tests that prove it, (3) the records update).
+  Fold into the micro-task's commit, never commit separately: formatting
+  fixes, scorecard regeneration, fixes made after a gate failed, and
+  trailer or metadata corrections. Before pushing, squash or amend your
+  own unpushed commits so each micro-task is one commit. Mark the task
+  file done inside the LAST micro-task's commit, not in a commit of its
+  own. Every commit should build and type-check on its own. Expect
+  roughly 3 to 6 commits for a typical task; report the final commit list
+  (SHA and subject) in the report.
 
 ## I. Gates
 
 Every task runs the full set, unrelaxed:
 
-| Gate | Command |
-| --- | --- |
-| full suite | `npm test` |
-| Foundation gate | `npm run test:foundation` |
-| adversarial suites | `npm run test:adversarial` |
-| performance smoke | `npm run test:performance` |
-| real-world validation | `npm run test:validation` |
-| binding-form grammar sweep | `npm run test:binding-grammar` |
-| real-Node oracle harness suite | `npm run test:oracle` |
-| typecheck | `npm run typecheck` |
-| lint | `npm run lint` |
-| prettier | `npm run format` |
-| build | `npm run build` |
-| history + commit metadata | `npm run validate:history` |
-| commit metadata | `npm run validate:metadata` |
-| scorecard freshness | `node scripts/generate-scorecard.mjs --check` |
-| documentation references | `node scripts/check-docs.mjs` |
+| Gate | Command | Runs in CI? |
+| --- | --- | --- |
+| full suite | `npm test` | yes |
+| Foundation gate | `npm run test:foundation` | yes |
+| adversarial suites | `npm run test:adversarial` | yes |
+| performance smoke | `npm run test:performance` | yes |
+| real-world validation | `npm run test:validation` | **no — local only** |
+| binding-form grammar sweep | `npm run test:binding-grammar` | yes |
+| real-Node oracle harness suite | `npm run test:oracle` | yes |
+| typecheck | `npm run typecheck` | yes |
+| lint | `npm run lint` | yes |
+| prettier | `npm run format` | yes |
+| build | `npm run build` | yes |
+| history + commit metadata | `npm run validate:history` | yes |
+| commit metadata | `npm run validate:metadata` | yes |
+| scorecard freshness | `node scripts/generate-scorecard.mjs --check` | yes |
+| documentation references | `node scripts/check-docs.mjs` | yes |
 
 - Do not change thresholds, skip tests or edit configuration to get green.
 - `npm test` and `npm run test:validation` use the network (OPEN-DEBTS
@@ -205,6 +217,14 @@ Every task runs the full set, unrelaxed:
   D-09). Compare them case by case, verdict by verdict, against that
   baseline. Do not ignore them. A known failure that changes verdict, or
   a new failure, is a finding.
+- Every gate above marked "yes" runs in `.github/workflows/ci.yml`, on
+  every pull request and on every push to `main` (task RWF-051-typecheck).
+  `npm run test:validation` is the one gate that stays local-only: it
+  queries the live OSV API unconditionally (OPEN-DEBTS D-03), so CI
+  running it would make a passing PR depend on an external service's
+  availability at that moment, not on the code. `npm test` also reaches
+  the network (one integration suite, same debt) but already ran in CI
+  before this task and is left as it is, per the same debt.
 
 ## J. Report format
 

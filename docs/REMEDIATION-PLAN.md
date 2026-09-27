@@ -325,14 +325,19 @@ written. ADR 0008's appended "Amendment A-0" proposes the change, which
 is **not decided**. See "A-0 additions to lane-A acceptance", below the
 table.
 
-**RWF-051-typecheck, type-check everything under `tests/`.** Added
-2026-09-27 as order **1b**, immediately after A-0 and before A-1, when
-the project owner decided Amendment A-0. Scope: type-check everything
-under `tests/` and fix the latent errors it reveals (including
-`tests/binding-grammar/harness.ts:328`). Closes RWF-051 (§ 2.5). Reason:
-lane A adds `tests/binding-grammar/` rows (ADR 0008 § 2), and that suite
-relies on type-level guards, so those guards must be enforced by a gate
-before lane A starts adding to it. Status: **planned**.
+**RWF-051-typecheck, widened: gate enforcement.** Added 2026-09-27 as
+order **1b**, immediately after A-0 and before A-1, when the project
+owner decided Amendment A-0. Scope, widened while executing: type-check
+everything under `tests/` and fix the latent errors it reveals (including
+`tests/binding-grammar/harness.ts:328`); AND make CI
+(`.github/workflows/ci.yml`) run every hermetic gate in `AGENTS.md`
+section I, on pull requests and on push to `main` (previously it ran a
+subset, on pull requests only). Closes RWF-051 (§ 2.5). Reason: lane A
+adds `tests/binding-grammar/` rows (ADR 0008 § 2), and that suite relies
+on type-level guards, so those guards must be enforced by a gate — and
+actually run in CI, not only when an agent happens to run them locally —
+before lane A starts adding to it. Status: **done**
+(`docs/tasks/gate-enforcement.md`).
 
 **A-7, reader builtins invoke accessors.** Added 2026-09-27 as order
 **30**, after every lane, by the project owner's Amendment A-0 decision
@@ -367,7 +372,7 @@ mechanical admission test on it (A-3) must read `fired`, not
 | --- | --- | --- | --- |
 | 1 | H-0 | — | every later task's failing-first tests, precision measurements (§ 4, § 9) and grammar sweeps (ADR 0009 § 2, ADR 0010 § 2) need real-Node ground truth; building the shared harness once, first, avoids each lane reimplementing its own ad hoc version, which is what § 9's method describes happening already |
 | 1a | A-0 | A | reproduction only, no analyzer change: lane A's design must be checked against the implicit invocations the ADR 0008 Decision record lists as not covered, before A-1..A-6 are built on it; uses H-0, so it follows H-0 |
-| 1b | RWF-051-typecheck | — (tooling) | type-check everything under `tests/` and fix the latent errors it reveals (including `tests/binding-grammar/harness.ts:328`): lane A adds `tests/binding-grammar/` rows that rely on type-level guards, and those guards must be enforced by a gate first |
+| 1b | RWF-051-typecheck, widened: gate enforcement | — (tooling) | type-check everything under `tests/` and fix the latent errors it reveals (including `tests/binding-grammar/harness.ts:328`), AND make CI run every hermetic gate: lane A adds `tests/binding-grammar/` rows that rely on type-level guards, and those guards must be enforced by a gate that actually runs, in CI, first |
 | 2 | A-1 | A | first task of the most prevalent lane (§ 5 "Prevalence first": timer/Promise callbacks, JSX, decorators, derived classes are ordinary code); a hard dependency of A-2/A-3/A-4 (ADR 0008 § 8) |
 | 3 | A-2 | A | hard dependency: A-3 and A-4 emit `possible` edges that A-2 defines (ADR 0008 § 8) |
 | 4 | A-3 | A | prevalent shapes (escaped callbacks, JSX, own-export calls); depends on A-1, A-2 |
