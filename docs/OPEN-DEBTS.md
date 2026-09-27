@@ -76,13 +76,14 @@ authoritative walk. Refusal is never absence
 
 ### D-03 — `npm test` is not offline — CLOSED by D-03
 
-**What it was.** Three suites inside the default `npm test` run queried
+**What it was.** Four suites inside the default `npm test` run queried
 the live OSV API unconditionally with no stub:
 `src/vulnerabilities/osv-provider.integration.test.ts` (the only one this
-entry originally named), `osv-normalizer.integration.test.ts` and
-`version-matching.integration.test.ts` (found by task `D-03`'s own
-premise check, AGENTS.md § D — this entry's original "What" undercounted
-by two). `tests/validation/validation.test.ts`'s 17 cases queried live
+entry originally named), `osv-normalizer.integration.test.ts`,
+`version-matching.integration.test.ts` and `src/cli/scan.integration.test.ts`
+(all four found by task `D-03`'s own premise check, AGENTS.md § D,
+re-run after each suite found — this entry's original "What" undercounted
+by three). `tests/validation/validation.test.ts`'s 17 cases queried live
 OSV the same way, via `runScanCommand`'s default provider.
 
 **Why it mattered.** A provider or network outage could turn the full
@@ -94,15 +95,16 @@ under review.
 
 **What closed it.** Task `D-03`: `scripts/record-osv-snapshot.mjs`
 records real OSV answers once (`tests/validation/osv-snapshot.json` —
-every query the real pipeline issues for every validation case, captured
-by running it once with a recording provider wrapped around a real
+every query the real pipeline issues for every validation case, plus
+`scan.integration.test.ts`'s own `lodash@4.17.4`, all captured by running
+the real pipeline once with a recording provider wrapped around a real
 `OsvProvider`, not guessed by hand; `src/vulnerabilities/osv-provider.fixtures.json`
-— the two response envelopes the provider-level tests need). All four
-suites now stub `fetchImpl`/the vulnerability provider with the recorded
-data (the new `SnapshotOsvProvider`, `src/testing/snapshot-osv-provider.ts`,
-for `validation.test.ts`; a stubbed `fetchImpl` built from the recorded
-response bodies for the other three, keeping them exercising the real
-`OsvProvider` request/response/zod-schema pipeline). `npm test` and
+— the two response envelopes the provider-level tests need). The new
+`SnapshotOsvProvider` (`src/testing/snapshot-osv-provider.ts`) now serves
+`validation.test.ts` and `scan.integration.test.ts` from that snapshot;
+the other three suites stub `OsvProvider`'s own `fetchImpl` with the
+recorded response bodies instead, keeping them exercising the real
+`OsvProvider` request/response/zod-schema pipeline. `npm test` and
 `npm run test:validation` are both fully offline. Verified: rerunning
 `npm run test:validation` against the snapshot reproduced OPEN-DEBTS
 D-09's five known failures exactly, case by case, for the same reason
