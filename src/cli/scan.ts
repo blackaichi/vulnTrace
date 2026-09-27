@@ -26,6 +26,7 @@ import {
   loadPackageLockFile,
 } from "../dependencies/index.js";
 import type { DependencyNode } from "../domain/dependency.js";
+import type { CallGraph } from "../domain/graph.js";
 import type { Diagnostic } from "../domain/coverage.js";
 import {
   buildKnownPackageRoots,
@@ -128,6 +129,29 @@ export interface RunScanOptions {
   readonly onModuleLoadClosure?: (
     closure: ModuleLoadClosure | undefined,
   ) => void;
+  /**
+   * Read-only observation seam for the scan's call graph (BL-029), invoked
+   * exactly once per scan that builds one, after the truncation decision
+   * and before any finding is built. Not invoked when graph construction
+   * fails (the scan then exits 3 without findings).
+   *
+   * Same contract as {@link onModuleLoadClosure}, one step stricter: the
+   * callback receives a DEEP COPY (`structuredClone`) of the graph, not the
+   * graph the proof context binds, so even a callback that ignores the
+   * `readonly` types cannot add, remove or retarget an edge the verdicts
+   * are computed from. It returns `void`, and nothing reads anything from
+   * it. The copy is made only when a callback is supplied, so a scan
+   * without one does no extra work. Not exposed through `vulntrace.yml` or
+   * any CLI flag.
+   *
+   * Exists so the differential tool (`scripts/differential.mjs`) observes
+   * the graph the scan actually built, rather than rebuilding one outside
+   * `runScanCommand` that could drift from it.
+   */
+  readonly onCallGraph?: (observed: {
+    readonly graph: CallGraph;
+    readonly truncated: boolean;
+  }) => void;
 }
 
 function loadConfig(projectRoot: string, configPathOverride?: string): Config {
@@ -636,6 +660,12 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // through to buildFinding, which downgrades what would otherwise be
   // NOT_AFFECTED to UNKNOWN when this is true.
   const graphTruncated = hitFileLimit || hitNodeLimit || hitTimeLimit;
+  if (options.onCallGraph) {
+    options.onCallGraph({
+      graph: structuredClone(graph),
+      truncated: graphTruncated,
+    });
+  }
 
   // THE scan's single proof context (VT-CONTRACT-03), created exactly ONCE
   // here -- never per advisory, per package or per finding -- and passed by
