@@ -30,7 +30,10 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
 **Until the remediation closes, treat every `NOT_AFFECTED` as `UNKNOWN`.**
 OPEN-DEBTS § 3 criterion 3 is false on `main`: D-16 and D-17 record
 dozens of reproduced paths to a false `NOT_AFFECTED` or a silently
-dropped finding. The README does not say this yet (backlog `BL-001`).
+dropped finding. The README says this (`README.md:80-88`, since
+`ae82d33`); its `## Status` section now points there too (`BL-001`,
+`tests/validation/FINDINGS.md` RWF-053 — an earlier version of this line
+said the notice did not exist, which was false).
 `test:validation` depends on the live OSV API (D-03) and is not run in CI.
 
 ## Key decisions
