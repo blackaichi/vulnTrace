@@ -182,12 +182,26 @@ node scripts/check-docs.mjs
   verdict by verdict. Any change to that set is explained.
 - `npm test` is also fully offline since `D-03`.
 - For an analyzer change, report the graph, proof and verdict
-  differentials separately. There is no shared differential tool yet
-  (backlog `BL-029`); until there is, use the method in
-  `docs/REMEDIATION-PLAN.md` § 9 (the validation and adversarial runners'
-  `ID EXPECTED ACTUAL RESULT` tables diffed case by case, plus a finding
-  dump by case, advisory and instance) and the per-task corpus scripts
-  under `scripts/` as recent task files and `FINDINGS.md` do.
+  differentials separately, with the shared tool (task `BL-029`):
+
+  ```bash
+  node scripts/differential.mjs            # base: git merge-base HEAD main
+  node scripts/differential.mjs --base <ref> --corpus adversarial-v1 --case ADV-001
+  ```
+
+  It scans every case of the validation and both adversarial corpora
+  twice — with the base commit's analyzer and with this working tree's —
+  over the same corpus (this tree's fixtures, oracles and OSV snapshot),
+  and reports the three differentials by case, advisory and exact package
+  instance, plus each case's expected, base and head verdicts under the
+  suites' own selectors. A graph not observed, a case not measured and a
+  case on one side only are listed as such, never counted as unchanged.
+  Put its summary table in the report, and the verdict and proof lines
+  that moved. `scripts/differential.mjs`'s header documents the options
+  and exactly what each side contains. Task-specific questions the
+  corpora do not reach still need their own measurement (a per-task
+  corpus script under `scripts/`, as recent task files and `FINDINGS.md`
+  do).
 - If a suite exits non-zero with every test passing (a known vitest
   worker timeout under load), rerun it alone and report both runs.
 - Report exactly what was run and the result of each.

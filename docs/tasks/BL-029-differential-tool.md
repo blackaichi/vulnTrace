@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-029
 - **Branch**: bl-029-differential-tool
 - **Base SHA**: a42ce00f8277820fbc2dea3cdda61d759a9cea49
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `424fcd4` docs(tasks): BL-029 task file — shared differential tool
+  - `343c62b` feat(BL-029): read-only onCallGraph observation seam in runScanCommand
+  - `a949e9b` feat(BL-029): graph, proof and verdict differential tool
+  - (this commit) docs(BL-029): records — workflow, plan pointer, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -150,23 +154,23 @@ would report zero. The tool must fail loud on both.
 
 ## Acceptance criteria
 
-- [ ] `RunScanOptions.onCallGraph` exists, fires exactly once per scan
+- [x] `RunScanOptions.onCallGraph` exists, fires exactly once per scan
       that builds a graph, receives a copy, and a test shows the scan
       output unchanged with it and a mutation of its argument inert.
-- [ ] The adversarial stub records have one definition, used by both
+- [x] The adversarial stub records have one definition, used by both
       suites and by the tool.
-- [ ] `node scripts/differential.mjs` produces a report with separate
+- [x] `node scripts/differential.mjs` produces a report with separate
       graph, proof and verdict sections, keyed by case, advisory and exact
       package instance, and a case table with expected, base and head.
-- [ ] A case with no observed graph is reported as unavailable, not zero.
-- [ ] Tests in `npm test` show each category firing on a planted change,
+- [x] A case with no observed graph is reported as unavailable, not zero.
+- [x] Tests in `npm test` show each category firing on a planted change,
       and a sibling swap between two same-`name@version` installs
       reported as two changes.
-- [ ] Head against head: zero graph, proof and verdict differences.
-- [ ] Base against head for this branch: zero proof and verdict
+- [x] Head against head: zero graph, proof and verdict differences.
+- [x] Base against head for this branch: zero proof and verdict
       differences; the graph differential is unavailable on the base side
       (the base has no hook), and the report says so.
-- [ ] `docs/WORKFLOW.md` § 3 names the tool and its usage.
+- [x] `docs/WORKFLOW.md` § 3 names the tool and its usage.
 
 ## Gates
 
@@ -180,3 +184,29 @@ the base's.
 
 In the format of `AGENTS.md` § J. Also report the tool's own run time for
 the full corpus, one side and both.
+
+## Outcome (2026-09-28)
+
+Measured with the tool itself, full corpus (139 cases: 17 validation, 34
+adversarial v1, 88 adversarial v2; 246 findings, 5 unreported candidates,
+3,535 graph nodes, 7,463 edges on the head side), about 140 s per side:
+
+| Run | graph | proof | verdict |
+| --- | --- | --- | --- |
+| head (`a949e9b`) against head | 0 of 139 changed, 0 unavailable | 0 of 139 | 0 changed, 0 added, 0 removed |
+| base `a42ce00` against head | unavailable, 139 of 139 (the base has no seam) | 0 of 139 | 0 changed, 0 added, 0 removed |
+
+The suite view of the second run is the documented baseline: 134 cases
+PASS on both sides and OPEN-DEBTS D-09's five known failures unchanged
+(`RWB-03`, `RWB-05`, `VAL-002`, `VAL-003` UNKNOWN; `RWB-09b` NO_FINDING).
+A planted analyzer change (resolved edges into `#vulnerable` withdrawn to
+`unresolved_target`) moved all three differentials and the suite view for
+ADV-001, and was reverted.
+
+Found while measuring: the first full runs failed with vitest's
+`Timeout calling "onTaskUpdate"` after every case had passed. The
+collector now runs one test per case, each starting with one macrotask
+turn, and the error no longer occurs; the same error also appears in
+`npm run test:validation` on the unmodified base. Recorded as backlog
+`BL-033` (a hypothesis to verify, not a correction of WORKFLOW § 3 yet).
+Also discovered: `BL-032` (the suites' finding selector exists four times).

@@ -37,13 +37,13 @@
   },
   "fullSuite": {
     "command": "npm test",
-    "commit": "d-03-hermetic-osv-validation (base a87faa2)",
-    "measuredAt": "2026-09-27",
+    "commit": "bl-029-differential-tool (base a42ce00)",
+    "measuredAt": "2026-09-28",
     "deterministic": true,
     "status": "PASS",
-    "files": 188,
-    "tests": 4525,
-    "durationSeconds": 295.0
+    "files": 191,
+    "tests": 4563,
+    "durationSeconds": 285.1
   },
   "adversarial": {
     "command": "npm run test:adversarial",

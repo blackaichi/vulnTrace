@@ -721,6 +721,14 @@ designs). For each clone and for an unmodified baseline clone:
 The first implementation task of each lane repeats steps 1–3 on the real
 implementation and reports any movement case by case.
 
+**Added by task `BL-029` (2026-09-28).** Steps 1 and 2 are now one
+committed tool, `node scripts/differential.mjs` (usage:
+[`WORKFLOW.md`](WORKFLOW.md) § 3). It diffs the runners' case tables and
+every finding by case, advisory and instance as above, and adds the call
+graph, so a lane task runs it instead of patching a scratch clone. Step 3
+(the targeted reproductions) is unchanged. The prototype numbers above
+were measured by the method as written, not by the tool.
+
 ## 10. Where task order and status are tracked (added 2026-09-27)
 
 Added by task
