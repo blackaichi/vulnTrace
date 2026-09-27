@@ -2,12 +2,22 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS <!-- TODO | IN_PROGRESS | BLOCKED | READY_FOR_REVIEW | MERGED | CANCELLED -->
+- **Status**: READY_FOR_REVIEW <!-- TODO | IN_PROGRESS | BLOCKED | READY_FOR_REVIEW | MERGED | CANCELLED -->
 - **Backlog ID**: `TASK-0`
 - **Branch**: `task-0-workflow-bootstrap`
 - **Base SHA**: `7004a05` (main after "docs: close RWF-051, record CI vs.
   local-only gates, mark task done")
-- **Commits**: filled in when the task is ready for review
+- **Commits**:
+  - `599f1f1` — this task file, `IN_PROGRESS`
+  - `a93b89e` — `.claude/settings.json`: the allowed attribution trailer
+    only
+  - `8c0c768` — `docs/tasks/BACKLOG.md`; finding RWF-052 (OPEN-DEBTS D-14
+    is stale); scorecard regenerated
+  - `b82dcc3` — `docs/WORKFLOW.md`, `AGENTS.md` § B/D/H/J/L, `CLAUDE.md`,
+    `docs/tasks/README.md` and `TEMPLATE.md`, `REMEDIATION-PLAN.md` § 10,
+    the pull request template, `docs/progress.md`; backlog row BL-029
+  - the commit appending ADR 0008's allowlist admission ruling and A-3's
+    criteria for it, and setting this task `READY_FOR_REVIEW`
 - **Superseded by**:
 
 ## Project context
@@ -137,24 +147,24 @@ recorded only in a register row with no task is the same.
 
 ## Acceptance criteria
 
-- [ ] `docs/tasks/BACKLOG.md` exists, lists every remediation task in
+- [x] `docs/tasks/BACKLOG.md` exists, lists every remediation task in
       § 5a order, every open finding and open debt either as its own row
       or mapped to the row that closes it, every Appendix A item (or its
       mapping to an existing task), and the completed tasks as MERGED.
-- [ ] Exactly one row is IN_PROGRESS (this task) until the last commit,
+- [x] Exactly one row is IN_PROGRESS (this task) until the last commit,
       which sets it to READY_FOR_REVIEW.
-- [ ] `docs/tasks/README.md`, `docs/REMEDIATION-PLAN.md` and `AGENTS.md`
+- [x] `docs/tasks/README.md`, `docs/REMEDIATION-PLAN.md` and `AGENTS.md`
       carry the conventions of step 5, appended without rewriting
       history.
-- [ ] `docs/WORKFLOW.md` exists and `CLAUDE.md` imports it alongside
+- [x] `docs/WORKFLOW.md` exists and `CLAUDE.md` imports it alongside
       `AGENTS.md`.
-- [ ] `docs/progress.md` and `.github/pull_request_template.md` exist.
-- [ ] ADR 0008 carries the dated allowlist admission ruling, and A-3's
+- [x] `docs/progress.md` and `.github/pull_request_template.md` exist.
+- [x] ADR 0008 carries the dated allowlist admission ruling, and A-3's
       acceptance in `docs/REMEDIATION-PLAN.md` includes it.
-- [ ] `.claude/settings.json` sets `attribution.commit` to the allowed
+- [x] `.claude/settings.json` sets `attribution.commit` to the allowed
       trailer, and every commit on this branch passes
       `npm run validate:metadata`.
-- [ ] Every gate in `AGENTS.md` § I passes, or its failure is reported.
+- [x] Every gate in `AGENTS.md` § I passes, or its failure is reported.
 
 ## Gates
 

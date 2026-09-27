@@ -478,6 +478,35 @@ Added 2026-09-27: Amendment A-0 part A is accepted with a condition (ADR
       `NOT_AFFECTED → UNKNOWN`. A-3 reports the result and does not relax
       the criterion to avoid it.
 
+Added 2026-09-27: the project owner's allowlist admission ruling (ADR
+0008, "Decision record — allowlist admission ruling"), recorded by task
+[`task-0-workflow-bootstrap`](tasks/task-0-workflow-bootstrap.md).
+**A-3** also accepts only when:
+
+- [ ] Admission is decided **per argument position**. A position passes
+      only if every hook the probe observes firing for it is (a) a member
+      of ADR 0008 § 2's protocol list, an accessor body (Amendment A-0
+      part B) or a Proxy trap (part A), **and** (b) proven by an oracle
+      case in which a vulnerable call inside that hook, reached through
+      this builtin at this position, never yields `NOT_AFFECTED`. Any
+      other hook (the builtin calling a function argument,
+      `util.inspect.custom`, an unlisted method) fails the position.
+- [ ] The admission test reads the hooks that fired and classifies each
+      against (a); it does not read `ranUserCode`.
+- [ ] The H-0 builtin probe reports a throw separately from a hook that
+      fired (`src/testing/oracle/builtin-probe.ts` today records a throw
+      in `fired`).
+- [ ] Part A's conditions still hold for every admitted position:
+      non-retaining; `new Proxy` and `Proxy.revocable` excluded by name;
+      the escape row takes precedence.
+- [ ] `JSON.parse`'s reviver position is never admitted. If its first
+      position is admitted, RWB-07's `NOT_AFFECTED` is reported as kept
+      and the oracle case that proves (b) for it is named.
+- [ ] Every position admitted under (a) that the "mechanical admission"
+      criterion above lists as an example whose probe fires (for example
+      `Object.keys`, `JSON.stringify`) is named in A-3's report, with the
+      hooks that fired and the oracle case for each.
+
 **A-4** (protocol members) also accepts only when, **if** Amendment A-0
 part B (accessor bodies) is accepted *(update, 2026-09-27: part B is
 accepted, with two conditions; the criteria after this list apply)*:
