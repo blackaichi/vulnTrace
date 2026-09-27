@@ -16,12 +16,11 @@ import type { LoudFixtureCheck } from "./loud-fixture.js";
  * would compile-check nothing and silently assert nothing -- so this
  * file's location is itself part of the guarantee, not incidental.
  *
- * Since task A-0, `npm run typecheck` also runs
- * `tests/oracle/tsconfig.json`, so cases written in `tests/oracle/` are
- * type-checked too -- but nothing else under `tests/` is
- * (tests/validation/FINDINGS.md, RWF-051), and the runner re-checks the
- * same shapes at runtime (`oracleCaseProblems` in `case.ts`, self-tested
- * by `tests/oracle/case-guards.runtime.test.ts`).
+ * Since task RWF-051-typecheck, `npm run typecheck` also runs
+ * `tests/tsconfig.json`, so every case written anywhere under `tests/` is
+ * type-checked too (tests/validation/FINDINGS.md, RWF-051) -- and the
+ * runner re-checks the same shapes at runtime (`oracleCaseProblems` in
+ * `case.ts`, self-tested by `tests/oracle/case-guards.runtime.test.ts`).
  *
  * This file is otherwise ordinary: it runs under the DEFAULT `npm test`
  * (it matches `vitest.config.ts`'s `src/**\/*.test.ts` include, exactly

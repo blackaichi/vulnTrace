@@ -322,10 +322,16 @@ export function observe(
   if (edges.length > 1) {
     return { kind: "ambiguous", count: edges.length };
   }
-  if (edge.resolution.kind === "unknown") {
-    return { kind: "unknown", reason: edge.resolution.reason };
+  const resolution = edge.resolution;
+  if (resolution.kind === "unknown") {
+    return { kind: "unknown", reason: resolution.reason };
   }
-  const node = graph.nodes.find((n) => n.id === edge.resolution.target);
+  // Narrowing on a two-level property chain (`edge.resolution.kind`) does
+  // not propagate into the `.find()` closure below even though `edge` is
+  // `const`; hoisting the already-narrowed `target` out of the closure
+  // sidesteps that TS limitation without changing runtime behaviour.
+  const target = resolution.target;
+  const node = graph.nodes.find((n) => n.id === target);
   if (!node) {
     return { kind: "no-edge" };
   }
