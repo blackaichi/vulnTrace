@@ -18,8 +18,11 @@ code and a live network dependency.
 
 `tests/validation/` exists to answer a different question: **does VulnTrace
 produce correct verdicts on real, previously-published CVEs/GHSAs, in real,
-unmodified, npm-installed open-source packages, using the real, live OSV
-API?** Synthetic fixtures are authored to be resolvable; real packages are
+unmodified, npm-installed open-source packages, against real OSV data?**
+(D-03: the OSV answers are a recorded snapshot of the real API, replayed
+hermetically — see § 2 below — not a live query on every run; the data
+itself is still real, not hand-authored.) Synthetic fixtures are authored
+to be resolvable; real packages are
 not authored with VulnTrace in mind at all. Real-world export idioms (UMD
 boilerplate, deep property assignment, re-export chains, build-tool output)
 are exactly the class of gap the adversarial suites cannot find by
@@ -32,11 +35,11 @@ user does.
 | | Adversarial (`tests/adversarial/v1`, `v2`) | Real-world (`tests/validation/`) |
 |---|---|---|
 | Code under test | Synthetic, hand-authored fixtures | Real, unmodified npm packages |
-| Vulnerability provider | Stubbed (`VulnerabilityProvider` fake) | Real, live OSV API |
+| Vulnerability provider | Stubbed (`VulnerabilityProvider` fake, hand-written) | `SnapshotOsvProvider` (D-03): a recorded snapshot of real OSV API answers |
 | Purpose | Probe specific analyzer mechanisms; catch regressions | Find real-world gaps the analyzer's own authors didn't anticipate |
 | Coverage strategy | Deliberately broad — every named category/mechanism gets a scenario | Deliberately narrow and slow-growing — one case per confirmed real CVE reproduction |
 | Expected pass rate | 100% is the standing bar; any regression is a bug | Not expected to be 100%; `knownFailure` cases are tracked, not hidden |
-| Network access | None | Required (live OSV query per case) |
+| Network access | None | None (D-03; was live-per-case before) |
 | CI gate | Yes (`npm run test:adversarial`, wired into CI) | Not yet (see § 8) |
 
 Both suites share the same non-negotiable discipline (carried over directly

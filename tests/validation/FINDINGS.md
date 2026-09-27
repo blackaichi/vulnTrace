@@ -228,6 +228,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | **Fixed** (RWF-051-typecheck) — see below |
 | RWF-052 | n/a — the repository's own debt register | `docs/OPEN-DEBTS.md` D-14 still describes RWF-046's file-scope `require` collapse as present and open, although RWF-046 closed it | record — a register entry overstates an open defect — see below | Open |
 | RWF-053 | n/a — the repository's own backlog and task records | `docs/tasks/BACKLOG.md`'s BL-001 row and `task-0-workflow-bootstrap.md`'s premise-verification note both claim `README.md` has no soundness-status notice, although it has had one since `ae82d33`, a day before that task started | record — two records overstate a missing notice — see below | **Fixed** (BL-001) — see below |
+| RWF-054 | n/a — the repository's own gate configuration | `AGENTS.md` § I claimed CI runs "on every pull request and on every push to `main`"; commit `a87faa2` removed the push trigger, making this false as a description of current CI | record — a gate description overstates when CI runs — see below | **Fixed** (D-03) — see below |
+| RWF-055 | n/a — the repository's own backlog citations | 39 `docs/tasks/BACKLOG.md` rows cite "Appendix A" as a Source, a document/section that exists nowhere in this repository (`grep -rin appendix docs/*.md tests/validation/FINDINGS.md` returns nothing) | record — roughly a third of the backlog's stated justifications point nowhere, same shape as D-10 but far wider — see below | Open |
+| RWF-056 | n/a — the repository's own validation-suite documentation | `tests/validation/README.md`'s Running section claimed "7 of 17 cases pass; the other 10 are known, tracked failures", citing RWF-001 through RWF-004, RWF-006 and RWF-012; the current, measured count is 12/17 passing, 5 known failures (`cases.json`, matching OPEN-DEBTS D-09 exactly) | record — a stale pass/fail count and citation list, from before several of those gaps were fixed — see below | **Fixed** (D-03) — see below |
 
 ---
 
@@ -17292,3 +17295,128 @@ point to the existing notice); appended a dated Corrections section to
 corrected `docs/progress.md`'s "Known limitations" section, which repeated
 the same false claim; and added a pointer from README's `## Status`
 section to the existing notice.
+
+## RWF-054 — `AGENTS.md` claimed CI runs on every push to `main`, although the push trigger was removed
+
+**Status:** **Fixed** (task `D-03`, 2026-09-27) — see below
+**Failure class:** record — a gate-configuration description states
+something no longer true about `.github/workflows/ci.yml`
+**Defect class:** not applicable (documentation)
+**Proof family affected:** none
+**Severity:** Low
+**Fix lane:** none assigned (records)
+
+**Discovered:** by task `D-03`, while reassessing the backlog and reading
+`AGENTS.md` § I before starting.
+
+`AGENTS.md` § I said every gate marked "yes" runs in CI "on every pull
+request and on every push to `main` (task RWF-051-typecheck)". Measured
+against `.github/workflows/ci.yml` on `main` at `a87faa2`: the `on:`
+block is `pull_request` (branches `[main]`) and `workflow_dispatch` only.
+Commit `a87faa2` ("Update CI workflow to remove push trigger", direct to
+`main`, 2026-09-27) removed the `push: branches: [main]` trigger that
+task `RWF-051-typecheck` had added. `AGENTS.md` was not updated when that
+commit landed.
+
+**Why it is registered.** AGENTS.md § C: a documented claim about the
+repository's own configuration must be verified, and its correction
+reported rather than silently perpetuated or worked around.
+
+**How it was closed.** Task `D-03` corrected `AGENTS.md` § I's sentence to
+state only what `ci.yml` currently does (pull requests), while already
+editing that same paragraph for the D-03 hermeticity change.
+
+## RWF-055 — 39 backlog rows cite "Appendix A", which exists nowhere in this repository
+
+**Status:** Open
+**Failure class:** record — a citation points at a document/section that
+does not exist, the same shape as `OPEN-DEBTS.md` D-10 but far wider
+**Defect class:** not applicable (documentation)
+**Proof family affected:** none
+**Severity:** Low (no soundness/verdict path touched) but wide blast
+radius (roughly a third of the entire backlog)
+**Fix lane:** none assigned (records) — needs its own investigation, not
+fixed here
+
+**Discovered:** by task `D-03`, verifying its own backlog row's citation
+before acting on it (AGENTS.md § D). The first check (grepping only the
+handful of rows visible in one preview) undercounted this at "four rows";
+a full `grep -n "Appendix A" docs/tasks/BACKLOG.md` corrected that before
+this entry was written — the undercounted premise was never registered
+as the finding, only the corrected one is.
+
+`docs/tasks/BACKLOG.md`'s `D-03` row cites "OPEN-DEBTS D-03; Appendix A
+(owner: P1–P2, 'consider doing it early')". Measured: `grep -rin appendix
+docs/*.md tests/validation/FINDINGS.md` returns nothing anywhere in this
+repository — no document contains the string "Appendix" at all, in any
+case. `grep -n "Appendix A" docs/tasks/BACKLOG.md` finds **39** rows
+citing it as their Source (sometimes combined with another source, e.g.
+BL-002's "FINDINGS RWF-047 (limitations); Appendix A"): `D-03`, `E-4`,
+`BL-002`, `BL-003`, `D-01`, `D-02`, `D-05`, `BL-005`, `BL-006`, `D-12`,
+`BL-007`, `BL-008`, `BL-009`, `RWF-002-adr`, `RWF-044`, `RWF-048`,
+`RWF-049`, `BL-010`, `BL-011`, `RWF-006`, `RWF-001`, `P1-B4-prototype`,
+`BL-012`, `BL-013`, `D-04`, `D-08`, `BL-014`, `BL-015`, `BL-016`,
+`BL-019`, `BL-020`, `BL-021`, `BL-022`, `BL-023`, `BL-024`, `BL-025`,
+`BL-026`, `BL-027`, `BL-028`.
+
+**Why it is registered.** AGENTS.md § C: a document is a claim to verify,
+not a fact. This is not the same defect as `OPEN-DEBTS.md` D-10 (a
+document cited by path that was never committed) — here nothing named
+"Appendix A" is cited by path or link at all, just referenced by name in
+prose, so `scripts/check-docs.mjs` (which validates paths/links, not
+prose citations — see backlog `BL-016`) would not catch it. It is the
+same underlying failure mode, at much greater scale: a citation nobody
+can follow, standing as the stated justification for a large fraction of
+the backlog's still-`TODO` work.
+
+**What this is NOT.** Not fixed by task `D-03` — determining what
+"Appendix A" was actually meant to reference (most likely a lost or
+never-committed planning document, the owner's own notes, or a
+mis-transcribed reference to an existing section under a different name)
+needs its own investigation across all 39 rows, not a guess. Silently
+substituting a plausible-sounding target would risk misattributing
+priority/dependency information under a false citation, which is worse
+than an honest broken pointer. Tracked as a new backlog row (discovered
+in `D-03`).
+
+**How to close it.** Ask the project owner what "Appendix A" was meant to
+reference (it may only exist in material outside this repository), or
+determine from context/git history that it never existed and correct all
+39 citing rows to state their reasoning directly instead.
+
+## RWF-056 — `tests/validation/README.md`'s known-failure count and citation list were stale
+
+**Status:** **Fixed** (task `D-03`, 2026-09-27) — see below
+**Failure class:** record — a suite's own documentation states a pass/fail
+count and root-cause citation list from before several of those gaps were
+fixed
+**Defect class:** not applicable (documentation)
+**Proof family affected:** none
+**Severity:** Low
+**Fix lane:** none assigned (records)
+
+**Discovered:** by task `D-03`, while updating `tests/validation/README.md`'s
+network-access claims and cross-checking the current known-failure count
+it was already discussing.
+
+`tests/validation/README.md`'s "Running" section said: "Currently exits
+non-zero: 7 of 17 cases pass; the other 10 are known, tracked failures
+(see `FINDINGS.md` RWF-001 through RWF-004, RWF-006, and RWF-012 ...)".
+Measured against `tests/validation/cases/cases.json` (17 cases, `python3`
+filter on `knownFailure`) and `OPEN-DEBTS.md` D-09: exactly 5 cases carry
+`knownFailure: true` today (`VAL-002`, `VAL-003`, `RWB-03`, `RWB-05`,
+`RWB-09b`), matching D-09's documented baseline exactly — not 10, and not
+caused by RWF-002/003/004/012 (those cases now pass; `RWB-05`'s remaining
+blocker is D-06/RWF-002, a separate, still-open reachability-scoping gap,
+not one of the cited-as-still-open causes either).
+
+**Why it is registered.** AGENTS.md § C: the README's own stated baseline
+must be verified before a later reader (or a validation-differential
+report) trusts it over `cases.json`/`OPEN-DEBTS.md` D-09, which is the
+actual source of truth for this count (AGENTS.md § B).
+
+**How it was closed.** Task `D-03` corrected the Running section's count
+to "12 of 17... the other 5", corrected the citation to RWF-001 and
+RWF-006 (D-09's actual two causes), and added a one-line note stating the
+count was stale and why, rather than silently overwriting a record
+without saying what changed.

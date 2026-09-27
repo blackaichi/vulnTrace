@@ -41,10 +41,10 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4221 tests, 170 files | measured (LIVE) — `npm test` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | 187 `*.test.ts` files exist under `src/`. | **Not fully offline.** `src/vulnerabilities/osv-provider.integration.test.ts` queries the live OSV API unconditionally, so this run is not a deterministic oracle. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4525 tests, 188 files | measured (deterministic) — `npm test` at `d-03-hermetic-osv-validation (base a87faa2)`, 2026-09-27 | 188 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
-| `npm run test:validation` | 12 passed / 5 failed (all known) | measured (LIVE) — `npm run test:validation` at `foundation-f7-docs-scorecard (base dcb5da1)`, 2026-09-17 | Real npm-installed packages against real advisories over the real OSV API. | Integration evidence and a provider-movement detector, never a correctness oracle. Owns no invariant in the map, on purpose. |
+| `npm run test:validation` | 12 passed / 5 failed (all known) | measured (deterministic) — `npm run test:validation` at `d-03-hermetic-osv-validation (base a87faa2)`, 2026-09-27 | Real npm-installed packages against real advisories, replayed from a recorded OSV snapshot since D-03 (was live). | Integration evidence and a provider-movement detector across re-recordings, never a correctness oracle. Owns no invariant in the map, on purpose. |
 
 ## 3. Verdict and proof coverage
 
@@ -89,7 +89,7 @@ Reasons per category:
 | Cases | 17 | structural — `tests/validation/cases/cases.json` | Real, npm-installed packages against real advisories; oracles authored from the advisory and the real source, independently of VulnTrace's output. | 17 cases is a shape corpus, not a statistical sample. No precision/recall figure is claimed from it. |
 | Expected-verdict distribution | AFFECTED 9, NOT_AFFECTED 7, UNKNOWN 1 | structural — the same file | The corpus is deliberately balanced so that 'vulnerable version installed' and 'vulnerable behavior reachable' can disagree. | These are the ORACLES, not the results. |
 | Known failures (kept failing on purpose) | 5 — VAL-002, VAL-003, RWB-03, RWB-05, RWB-09b | structural — `knownFailure: true` in the same file | A disagreement with an independently-researched oracle is recorded and kept red, never silently fixed away or re-scoped to match the tool. | One of them (`RWB-09b`) is a benchmark ORACLE-DESIGN limitation, not an analyzer defect: the correct result is no finding at all, which the case format cannot express. |
-| Last recorded live run | 12 passed / 5 failed (5 known, 0 unexpected) | measured (LIVE) — `npm run test:validation`, 2026-09-17 | Historical measurement, reproduced in `tests/validation/REPORT.md`. | Live. A rerun today can differ because the advisory database moved, not because this repository changed. |
+| Last recorded run | 12 passed / 5 failed (5 known, 0 unexpected) | measured (deterministic) — `npm run test:validation`, 2026-09-27 | Historical measurement, reproduced in `tests/validation/REPORT.md`. | Hermetic since D-03 (replays a recorded OSV snapshot): a rerun today reproduces this exactly. Only re-recording the snapshot (`scripts/record-osv-snapshot.mjs`) can move it. |
 
 ## 7. Where the UNKNOWN pressure actually is
 
@@ -305,10 +305,10 @@ field and the vocabulary are documented next to the table.
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 123 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 77 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-01, AUD-02, AUD-03, AUD-04, AUD-05, AUD-06, AUD-07, AUD-08, AUD-09, AUD-10, AUD-11, AUD-12, AUD-13, AUD-14, AUD-15, AUD-16, PRM-12, PRM-13, PRM-14, PRM-15, PRM-16, PRM-17, PRM-18, PRM-19, PRM-20, PRM-21, PRM-22, PRM-23, PRM-24, PRM-25, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-31, PRM-32, PRM-33, PRM-34, PRM-35, PRM-36, PRM-37, PRM-38, PRM-60, PRM-61, PRM-62, PRM-63, PRM-64, PRM-65, PRM-66, PRM-67, PRM-101, PRM-102, PRM-103, PRM-104, PRM-105, PRM-106, PRM-107, PRM-108, PRM-109, PRM-110, PRM-111, PRM-112, PRM-113, PRM-114, PRM-115, PRM-116, RWF-050, PRM-117, PRM-118, RWF-052 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Findings recorded | 126 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 78 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-01, AUD-02, AUD-03, AUD-04, AUD-05, AUD-06, AUD-07, AUD-08, AUD-09, AUD-10, AUD-11, AUD-12, AUD-13, AUD-14, AUD-15, AUD-16, PRM-12, PRM-13, PRM-14, PRM-15, PRM-16, PRM-17, PRM-18, PRM-19, PRM-20, PRM-21, PRM-22, PRM-23, PRM-24, PRM-25, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-31, PRM-32, PRM-33, PRM-34, PRM-35, PRM-36, PRM-37, PRM-38, PRM-60, PRM-61, PRM-62, PRM-63, PRM-64, PRM-65, PRM-66, PRM-67, PRM-101, PRM-102, PRM-103, PRM-104, PRM-105, PRM-106, PRM-107, PRM-108, PRM-109, PRM-110, PRM-111, PRM-112, PRM-113, PRM-114, PRM-115, PRM-116, RWF-050, PRM-117, PRM-118, RWF-052, RWF-055 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 1 — RWF-002 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
-| Recorded as fixed | 45 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
+| Recorded as fixed | 47 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
 
 ### 8.1 Outstanding findings, in their own words
 
@@ -395,6 +395,7 @@ this table except the category.
 | PRM-117 | open | Open | false NOT_AFFECTED — see below |
 | PRM-118 | open | Open | false AFFECTED — see below |
 | RWF-052 | open | Open | record — a register entry overstates an open defect — see below |
+| RWF-055 | open | Open | record — roughly a third of the backlog's stated justifications point nowhere, same shape as D-10 but far wider — see below |
 | RWF-002 | open in part | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model |
 
 ## 9. Commands referenced by the documentation
@@ -404,10 +405,11 @@ documented; `src/testing/docs-contract.test.ts` fails if a documented
 `npm run` target stops existing.
 
 The `Network?` column is derived from what each script actually runs,
-not from a remembered list: the one live suite inside the default
-vitest run is `src/vulnerabilities/osv-provider.integration.test.ts`,
-so every invocation that neither excludes the integration tests nor
-points at an offline config reaches OSV.
+not from a remembered list. Since task `D-03` (OPEN-DEBTS D-03,
+CLOSED), no vitest invocation reaches the network: every suite that
+used to query the live OSV API unconditionally now replays a
+recorded snapshot of real OSV answers instead
+(`scripts/record-osv-snapshot.mjs`).
 
 | Script | Deterministic? | Network? |
 | --- | --- | --- |
@@ -415,16 +417,16 @@ points at an offline config reaches OSV.
 | `npm run format` | yes | no |
 | `npm run format:write` | yes | no |
 | `npm run lint` | yes | no |
-| `npm run test` | no — includes the live OSV provider integration suite | **yes — live OSV** |
+| `npm run test` | yes | no |
 | `npm run test:adversarial` | yes | no |
 | `npm run test:binding-grammar` | yes | no |
-| `npm run test:coverage` | no — includes the live OSV provider integration suite | **yes — live OSV** |
+| `npm run test:coverage` | yes | no |
 | `npm run test:foundation` | yes | no |
-| `npm run test:integration` | no — includes the live OSV provider integration suite | **yes — live OSV** |
+| `npm run test:integration` | yes | no |
 | `npm run test:oracle` | yes | no |
 | `npm run test:performance` | no — wall-clock: shape deterministic, timing environmental | no |
 | `npm run test:unit` | yes | no |
-| `npm run test:validation` | no — live OSV | **yes — live OSV** |
+| `npm run test:validation` | yes | no |
 | `npm run typecheck` | yes | no |
 | `npm run validate:history` | yes | no |
 | `npm run validate:metadata` | yes | no |
