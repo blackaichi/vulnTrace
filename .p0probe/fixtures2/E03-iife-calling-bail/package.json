@@ -1,0 +1,8 @@
+{
+  "name": "p0probe2-e03-iife-calling-bail",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}

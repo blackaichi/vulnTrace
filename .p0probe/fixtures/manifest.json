@@ -1,0 +1,197 @@
+[
+  {
+    "id": "A01-objlit-value",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A01-objlit-value"
+  },
+  {
+    "id": "A02-objlit-computed-key",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A02-objlit-computed-key"
+  },
+  {
+    "id": "A03-call-argument",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A03-call-argument"
+  },
+  {
+    "id": "A04-sequence-comma",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A04-sequence-comma"
+  },
+  {
+    "id": "A05-logical-or-left",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A05-logical-or-left"
+  },
+  {
+    "id": "A06-logical-and-left",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A06-logical-and-left"
+  },
+  {
+    "id": "A07-template-substitution",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A07-template-substitution"
+  },
+  {
+    "id": "A08-array-element",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A08-array-element"
+  },
+  {
+    "id": "A09-binary-left",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A09-binary-left"
+  },
+  {
+    "id": "A10-property-access",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A10-property-access"
+  },
+  {
+    "id": "A11-element-access-index",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A11-element-access-index"
+  },
+  {
+    "id": "A12-spread-array",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A12-spread-array"
+  },
+  {
+    "id": "A13-spread-object",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A13-spread-object"
+  },
+  {
+    "id": "A14-assignment-rhs",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A14-assignment-rhs"
+  },
+  {
+    "id": "A15-module-exports-call",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A15-module-exports-call"
+  },
+  {
+    "id": "A16-new-argument",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A16-new-argument"
+  },
+  {
+    "id": "A17-throw-argument",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A17-throw-argument"
+  },
+  {
+    "id": "A18-nested-objlit-value",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A18-nested-objlit-value"
+  },
+  {
+    "id": "A19-if-test",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A19-if-test"
+  },
+  {
+    "id": "A20-tagged-template",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A20-tagged-template"
+  },
+  {
+    "id": "A21-destructuring-target",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A21-destructuring-target"
+  },
+  {
+    "id": "A22-objlit-value-parens",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A22-objlit-value-parens"
+  },
+  {
+    "id": "A23-switch-discriminant",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A23-switch-discriminant"
+  },
+  {
+    "id": "A24-for-initializer",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A24-for-initializer"
+  },
+  {
+    "id": "A25-optional-call-value",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A25-optional-call-value"
+  },
+  {
+    "id": "A26-exportwrite-objlit",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A26-exportwrite-objlit"
+  },
+  {
+    "id": "A27-paren-call-statement",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A27-paren-call-statement"
+  },
+  {
+    "id": "A28-array-destructure-rhs",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/A28-array-destructure-rhs"
+  },
+  {
+    "id": "N01-deferred-in-function",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/N01-deferred-in-function"
+  },
+  {
+    "id": "N02-conditional-value",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/N02-conditional-value"
+  },
+  {
+    "id": "N03-logical-or-right",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/N03-logical-or-right"
+  },
+  {
+    "id": "N04-logical-and-right",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/N04-logical-and-right"
+  },
+  {
+    "id": "N05-caught",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/N05-caught"
+  },
+  {
+    "id": "N06-stable-no-construct",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/N06-stable-no-construct"
+  },
+  {
+    "id": "B01-heritage-multipath",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/B01-heritage-multipath"
+  },
+  {
+    "id": "B02-heritage-both-invalid",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/B02-heritage-both-invalid"
+  },
+  {
+    "id": "B03-heritage-throw-or-async",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/B03-heritage-throw-or-async"
+  },
+  {
+    "id": "B04-multipath-plain-call",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/B04-multipath-plain-call"
+  },
+  {
+    "id": "B05-heritage-multipath-completes",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures/B05-heritage-multipath-completes"
+  }
+]

@@ -1,0 +1,8 @@
+{
+  "name": "p0probe-b04-multipath-plain-call",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}

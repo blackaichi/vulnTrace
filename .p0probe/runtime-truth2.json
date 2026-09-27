@@ -1,0 +1,106 @@
+[
+  {
+    "id": "C01-destructure-key-alone",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C02-poison-defeats-rwf024",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C03-poison-defeats-rwf016",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C04-poison-defeats-rwf017",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C05-poison-via-array-destructure",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C06-poison-control-no-destructure",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C07-alias-call",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C08-transitive-call",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C09-member-call",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "C10-own-block-throwing-shadow",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "shadow",
+    "agrees": true
+  },
+  {
+    "id": "E01-new-expression",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "E02-throwing-iife",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "iife",
+    "agrees": true
+  },
+  {
+    "id": "E03-iife-calling-bail",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  }
+]

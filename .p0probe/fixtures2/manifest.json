@@ -1,0 +1,67 @@
+[
+  {
+    "id": "C01-destructure-key-alone",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C01-destructure-key-alone"
+  },
+  {
+    "id": "C02-poison-defeats-rwf024",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C02-poison-defeats-rwf024"
+  },
+  {
+    "id": "C03-poison-defeats-rwf016",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C03-poison-defeats-rwf016"
+  },
+  {
+    "id": "C04-poison-defeats-rwf017",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C04-poison-defeats-rwf017"
+  },
+  {
+    "id": "C05-poison-via-array-destructure",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C05-poison-via-array-destructure"
+  },
+  {
+    "id": "C06-poison-control-no-destructure",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C06-poison-control-no-destructure"
+  },
+  {
+    "id": "C07-alias-call",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C07-alias-call"
+  },
+  {
+    "id": "C08-transitive-call",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C08-transitive-call"
+  },
+  {
+    "id": "C09-member-call",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C09-member-call"
+  },
+  {
+    "id": "C10-own-block-throwing-shadow",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/C10-own-block-throwing-shadow"
+  },
+  {
+    "id": "E01-new-expression",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/E01-new-expression"
+  },
+  {
+    "id": "E02-throwing-iife",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/E02-throwing-iife"
+  },
+  {
+    "id": "E03-iife-calling-bail",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures2/E03-iife-calling-bail"
+  }
+]

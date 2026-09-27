@@ -1,0 +1,66 @@
+[
+  {
+    "id": "D01-entry-cutoff-named-export",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "run",
+    "agrees": false
+  },
+  {
+    "id": "D02-entry-cutoff-anonymous-export",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "run",
+    "agrees": false
+  },
+  {
+    "id": "D03-entry-cutoff-property-export",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "run",
+    "agrees": false
+  },
+  {
+    "id": "D04-entry-gap-objlit-value",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "run",
+    "agrees": false
+  },
+  {
+    "id": "F01-property-export-overwrite",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "F02-property-export-overwrite-gap",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "F03-objlit-export-overwrite-gap",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "F04-property-export-control",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "object",
+    "agrees": true
+  }
+]

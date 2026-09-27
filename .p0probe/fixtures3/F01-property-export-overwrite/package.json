@@ -1,0 +1,8 @@
+{
+  "name": "p0probe3-f01-property-export-overwrite",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}

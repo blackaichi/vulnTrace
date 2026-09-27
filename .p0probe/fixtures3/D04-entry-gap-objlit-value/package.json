@@ -1,0 +1,8 @@
+{
+  "name": "p0probe3-d04-entry-gap-objlit-value",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "name": "p0probe-a15-module-exports-call",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}

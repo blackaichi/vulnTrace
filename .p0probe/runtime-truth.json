@@ -1,0 +1,314 @@
+[
+  {
+    "id": "A01-objlit-value",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A02-objlit-computed-key",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A03-call-argument",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A04-sequence-comma",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A05-logical-or-left",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A06-logical-and-left",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A07-template-substitution",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A08-array-element",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A09-binary-left",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A10-property-access",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A11-element-access-index",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A12-spread-array",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A13-spread-object",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A14-assignment-rhs",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A15-module-exports-call",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A16-new-argument",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A17-throw-argument",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A18-nested-objlit-value",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A19-if-test",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A20-tagged-template",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A21-destructuring-target",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A22-objlit-value-parens",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A23-switch-discriminant",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A24-for-initializer",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A25-optional-call-value",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A26-exportwrite-objlit",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A27-paren-call-statement",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "A28-array-destructure-rhs",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "bail",
+    "agrees": true
+  },
+  {
+    "id": "N01-deferred-in-function",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "safeOp",
+    "agrees": true
+  },
+  {
+    "id": "N02-conditional-value",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "safeOp",
+    "agrees": true
+  },
+  {
+    "id": "N03-logical-or-right",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "safeOp",
+    "agrees": true
+  },
+  {
+    "id": "N04-logical-and-right",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "safeOp",
+    "agrees": true
+  },
+  {
+    "id": "N05-caught",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "safeOp",
+    "agrees": true
+  },
+  {
+    "id": "N06-stable-no-construct",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "safeOp",
+    "agrees": true
+  },
+  {
+    "id": "B01-heritage-multipath",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "boom",
+    "agrees": true
+  },
+  {
+    "id": "B02-heritage-both-invalid",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "Class extends value 1 is not a constructor or null",
+    "agrees": true
+  },
+  {
+    "id": "B03-heritage-throw-or-async",
+    "expectedEndsEval": true,
+    "runtimeEndsEval": true,
+    "observed": "ENDED",
+    "detail": "Class extends value #<Promise> is not a constructor or null",
+    "agrees": true
+  },
+  {
+    "id": "B04-multipath-plain-call",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "safeOp",
+    "agrees": true
+  },
+  {
+    "id": "B05-heritage-multipath-completes",
+    "expectedEndsEval": false,
+    "runtimeEndsEval": false,
+    "observed": "COMPLETED",
+    "detail": "safeOp",
+    "agrees": true
+  }
+]

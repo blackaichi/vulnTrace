@@ -1,0 +1,8 @@
+{
+  "name": "p0probe-a08-array-element",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}

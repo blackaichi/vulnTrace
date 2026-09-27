@@ -1,0 +1,42 @@
+[
+  {
+    "id": "D01-entry-cutoff-named-export",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures3/D01-entry-cutoff-named-export"
+  },
+  {
+    "id": "D02-entry-cutoff-anonymous-export",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures3/D02-entry-cutoff-anonymous-export"
+  },
+  {
+    "id": "D03-entry-cutoff-property-export",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures3/D03-entry-cutoff-property-export"
+  },
+  {
+    "id": "D04-entry-gap-objlit-value",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures3/D04-entry-gap-objlit-value"
+  },
+  {
+    "id": "F01-property-export-overwrite",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures3/F01-property-export-overwrite"
+  },
+  {
+    "id": "F02-property-export-overwrite-gap",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures3/F02-property-export-overwrite-gap"
+  },
+  {
+    "id": "F03-objlit-export-overwrite-gap",
+    "endsEval": true,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures3/F03-objlit-export-overwrite-gap"
+  },
+  {
+    "id": "F04-property-export-control",
+    "endsEval": false,
+    "dir": "/data/workdir/claude/vulnTrace/.claude/worktrees/p0-closure-audit-probes/.p0probe/fixtures3/F04-property-export-control"
+  }
+]

@@ -1,0 +1,142 @@
+[
+  {
+    "id": "C01-destructure-key-alone",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "C02-poison-defeats-rwf024",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "C03-poison-defeats-rwf016",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "C04-poison-defeats-rwf017",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "C05-poison-via-array-destructure",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "C06-poison-control-no-destructure",
+    "endsEval": true,
+    "verdict": "UNKNOWN",
+    "familyA": false,
+    "familyB": false,
+    "familyC": false,
+    "unsound": false,
+    "reason": ""
+  },
+  {
+    "id": "C07-alias-call",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "C08-transitive-call",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "C09-member-call",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "C10-own-block-throwing-shadow",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "E01-new-expression",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "E02-throwing-iife",
+    "endsEval": true,
+    "verdict": "UNKNOWN",
+    "familyA": false,
+    "familyB": false,
+    "familyC": false,
+    "unsound": false,
+    "reason": ""
+  },
+  {
+    "id": "E03-iife-calling-bail",
+    "endsEval": true,
+    "verdict": "UNKNOWN",
+    "familyA": false,
+    "familyB": false,
+    "familyC": false,
+    "unsound": false,
+    "reason": ""
+  }
+]

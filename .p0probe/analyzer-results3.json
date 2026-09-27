@@ -1,0 +1,85 @@
+[
+  {
+    "id": "D01-entry-cutoff-named-export",
+    "endsEval": true,
+    "verdict": "AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": false,
+    "unsound": false,
+    "reason": ""
+  },
+  {
+    "id": "D02-entry-cutoff-anonymous-export",
+    "endsEval": true,
+    "verdict": "AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": false,
+    "unsound": false,
+    "reason": ""
+  },
+  {
+    "id": "D03-entry-cutoff-property-export",
+    "endsEval": true,
+    "verdict": "AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": false,
+    "unsound": false,
+    "reason": ""
+  },
+  {
+    "id": "D04-entry-gap-objlit-value",
+    "endsEval": true,
+    "verdict": "AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": false,
+    "unsound": false,
+    "reason": ""
+  },
+  {
+    "id": "F01-property-export-overwrite",
+    "endsEval": true,
+    "verdict": "UNKNOWN",
+    "familyA": false,
+    "familyB": false,
+    "familyC": false,
+    "unsound": false,
+    "reason": ""
+  },
+  {
+    "id": "F02-property-export-overwrite-gap",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "F03-objlit-export-overwrite-gap",
+    "endsEval": true,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": true,
+    "reason": ""
+  },
+  {
+    "id": "F04-property-export-control",
+    "endsEval": false,
+    "verdict": "NOT_AFFECTED",
+    "familyA": false,
+    "familyB": false,
+    "familyC": true,
+    "complete": true,
+    "unsound": false,
+    "reason": ""
+  }
+]

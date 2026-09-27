@@ -1,0 +1,8 @@
+{
+  "name": "p0probe2-c02-poison-defeats-rwf024",
+  "version": "1.0.0",
+  "private": true,
+  "dependencies": {
+    "fixture-lib": "1.0.0"
+  }
+}
