@@ -109,6 +109,11 @@ than adding features. Foundation is closed; see
 unfinished. `docs/adr/0007-mvp-known-limitations.md` covers what was
 deliberately out of scope for the MVP release.
 
+**"Foundation is closed" is not "the soundness contract holds."** See the
+current-status notice above (the soundness remediation is open,
+`docs/OPEN-DEBTS.md` D-17): treat every `NOT_AFFECTED` this analyzer
+reports as `UNKNOWN` until it closes.
+
 ## Example command
 
 ```bash
