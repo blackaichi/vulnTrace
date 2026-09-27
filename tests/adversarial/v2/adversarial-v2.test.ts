@@ -2,11 +2,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import type {
-  PackageQuery,
-  RawVulnerability,
-  VulnerabilityProvider,
-} from "../../../src/domain/vulnerability.js";
+import { adversarialV2Provider } from "../../../src/testing/adversarial-providers.js";
 import { runScanCommand } from "../../../src/cli/scan.js";
 import { validateScanOutput } from "../../../src/cli/output.js";
 
@@ -79,16 +75,6 @@ const oracle: readonly OracleEntry[] = JSON.parse(
   readFileSync(path.join(SUITE_ROOT, "expected.json"), "utf-8"),
 ) as OracleEntry[];
 
-function fakeProvider(
-  byPackageName: Readonly<Record<string, readonly RawVulnerability[]>>,
-): VulnerabilityProvider {
-  return {
-    queryPackage(query: PackageQuery): Promise<readonly RawVulnerability[]> {
-      return Promise.resolve(byPackageName[query.name] ?? []);
-    },
-  };
-}
-
 function fakeIo() {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -108,23 +94,11 @@ function fakeIo() {
  * same way the original adversarial suite does -- this is the only
  * non-real piece of the pipeline; dependency graph, module resolution,
  * call graph, reachability, verdict and JSON output all run for real
- * against real files on disk.
+ * against real files on disk. The record is defined once in
+ * `src/testing/adversarial-providers.ts` (BL-029), so the differential
+ * tool scans with exactly the record this suite does.
  */
-const VT2_GHSA: RawVulnerability = {
-  id: "GHSA-vt2v2-0001",
-  aliases: [],
-  affected: [
-    {
-      package: { ecosystem: "npm", name: "vt2-vuln-lib" },
-      ranges: [
-        { type: "SEMVER", events: [{ introduced: "0" }, { fixed: "2.0.0" }] },
-      ],
-    },
-  ],
-  references: [],
-};
-
-const provider = fakeProvider({ "vt2-vuln-lib": [VT2_GHSA] });
+const provider = adversarialV2Provider();
 
 const results: ScenarioResult[] = [];
 
