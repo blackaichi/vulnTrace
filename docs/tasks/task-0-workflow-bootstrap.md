@@ -176,3 +176,29 @@ failures.
 ## Report
 
 The end-of-task report of `docs/WORKFLOW.md` (the prompt's Part 7).
+
+## Corrections
+
+### 2026-09-27 — the "README status notice" premise-verification note is itself false
+
+**What was wrong.** This task file's "Premise verification" section
+states: "**'The README status notice: until the soundness remediation
+closes, treat NOT_AFFECTED as UNKNOWN' (Part 8).** **False.** `README.md`
+has no such notice." That is false. `README.md:80-88` has carried
+exactly that notice, beside the soundness-priority guarantee, with a link
+to `docs/OPEN-DEBTS.md` D-17, since commit `ae82d33`
+("docs(README): factual current-status notice; correct two disproved
+cache sentences"), dated 2026-09-26 — one day before this task's own
+first commit (`2d5b666`, 2026-09-27). The BL-001 backlog row this task
+added repeated the same false claim.
+
+**What was measured instead.** Task `BL-001` (branch
+`bl-001-readme-notice-correction`) verified the notice's presence and
+origin against `git log -p -- README.md` and corrected the backlog row.
+The part of the original claim that is true and still stands: README's
+`## Status` section (`README.md:102-108`), read on its own, says
+"Foundation is closed" and does not point a reader to the notice above it
+or to D-17 — that narrower gap is what `BL-001` closed.
+
+**Where the deviation is reported.** `tests/validation/FINDINGS.md`
+RWF-053 (AGENTS.md § C: a wrong record is itself a finding).
