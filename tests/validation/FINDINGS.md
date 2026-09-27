@@ -225,7 +225,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-050 | n/a — a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) has no register row of its own | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below | Open |
 | PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | Open |
 | PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | Open |
-| RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | Open |
+| RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | **Fixed** (RWF-051-typecheck) — see below |
 
 ---
 
@@ -17098,7 +17098,7 @@ getter "Not covered").
 
 ## RWF-051 — Nothing under `tests/` is type-checked, so a type-level guard written there is enforced by no gate
 
-**Status:** Open
+**Status:** **Fixed** (task RWF-051-typecheck, 2026-09-27) — see below
 **Failure class:** tooling — a guard that reads as enforced is not
 **Defect class:** not applicable (tooling)
 **Proof family affected:** none directly
@@ -17134,3 +17134,46 @@ a scratch tsconfig that type-checks `tests/**` (not committed):
 oracle harness re-checks a case's bound names, controls and ground truth
 at runtime. The rest of `tests/` is still not type-checked, and nothing
 else is fixed here.
+
+**Closed by task RWF-051-typecheck (2026-09-27).** `npm run typecheck` now
+also runs `tests/tsconfig.json` (superseding and removing the A-0-only
+`tests/oracle/tsconfig.json`), which type-checks every `.ts` file under
+`tests/` except the three fixture directories
+(`tests/adversarial/{v1,v2}/fixtures/`, `tests/validation/fixtures/`) --
+analyzer INPUT DATA (real/synthetic npm packages under scan), not test
+code, excluded the same way lint and prettier already exclude them.
+
+Exactly the one latent error predicted above was found:
+`tests/binding-grammar/harness.ts:328`, TS2339, `edge.resolution.target`
+inside the `.find` callback in `observe()`. **Cosmetic, not a hidden test
+defect**: reproduced in isolation with a minimal repro (a two-variant
+discriminated union, narrowed by an early return on the "other" branch,
+then read from inside a `.find()` callback) -- TypeScript does not
+propagate narrowing on a two-level property chain (`edge.resolution.kind`)
+across a closure boundary, even though `edge` itself is `const` and never
+reassigned. The fix hoists the already-narrowed `resolution`/`target`
+locals out of the closure; the emitted JavaScript, and every one of the
+293 `test:binding-grammar` assertions, is unchanged.
+
+The type-level half of the guard was proven to actually bite under this
+gate: temporarily widening `KnownDisagreement.observed` (in
+`tests/binding-grammar/disagreements.ts`) to admit an `{kind: "exact"}`
+variant makes `npm run typecheck` fail --
+`tests/binding-grammar/guard.test.ts(209,7): error TS2578: Unused
+'@ts-expect-error' directive` -- exactly the failure the guard's own
+comment has claimed since it was written. Reverted immediately after; no
+diff remained.
+
+While establishing which suites are hermetic enough for CI to run them,
+`scripts/scorecard-sources.mjs`'s `classifyScript` was found to wrongly
+classify `npm run test:oracle` as reaching the live OSV API (its
+config-name allowlist was never extended to `vitest.oracle.config.ts`
+when task A-0 added it). Measured false -- run alone, `test:oracle` is 68
+tests, real local `node` subprocesses only, no network. Corrected;
+`docs/SCORECARD.md` regenerated. This is itself a small instance of the
+class AGENTS.md section C describes: a generated document's claim,
+unverified, going stale for one task cycle.
+
+CI now runs `test:binding-grammar` and `test:oracle` (along with every
+other hermetic gate in AGENTS.md section I) on every pull request and on
+push to `main`; see `.github/workflows/ci.yml`.

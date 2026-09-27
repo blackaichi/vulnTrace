@@ -2,11 +2,19 @@
 
 ## Status
 
-- **Status**: in-progress
+- **Status**: done
 - **Branch**: `gate-enforcement`
 - **Base SHA**: `3cfc7a9` (main after "docs(tasks): record the owner's A-0
   decision in the A-0 task file")
-- **Commits**: <!-- filled in when done -->
+- **Commits**:
+  - `3bf13af` — this task file, in-progress
+  - `deea753` — type-check all of `tests/`, not just `tests/oracle/`
+    (the one revealed error fixed, guard proof done and reverted)
+  - `a10f0cd` — CI runs every hermetic gate, on `pull_request` and `push`
+    to `main`; corrects `scripts/scorecard-sources.mjs`'s network
+    classification of `test:oracle`
+  - the commit recording RWF-051's closure, the `AGENTS.md` and
+    `REMEDIATION-PLAN.md` updates, and this status set to done
 - **Superseded by**:
 
 ## Project context
