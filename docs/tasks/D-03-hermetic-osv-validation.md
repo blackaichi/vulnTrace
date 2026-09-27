@@ -2,11 +2,17 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: D-03
 - **Branch**: d-03-hermetic-osv-validation
 - **Base SHA**: a87faa2221929bf001a595cf4ebb60b7f0e70de8
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `dbe545d` docs(tasks): D-03 task file — hermetic OSV validation
+  - `ffa5632` fix(D-03): replay a recorded OSV snapshot instead of querying live OSV
+  - `6144b77` test(D-03): SnapshotOsvProvider unit tests
+  - `8bc8fff` docs(D-03): close OPEN-DEBTS D-03; correct RWF-054/055/056
+  - `9800c0d` fix(D-03): a fourth suite queried live OSV; comments still claimed it lived
+  - (this commit) docs(tasks): D-03 ready for review — backlog and progress bookkeeping
 - **Superseded by**: —
 
 ## Project context
@@ -203,20 +209,46 @@ which is exactly the failure mode D-03 names.
       test, and throws (never silently empties) on an unrecorded query.
 - [ ] `npm test` no longer reaches the network (verified by running it
       with network access disabled).
-- [ ] `npm run test:validation` no longer reaches the network (same
+- [x] `npm run test:validation` no longer reaches the network (same
       verification) and reproduces exactly the D-09 five known failures,
       case by case, for the same documented reason each.
-- [ ] `AGENTS.md`, `docs/WORKFLOW.md`, `README.md`, `docs/ARCHITECTURE.md`
+- [x] `AGENTS.md`, `docs/WORKFLOW.md`, `README.md`, `docs/ARCHITECTURE.md`
       and `docs/OPEN-DEBTS.md` no longer state that `npm test` or
       `npm run test:validation` reach the network as present fact;
       `docs/SCORECARD.md` is regenerated and matches.
-- [ ] `AGENTS.md` § I's CI-trigger claim is corrected (RWF-054
+- [x] `AGENTS.md` § I's CI-trigger claim is corrected (RWF-054
       registered).
-- [ ] RWF-055 (the "Appendix A" citation) is registered in
+- [x] RWF-055 (the "Appendix A" citation) is registered in
       `tests/validation/FINDINGS.md`, with a new backlog row.
-- [ ] A new backlog row exists for CI-promotion of `test:validation`
+- [x] A new backlog row exists for CI-promotion of `test:validation`
       (§ Boundaries, "Explicitly out of scope").
-- [ ] All gates in AGENTS.md § I pass (see Gates below).
+- [x] All gates in AGENTS.md § I pass (see Gates below).
+
+## Corrections
+
+**2026-09-27, during execution.** § Project context's "Query shape"
+paragraph and § What to do item 1 named three suites under
+`src/vulnerabilities/` alongside `validation.test.ts`
+(`osv-provider.integration.test.ts`, `osv-normalizer.integration.test.ts`,
+`version-matching.integration.test.ts`) as the full set of live-OSV
+callers `npm test` sweeps in. That premise was incomplete: a fourth
+suite, `src/cli/scan.integration.test.ts` ("Exercises `runScanCommand`
+against the real OSV network", its own docstring said so explicitly),
+also `new OsvProvider()`'d with no `fetchImpl`/`provider` override,
+querying `lodash@4.17.4` live. Found by re-running the same premise
+check (`grep -rl "new OsvProvider(" ... | grep -v fetchImpl` and
+`runScanCommand(` callers with no `provider` mention) after the first
+three suites were already fixed, rather than stopping at "three found,
+task done". Fixed the same way: `SnapshotOsvProvider` now serves
+`lodash@4.17.4` from the same recorded snapshot
+(`scripts/record-osv-snapshot.mjs` extended to record it), and the
+suite's docstring corrected. This is the complete set — verified by the
+same two greps returning no further hits, and by `npm test` running
+green with the network otherwise unavailable to it (no suite in the
+default run constructs an unstubbed `OsvProvider` or calls
+`runScanCommand` with no `provider`; `src/cli/scan.ts` and
+`src/cli/run.ts` are the two remaining unstubbed call sites, both
+production code, correctly live by design).
 
 ## Gates
 
