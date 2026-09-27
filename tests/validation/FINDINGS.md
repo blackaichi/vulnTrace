@@ -226,6 +226,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | Open |
 | PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | Open |
 | RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | **Fixed** (RWF-051-typecheck) — see below |
+| RWF-052 | n/a — the repository's own debt register | `docs/OPEN-DEBTS.md` D-14 still describes RWF-046's file-scope `require` collapse as present and open, although RWF-046 closed it | record — a register entry overstates an open defect — see below | Open |
 
 ---
 
@@ -17177,3 +17178,54 @@ unverified, going stale for one task cycle.
 CI now runs `test:binding-grammar` and `test:oracle` (along with every
 other hermetic gate in AGENTS.md section I) on every pull request and on
 push to `main`; see `.github/workflows/ci.yml`.
+
+---
+
+## RWF-052 — OPEN-DEBTS D-14 still reads as an open debt although RWF-046 closed it
+
+**Status:** Open
+**Failure class:** record — a register entry states, in the present
+tense, a defect that is fixed
+**Defect class:** not applicable (documentation)
+**Proof family affected:** none
+**Severity:** Low
+**Fix lane:** none assigned (records)
+
+**Discovered:** by task `task-0-workflow-bootstrap`, while building
+`docs/tasks/BACKLOG.md` from every open OPEN-DEBTS item.
+
+`docs/OPEN-DEBTS.md` D-14 ("RWF-046: a function-local `require` binds at
+FILE scope") has no closure note. Its text says, in the present tense,
+that two functions binding the same local name to different specifiers
+"collapse onto whichever was indexed first" and that "`b`'s edge is
+fabricated". Nothing in the register says otherwise at D-14 itself, so a
+reader of § 1 counts it as an open debt.
+
+Measured at `7004a05`:
+
+- this register's own row for RWF-046 reads **Fixed (RWF-046)**;
+- OPEN-DEBTS D-15 says of RWF-046 and RWF-046a, "Both halves are
+  fixed", and D-16 says "Unlike D-14 and D-15, this one is not a closed
+  lesson", so two later entries already treat D-14 as closed;
+- the fix is the one D-14's own "How to close it" prescribes, on the
+  symbol-binder side: `src/code-intelligence/symbol-binder.ts` resolves
+  require provenance through `resolveImportProvenanceDeclaration`
+  (`src/code-intelligence/named-bindings.ts`), keyed by declaration;
+- D-14's two-function reproduction is pinned by
+  `src/code-intelligence/require-binding-authority.test.ts`, "resolves
+  each sibling to its OWN binding", which passes on `main`;
+- the first sentence of D-14's "What" is still literally true:
+  `extractRequireBindings` in `src/code-intelligence/source-index.ts`
+  still records a `require()` binding by `localName` in the file-level
+  import table. The table is no longer the authority, so the collapse it
+  describes no longer happens.
+
+**Why it is registered.** AGENTS.md § C: a record that is wrong is itself
+a finding. The analyzer is not wrong here, and no verdict depends on
+this text; the cost is a reader who counts a closed defect as open, or
+who trusts D-14's present-tense reproduction over the code.
+
+**How to close it.** Append a dated closure note to D-14 that names
+RWF-046, the fix location and the pinning test, the way D-07's heading
+records its closure. Do not rewrite D-14's original text. Backlog task
+`BL-018`.
