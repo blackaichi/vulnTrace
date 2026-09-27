@@ -2,11 +2,16 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-001
 - **Branch**: bl-001-readme-notice-correction
 - **Base SHA**: ace013910303c29b80b7cfe732702dc459c9c59f
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `7961d1c` docs(tasks): BL-001 task file — correct the false "no README notice" record
+  - `eefbac7` docs(findings): register RWF-053 — the false "no README notice" record
+  - `8a1c4ec` docs: correct the false "no README notice" claim in TASK-0's file and progress.md
+  - `7898377` docs(README): point the Status section at the existing soundness notice
+  - (this commit) docs(tasks): BL-001 ready for review — backlog and progress bookkeeping
 - **Superseded by**: —
 
 ## Project context
@@ -111,22 +116,22 @@ wrong, the correction is itself a finding. Report it."
 
 ## Acceptance criteria
 
-- [ ] `tests/validation/FINDINGS.md` has a new `RWF-053` status-table row
+- [x] `tests/validation/FINDINGS.md` has a new `RWF-053` status-table row
       and `##` section describing the false "no README notice" claim in
       both the BL-001 backlog row and `task-0-workflow-bootstrap.md`.
-- [ ] `docs/tasks/BACKLOG.md`'s BL-001 row no longer asserts the notice is
-      missing; it is set to `MERGED` with corrected notes, and the
-      previous task's row (`TASK-0`) is unaffected (already `MERGED` from
-      TASK-0's own bookkeeping — verify, do not re-set).
-- [ ] `docs/tasks/task-0-workflow-bootstrap.md` has an appended, dated
+- [x] `docs/tasks/BACKLOG.md`'s BL-001 row no longer asserts the notice is
+      missing; it is set to `READY_FOR_REVIEW` with corrected notes (the
+      last micro-task's commit, per AGENTS.md § H), and the previous
+      task's row (`TASK-0`) is set to `MERGED` (PR #73).
+- [x] `docs/tasks/task-0-workflow-bootstrap.md` has an appended, dated
       Corrections section; its original body is untouched.
-- [ ] `docs/progress.md` no longer states that the README notice does not
+- [x] `docs/progress.md` no longer states that the README notice does not
       exist.
-- [ ] `README.md`'s `## Status` section points a reader to the existing
+- [x] `README.md`'s `## Status` section points a reader to the existing
       notice / D-17 instead of reading as an unqualified "closed".
-- [ ] `node scripts/check-docs.mjs` and
+- [x] `node scripts/check-docs.mjs` and
       `node scripts/generate-scorecard.mjs --check` pass.
-- [ ] All gates in AGENTS.md § I pass (see Gates below).
+- [x] All gates in AGENTS.md § I pass (see Gates below).
 
 ## Gates
 
