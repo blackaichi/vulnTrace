@@ -21,7 +21,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
-    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/oracle/tsconfig.json",
+    "typecheck": "tsc --noEmit && tsc --noEmit -p tests/tsconfig.json",
     "test": "vitest run",
     "test:unit": "vitest run --exclude \"**/*.integration.test.ts\"",
     "test:integration": "vitest run integration",
