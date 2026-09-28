@@ -761,6 +761,26 @@ accepted ADR 0008's Amendment A-0 on 2026-09-27; `PRM-117` and `PRM-118`
 are mapped in `docs/REMEDIATION-PLAN.md` § 2.5, and `RWF-051` is § 5a
 order 1b. None of it is implemented, so this entry still stands.
 
+**Progress, added by task `A-1` (2026-09-28).** The first lane-A task
+(`docs/tasks/A-1-invocation-account.md`) fixed three of the 47 false
+`NOT_AFFECTED` findings above: `PRM-19` (implicit `super`), `PRM-37`
+(tagged templates) and `PRM-115` (decorators), each reproduced against
+real Node and failing on the base commit first. It also found and fixed
+`RWF-057`, a false `NOT_AFFECTED` through family A that none of the three
+audits reported (a `vm` loader used as a tagged template's tag). Its
+independent audit found two more false `NOT_AFFECTED` findings that
+predate it and are not fixed here: `RWF-060` (an implicit constructor
+forwarding a callback into an ambient or builtin base, routed to A-3) and
+`RWF-061` (a `vm.Script` reached through a subclass or factory, family A,
+backlog `BL-037`) and `RWF-062` (`new A()` resolved to a constructor
+overload signature, backlog `BL-038`). The tables above are left as measured; 44 of their 47
+false `NOT_AFFECTED` findings remain open, plus these three. The no-edge branches the call graph still takes
+without a proof are now named in code (`UNPROVEN_NO_EDGE_LEDGER`,
+`src/domain/graph.ts`), each with the open findings it carries (`AUD-01`,
+`AUD-02`, `PRM-12`, `PRM-14`, `PRM-15`, `PRM-117`, `RWF-060`) and the
+lane-A task
+that removes it. This entry still stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

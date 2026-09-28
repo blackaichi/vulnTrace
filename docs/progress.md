@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-09-28, by `BL-029`.
+**Last updated:** 2026-09-28, by `A-1`.
 
 ## Objective
 
@@ -25,8 +25,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   `npm run test:validation` are both fully offline — OPEN-DEBTS D-03,
   CLOSED) and BL-029 (`node scripts/differential.mjs`: the graph, proof
   and verdict differentials, base against head, over all 139 corpus
-  cases — usage in [`WORKFLOW.md`](WORKFLOW.md) § 3). No lane is
-  implemented yet.
+  cases — usage in [`WORKFLOW.md`](WORKFLOW.md) § 3).
+- Lane A has started. `A-1` made every invocation site of a walked file
+  yield an account (ADR 0008 invariant A1: a census of every
+  `ts.SyntaxKind`, a handler table, `InvocationAccount`), fixed
+  tagged templates, decorators and implicit `super` (PRM-37, PRM-115,
+  PRM-19), and found and fixed RWF-057 (a `vm` tag). The no-edge branches
+  still taken without a proof are named in `UNPROVEN_NO_EDGE_LEDGER`
+  (`src/domain/graph.ts`) with the task that removes each (A-3, A-5).
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -57,19 +63,31 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`BL-029` — shared graph, proof and verdict differential tool
-([task file](tasks/BL-029-differential-tool.md)): `READY_FOR_REVIEW`, its
-pull request awaiting the project owner. `D-03` merged as PR #76.
+`A-1` — `InvocationAccount`, syntax-kind census, handler table; tagged
+templates, decorators, implicit `super`
+([task file](tasks/A-1-invocation-account.md)): `READY_FOR_REVIEW`, its
+pull request awaiting the project owner. `BL-029` merged as PR #77.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-029`:
-lane A from `A-1`, which is the first task to report its differentials
-with the tool.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-1`:
+`A-2`, the `possible` edge kind, bound by the rule `A-1` wrote into
+[`SOUNDNESS-CONTRACT.md`](SOUNDNESS-CONTRACT.md) § 1 and § 3 and by the
+`affected-path-resolved-edges-only` invariant, whose owner test it must
+extend.
 
 ## Recently discovered
 
-From `BL-029`: `BL-032` (the suites' finding selector is written out
+From `A-1`: `BL-037` (**P1**, RWF-061: a `vm.Script` reached through a
+subclass or factory is a family-A false `NOT_AFFECTED`), `BL-038` (**P1**,
+RWF-062: `new A()` resolves to a constructor overload signature), RWF-060 (**P1**,
+an implicit constructor forwarding a callback into an ambient or builtin
+base; added to A-3's acceptance), `BL-036` (RWF-059, an instance field
+initializer's calls attributed to the class-definition owner), `BL-034`
+(resolve an explicit `super(...)` through the base authority —
+precision) and `BL-035` (RWF-058, a call inside a member decorator's
+expression is attributed to the member). From
+`BL-029`: `BL-032` (the suites' finding selector is written out
 four times, the tool's suite view included) and `BL-033` (vitest's
 `Timeout calling "onTaskUpdate"` looks duration-bound, not load-bound;
 verify and remove it from the suites). Still open from earlier tasks:

@@ -31,9 +31,9 @@ cannot be averaged into one number without destroying both. Read the
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Foundation invariants with a named owner | 22 | structural — `src/testing/foundation-invariants.ts` | Every soundness property F1–F6 established has exactly one deterministic test that fails when it breaks. | Membership only. The map proves an owner exists and is executed; it cannot prove the owner's assertions are semantically adequate. |
-| Distinct owner test files | 29 | structural — the same map | The invariants are spread across independent suites rather than concentrated in one fragile file. | An owner may own more than one invariant; this is not a coverage percentage. |
-| Test files the gate executes | 29 | structural — `vitest.foundation.config.ts` | `npm run test:foundation` is a subset of `npm test`, never a second suite. | Gate files may contain assertions beyond the invariant they own. |
+| Foundation invariants with a named owner | 24 | structural — `src/testing/foundation-invariants.ts` | Every soundness property F1–F6 established has exactly one deterministic test that fails when it breaks. | Membership only. The map proves an owner exists and is executed; it cannot prove the owner's assertions are semantically adequate. |
+| Distinct owner test files | 33 | structural — the same map | The invariants are spread across independent suites rather than concentrated in one fragile file. | An owner may own more than one invariant; this is not a coverage percentage. |
+| Test files the gate executes | 33 | structural — `vitest.foundation.config.ts` | `npm run test:foundation` is a subset of `npm test`, never a second suite. | Gate files may contain assertions beyond the invariant they own. |
 | Invariants by originating task | F1 1, F2 3, F3 4, F4 4, F5 3, F6 5, VT-CONTRACT 1, P1-A 1 | structural — the same map | Shows which Foundation task each guarantee came from. | A task with fewer invariants did not necessarily do less work. |
 | Gate result | PASS (1356 tests, 29 files) | measured (deterministic) — `npm run test:foundation` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | The Foundation block's hard gate. It is offline and contains no network access at all. | Green means no listed invariant broke — not that the analyzer is sound. |
 
@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4563 tests, 191 files | measured (deterministic) — `npm test` at `bl-029-differential-tool (base a42ce00)`, 2026-09-28 | 191 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4563 tests, 191 files | measured (deterministic) — `npm test` at `bl-029-differential-tool (base a42ce00)`, 2026-09-28 | 196 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (deterministic) — `npm run test:validation` at `d-03-hermetic-osv-validation (base a87faa2)`, 2026-09-27 | Real npm-installed packages against real advisories, replayed from a recorded OSV snapshot since D-03 (was live). | Integration evidence and a provider-movement detector across re-recordings, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -305,10 +305,10 @@ field and the vocabulary are documented next to the table.
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 126 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 78 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-01, AUD-02, AUD-03, AUD-04, AUD-05, AUD-06, AUD-07, AUD-08, AUD-09, AUD-10, AUD-11, AUD-12, AUD-13, AUD-14, AUD-15, AUD-16, PRM-12, PRM-13, PRM-14, PRM-15, PRM-16, PRM-17, PRM-18, PRM-19, PRM-20, PRM-21, PRM-22, PRM-23, PRM-24, PRM-25, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-31, PRM-32, PRM-33, PRM-34, PRM-35, PRM-36, PRM-37, PRM-38, PRM-60, PRM-61, PRM-62, PRM-63, PRM-64, PRM-65, PRM-66, PRM-67, PRM-101, PRM-102, PRM-103, PRM-104, PRM-105, PRM-106, PRM-107, PRM-108, PRM-109, PRM-110, PRM-111, PRM-112, PRM-113, PRM-114, PRM-115, PRM-116, RWF-050, PRM-117, PRM-118, RWF-052, RWF-055 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Findings recorded | 132 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 80 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-01, AUD-02, AUD-03, AUD-04, AUD-05, AUD-06, AUD-07, AUD-08, AUD-09, AUD-10, AUD-11, AUD-12, AUD-13, AUD-14, AUD-15, AUD-16, PRM-12, PRM-13, PRM-14, PRM-15, PRM-16, PRM-17, PRM-18, PRM-20, PRM-21, PRM-22, PRM-23, PRM-24, PRM-25, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-31, PRM-32, PRM-33, PRM-34, PRM-35, PRM-36, PRM-38, PRM-60, PRM-61, PRM-62, PRM-63, PRM-64, PRM-65, PRM-66, PRM-67, PRM-101, PRM-102, PRM-103, PRM-104, PRM-105, PRM-106, PRM-107, PRM-108, PRM-109, PRM-110, PRM-111, PRM-112, PRM-113, PRM-114, PRM-116, RWF-050, PRM-117, PRM-118, RWF-052, RWF-055, RWF-058, RWF-059, RWF-060, RWF-061, RWF-062 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 1 — RWF-002 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
-| Recorded as fixed | 47 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
+| Recorded as fixed | 51 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
 
 ### 8.1 Outstanding findings, in their own words
 
@@ -347,7 +347,6 @@ this table except the category.
 | PRM-16 | open | Open | false NOT_AFFECTED — see below |
 | PRM-17 | open | Open | false NOT_AFFECTED — see below |
 | PRM-18 | open | Open | false NOT_AFFECTED — see below |
-| PRM-19 | open | Open | false NOT_AFFECTED — see below |
 | PRM-20 | open | Open | false NOT_AFFECTED — see below |
 | PRM-21 | open | Open | false NOT_AFFECTED — see below |
 | PRM-22 | open | Open | false NOT_AFFECTED — see below |
@@ -365,7 +364,6 @@ this table except the category.
 | PRM-34 | open | Open | silent drop — see below |
 | PRM-35 | open | Open | scan abort — see below |
 | PRM-36 | open | Open | false reason — see below |
-| PRM-37 | open | Open | false NOT_AFFECTED — see below |
 | PRM-38 | open | Open | false NOT_AFFECTED — see below |
 | PRM-60 | open | Open | false NOT_AFFECTED — see below |
 | PRM-61 | open | Open | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below |
@@ -389,13 +387,17 @@ this table except the category.
 | PRM-112 | open | Open | false NOT_AFFECTED — see below |
 | PRM-113 | open | Open | false NOT_AFFECTED — see below |
 | PRM-114 | open | Open | false NOT_AFFECTED — see below |
-| PRM-115 | open | Open | false NOT_AFFECTED — see below |
 | PRM-116 | open | Open | false NOT_AFFECTED — see below |
 | RWF-050 | open | Open | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below |
 | PRM-117 | open | Open | false NOT_AFFECTED — see below |
 | PRM-118 | open | Open | false AFFECTED — see below |
 | RWF-052 | open | Open | record — a register entry overstates an open defect — see below |
 | RWF-055 | open | Open | record — roughly a third of the backlog's stated justifications point nowhere, same shape as D-10 but far wider — see below |
+| RWF-058 | open | Open | fabricated edge (misattributed caller; no verdict moved) — see below |
+| RWF-059 | open | Open | fabricated edge / false AFFECTED — see below |
+| RWF-060 | open | Open | false NOT_AFFECTED — see below |
+| RWF-061 | open | Open | false NOT_AFFECTED (family A) — see below |
+| RWF-062 | open | Open | false NOT_AFFECTED — see below |
 | RWF-002 | open in part | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model |
 
 ## 9. Commands referenced by the documentation
