@@ -348,3 +348,31 @@ describe("F3 § 28: an unknown runtime value is never silently dropped", () => {
     ).not.toThrow();
   });
 });
+
+describe("task A-2: possible_invocation (ADR 0008 § 3)", () => {
+  it("is a value_uncertainty subtype, and the categories are still six", () => {
+    expect(classifyUncertaintyReason("possible_invocation")).toEqual({
+      category: "value_uncertainty",
+      reason: "possible_invocation",
+      count: 1,
+    });
+    expect(UNCERTAINTY_CATEGORIES).toHaveLength(6);
+  });
+
+  it("orders after the edge reasons of its category", () => {
+    expect(
+      aggregateUncertainty(["possible_invocation", "dynamic_member_access"]),
+    ).toEqual([
+      {
+        category: "value_uncertainty",
+        reason: "dynamic_member_access",
+        count: 1,
+      },
+      {
+        category: "value_uncertainty",
+        reason: "possible_invocation",
+        count: 1,
+      },
+    ]);
+  });
+});

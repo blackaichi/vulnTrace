@@ -172,3 +172,64 @@ describe("FOUNDATION F3: the schema additions are additive (§ 21, attack M)", (
     expect(validateScanOutput(withF3)).toEqual([]);
   });
 });
+
+describe("task A-2: the possible edge's output additions are additive", () => {
+  const current = {
+    schemaVersion: SCHEMA_VERSION,
+    scan: { id: "scan-a2", project: "." },
+    findings: [
+      {
+        vulnerability: "GHSA-a2",
+        package: "lib",
+        packageInstance: "node_modules/lib",
+        verdict: "UNKNOWN",
+        unknownReasons: [
+          {
+            category: "value_uncertainty",
+            reason: "possible_invocation",
+            count: 1,
+          },
+        ],
+      },
+    ],
+    coverage: {
+      files: 1,
+      modulesResolved: 1,
+      modulesUnresolved: 0,
+      functions: 2,
+      callsResolved: 1,
+      callsDynamic: 0,
+      callsPossible: 1,
+    },
+    diagnostics: [],
+    timings: {
+      parsingMs: 0,
+      resolutionMs: 0,
+      graphConstructionMs: 0,
+      reachabilityMs: 0,
+      providerMs: 0,
+      cacheHits: 0,
+      cacheMisses: 0,
+      totalMs: 0,
+    },
+  };
+
+  it("accepts possible_invocation and a callsPossible count", () => {
+    expect(validateScanOutput(current)).toEqual([]);
+  });
+
+  it("still validates a result that predates callsPossible", () => {
+    const { callsPossible: _dropped, ...before } = current.coverage;
+    void _dropped;
+    expect(validateScanOutput({ ...current, coverage: before })).toEqual([]);
+  });
+
+  it("rejects a negative callsPossible, so the field is typed", () => {
+    expect(
+      validateScanOutput({
+        ...current,
+        coverage: { ...current.coverage, callsPossible: -1 },
+      }).length,
+    ).toBeGreaterThan(0);
+  });
+});

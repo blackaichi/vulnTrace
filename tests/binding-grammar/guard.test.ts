@@ -221,3 +221,49 @@ describe("the guard: what a disagreement entry may silence", () => {
     }
   });
 });
+
+describe("task A-2: a POSSIBLE observation never passes and is never silenced", () => {
+  const possibleRight: Observation = {
+    kind: "possible",
+    target: "node_modules/pkg/index.js#run",
+  };
+  const possibleWrong: Observation = {
+    kind: "possible",
+    target: "node_modules/pkg/index.js#probeTarget",
+  };
+
+  it("the expected target, only as POSSIBLE: a violation, not a fabrication, and no entry silences it", () => {
+    for (const entry of [
+      undefined,
+      refusalEntry("unsupported_callee_binding"),
+    ]) {
+      const outcome = classifyCellOutcome({
+        key: "k",
+        expectation: EXPECT_EXACT,
+        observed: possibleRight,
+        entry,
+      });
+      expect(outcome).toMatchObject({ kind: "violation", fabrication: false });
+    }
+  });
+
+  it("a different target as POSSIBLE: a fabrication, whatever the table says", () => {
+    const outcome = classifyCellOutcome({
+      key: "k",
+      expectation: EXPECT_EXACT,
+      observed: possibleWrong,
+      entry: refusalEntry("unsupported_callee_binding"),
+    });
+    expect(outcome).toMatchObject({ kind: "violation", fabrication: true });
+  });
+
+  it("any POSSIBLE target where a refusal is expected: a fabrication", () => {
+    const outcome = classifyCellOutcome({
+      key: "k",
+      expectation: EXPECT_UNKNOWN,
+      observed: possibleRight,
+      entry: undefined,
+    });
+    expect(outcome).toMatchObject({ kind: "violation", fabrication: true });
+  });
+});

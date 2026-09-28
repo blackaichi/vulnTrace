@@ -223,6 +223,12 @@ export function makeProject(kind: ProjectKind): string {
 export type Observation =
   /** `<module path relative to the project root>#<declaration name>`. */
   | { readonly kind: "exact"; readonly target: string }
+  /**
+   * A `possible` edge (ADR 0008 § 1, task A-2): the analyzer names a
+   * target the program MAY invoke. Never an expectation, and never a pass:
+   * see `guard.ts`.
+   */
+  | { readonly kind: "possible"; readonly target: string }
   | { readonly kind: "unknown"; readonly reason: string }
   /** No call edge left the probe at all -- itself a defect, never a refusal. */
   | { readonly kind: "no-edge" }
@@ -235,6 +241,8 @@ export function formatObservation(o: Observation): string {
   switch (o.kind) {
     case "exact":
       return `EXACT ${o.target}`;
+    case "possible":
+      return `POSSIBLE ${o.target}`;
     case "unknown":
       return `UNKNOWN ${o.reason}`;
     case "no-edge":
@@ -336,5 +344,10 @@ export function observe(
     return { kind: "no-edge" };
   }
   const rel = path.relative(root, node.module).split(path.sep).join("/");
-  return { kind: "exact", target: `${rel}#${node.name ?? "<anonymous>"}` };
+  const named = `${rel}#${node.name ?? "<anonymous>"}`;
+  // A `possible` edge names its target too, but claims less: it must never
+  // read as EXACT (a downgrade would pass silently) nor as a refusal.
+  return resolution.kind === "possible"
+    ? { kind: "possible", target: named }
+    : { kind: "exact", target: named };
 }

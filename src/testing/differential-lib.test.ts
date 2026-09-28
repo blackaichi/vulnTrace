@@ -727,3 +727,117 @@ describe("BL-029 differential: the report", () => {
     );
   });
 });
+
+function possibleTo(root: string, name: string): CallEdge["resolution"] {
+  return { kind: "possible", target: `${root}/src/index.js#${name}@1:1` };
+}
+
+/** The default graph with main's line-2 call re-resolved. */
+function graphWithLine2(
+  root: string,
+  resolution: CallEdge["resolution"],
+): CallGraph {
+  return graph(root, {
+    edges: [
+      edge(root, "main", 2, resolution),
+      edge(root, "main", 3, resolvedTo(root, "b")),
+    ],
+  });
+}
+
+describe("A-2 differential: possible edges", () => {
+  it("renders a possible edge as `~> target`, never as an unknown", () => {
+    const d = diffOf(
+      {},
+      { graph: graphWithLine2(HEAD_ROOT, possibleTo(HEAD_ROOT, "a")) },
+    );
+    const site = d.graph.changed[0]?.sitesChanged[0];
+    expect(site?.base).toEqual(["-> <project>/src/index.js#a@1:1"]);
+    expect(site?.head).toEqual(["~> <project>/src/index.js#a@1:1"]);
+  });
+
+  it("counts a resolved call site withdrawn to possible", () => {
+    const d = diffOf(
+      {},
+      { graph: graphWithLine2(HEAD_ROOT, possibleTo(HEAD_ROOT, "a")) },
+    );
+    expect(summarize(d).graph).toMatchObject({
+      sitesChanged: 1,
+      withdrawnToPossible: 1,
+      withdrawnToUnknown: 0,
+      retargeted: 0,
+    });
+    expect(renderReport(d)).toContain("1 withdrawn to possible");
+  });
+
+  it("counts an unknown call site that became possible", () => {
+    const d = diffOf(
+      { graph: graphWithLine2(BASE_ROOT, UNKNOWN) },
+      { graph: graphWithLine2(HEAD_ROOT, possibleTo(HEAD_ROOT, "a")) },
+    );
+    expect(summarize(d).graph).toMatchObject({
+      sitesChanged: 1,
+      unknownToPossible: 1,
+      unknownToResolved: 0,
+    });
+  });
+
+  it("counts a possible call site that became resolved", () => {
+    const d = diffOf(
+      { graph: graphWithLine2(BASE_ROOT, possibleTo(BASE_ROOT, "a")) },
+      {},
+    );
+    expect(summarize(d).graph).toMatchObject({
+      sitesChanged: 1,
+      possibleToResolved: 1,
+    });
+  });
+
+  it("counts a possible call site withdrawn to unknown", () => {
+    const d = diffOf(
+      { graph: graphWithLine2(BASE_ROOT, possibleTo(BASE_ROOT, "a")) },
+      { graph: graphWithLine2(HEAD_ROOT, UNKNOWN) },
+    );
+    expect(summarize(d).graph).toMatchObject({
+      sitesChanged: 1,
+      withdrawnToUnknown: 1,
+      withdrawnToPossible: 0,
+    });
+  });
+
+  it("counts a resolved edge beside an unknown one that became possible as withdrawn to possible", () => {
+    const eval_: CallEdge["resolution"] = {
+      kind: "unknown",
+      reason: "eval",
+      potentialTargets: [],
+    };
+    const site = (root: string, first: CallEdge["resolution"]) =>
+      graph(root, {
+        edges: [
+          edge(root, "main", 2, first),
+          edge(root, "main", 2, eval_),
+          edge(root, "main", 3, resolvedTo(root, "b")),
+        ],
+      });
+    const d = diffOf(
+      { graph: site(BASE_ROOT, resolvedTo(BASE_ROOT, "a")) },
+      { graph: site(HEAD_ROOT, possibleTo(HEAD_ROOT, "a")) },
+    );
+    expect(summarize(d).graph).toMatchObject({
+      sitesChanged: 1,
+      withdrawnToPossible: 1,
+      retargeted: 0,
+    });
+  });
+
+  it("counts a possible call site given another possible target as retargeted", () => {
+    const d = diffOf(
+      { graph: graphWithLine2(BASE_ROOT, possibleTo(BASE_ROOT, "a")) },
+      { graph: graphWithLine2(HEAD_ROOT, possibleTo(HEAD_ROOT, "b")) },
+    );
+    expect(summarize(d).graph).toMatchObject({
+      sitesChanged: 1,
+      retargeted: 1,
+    });
+  });
+});

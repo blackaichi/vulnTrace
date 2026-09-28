@@ -88,6 +88,7 @@ export default defineConfig({
       "src/code-intelligence/invocation-sites.site-coverage.test.ts",
       "src/code-intelligence/call-graph.invocation-account.test.ts",
       "src/analysis/reachability.affected-path.test.ts",
+      "src/analysis/verdict.possible-edge.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take
