@@ -356,13 +356,43 @@ function unclassifiedReasonFailsClosed(reason: never): boolean {
 }
 
 /**
- * A call edge either resolves to an exact node, or is explicitly
- * represented as uncertain. Dynamic constructs (`foo[method]()`,
- * `require(variable)`, `import(variable)`) must never fabricate exact
- * edges (see docs/SDD.md § 18, § 21).
+ * A call edge either resolves to an exact node, may invoke a known node,
+ * or is explicitly represented as uncertain. Dynamic constructs
+ * (`foo[method]()`, `require(variable)`, `import(variable)`) must never
+ * fabricate exact edges (see docs/SDD.md § 18, § 21).
+ *
+ * - `resolved`: an authority proved that the call site invokes exactly
+ *   `target` whenever it runs (ADR 0008 § 1, invariant A2).
+ * - `possible` (ADR 0008 § 1, task A-2): the program MAY invoke `target`
+ *   here, and nothing proves that it does -- an escaped function value
+ *   handed to code the graph does not model, a JSX component, a protocol
+ *   member, an accessor body. Reachability traverses it: the code behind
+ *   it is searched and its own unknown edges count against family C's
+ *   completeness. It is never part of an AFFECTED path, and a target
+ *   reached only through `possible` edges is UNKNOWN (SOUNDNESS-CONTRACT
+ *   § 1 and § 3; ADR 0008 Decision 2; `analysis/reachability.ts`).
+ * - `unknown`: which function, if any, is invoked is not established.
+ *
+ * WHAT BINDS A PRODUCER OF A `possible` EDGE. Nothing in this type can
+ * check these, so they are stated here and in REMEDIATION-PLAN § 5a
+ * ("A-2 additions to lane-A acceptance"):
+ *
+ * 1. Only for an over-approximated invocation ADR 0008 § 2 names, and
+ *    only when the invoked value is attributable to `target`. An
+ *    unattributable value gets an `unknown` edge (§ 3), never a
+ *    `possible` edge to a guess.
+ * 2. The target's file is walked exactly as it would be for a resolved
+ *    edge. Reachability reads "no outgoing edges" as "searched, and calls
+ *    nothing"; a `possible` edge into a body the graph never walked would
+ *    make an unsearched region look complete, which is how a false family
+ *    C would appear.
+ * 3. Never where the language guarantees the call: that is `resolved`,
+ *    with its authority (decorators, implicit `super`, documented
+ *    invoking builtins; ADR 0008 § 4).
  */
 export type CallEdgeResolution =
   | { readonly kind: "resolved"; readonly target: GraphNodeId }
+  | { readonly kind: "possible"; readonly target: GraphNodeId }
   | {
       readonly kind: "unknown";
       readonly reason: DynamicCallReason;
@@ -383,9 +413,10 @@ export interface CallEdge {
  * closed union rather than `CallEdge | undefined`, so a branch that
  * forgets to account for a site is a type error, not a missing edge.
  *
- * - `edges`: one or more call edges, each resolved or unknown. ADR 0008
- *   § 1 adds a third resolution kind, `possible`, in task A-2; until then
- *   an over-approximated invocation this graph cannot prove is `unknown`.
+ * - `edges`: one or more call edges, each resolved, possible or unknown.
+ *   Task A-2 added the `possible` kind (ADR 0008 § 1); no handler emits
+ *   one yet. Its producers are A-3 and A-4, and until they land an
+ *   over-approximated invocation this graph cannot prove is `unknown`.
  * - `unproven_no_edge`: the site gets no edge, AND nothing proves that is
  *   sound. See {@link UnprovenNoEdgeReason}.
  *
@@ -515,6 +546,16 @@ export type ReachabilityResult =
       readonly target: GraphNodeId;
       readonly blockers: readonly string[];
       readonly unresolvedEdges: readonly UnresolvedEdge[];
+      /**
+       * Present exactly when the search reached the target, but only
+       * through at least one `possible` edge: no all-resolved path exists
+       * in the searched region. A witness path from source to target, one
+       * or more of whose hops is a `possible` edge. It is NEVER an AFFECTED
+       * path (SOUNDNESS-CONTRACT § 1); it is why this result is `unknown`,
+       * and the uncertainty it carries is `possible_invocation` (ADR 0008
+       * § 3). `unresolvedEdges` may be empty when this is present.
+       */
+      readonly possibleOnlyPath?: readonly GraphNodeId[];
       readonly coverage: Coverage;
     };
 

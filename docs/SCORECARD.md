@@ -69,14 +69,14 @@ cannot be averaged into one number without destroying both. Read the
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
 | Categories | 6 — unmodeled_construct, value_uncertainty, capability_escape, identity_unresolved, analysis_precondition_unmet, budget_exceeded | structural — `src/domain/uncertainty.ts` | Each category names a different KIND of work, which is the only property that makes a taxonomy worth having. | **Observational.** Nothing in the taxonomy authorizes a proof or is read by any branch that decides a verdict. |
-| Specific reasons classified | 47 | structural — the same file, exhaustiveness compile-enforced | Every `DynamicCallReason` appears verbatim and every reason has exactly one category. | Eight of them are the P1-B1 frontend-gap subtypes; `unsupported_construct` survives as their runtime floor, not as a bucket — see §7.1. |
+| Specific reasons classified | 48 | structural — the same file, exhaustiveness compile-enforced | Every `DynamicCallReason` appears verbatim and every reason has exactly one category. | Eight of them are the P1-B1 frontend-gap subtypes; `unsupported_construct` survives as their runtime floor, not as a bucket — see §7.1. |
 
 Reasons per category:
 
 | Category | Reasons |
 | --- | --- |
 | `unmodeled_construct` | 11 |
-| `value_uncertainty` | 1 |
+| `value_uncertainty` | 2 |
 | `capability_escape` | 16 |
 | `identity_unresolved` | 9 |
 | `analysis_precondition_unmet` | 7 |

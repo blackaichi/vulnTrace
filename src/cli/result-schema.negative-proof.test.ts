@@ -78,6 +78,7 @@ const EMPTY_COVERAGE: Coverage = {
   functions: 0,
   callsResolved: 0,
   callsDynamic: 0,
+  callsPossible: 0,
 };
 
 const ZERO_TIMINGS: PhaseTimings = {

@@ -13,8 +13,15 @@
  *
  * - graph: per case, the call graph's nodes and call sites. A site is
  *   `from [type] @ file:line:col`; its value is the multiset of its edges'
- *   resolutions. A site whose resolutions changed is classified as
- *   withdrawn to unknown, unknown to resolved, or retargeted.
+ *   resolutions: `-> target` (resolved), `~> target` (possible, ADR 0008
+ *   § 1) or `? reason {potential targets}` (unknown). A site whose
+ *   resolutions changed is classified by its WEAKEST resolution (unknown
+ *   below possible below resolved): withdrawn to unknown, withdrawn to
+ *   possible, unknown to possible, unknown to resolved, possible to
+ *   resolved, or retargeted. When the weakest kind is unchanged, a shift
+ *   in the site's count of `possible` edges still decides the class (see
+ *   `classifySiteChange`); only a site whose kinds are all unchanged is
+ *   retargeted.
  * - proof: per case, advisory and exact package instance, the proof a
  *   finding carries: its negative-proof family (A, B, C of
  *   SOUNDNESS-CONTRACT), evidence path, evidence reasons, the
@@ -129,6 +136,9 @@ function edgeResolution(edge, normalize) {
   const resolution = edge.resolution;
   if (resolution.kind === "resolved") {
     return `-> ${normalize(resolution.target)}`;
+  }
+  if (resolution.kind === "possible") {
+    return `~> ${normalize(resolution.target)}`;
   }
   const potential = [...(resolution.potentialTargets ?? [])]
     .map(normalize)
@@ -370,11 +380,37 @@ function groupSites(edges) {
   return sites;
 }
 
+/** 0 unknown, 1 possible, 2 resolved: the strength of one rendered resolution. */
+function resolutionRank(rendered) {
+  if (rendered.startsWith("?")) return 0;
+  if (rendered.startsWith("~>")) return 1;
+  return 2;
+}
+
+const RANK_NAME = ["unknown", "possible", "resolved"];
+
+/**
+ * Classifies a re-resolved site by its weakest resolution on each side.
+ * When the weakest kind is unchanged, a site whose `possible` edges grew
+ * or shrank against its resolved or unknown ones still changed kind
+ * (`[-> A, ? eval]` to `[~> A, ? eval]` is a withdrawal to possible, not a
+ * retarget), so the counts of each kind decide it. A site with only
+ * resolved and unknown edges has no `possible` edge on either side and
+ * classifies exactly as it did before `possible` existed.
+ */
 function classifySiteChange(base, head) {
-  const baseUnknown = base.some((r) => r.startsWith("?"));
-  const headUnknown = head.some((r) => r.startsWith("?"));
-  if (!baseUnknown && headUnknown) return "withdrawn_to_unknown";
-  if (baseUnknown && !headUnknown) return "unknown_to_resolved";
+  const weakest = (list) => Math.min(...list.map(resolutionRank));
+  const b = weakest(base);
+  const h = weakest(head);
+  if (h < b) return `withdrawn_to_${RANK_NAME[h]}`;
+  if (h > b) return `${RANK_NAME[b]}_to_${RANK_NAME[h]}`;
+  const count = (list, rank) =>
+    list.filter((r) => resolutionRank(r) === rank).length;
+  const delta = (rank) => count(head, rank) - count(base, rank);
+  if (delta(1) > 0 && delta(2) < 0) return "withdrawn_to_possible";
+  if (delta(1) > 0 && delta(0) < 0) return "unknown_to_possible";
+  if (delta(1) < 0 && delta(2) > 0) return "possible_to_resolved";
+  if (delta(1) < 0 && delta(0) > 0) return "withdrawn_to_unknown";
   return "retargeted";
 }
 
@@ -632,7 +668,10 @@ export function summarize(diff) {
       sitesRemoved: sum(g, (c) => c.sitesRemoved.length),
       sitesChanged: changedSites.length,
       withdrawnToUnknown: changedSites.filter((s) => s.change === "withdrawn_to_unknown").length,
+      withdrawnToPossible: changedSites.filter((s) => s.change === "withdrawn_to_possible").length,
+      unknownToPossible: changedSites.filter((s) => s.change === "unknown_to_possible").length,
       unknownToResolved: changedSites.filter((s) => s.change === "unknown_to_resolved").length,
+      possibleToResolved: changedSites.filter((s) => s.change === "possible_to_resolved").length,
       retargeted: changedSites.filter((s) => s.change === "retargeted").length,
       truncationChanged: g.filter((c) => c.truncated !== null).length,
     },
@@ -688,7 +727,7 @@ export function renderReport(diff, context = {}) {
   lines.push("| Differential | Result |");
   lines.push("| --- | --- |");
   lines.push(
-    `| graph | ${s.graph.casesChanged} of ${s.graph.measured} measured cases changed: nodes +${s.graph.nodesAdded}/−${s.graph.nodesRemoved}; call sites +${s.graph.sitesAdded}/−${s.graph.sitesRemoved}, ${s.graph.sitesChanged} re-resolved (${s.graph.withdrawnToUnknown} withdrawn to unknown, ${s.graph.unknownToResolved} unknown to resolved, ${s.graph.retargeted} retargeted); truncation changed in ${s.graph.truncationChanged}. **Unavailable: ${s.graph.unavailable} cases** |`,
+    `| graph | ${s.graph.casesChanged} of ${s.graph.measured} measured cases changed: nodes +${s.graph.nodesAdded}/−${s.graph.nodesRemoved}; call sites +${s.graph.sitesAdded}/−${s.graph.sitesRemoved}, ${s.graph.sitesChanged} re-resolved (${s.graph.withdrawnToUnknown} withdrawn to unknown, ${s.graph.withdrawnToPossible} withdrawn to possible, ${s.graph.unknownToPossible} unknown to possible, ${s.graph.unknownToResolved} unknown to resolved, ${s.graph.possibleToResolved} possible to resolved, ${s.graph.retargeted} retargeted); truncation changed in ${s.graph.truncationChanged}. **Unavailable: ${s.graph.unavailable} cases** |`,
   );
   lines.push(
     `| proof | ${s.proof.changed} findings with a changed proof (${s.proof.changedWithVerdictUnchanged} with the verdict unchanged), over ${s.proof.measured} measured cases |`,

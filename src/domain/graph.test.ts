@@ -40,6 +40,7 @@ describe("ReachabilityResult", () => {
     functions: 12,
     callsResolved: 10,
     callsDynamic: 1,
+    callsPossible: 0,
   };
 
   it("carries a path only when reachable", () => {

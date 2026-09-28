@@ -10,6 +10,13 @@ export interface Coverage {
   readonly functions: number;
   readonly callsResolved: number;
   readonly callsDynamic: number;
+  /**
+   * Call edges whose resolution is `possible` (ADR 0008 § 1, task A-2):
+   * invocations the program may perform, counted apart from both
+   * `callsResolved` (nothing proves the call happens) and `callsDynamic`
+   * (the target is known).
+   */
+  readonly callsPossible: number;
 }
 
 /**

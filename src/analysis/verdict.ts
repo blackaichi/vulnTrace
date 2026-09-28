@@ -1494,8 +1494,10 @@ async function checkReachability(
       } else if (packageInstance !== undefined) {
         // VT-307e (hardened by VT-307e's own final audit, which
         // reproduced a false NOT_AFFECTED here): VT-300's guard passing
-        // means no RESOLVED CALL EDGE reachable from an entrypoint could
-        // load this instance. That is not the same claim as "this
+        // means no closure-widening construct is reachable from an
+        // entrypoint over resolved or `possible` edges (task A-2), so
+        // nothing the call graph reached could load this instance. That
+        // is not the same claim as "this
         // instance cannot be loaded at all" -- the call graph's own
         // discovery never follows a re-export DECLARATION
         // (`export * from "pkg"`) as an edge in the first place
@@ -1586,6 +1588,13 @@ async function checkReachability(
                 edgeUncertaintyReason(edge.reason),
               ),
             );
+            // ADR 0008 § 3 (task A-2): the target was reached, but only
+            // through a `possible` edge. No unresolved edge need exist, so
+            // this is the only place the reason can come from. Typed, like
+            // the edges above: read from the witness, never from prose.
+            if (result.possibleOnlyPath !== undefined) {
+              uncertaintyReasons.push("possible_invocation");
+            }
           } else if (result.state === "unreachable") {
             // VT-307e: a POSITIVE family-C result -- this search ran to
             // exhaustion and found no unresolved edge anywhere in the

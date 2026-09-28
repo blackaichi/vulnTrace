@@ -207,7 +207,9 @@ export interface ConfirmedAbsentInstance {
  * The old name asserted a property of the WHOLE call graph, which this
  * proof has never established and does not need: `analyzeReachability`
  * only ever enumerates the region reachable from one entrypoint source
- * node over RESOLVED edges, and nodes outside that region -- including
+ * node over RESOLVED and `possible` edges (ADR 0008 § 1, task A-2: the
+ * code behind a possible edge is searched), and nodes outside that
+ * region -- including
  * their unresolved edges -- are never inspected and are irrelevant to the
  * conclusion. An API consumer reading `callGraphComplete: true` could
  * reasonably infer whole-program completeness and act on a stronger claim
@@ -224,8 +226,10 @@ export interface ConfirmedUnreachableTarget {
   /**
    * Always `true`. Names exactly the completeness this proof rests on: the
    * REACHABLE SUBGRAPH -- the set of nodes `analyzeReachability` reaches
-   * from the entrypoint source node over resolved edges -- was enumerated
-   * to exhaustion AND contained no unresolved edge anywhere in it.
+   * from the entrypoint source node over resolved and `possible` edges
+   * (task A-2) -- was enumerated to exhaustion, contained no unresolved
+   * edge anywhere in it, and did not reach the target through a
+   * `possible` edge (that is `unknown`, never `unreachable`).
    *
    * Both halves are load-bearing and both are captured by this one field,
    * because `analyzeReachability` returns `unreachable` only when both

@@ -210,6 +210,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
         functions: expect.any(Number),
         callsResolved: expect.any(Number),
         callsDynamic: expect.any(Number),
+        callsPossible: expect.any(Number),
       },
       diagnostics: [],
     });

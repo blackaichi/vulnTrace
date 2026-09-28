@@ -141,6 +141,9 @@ export const UNCERTAINTY_REASONS = [
   "loader_hook_mutation",
   "loader_capability_escape",
 
+  // --- Reachability over `possible` edges (ADR 0008 § 3, task A-2) ---
+  "possible_invocation",
+
   // --- Module-load closure incompleteness, beyond the edge reasons ---
   "parse_failure",
   "traversal_truncated",
@@ -247,6 +250,14 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // isClosureWideningReason, which classifies it non-widening for exactly
   // this reason).
   dynamic_member_access: "value_uncertainty",
+  // ADR 0008 § 3: "a target reached only through possible edges:
+  // `value_uncertainty` (the construct is modeled; whether it runs is not
+  // statically established)". The invocation and its target are both
+  // known; what is not is whether the program performs it. A subtype, not
+  // a seventh category. It is not a `DynamicCallReason`: no edge carries
+  // it. `analyzeReachability` reports it for one search, as the
+  // `possibleOnlyPath` witness of an `unknown` result.
+  possible_invocation: "value_uncertainty",
 
   // -- capability_escape: the runtime can leave the analyzed world. --
   //
