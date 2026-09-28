@@ -34,7 +34,16 @@ export interface InvariantOwnership {
   readonly invariant: string;
   /** Which Foundation task established it. */
   readonly foundation:
-    "F1" | "F2" | "F3" | "F4" | "F5" | "F6" | "VT-CONTRACT" | "P1-A";
+    | "F1"
+    | "F2"
+    | "F3"
+    | "F4"
+    | "F5"
+    | "F6"
+    | "VT-CONTRACT"
+    | "P1-A"
+    /** The soundness remediation's ADR 0008 (lane A; registered from task A-1). */
+    | "ADR-0008";
   /** Repo-relative test files that own it. Each must exist and be gated. */
   readonly owners: readonly string[];
   /** Why these owners, and what each one is responsible for. */
@@ -357,6 +366,52 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "Both directions: forbidden forms rejected, ordinary prose accepted. " +
       "The git walk lives in `scripts/validate-commit-metadata.mjs` and runs " +
       "under `validate:history`.",
+  },
+
+  // ------------------------------------------------------------------
+  // The soundness remediation, lane A (ADR 0008)
+  // ------------------------------------------------------------------
+  {
+    id: "VT-INV-A1-invocation-accounting",
+    invariant:
+      "Every site of the kinds the census marks `site` (calls, `new`, " +
+      "tagged templates, decorators, implicit `super`) in a walked file " +
+      "yields an account: edges, or a no-edge account. Every ts.SyntaxKind " +
+      "is classified, and every invocation-capable kind that is not yet " +
+      "accounted (`pending`), like every no-edge account given without a " +
+      "proof, names the open findings and lane-A task that own it.",
+    foundation: "ADR-0008",
+    owners: [
+      "src/code-intelligence/invocation-sites.census.test.ts",
+      "src/code-intelligence/invocation-sites.site-coverage.test.ts",
+      "src/code-intelligence/call-graph.invocation-account.test.ts",
+    ],
+    note:
+      "Task A-1. The census owns the classification of every syntax kind " +
+      "(a new TypeScript node kind fails it); the site-coverage test owns " +
+      "the walk -- every site of every file walked over the three corpora " +
+      "has an account, pruned branches included; the account test owns " +
+      "what the three A-1 sites (tagged templates, decorators, implicit " +
+      "`super`) are accounted as, and the unproven no-edge ledger: one " +
+      "producing program per reason, every named finding still open. " +
+      "Pending kinds (JSX, protocol members, accessors, hook assignments) " +
+      "are open defects of A-3/A-4, named in the census.",
+  },
+  {
+    id: "affected-path-resolved-edges-only",
+    invariant:
+      "An AFFECTED path consists of resolved edges only. A `possible` edge " +
+      "counts as reachable for family-C completeness but is never part of " +
+      "an AFFECTED path, and a target reached only through `possible` " +
+      "edges is UNKNOWN.",
+    foundation: "ADR-0008",
+    owners: ["src/analysis/reachability.affected-path.test.ts"],
+    note:
+      "The project owner's Decision 2 (ADR 0008, 2026-09-26), stated in " +
+      "SOUNDNESS-CONTRACT § 1 and § 3 by task A-1. The owner asserts the " +
+      "resolved-only half, which is all the graph can express today. The " +
+      "`possible` edge kind arrives in task A-2, which must extend this " +
+      "owner with the other two halves before it may emit one.",
   },
 ];
 

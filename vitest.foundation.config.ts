@@ -83,6 +83,11 @@ export default defineConfig({
       "src/testing/foundation-invariants.test.ts",
       "src/testing/fixtures-are-committed.test.ts",
       "src/testing/commit-metadata-policy.test.ts",
+
+      "src/code-intelligence/invocation-sites.census.test.ts",
+      "src/code-intelligence/invocation-sites.site-coverage.test.ts",
+      "src/code-intelligence/call-graph.invocation-account.test.ts",
+      "src/analysis/reachability.affected-path.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take

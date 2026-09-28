@@ -39,6 +39,19 @@ An `AFFECTED` carries no `unknownReasons`. Attaching uncertainty to a
 finding that has a reproduced path would invite "how sure are we about this
 `AFFECTED`?", a question this analyzer does not answer.
 
+**An `AFFECTED` path consists of resolved edges only.** Every hop of the
+reported path is a call-graph edge whose resolution is `resolved`: an
+authority proved that the callee denotes exactly that function at that
+site ([ADR 0008](adr/0008-invocation-accounting-and-resolution-authority.md)
+§ 1, invariant A2). A `possible` edge (ADR 0008 § 1: an invocation the
+program may or may not perform, carrying its target) can **never** be
+part of an `AFFECTED` path, and a target reached only through `possible`
+edges is `UNKNOWN`, never `AFFECTED`. *(Project-owner decision, ADR 0008
+"Decision record — project owner, 2026-09-26", Decision 2. The `possible`
+edge kind does not exist yet: task A-2 introduces it, and this rule is
+binding on it. Until then every edge is `resolved` or `unknown`, and
+reachability follows `resolved` edges only.)*
+
 ### `NOT_AFFECTED`
 
 `NOT_AFFECTED` is a **positive claim**, not the absence of a positive one.
@@ -195,6 +208,34 @@ both hold: it drains its queue *and* returns `unknown` instead if it met
 even one unresolved edge along the way. This is why it is not merely "the
 search finished" — a search that meets a dynamic construct also finishes,
 and proves nothing.
+
+**`possible` edges count for completeness, never against it.** A `possible`
+edge (ADR 0008 § 1) is traversed by the search: the code behind it belongs
+to the reachable subgraph, is searched, and its own unresolved edges count
+against `reachableSubgraphComplete`. It never counts as a resolved path to
+the target (§ 1, `AFFECTED`), and it is never discarded as "not taken"
+either — an over-approximated invocation that provably cannot reach the
+target leaves family C standing, and one that might reach it withholds the
+proof. *(Decision 2, as in § 1. Introduced with the edge kind by task A-2,
+and binding on it.)*
+
+**Every invocation site is accounted for.** The reachable subgraph is only
+as complete as the call graph's accounting of the sites inside it: a site
+that runs user code and gets no edge at all makes an unsearched region look
+searched. ADR 0008 invariant A1 requires every invocation-capable site of a
+walked file to yield an account — edges, or a no-edge account. Task A-1
+enforces it structurally for the site kinds it accounts for (calls, `new`,
+tagged templates, decorators, implicit `super`):
+`src/code-intelligence/invocation-sites.ts`'s census classifies every
+syntax kind, and `call-graph.ts` dispatches every site through one handler
+table. **It does not hold yet** for two groups, each an open finding with
+the lane-A task that closes it: the census's `pending` kinds — JSX
+elements, protocol-named members, accessors, hook assignments (A-3, A-4) —
+which get no account at all, and the no-edge accounts the graph gives
+**without** a proof (`UNPROVEN_NO_EDGE_LEDGER`, `src/domain/graph.ts`;
+A-3, A-5). While either remains, family C's completeness is relative to
+them — which is what the implementation-status note at the top of this
+file says.
 
 **Two further preconditions are enforced by `buildFinding` before this
 proof is ever constructed**, and are therefore not restated as fields on
