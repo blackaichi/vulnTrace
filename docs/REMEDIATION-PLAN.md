@@ -541,6 +541,34 @@ when:
 A lane-A task that makes any of these cases `UNKNOWN` earlier than
 listed deletes that case's record in the same way.
 
+#### A-1 additions to lane-A acceptance
+
+Added by task A-1 (2026-09-28), from its independent audit. The cases
+are in `tests/validation/FINDINGS.md` (RWF-060; PRM-37's A-1 status
+update).
+
+**A-3** also accepts only when:
+
+- [ ] The arguments of a `new` (or call) whose callee RESOLVES to a
+      derived class's implicit constructor are accounted as the
+      arguments of a call to its base when the implicit-constructor chain
+      ends at an ambient or builtin constructor
+      (`class P extends Promise {}`, `new P(() => lib.parse("x"))`; a
+      `stream.Readable` subclass handed `{ read() {...} }`). ADR 0008
+      § 2's escape row as written names only a call or `new` whose callee
+      is ambient, builtin, unresolved or unknown, so it would not reach
+      these arguments. RWF-060 becomes `UNKNOWN` (or `AFFECTED` for a
+      documented invoking builtin such as the `Promise` executor), never
+      `NOT_AFFECTED`.
+- [ ] A class value handed to an ambient or builtin API that constructs
+      it (`Reflect.construct(A, [])`, ADR 0008 § 4's documented invoking
+      builtins) reaches the class's constructor node -- explicit, or the
+      synthesized implicit constructor -- because task A-1 accounts a
+      tagged template or decorator in an instance field initializer from
+      that node (`evaluatingOwnerOf`). `` class A { f = lib.parse`x`; }
+      Reflect.construct(A, []); `` is `UNKNOWN` or `AFFECTED`, never
+      `NOT_AFFECTED` (FINDINGS.md, PRM-37's A-1 status update).
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

@@ -2,11 +2,16 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: A-1
 - **Branch**: a-1-invocation-account
 - **Base SHA**: c5ca8852575ad5eaa2e2edae1f6c8401b3031e4e
-- **Commits**: filled in by the last commit
+- **Commits**:
+  - `54fec68` docs(tasks): A-1 task file — invocation accounting, census, three sites
+  - `aaaa2d3` test(A-1): real-Node reproductions for tagged templates, implicit super, decorators
+  - `82152e9` fix(A-1): account for every invocation site; tagged templates, decorators, implicit super
+  - `a1970b2` docs(A-1): contract and invariant map — resolved-only AFFECTED paths, VT-INV-A1
+  - (this commit) docs(A-1): records — backlog, plan, debts, scorecard, progress
 - **Superseded by**: —
 
 ## Project context
@@ -188,3 +193,101 @@ the whole of lane A), and any that does is reported by case.
 ## Report
 
 In the format of `AGENTS.md` § J.
+
+## Outcome (2026-09-28)
+
+**Acceptance criteria**: all **yes**.
+
+- Reproductions: 37 oracle cases in `tests/oracle/a1-invocation-sites.*`.
+  On the base `c5ca885`, 25 fail and 12 controls pass: 24 are false
+  `NOT_AFFECTED` findings, and the 25th is the getter-body precision cost
+  described below. All 37 pass on the branch.
+- `InvocationAccount` is a closed union. Its only no-edge account is
+  `unproven_no_edge`, and each reason names its open findings and its
+  closing task (`UNPROVEN_NO_EDGE_LEDGER`, owner test in
+  `call-graph.invocation-account.test.ts`).
+- Census: every `ts.SyntaxKind` is classified, and a new node kind fails
+  `invocation-sites.census.test.ts`.
+- Handler table: `INVOCATION_SITE_HANDLERS` `satisfies` a mapped type
+  over `InvocationSiteKind`.
+- Site coverage: every site of every walked file over the 134 corpus
+  fixtures has an account, pruned branches included
+  (`invocation-sites.site-coverage.test.ts`).
+- The three sites are accounted as ADR 0008 § 2 and § 4 state. A
+  decorator is accounted from the owner that evaluates its class
+  definition.
+- Loader classification covers a tag in both layers (RWF-057).
+- `SOUNDNESS-CONTRACT.md` § 1 and § 3 and the invariant map are updated;
+  `VT-INV-A1-invocation-accounting` and
+  `affected-path-resolved-edges-only` are gated.
+- Differentials (`node scripts/differential.mjs`, 139 cases):
+  - graph: +30 call sites in 4 adversarial cases, all implicit-`super`
+    edges (1 resolved, 29 unknown); 0 withdrawn, 0 retargeted;
+  - proof: 0;
+  - verdict: 0.
+  Validation matches the D-09 baseline case by case.
+- Independent audit: round 1 `BLOCKED`, round 2 `CERTIFIED` (details
+  below).
+
+**Deviations from this file and from ADR 0008 § 8, with the reason.**
+
+1. ADR 0008 § 8 names "tests that assert an edge count for a file
+   containing a derived class with no constructor or a tagged template"
+   as tests that would change. No such test exists on `main`, and no
+   existing test changed (4,563 → all green before the new tests were
+   added).
+2. No ADR 0008 § 2 no-edge proof is claimed, because none of today's
+   no-edge branches establishes one. They are named `unproven_no_edge`
+   accounts instead. ADR 0008's "no fourth outcome" is the end state of
+   lane A, not of A-1.
+3. `loader-constructs.ts` is changed, although it is not in the ADR's
+   file list for A-1. A tag and a decorator must get the loader
+   classification a callee gets, and the two layers must agree on it
+   (RWF-057).
+4. From the independent audit, round 1:
+   - A tagged template and a decorator are accounted from the owner that
+     EVALUATES them (`evaluatingOwnerOf`), not from the walk's stack.
+   - A decorator TypeScript erases in every mode is not a site.
+   - A site in an accessor body is withdrawn to unknown until A-4. The
+     cost: a decorated class in a getter that is never read is `UNKNOWN`,
+     where the base gave a correct `NOT_AFFECTED`. This is the one
+     verdict the reproductions move away from a correct base result.
+5. `docs/REMEDIATION-PLAN.md` § 5a gains "A-1 additions to lane-A
+   acceptance". It adds two A-3 criteria (RWF-060, and a class handed to
+   `Reflect.construct` must reach its constructor node), because A-3 as
+   specified would not close them. **Project-owner review requested.**
+6. The Foundation gate gains `invocation-sites.site-coverage.test.ts`
+   (~26 s of test time over the corpora). The gate now takes about 75–85
+   s wall-clock on this machine.
+
+**Independent audit.**
+
+- Round 1: `BLOCKED`.
+  - Resolved edges for decorators TypeScript erases: fixed.
+  - Decorators attributed to the module inside an instance field or an
+    accessor: fixed.
+  - Unregistered false `NOT_AFFECTED` defects predating A-1:
+    registered as RWF-060 and RWF-061.
+  - Shared-authority notes (PRM-20): added.
+  - Two overclaims, a stale reference and a wrong census reason:
+    corrected.
+  - Decorator loader classification differing between layers: aligned.
+- Round 2: `CERTIFIED`, with three non-blocking findings, all addressed:
+  - The constructor attribution's cost under `Reflect.construct`:
+    recorded, and added to A-3's acceptance.
+  - Parameter and `declare`-field decorators of a class expression are
+    erased in every mode: now not sites.
+  - A constructor-overload false `NOT_AFFECTED`, predating A-1:
+    registered as RWF-062 (`BL-038`).
+
+**Discovered** (backlog rows, "discovered in A-1"):
+
+| Row | Finding | Priority | Scope |
+| --- | --- | --- | --- |
+| `BL-037` | RWF-061 | P1 | lane C |
+| `BL-038` | RWF-062 | P1 | |
+| A-3 acceptance | RWF-060 | P1 | |
+| `BL-036` | RWF-059 | P2 | |
+| `BL-034` | — | P4 | explicit `super(...)`, precision |
+| `BL-035` | RWF-058 | P4 | |
+
