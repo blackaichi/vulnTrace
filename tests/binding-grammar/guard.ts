@@ -68,6 +68,8 @@ export function formatObserved(o: Observation): string {
   switch (o.kind) {
     case "exact":
       return `EXACT ${o.target}`;
+    case "possible":
+      return `POSSIBLE ${o.target}`;
     case "unknown":
       return `UNKNOWN ${o.reason}`;
     case "no-edge":
@@ -115,6 +117,31 @@ export function classifyCellOutcome(input: CellJudgement): CellOutcome {
         `direction, and this check runs before the table is read. ` +
         `Classify it, report it as a live soundness defect, and fix the ` +
         `analyzer.`,
+    };
+  }
+
+  // A `possible` edge (task A-2) is neither the answer a cell expects nor
+  // a refusal, so no entry may silence it. Naming any target other than
+  // the expected one -- or any target where a refusal is expected -- is a
+  // wrong attribution even at `possible` strength (class A). Naming the
+  // expected target is a downgrade that costs every AFFECTED through the
+  // edge; the task that emits it must look at the cell, not record it.
+  if (observed.kind === "possible") {
+    const expectedTarget =
+      expectation.kind === "exact" && `EXACT ${observed.target}` === wanted;
+    return {
+      kind: "violation",
+      fabrication: !expectedTarget,
+      message: expectedTarget
+        ? `${key}: the analyzer names the expected target, but only as a ` +
+          `POSSIBLE invocation (${actual}), where the language names it ` +
+          `exactly (${wanted}). Every AFFECTED through this call is lost. ` +
+          `Decide whether the over-approximation is the correct account ` +
+          `for this shape; no entry may record it.`
+        : `${key}: expected ${wanted}, observed ${actual}. A possible edge ` +
+          `to a target the language does not name is a wrong attribution ` +
+          `(class A), even though it can never make an AFFECTED path. It ` +
+          `CANNOT be silenced by disagreements.ts.`,
     };
   }
 

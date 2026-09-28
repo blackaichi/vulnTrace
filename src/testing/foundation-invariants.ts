@@ -405,13 +405,21 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "an AFFECTED path, and a target reached only through `possible` " +
       "edges is UNKNOWN.",
     foundation: "ADR-0008",
-    owners: ["src/analysis/reachability.affected-path.test.ts"],
+    owners: [
+      "src/analysis/reachability.affected-path.test.ts",
+      "src/analysis/verdict.possible-edge.test.ts",
+    ],
     note:
       "The project owner's Decision 2 (ADR 0008, 2026-09-26), stated in " +
-      "SOUNDNESS-CONTRACT § 1 and § 3 by task A-1. The owner asserts the " +
-      "resolved-only half, which is all the graph can express today. The " +
-      "`possible` edge kind arrives in task A-2, which must extend this " +
-      "owner with the other two halves before it may emit one.",
+      "SOUNDNESS-CONTRACT § 1 and § 3 by task A-1. Task A-2 added the " +
+      "`possible` edge kind and the other two halves: the reachability " +
+      "owner asserts all three on hand-built graphs and against a " +
+      "set-based oracle over seeded random graphs; the verdict owner " +
+      "asserts them through the production `buildFinding` on real " +
+      "projects (UNKNOWN with `possible_invocation`, family C withheld by " +
+      "an unknown edge behind a `possible` edge and kept by a clean one, " +
+      "family B withdrawn by VT-300 through one). No producer emits a " +
+      "`possible` edge yet (A-3, A-4).",
   },
 ];
 
