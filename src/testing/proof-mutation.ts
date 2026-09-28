@@ -473,11 +473,20 @@ export function graphWithoutInstance(
   };
 }
 
+/**
+ * Whether `edge` points at a node in `ids`: a resolved edge, or a
+ * `possible` edge (ADR 0008 § 1), both of which name their target. An
+ * unknown edge's potential targets are not a claim that it points there.
+ */
 function edgeTargets(
   edge: CallGraph["edges"][number],
   ids: ReadonlySet<string>,
 ): boolean {
-  return edge.resolution.kind === "resolved" && ids.has(edge.resolution.target);
+  return (
+    (edge.resolution.kind === "resolved" ||
+      edge.resolution.kind === "possible") &&
+    ids.has(edge.resolution.target)
+  );
 }
 
 /** Drops one node by id, plus every edge that touched it. */

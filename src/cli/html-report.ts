@@ -919,6 +919,7 @@ function renderCoverage(coverage: Coverage): string {
     ["Functions", coverage.functions],
     ["Calls resolved", coverage.callsResolved],
     ["Calls dynamic", coverage.callsDynamic],
+    ["Calls possible", coverage.callsPossible],
   ];
   return (
     `<section id="coverage" class="panel">` +

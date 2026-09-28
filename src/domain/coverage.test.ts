@@ -10,6 +10,7 @@ describe("Coverage", () => {
       functions: 4210,
       callsResolved: 3850,
       callsDynamic: 360,
+      callsPossible: 0,
     };
 
     // modulesResolved + modulesUnresolved summing to files is specific to

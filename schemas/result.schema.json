@@ -212,7 +212,7 @@
                   },
                   "reachableSubgraphComplete": {
                     "const": true,
-                    "description": "Always true, and the narrowest accurate statement of what this proof rests on: the REACHABLE SUBGRAPH -- the nodes analyzeReachability reaches from the entrypoint source node over resolved edges -- was enumerated to exhaustion AND contained no unresolved edge anywhere in it. Both halves are load-bearing: analyzeReachability returns `unreachable` only when it drains its queue and met no unresolved edge, and returns `unknown` otherwise, so this is not merely 'the search finished'. Scoped to that subgraph and no further: NOT a claim that the call graph is complete, that the package is unloaded, or that unresolved edges elsewhere in the program do not exist. The separate graphTruncated === false requirement (VT-202) is enforced by buildFinding ahead of this proof."
+                    "description": "Always true, and the narrowest accurate statement of what this proof rests on: the REACHABLE SUBGRAPH -- the nodes analyzeReachability reaches from the entrypoint source node over resolved and `possible` edges (ADR 0008 § 1: the code behind a possible edge is searched, and its own unresolved edges count) -- was enumerated to exhaustion AND contained no unresolved edge anywhere in it. Both halves are load-bearing: analyzeReachability returns `unreachable` only when it drains its queue and met no unresolved edge, and returns `unknown` otherwise, so this is not merely 'the search finished'. Scoped to that subgraph and no further: NOT a claim that the call graph is complete, that the package is unloaded, or that unresolved edges elsewhere in the program do not exist. The separate graphTruncated === false requirement (VT-202) is enforced by buildFinding ahead of this proof."
                   }
                 }
               }
@@ -269,6 +269,7 @@
                     "child_process_execution",
                     "loader_hook_mutation",
                     "loader_capability_escape",
+                    "possible_invocation",
                     "parse_failure",
                     "traversal_truncated",
                     "module_load_closure_unavailable",
@@ -444,6 +445,11 @@
         "callsDynamic": {
           "type": "integer",
           "minimum": 0
+        },
+        "callsPossible": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Call edges whose resolution is `possible` (ADR 0008 § 1): invocations the program may perform and nothing proves it does -- an escaped function value, a JSX component, a protocol member, an accessor body. Counted apart from callsResolved (the call is not proved to happen) and callsDynamic (the target is known). Reachability searches the code behind them, but never reports an AFFECTED path through one. Optional, so a result produced before task A-2 added it still validates."
         }
       }
     },
@@ -543,6 +549,7 @@
               "child_process_execution",
               "loader_hook_mutation",
               "loader_capability_escape",
+              "possible_invocation",
               "parse_failure",
               "traversal_truncated",
               "module_load_closure_unavailable",

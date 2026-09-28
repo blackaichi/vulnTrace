@@ -20,6 +20,7 @@ const EMPTY_COVERAGE = {
   functions: 0,
   callsResolved: 0,
   callsDynamic: 0,
+  callsPossible: 0,
 };
 
 const EMPTY_TIMINGS = {

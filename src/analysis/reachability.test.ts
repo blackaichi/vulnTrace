@@ -218,6 +218,7 @@ describe("analyzeReachability: coverage", () => {
       functions: 3,
       callsResolved: 1,
       callsDynamic: 1,
+      callsPossible: 0,
     });
   });
 });

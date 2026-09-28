@@ -457,7 +457,8 @@ module.exports = { main };
     "modulesUnresolved": 0,
     "functions": 3,
     "callsResolved": 2,
-    "callsDynamic": 0
+    "callsDynamic": 0,
+    "callsPossible": 0
   },
   "diagnostics": [],
   "unreportedCandidates": [],
@@ -538,7 +539,8 @@ module.exports = { main };
     "modulesUnresolved": 0,
     "functions": 3,
     "callsResolved": 2,
-    "callsDynamic": 0
+    "callsDynamic": 0,
+    "callsPossible": 0
   },
   "diagnostics": [],
   "unreportedCandidates": [],
@@ -617,7 +619,8 @@ module.exports = { main };
     "modulesUnresolved": 0,
     "functions": 3,
     "callsResolved": 1,
-    "callsDynamic": 1
+    "callsDynamic": 1,
+    "callsPossible": 0
   },
   "diagnostics": [
     {

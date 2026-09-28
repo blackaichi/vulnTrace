@@ -110,7 +110,13 @@ export interface SiteChange {
   readonly site: string;
   readonly base: readonly string[];
   readonly head: readonly string[];
-  readonly change: "withdrawn_to_unknown" | "unknown_to_resolved" | "retargeted";
+  readonly change:
+    | "withdrawn_to_unknown"
+    | "withdrawn_to_possible"
+    | "unknown_to_possible"
+    | "unknown_to_resolved"
+    | "possible_to_resolved"
+    | "retargeted";
 }
 
 export interface GraphCaseDiff {
@@ -214,7 +220,10 @@ export interface Summary {
     readonly sitesRemoved: number;
     readonly sitesChanged: number;
     readonly withdrawnToUnknown: number;
+    readonly withdrawnToPossible: number;
+    readonly unknownToPossible: number;
     readonly unknownToResolved: number;
+    readonly possibleToResolved: number;
     readonly retargeted: number;
     readonly truncationChanged: number;
   };
