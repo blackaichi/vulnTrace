@@ -5,6 +5,8 @@ import type {
   DynamicCallReason,
   GraphNode,
   GraphNodeId,
+  InvocationAccount,
+  UnprovenNoEdgeReason,
 } from "../domain/graph.js";
 import type { KnownPackageRoots } from "../domain/resolved-target.js";
 import {
@@ -12,7 +14,15 @@ import {
   esmExportForwardingHop,
 } from "./export-forwarding.js";
 import {
+  type ClassLike,
+  type InvocationSite,
+  type InvocationSiteKind,
+  invocationSiteOf,
+} from "./invocation-sites.js";
+import {
   classifyClosureWideningCall,
+  classifyClosureWideningImplicitCallee,
+  classifyClosureWideningTaggedTemplate,
   isStaticRequireCall,
 } from "./loader-constructs.js";
 import { classifyUnsupportedConstruct } from "./unsupported-construct.js";
@@ -600,7 +610,7 @@ async function followCommonJsReExport(
  */
 async function resolveHigherOrderCallTarget(
   callee: ts.Identifier,
-  call: ts.CallExpression,
+  call: ts.Node,
   prepared: FileGraphData,
   ctx: WalkContext,
 ): Promise<GraphNodeId | undefined> {
@@ -646,7 +656,10 @@ async function resolveHigherOrderCallTarget(
   // a named function declaration's parameters propagate, and only for a
   // call written directly in that function's own body.
   //
-  // The second half is why `call` is still consulted. Deriving the
+  // The second half is why `call` is still consulted. (Since task A-1 it
+  // is the invocation site, which may also be a tagged template or a
+  // decorator -- the same question: does the site sit directly in the
+  // parameter's own function?) Deriving the
   // enclosing function from `parameter.parent` alone would also admit a
   // call nested inside a closure the function creates
   // (`function mixin(object) { ... function () { object(x); } ... }`),
@@ -1653,6 +1666,10 @@ interface WalkContext {
    * file, so it must never run unconditionally.
    */
   readonly getProgram: () => ts.Program | undefined;
+  /** See {@link BuildCallGraphOptions.onInvocationAccount}. */
+  readonly onInvocationAccount?: (
+    observation: InvocationAccountObservation,
+  ) => void;
 }
 
 /**
@@ -1695,29 +1712,44 @@ function resolvesToUnrelatedConstructor(
   );
 }
 
+/** A site accounted for by exactly one edge. */
+function edgeAccount(edge: CallEdge): InvocationAccount {
+  return { kind: "edges", edges: [edge] };
+}
+
 /**
- * Classifies and (when possible) resolves one call expression into a
- * {@link CallEdge} (see docs/SDD.md § 18, § 3.1's VT-201 completeness
- * invariant). Returns `undefined` only when the callee is a known ambient
- * global/builtin (see {@link KNOWN_GLOBAL_IDENTIFIERS}) — never merely
- * because resolution failed. Every other visited call, including one
- * bound to a local parameter/variable this binder cannot trace (a
- * function value flowing through an argument, a method call on a
- * locally-constructed instance), still produces an explicit
- * `unknown(unsupported_construct)` edge rather than silently vanishing:
- * before VT-201, such calls disappeared entirely, which let
- * `analyzeReachability` mistake "we never modeled this construct" for
- * "this genuinely calls nothing" and report a false NOT_AFFECTED (see
- * ADV-019/ADV-030's completion reports).
+ * A site that gets no edge and no proof that none is needed (see
+ * {@link UnprovenNoEdgeReason}: each reason is an open finding, named in
+ * `UNPROVEN_NO_EDGE_LEDGER` with the lane-A task that removes it).
+ */
+function unprovenNoEdge(reason: UnprovenNoEdgeReason): InvocationAccount {
+  return { kind: "unproven_no_edge", reason };
+}
+
+/**
+ * Classifies and (when possible) resolves one call expression into its
+ * {@link InvocationAccount} (see docs/SDD.md § 18, § 3.1's VT-201
+ * completeness invariant, ADR 0008 invariant A1). Accounted with no edge
+ * only when the callee is a known ambient global/builtin (see
+ * {@link KNOWN_GLOBAL_IDENTIFIERS}) or a static `require("x")` -- never
+ * merely because resolution failed, and never silently: each of those is
+ * an `unproven_no_edge` account naming the certified decision it comes
+ * from. Every other visited call, including one bound to a local
+ * parameter/variable this binder cannot trace (a function value flowing
+ * through an argument, a method call on a locally-constructed instance),
+ * still produces an explicit `unknown(unsupported_construct)` edge rather
+ * than silently vanishing: before VT-201, such calls disappeared entirely,
+ * which let `analyzeReachability` mistake "we never modeled this
+ * construct" for "this genuinely calls nothing" and report a false
+ * NOT_AFFECTED (see ADV-019/ADV-030's completion reports).
  */
 async function classifyCall(
   call: ts.CallExpression,
   from: GraphNodeId,
   prepared: FileGraphData,
   ctx: WalkContext,
-): Promise<CallEdge | undefined> {
+): Promise<InvocationAccount> {
   const location = toSourceLocation(prepared.index.sourceFile, call);
-  const callee = call.expression;
 
   // VT-307b: checked before bindCallee -- none of these shapes are
   // ordinary imports, and several are rooted in an identifier
@@ -1729,7 +1761,7 @@ async function classifyCall(
   // as a module loader; only the edge SHAPE is decided here.
   const loaderReason = classifyClosureWideningCall(call, prepared);
   if (loaderReason) {
-    return {
+    return edgeAccount({
       from,
       type: LOADER_EDGE_TYPE[loaderReason] ?? "direct",
       resolution: {
@@ -1738,15 +1770,47 @@ async function classifyCall(
         potentialTargets: [],
       },
       location,
-    };
+    });
   }
 
   if (isStaticRequireCall(call)) {
     // A static require("literal") is import setup, already captured in
     // the module model; it is not itself a meaningful "call into" target.
-    return undefined;
+    // Recognised by spelling, not by proving `require` is the ambient one
+    // (PRM-15), so this is not yet ADR 0008's `AmbientStaticRequire`.
+    return unprovenNoEdge("static_require_by_text");
   }
 
+  return classifyCallee(call.expression, call, from, location, prepared, ctx, {
+    inlineCallbackCall: call,
+  });
+}
+
+/**
+ * How a callee is resolved at a site that CALLS it -- a call expression,
+ * and (task A-1) a tagged template's tag and a decorator, which the
+ * language calls exactly as it calls a call expression's callee (ADR 0008
+ * § 2: "the tag, resolved like a callee"). Everything the three share is
+ * here, in the order `classifyCall` has always applied it, so a later fix
+ * to one resolution authority (A-5, A-6) reaches all three sites at once.
+ *
+ * `site` is the node the invocation happens at, used only by VT-210 to
+ * require that the site sits directly in the parameter's own function.
+ * `inlineCallbackCall` is set only for a real call expression: VT-213's
+ * inline-callback fallback reads a call's ARGUMENTS, and is deliberately
+ * not extended to the new sites. It is an open displacement defect
+ * (PRM-13, A-5), and a tag or decorator it could not attribute keeps its
+ * honest unknown edge instead.
+ */
+async function classifyCallee(
+  callee: ts.Expression,
+  site: ts.Node,
+  from: GraphNodeId,
+  location: ReturnType<typeof toSourceLocation>,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+  options: { readonly inlineCallbackCall?: ts.CallExpression },
+): Promise<InvocationAccount> {
   const binding = await bindCallee(
     callee,
     ctx.resolver,
@@ -1763,12 +1827,12 @@ async function classifyCall(
       );
 
       if (targetNodeId) {
-        return {
+        return edgeAccount({
           from,
           type: "import",
           resolution: { kind: "resolved", target: targetNodeId },
           location,
-        };
+        });
       }
 
       // VT-209: not a local definition, but the target file might itself
@@ -1781,16 +1845,16 @@ async function classifyCall(
           new Set(),
         );
         if (chased) {
-          return {
+          return edgeAccount({
             from,
             type: "import",
             resolution: { kind: "resolved", target: chased },
             location,
-          };
+          });
         }
       }
 
-      return {
+      return edgeAccount({
         from,
         type: "import",
         resolution: {
@@ -1799,12 +1863,12 @@ async function classifyCall(
           potentialTargets: [],
         },
         location,
-      };
+      });
     }
   }
 
   if (binding.kind === "ambiguous") {
-    return {
+    return edgeAccount({
       from,
       type: "direct",
       resolution: {
@@ -1813,11 +1877,11 @@ async function classifyCall(
         potentialTargets: [],
       },
       location,
-    };
+    });
   }
 
   if (binding.kind === "unresolved_module") {
-    return {
+    return edgeAccount({
       from,
       type: "import",
       resolution: {
@@ -1826,7 +1890,7 @@ async function classifyCall(
         potentialTargets: [],
       },
       location,
-    };
+    });
   }
 
   if (binding.kind === "declaration_only") {
@@ -1835,7 +1899,7 @@ async function classifyCall(
     // index), so this must not fabricate a "resolved, zero-edge" region.
     // See isClosureWideningReason's own doc comment for why this reason is
     // closure-widening.
-    return {
+    return edgeAccount({
       from,
       type: "import",
       resolution: {
@@ -1844,7 +1908,7 @@ async function classifyCall(
         potentialTargets: [],
       },
       location,
-    };
+    });
   }
 
   // Not an import: a direct, same-file call is still worth an edge --
@@ -1868,12 +1932,12 @@ async function classifyCall(
   // name-based path anywhere that can answer after B3 has declined.
   const localTarget = callableNodeIdFor(callee, prepared);
   if (localTarget) {
-    return {
+    return edgeAccount({
       from,
       type: "direct",
       resolution: { kind: "resolved", target: localTarget },
       location,
-    };
+    });
   }
 
   // VT-201: neither an import nor a locally-declared function/method by
@@ -1882,13 +1946,14 @@ async function classifyCall(
   // locally-constructed instance (`instance.method()`). Silently
   // returning `undefined` here (pre-VT-201 behavior) let the vulnerable
   // dependency vanish from the graph entirely rather than being flagged
-  // uncertain. Known ambient globals/builtins are the sole exception —
-  // they can never be a vulnerable-rule target, and flagging every
-  // `console.log()` this way would make almost every real scan degrade to
-  // UNKNOWN.
+  // uncertain. Known ambient globals/builtins are the sole exception --
+  // flagging every `console.log()` this way would make almost every real
+  // scan degrade to UNKNOWN. VT-201's premise that they "can never be a
+  // vulnerable-rule target" is reopened by ADR 0008 § 6 (AUD-01, AUD-02):
+  // what they are handed can be. Hence an UNPROVEN account, until A-3.
   const root = rootIdentifierOf(callee);
   if (root && isKnownGlobalIdentifier(root)) {
-    return undefined;
+    return unprovenNoEdge("ambient_global_callee");
   }
 
   // VT-208: a method call on a receiver this binder can't attribute by
@@ -1899,12 +1964,12 @@ async function classifyCall(
   if (ts.isPropertyAccessExpression(callee)) {
     const methodTarget = resolveInstanceMethod(callee, prepared, ctx);
     if (methodTarget) {
-      return {
+      return edgeAccount({
         from,
         type: "method",
         resolution: { kind: "resolved", target: methodTarget },
         location,
-      };
+      });
     }
   }
 
@@ -1916,17 +1981,17 @@ async function classifyCall(
   if (ts.isIdentifier(callee)) {
     const higherOrderTarget = await resolveHigherOrderCallTarget(
       callee,
-      call,
+      site,
       prepared,
       ctx,
     );
     if (higherOrderTarget) {
-      return {
+      return edgeAccount({
         from,
         type: "callback",
         resolution: { kind: "resolved", target: higherOrderTarget },
         location,
-      };
+      });
     }
   }
 
@@ -1938,42 +2003,46 @@ async function classifyCall(
   // cheaper syntactic path has already failed.
   const aliasTarget = await resolveLocalAlias(callee, prepared, ctx);
   if (aliasTarget) {
-    return {
+    return edgeAccount({
       from,
       type: ts.isPropertyAccessExpression(callee) ? "method" : "direct",
       resolution: { kind: "resolved", target: aliasTarget },
       location,
-    };
+    });
   }
 
   // VT-213: a call this graph still cannot attribute might pass exactly
   // one inline function/arrow-function argument (see SDD-v0.2.md § 7.1) --
   // e.g. `arr.map(() => vulnerable())`, `promise.then(() => vulnerable())`.
   // Attempted last, after every other resolution path has already failed.
-  const callbackTarget = resolveInlineCallbackArgument(call, prepared);
-  if (callbackTarget) {
-    return {
-      from,
-      type: "callback",
-      resolution: { kind: "resolved", target: callbackTarget },
-      location,
-    };
+  if (options.inlineCallbackCall) {
+    const callbackTarget = resolveInlineCallbackArgument(
+      options.inlineCallbackCall,
+      prepared,
+    );
+    if (callbackTarget) {
+      return edgeAccount({
+        from,
+        type: "callback",
+        resolution: { kind: "resolved", target: callbackTarget },
+        location,
+      });
+    }
   }
 
   // VT-305 (RWF-007): a Node builtin (`fs.readFile(...)`, `path.basename`,
-  // ...) is a known external runtime module, not uncertainty -- it must
-  // never fabricate an `unsupported_construct` edge merely because it has
-  // no local source file to attribute the call to. Deliberately checked
-  // here, AFTER the inline-callback fallback above (not alongside
+  // ...) is a known external runtime module -- it must never fabricate an
+  // `unsupported_construct` edge merely because it has no local source
+  // file to attribute the call to. Deliberately checked here, AFTER the
+  // inline-callback fallback above (not alongside
   // `isKnownGlobalIdentifier`'s earlier check): unlike ambient globals,
   // builtin methods very commonly take a real callback argument
   // (`fs.readFile(file, callback)`) whose own call-graph connection VT-213
-  // must still get a chance to make; only once every real resolution
-  // avenue has failed does this fall back to "no edge, known operation" --
-  // mirroring `isKnownGlobalIdentifier`'s own treatment, never
-  // `unsupported_construct`.
+  // must still get a chance to make. VT-305's premise that a builtin "is
+  // not uncertainty" is reopened by ADR 0008 § 6 (PRM-12): a callback it
+  // is handed can run. Hence an UNPROVEN account, until A-3.
   if (binding.kind === "builtin") {
-    return undefined;
+    return unprovenNoEdge("builtin_module_callee");
   }
 
   // P1-B1: the same fallback edge this has always emitted, with the
@@ -1982,7 +2051,7 @@ async function classifyCall(
   // its `unknown` resolution are unchanged, and every subtype is
   // classified `unmodeled_construct` and NON-widening exactly as
   // `unsupported_construct` was (see unsupported-construct.ts).
-  return {
+  return edgeAccount({
     from,
     type: ts.isPropertyAccessExpression(callee) ? "method" : "direct",
     resolution: {
@@ -1991,42 +2060,65 @@ async function classifyCall(
       potentialTargets: [],
     },
     location,
-  };
+  });
 }
 
 /**
- * Classifies and (when possible) resolves one `new` construction into a
- * {@link CallEdge}, mirroring {@link classifyCall} (see docs/SDD.md § 18,
- * § 3.1). Before VT-201, `NewExpression` nodes were never visited by the
- * call graph at all -- not resolved, not flagged unknown, simply invisible
- * -- so `new VulnerableClass()` could never be found reachable no matter
- * how directly it was called (see ADV-020's completion report). Every
- * visited construction now produces an edge: resolved when the
- * constructed class is attributable to an import or local declaration,
- * `unknown(unsupported_construct)` otherwise, unless the callee is a known
- * ambient global constructor (`new Map()`, `new Date()`, ...), which stays
- * without an edge exactly as before. Full class-name -> constructor-node
- * resolution accuracy (matching an exported class name to its own
- * constructor's graph node) is VT-207's job, not this task's — VT-201
- * only guarantees the construct is never silent.
+ * Classifies and (when possible) resolves one `new` construction into its
+ * {@link InvocationAccount}, mirroring {@link classifyCall} (see
+ * docs/SDD.md § 18, § 3.1). Before VT-201, `NewExpression` nodes were
+ * never visited by the call graph at all -- not resolved, not flagged
+ * unknown, simply invisible -- so `new VulnerableClass()` could never be
+ * found reachable no matter how directly it was called (see ADV-020's
+ * completion report). Every visited construction now produces an edge:
+ * resolved when the constructed class is attributable to an import or
+ * local declaration, `unknown(unsupported_construct)` otherwise, unless
+ * the callee is a known ambient global constructor (`new Map()`,
+ * `new Date()`, ...) or a builtin, which is accounted `unproven_no_edge`.
+ * Full class-name -> constructor-node resolution accuracy (matching an
+ * exported class name to its own constructor's graph node) is VT-207's
+ * job, not this task's — VT-201 only guarantees the construct is never
+ * silent.
  */
 async function classifyNew(
   node: ts.NewExpression,
   from: GraphNodeId,
   prepared: FileGraphData,
   ctx: WalkContext,
-): Promise<CallEdge | undefined> {
-  const location = toSourceLocation(prepared.index.sourceFile, node);
-  const callee = node.expression;
-
+): Promise<InvocationAccount> {
   // VT-307b: `new Function(...)` -- see classifyCall's identical check and
   // classifyClosureWideningCall's own doc comment. Checked before
   // bindCallee/the known-global fallback for the same reason. For a `new`
   // expression the shared classifier skips its call-only forms entirely,
   // so this stays exactly the `classifyLoaderConstruct` dispatch it was.
-  const loaderReason = classifyClosureWideningCall(node, prepared);
+  return classifyConstructee(
+    node.expression,
+    classifyClosureWideningCall(node, prepared),
+    from,
+    toSourceLocation(prepared.index.sourceFile, node),
+    prepared,
+    ctx,
+  );
+}
+
+/**
+ * How a constructor is resolved at a site that CONSTRUCTS it -- a `new`
+ * expression, and (task A-1) the base constructor a derived class's
+ * implicit constructor runs through `super(...args)`, which the language
+ * constructs exactly as `new Base(...args)` would. `loaderReason` is the
+ * site's own loader classification, decided by the caller because a
+ * `new` expression and an `extends` clause ask it differently.
+ */
+async function classifyConstructee(
+  callee: ts.Expression,
+  loaderReason: DynamicCallReason | undefined,
+  from: GraphNodeId,
+  location: ReturnType<typeof toSourceLocation>,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<InvocationAccount> {
   if (loaderReason) {
-    return {
+    return edgeAccount({
       from,
       type: "constructor",
       resolution: {
@@ -2035,7 +2127,7 @@ async function classifyNew(
         potentialTargets: [],
       },
       location,
-    };
+    });
   }
 
   const binding = await bindCallee(
@@ -2054,15 +2146,15 @@ async function classifyNew(
       );
 
       if (targetNodeId) {
-        return {
+        return edgeAccount({
           from,
           type: "constructor",
           resolution: { kind: "resolved", target: targetNodeId },
           location,
-        };
+        });
       }
 
-      // VT-209: see classifyCall's identical handling above.
+      // VT-209: see classifyCallee's identical handling above.
       if (targetFile) {
         const chased = await resolveReExportChain(
           targetFile,
@@ -2071,16 +2163,16 @@ async function classifyNew(
           new Set(),
         );
         if (chased) {
-          return {
+          return edgeAccount({
             from,
             type: "constructor",
             resolution: { kind: "resolved", target: chased },
             location,
-          };
+          });
         }
       }
 
-      return {
+      return edgeAccount({
         from,
         type: "constructor",
         resolution: {
@@ -2089,12 +2181,12 @@ async function classifyNew(
           potentialTargets: [],
         },
         location,
-      };
+      });
     }
   }
 
   if (binding.kind === "ambiguous") {
-    return {
+    return edgeAccount({
       from,
       type: "constructor",
       resolution: {
@@ -2103,11 +2195,11 @@ async function classifyNew(
         potentialTargets: [],
       },
       location,
-    };
+    });
   }
 
   if (binding.kind === "unresolved_module") {
-    return {
+    return edgeAccount({
       from,
       type: "constructor",
       resolution: {
@@ -2116,13 +2208,13 @@ async function classifyNew(
         potentialTargets: [],
       },
       location,
-    };
+    });
   }
 
   if (binding.kind === "declaration_only") {
-    // VT-304: see the equivalent branch in classifyCall for why this must
+    // VT-304: see the equivalent branch in classifyCallee for why this must
     // not fabricate a resolved, zero-edge region.
-    return {
+    return edgeAccount({
       from,
       type: "constructor",
       resolution: {
@@ -2131,11 +2223,11 @@ async function classifyNew(
         potentialTargets: [],
       },
       location,
-    };
+    });
   }
 
   // Not an import: a locally-declared class constructed by name is still
-  // worth an edge when it can be attributed (mirrors classifyCall's own
+  // worth an edge when it can be attributed (mirrors classifyCallee's own
   // local lookup, and shares its authority exactly).
   //
   // P1-B3b § 20. `new Identifier()` asks the same binding question a call
@@ -2147,31 +2239,31 @@ async function classifyNew(
   // receiver, all of which remain Block C's.
   const localTarget = constructableNodeIdFor(callee, prepared);
   if (localTarget) {
-    return {
+    return edgeAccount({
       from,
       type: "constructor",
       resolution: { kind: "resolved", target: localTarget },
       location,
-    };
+    });
   }
 
   const root = rootIdentifierOf(callee);
   if (root && isKnownGlobalIdentifier(root)) {
-    return undefined;
+    return unprovenNoEdge("ambient_global_callee");
   }
 
   // VT-305 (RWF-007): see the equivalent, more fully-explained check in
-  // classifyCall -- a Node builtin is a known external module, never
+  // classifyCallee -- a Node builtin is a known external module, never
   // `unsupported_construct`.
   if (binding.kind === "builtin") {
-    return undefined;
+    return unprovenNoEdge("builtin_module_callee");
   }
 
-  // P1-B1: see classifyCall's identical fallback. A construction shares
+  // P1-B1: see classifyCallee's identical fallback. A construction shares
   // the call site's subtype vocabulary deliberately -- `new Ctor()` and
   // `Ctor()` fail to attribute the SAME binding, and this edge's own
   // `type` already records that it was a construction.
-  return {
+  return edgeAccount({
     from,
     type: "constructor",
     resolution: {
@@ -2180,7 +2272,324 @@ async function classifyNew(
       potentialTargets: [],
     },
     location,
-  };
+  });
+}
+
+/**
+ * Task A-1, PRM-37. A tagged template (`` tag`x${v}` ``) calls its tag
+ * with the strings array and the substitutions. Before A-1 it was neither
+ * a `CallExpression` nor a `NewExpression`, so `walkFile` gave it no edge
+ * at all and family C certified the tag's body unreachable. The tag's
+ * loader classification comes first, as a call's does, from the function
+ * the module-load closure shares (`` vm.runInThisContext`code` `` runs
+ * `code`); then the tag is resolved exactly like a callee.
+ */
+async function classifyTaggedTemplate(
+  node: ts.TaggedTemplateExpression,
+  from: GraphNodeId,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<InvocationAccount> {
+  const location = toSourceLocation(prepared.index.sourceFile, node);
+  const loaderReason = classifyClosureWideningTaggedTemplate(node, prepared);
+  if (loaderReason) {
+    return edgeAccount({
+      from,
+      type: LOADER_EDGE_TYPE[loaderReason] ?? "direct",
+      resolution: {
+        kind: "unknown",
+        reason: loaderReason,
+        potentialTargets: [],
+      },
+      location,
+    });
+  }
+  return classifyCallee(node.tag, node, from, location, prepared, ctx, {});
+}
+
+/**
+ * Task A-1, PRM-115. A decorator -- legacy (`experimentalDecorators`) or
+ * standard, on a class, a member or (legacy only) a parameter -- is
+ * called while its class definition is evaluated: resolved when its
+ * expression names one function, unknown otherwise (ADR 0008 § 2, § 4:
+ * "resolved, because the language guarantees the call"). A decorator
+ * factory, `@make()`, is two invocations: the call `make()`, an ordinary
+ * call site of its own, and the call of whatever `make()` returned, which
+ * is this site -- a call result this graph does not attribute, so unknown.
+ *
+ * `from` is the owner that evaluates the class DEFINITION, never the
+ * decorated member: a method decorator runs whether or not the method is
+ * ever called (see {@link evaluatingOwnerOf}).
+ */
+async function classifyDecorator(
+  node: ts.Decorator,
+  from: GraphNodeId,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<InvocationAccount> {
+  const location = toSourceLocation(prepared.index.sourceFile, node);
+  const loaderReason = classifyClosureWideningImplicitCallee(
+    node.expression,
+    prepared,
+  );
+  if (loaderReason) {
+    return edgeAccount({
+      from,
+      type: LOADER_EDGE_TYPE[loaderReason] ?? "direct",
+      resolution: {
+        kind: "unknown",
+        reason: loaderReason,
+        potentialTargets: [],
+      },
+      location,
+    });
+  }
+  return classifyCallee(
+    node.expression,
+    node,
+    from,
+    location,
+    prepared,
+    ctx,
+    {},
+  );
+}
+
+/**
+ * Task A-1, PRM-19. A derived class with no constructor of its own has
+ * the implicit `constructor(...args) { super(...args); }`, so constructing
+ * it constructs its base: the synthesized implicit-constructor node
+ * (`source-index.ts`, VT-215) gets exactly one account, the base
+ * constructor, resolved like `new Base()` (ADR 0008 § 4: "resolved,
+ * because the language guarantees the call") or unknown.
+ *
+ * The base is the value of the `extends` expression when the class
+ * definition was evaluated; binding it through the same authorities as a
+ * `new` callee asks the same question of the same name.
+ */
+async function classifyImplicitSuper(
+  node: ClassLike,
+  base: ts.Expression,
+  owner: GraphNodeId,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<InvocationAccount> {
+  const sourceFile = prepared.index.sourceFile;
+  // The implicit constructor's own node, registered by `prepareFile` for
+  // every class without a constructor (the same `classHasOwnConstructor`
+  // test the site predicate uses), at the location `source-index.ts`
+  // gives it. The owner fallback cannot fire for a class the site
+  // predicate accepts; if it ever did, attributing the base construction
+  // to the class-definition owner over-approximates reachability rather
+  // than dropping the edge.
+  const from =
+    prepared.functionNodeIdByLocation.get(
+      locationKey(toSourceLocation(sourceFile, node.name ?? node)),
+    ) ?? owner;
+  return classifyConstructee(
+    base,
+    classifyClosureWideningImplicitCallee(base, prepared),
+    from,
+    toSourceLocation(sourceFile, base),
+    prepared,
+    ctx,
+  );
+}
+
+/**
+ * The node whose execution evaluates `node`, for a site task A-1 added --
+ * or the accessor, when that is an accessor body, which has no node of its
+ * own yet (task A-4, ADR 0008 Amendment A-0 part B).
+ *
+ * WHY NOT THE WALK'S OWNER STACK. The stack pushes only function-like
+ * nodes, so everything else nested in a class is walked under the owner
+ * of the class definition. Three positions are not evaluated by it:
+ *
+ * - a function-like member's computed NAME and its DECORATORS (and its
+ *   parameters' decorators) run at class definition, although the walk has
+ *   already pushed the member (RWF-023's key, RWF-058's decorator
+ *   expression);
+ * - an INSTANCE field's initializer runs when the class is CONSTRUCTED, by
+ *   its constructor -- explicit or implicit -- not at definition;
+ * - an accessor's body and parameters run when the property is read or
+ *   written.
+ *
+ * Calls and `new` expressions keep the stack's attribution, which predates
+ * A-1 (RWF-059 records the instance-field half; PRM-118 the accessor
+ * half). A-1's own sites -- tagged templates, decorators -- are
+ * attributed here instead: before A-1 they had no edge at all, and the
+ * task A-1 audit reproduced the stack's attribution turning a correct
+ * NOT_AFFECTED into a false AFFECTED for a decorated class defined in an
+ * instance field or a getter that never runs.
+ */
+function evaluatingOwnerOf(
+  node: ts.Node,
+  prepared: FileGraphData,
+): GraphNodeId | { readonly accessor: ts.AccessorDeclaration } | undefined {
+  const sourceFile = prepared.index.sourceFile;
+  const nodeIdAt = (at: ts.Node): GraphNodeId | undefined =>
+    prepared.functionNodeIdByLocation.get(
+      locationKey(toSourceLocation(sourceFile, at)),
+    );
+
+  let child: ts.Node = node;
+  let parent: ts.Node | undefined = node.parent;
+  while (parent) {
+    if (ts.isDecorator(parent)) {
+      // Everything in a decorator runs with its class's definition.
+      const site = invocationSiteOf(parent);
+      const cls = site?.kind === "decorator" ? site.decoratedClass : undefined;
+      if (cls) {
+        child = cls;
+        parent = cls.parent;
+        continue;
+      }
+    }
+    if (
+      isFunctionLike(parent) &&
+      (parent as ts.NamedDeclaration).name !== child
+    ) {
+      return nodeIdAt(parent);
+    }
+    if (
+      ts.isPropertyDeclaration(parent) &&
+      parent.initializer === child &&
+      !hasStaticModifier(parent) &&
+      (ts.isClassDeclaration(parent.parent) ||
+        ts.isClassExpression(parent.parent))
+    ) {
+      const cls = parent.parent;
+      const ctor = cls.members.find(ts.isConstructorDeclaration);
+      return nodeIdAt(ctor ?? cls.name ?? cls);
+    }
+    if (
+      (ts.isGetAccessorDeclaration(parent) ||
+        ts.isSetAccessorDeclaration(parent)) &&
+      parent.name !== child
+    ) {
+      return { accessor: parent };
+    }
+    if (ts.isSourceFile(parent)) {
+      return prepared.moduleNodeId;
+    }
+    child = parent;
+    parent = parent.parent;
+  }
+  return undefined;
+}
+
+/**
+ * The account of a site whose evaluating owner is an accessor body
+ * ({@link evaluatingOwnerOf}): the same edges, from the owner that
+ * evaluates the accessor's DEFINITION (where the walk has always
+ * attributed an accessor body's calls, PRM-118), with every RESOLVED edge
+ * withdrawn to unknown (its target kept as the potential target). The accessor may or may not run, and it has no node
+ * of its own to hang a resolved edge on; an unknown edge withholds the
+ * negative proof over the region without claiming the call happens. ADR
+ * 0008 § 1's `possible` edge (task A-2) is the precise account, from the
+ * accessor's own node (task A-4).
+ */
+function deferredToAccessor(account: InvocationAccount): InvocationAccount {
+  if (account.kind !== "edges") {
+    return account;
+  }
+  const [first, ...rest] = account.edges.map((edge): CallEdge =>
+    edge.resolution.kind === "resolved"
+      ? {
+          ...edge,
+          resolution: {
+            kind: "unknown",
+            reason: "unsupported_construct",
+            potentialTargets: [edge.resolution.target],
+          },
+        }
+      : edge,
+  );
+  return { kind: "edges", edges: [first!, ...rest] };
+}
+
+/**
+ * Accounts a site A-1 added from the owner that evaluates `evaluated`
+ * ({@link evaluatingOwnerOf}), falling back to the walk's owner. Inside an
+ * accessor body -- at any depth of nested accessors -- the account hangs
+ * from the owner of the outermost accessor's definition, withdrawn to
+ * unknown.
+ */
+function fromEvaluatingOwner(
+  evaluated: ts.Node,
+  env: SiteEnvironment,
+  classify: (from: GraphNodeId) => Promise<InvocationAccount>,
+): Promise<InvocationAccount> {
+  let owner = evaluatingOwnerOf(evaluated, env.prepared);
+  let deferred = false;
+  while (owner !== undefined && typeof owner !== "string") {
+    deferred = true;
+    owner = evaluatingOwnerOf(owner.accessor, env.prepared);
+  }
+  const account = classify(owner ?? env.owner);
+  return deferred ? account.then(deferredToAccessor) : account;
+}
+
+/** What a handler needs besides its site. */
+interface SiteEnvironment {
+  /** The node currently executing: the top of `walkFile`'s owner stack. */
+  readonly owner: GraphNodeId;
+  readonly prepared: FileGraphData;
+  readonly ctx: WalkContext;
+}
+
+type SiteHandler<K extends InvocationSiteKind> = (
+  site: Extract<InvocationSite, { readonly kind: K }>,
+  env: SiteEnvironment,
+) => Promise<InvocationAccount>;
+
+/**
+ * ADR 0008 § 2's handler table: one handler per site kind, typed over the
+ * closed {@link InvocationSiteKind} union, so adding a site kind to the
+ * census without a handler is a type error. Each handler returns an
+ * {@link InvocationAccount}; none can return "nothing".
+ *
+ * A call and a `new` are accounted from the walk's owner, as before A-1. A
+ * tagged template and a decorator are accounted from the owner that
+ * EVALUATES them ({@link evaluatingOwnerOf}): a decorator's is the owner
+ * of its class's definition, never the decorated member. An implicit
+ * `super` is accounted from the implicit constructor's own node.
+ */
+const INVOCATION_SITE_HANDLERS = {
+  call: (site, env) =>
+    classifyCall(site.node, env.owner, env.prepared, env.ctx),
+  construct: (site, env) =>
+    classifyNew(site.node, env.owner, env.prepared, env.ctx),
+  tagged_template: (site, env) =>
+    fromEvaluatingOwner(site.node, env, (from) =>
+      classifyTaggedTemplate(site.node, from, env.prepared, env.ctx),
+    ),
+  decorator: (site, env) =>
+    fromEvaluatingOwner(site.decoratedClass ?? site.node, env, (from) =>
+      classifyDecorator(site.node, from, env.prepared, env.ctx),
+    ),
+  implicit_super: (site, env) =>
+    classifyImplicitSuper(
+      site.node,
+      site.base,
+      env.owner,
+      env.prepared,
+      env.ctx,
+    ),
+} as const satisfies { readonly [K in InvocationSiteKind]: SiteHandler<K> };
+
+function accountFor(
+  site: InvocationSite,
+  env: SiteEnvironment,
+): Promise<InvocationAccount> {
+  // TypeScript cannot correlate `site.kind` with the handler it indexes,
+  // so the lookup is widened once, here; the table above is what is
+  // checked per kind.
+  const handler = INVOCATION_SITE_HANDLERS[site.kind] as (
+    site: InvocationSite,
+    env: SiteEnvironment,
+  ) => Promise<InvocationAccount>;
+  return handler(site, env);
 }
 
 /**
@@ -2420,6 +2829,17 @@ function classDefinitionTimeComputedName(
   return runsWhenEnclosingOwnerRuns(node) ? name : undefined;
 }
 
+/**
+ * One invocation site's account, as {@link walkFile} recorded it -- the
+ * read-only observation {@link BuildCallGraphOptions.onInvocationAccount}
+ * reports (task A-1).
+ */
+export interface InvocationAccountObservation {
+  readonly file: string;
+  readonly site: InvocationSite;
+  readonly account: InvocationAccount;
+}
+
 async function walkFile(
   prepared: FileGraphData,
   ctx: WalkContext,
@@ -2427,6 +2847,34 @@ async function walkFile(
   await emitModuleLoadEdges(prepared, ctx);
 
   const stack: GraphNodeId[] = [prepared.moduleNodeId];
+
+  function record(site: InvocationSite, account: InvocationAccount): void {
+    if (account.kind === "edges") {
+      ctx.edges.push(...account.edges);
+    }
+    ctx.onInvocationAccount?.({
+      file: prepared.index.filePath,
+      site,
+      account,
+    });
+  }
+
+  /**
+   * ADR 0008 invariant A1 reaches the sites in a branch VT-211 prunes as
+   * well: each is accounted `constant_folded_branch` rather than skipped,
+   * so pruning is a named, counted decision instead of an absence. No
+   * handler runs and no edge is added -- the graph is exactly what it was.
+   */
+  function accountPrunedBranch(node: ts.Node): void {
+    const site = invocationSiteOf(node);
+    if (site) {
+      record(site, {
+        kind: "unproven_no_edge",
+        reason: "constant_folded_branch",
+      });
+    }
+    ts.forEachChild(node, accountPrunedBranch);
+  }
 
   async function visit(node: ts.Node): Promise<void> {
     let pushed = false;
@@ -2463,24 +2911,21 @@ async function walkFile(
       }
     }
 
-    if (ts.isCallExpression(node)) {
-      const from = stack[stack.length - 1];
-      if (from) {
-        const edge = await classifyCall(node, from, prepared, ctx);
-        if (edge) {
-          ctx.edges.push(edge);
-        }
-      }
-    }
-
-    if (ts.isNewExpression(node)) {
-      const from = stack[stack.length - 1];
-      if (from) {
-        const edge = await classifyNew(node, from, prepared, ctx);
-        if (edge) {
-          ctx.edges.push(edge);
-        }
-      }
+    // ADR 0008 invariant A1: every invocation-capable site gets exactly
+    // the account its kind's handler gives it (`invocation-sites.ts`
+    // decides which nodes are sites; INVOCATION_SITE_HANDLERS, which
+    // account each kind).
+    const site = invocationSiteOf(node);
+    const from = stack[stack.length - 1];
+    if (site && from) {
+      record(
+        site,
+        await accountFor(site, {
+          owner: from,
+          prepared,
+          ctx,
+        }),
+      );
     }
 
     if (ts.isIfStatement(node)) {
@@ -2490,11 +2935,16 @@ async function walkFile(
       // which branch(es) get visited; anything else (a variable,
       // parameter, or function call -- the overwhelming majority of real
       // conditions) still visits both, unchanged from before this task.
+      // The branch not visited has its sites accounted as pruned.
       await visit(node.expression);
       const constantValue = evaluateConstantBoolean(node.expression);
       if (constantValue === true) {
         await visit(node.thenStatement);
+        if (node.elseStatement) {
+          accountPrunedBranch(node.elseStatement);
+        }
       } else if (constantValue === false) {
+        accountPrunedBranch(node.thenStatement);
         if (node.elseStatement) {
           await visit(node.elseStatement);
         }
@@ -2569,6 +3019,18 @@ export interface BuildCallGraphOptions {
    * it is a separate cleanup, not part of RWF-004b.
    */
   readonly knownPackageRoots?: KnownPackageRoots;
+  /**
+   * Task A-1: a read-only observation of every invocation site's account,
+   * in walk order (ADR 0008 invariant A1). Called once per account the
+   * walk records -- a site the walk visits twice (RWF-023's computed
+   * keys) is reported twice. It can never change the graph: the account
+   * has already been recorded when it is reported. Absent by default, and
+   * then costs nothing. `invocation-sites.site-coverage.test.ts` uses it
+   * to prove no site of a walked file goes unaccounted.
+   */
+  readonly onInvocationAccount?: (
+    observation: InvocationAccountObservation,
+  ) => void;
 }
 
 /**
@@ -2699,6 +3161,7 @@ export async function buildCallGraph(
       }
     },
     getProgram,
+    onInvocationAccount: options.onInvocationAccount,
   };
 
   while (queue.length > 0) {

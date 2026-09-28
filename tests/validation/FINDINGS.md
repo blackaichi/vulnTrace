@@ -178,7 +178,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-16 | `vuln-lib` (synthetic fixture) | A same-file caller is treated as the unique call site of an exported higher-order parameter, even with cross-file callers | false NOT_AFFECTED — see below | Open |
 | PRM-17 | `vuln-lib` (synthetic fixture) | A higher-order parameter's reassignment inside the function body is never checked before its call sites are treated as authoritative | false NOT_AFFECTED — see below | Open |
 | PRM-18 | `vuln-lib` (synthetic fixture) | The TypeScript checker's static apparent type of a receiver is used as the runtime receiver, even when reassigned | false NOT_AFFECTED — see below | Open |
-| PRM-19 | `vuln-lib` (synthetic fixture) | A derived class's synthesized implicit default constructor gets no edge to the resolved base constructor | false NOT_AFFECTED — see below | Open |
+| PRM-19 | `vuln-lib` (synthetic fixture) | A derived class's synthesized implicit default constructor gets no edge to the resolved base constructor | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-20 | `vuln-lib` (synthetic fixture) | `bindCallee` resolves a trailing method chain (`x.y()`) to the receiver `x` itself, discarding which method was called | false NOT_AFFECTED — see below | Open |
 | PRM-21 | `vuln-lib` (synthetic fixture) | A same-file `const` binding shadows an ambient global (`require`, `eval`, `process`, `module`) for the whole file | false NOT_AFFECTED — see below | Open |
 | PRM-22 | `vuln-lib` (synthetic fixture) | The loader classifier's alias lookup for module/eval/vm-style capabilities is first-match and scope-blind | false NOT_AFFECTED — see below | Open |
@@ -196,7 +196,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-34 | `lodash` (`file:`-vendored, real npm 10.9.0 lockfile) | A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely | silent drop — see below | Open |
 | PRM-35 | `vuln-lib` (synthetic fixture), cache | A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic | scan abort — see below | Open |
 | PRM-36 | `vuln-lib` (synthetic fixture), workspaces | The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set | false reason — see below | Open |
-| PRM-37 | `vuln-lib` (synthetic fixture) | A tagged-template call (`` tag`x` ``) gets no call-graph edge at all | false NOT_AFFECTED — see below | Open |
+| PRM-37 | `vuln-lib` (synthetic fixture) | A tagged-template call (`` tag`x` ``) gets no call-graph edge at all | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-38 | `vuln-lib` (synthetic fixture) | Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge | false NOT_AFFECTED — see below | Open |
 | PRM-60 | `vuln-lib` (synthetic fixture) | `unsupported_*` reasons are treated as never widening the closure, but four capability-receiver shapes let them load a new module | false NOT_AFFECTED — see below | Open |
 | PRM-61 | `vuln-lib` (synthetic fixture) | Export forwarding resolves to the first "own" binding of a name, which a later `module.exports` replacement or property write can make stale | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below | Open |
@@ -220,7 +220,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-112 | `vuln-lib` (synthetic fixture) | `instanceof` against a class defining a static `[Symbol.hasInstance]` invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
 | PRM-113 | `vuln-lib` (synthetic fixture) | `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
 | PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | Open |
-| PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | Open |
+| PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | Open |
 | RWF-050 | n/a — a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) has no register row of its own | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below | Open |
 | PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | Open |
@@ -231,6 +231,12 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-054 | n/a — the repository's own gate configuration | `AGENTS.md` § I claimed CI runs "on every pull request and on every push to `main`"; commit `a87faa2` removed the push trigger, making this false as a description of current CI | record — a gate description overstates when CI runs — see below | **Fixed** (D-03) — see below |
 | RWF-055 | n/a — the repository's own backlog citations | 39 `docs/tasks/BACKLOG.md` rows cite "Appendix A" as a Source, a document/section that exists nowhere in this repository (`grep -rin appendix docs/*.md tests/validation/FINDINGS.md` returns nothing) | record — roughly a third of the backlog's stated justifications point nowhere, same shape as D-10 but far wider — see below | Open |
 | RWF-056 | n/a — the repository's own validation-suite documentation | `tests/validation/README.md`'s Running section claimed "7 of 17 cases pass; the other 10 are known, tracked failures", citing RWF-001 through RWF-004, RWF-006 and RWF-012; the current, measured count is 12/17 passing, 5 known failures (`cases.json`, matching OPEN-DEBTS D-09 exactly) | record — a stale pass/fail count and citation list, from before several of those gaps were fixed — see below | **Fixed** (D-03) — see below |
+| RWF-057 | `vuln-lib` (synthetic fixture) | A tagged template whose TAG is a loader capability (`` vm.runInThisContext`code` ``) compiles and runs its template text, but the module-load closure's scanner checked only a tagged template's substitutions, never its tag | false NOT_AFFECTED (family A) — see below | **Fixed** (A-1) — see below |
+| RWF-058 | `vuln-lib` (synthetic fixture) | A call written inside a member or parameter decorator's expression (`@make(arg()) m() {}`) runs at class definition, but is walked under the decorated member, so the graph records `m → make` and `m → arg` | fabricated edge (misattributed caller; no verdict moved) — see below | Open |
+| RWF-059 | `vuln-lib` (synthetic fixture) | A call or `new` in an instance field initializer runs when the class is CONSTRUCTED, but is attributed to the owner of the class DEFINITION; for a class never constructed that is a fabricated edge and a false AFFECTED | fabricated edge / false AFFECTED — see below | Open |
+| RWF-060 | `vuln-lib` (synthetic fixture) | A derived class with no constructor whose base is an ambient or builtin constructor (`class P extends Promise {}`, a `stream.Readable` subclass) forwards `new P(...)`'s arguments to the base, and a callback among them runs; nothing accounts for them | false NOT_AFFECTED — see below | Open |
+| RWF-061 | `vuln-lib` (synthetic fixture) | A `vm.Script` reached through a subclass (`class X extends vm.Script {}`) or a factory function (`function mk(c) { return new vm.Script(c); }`) runs its code through `.runInThisContext()`, but the module-load closure records nothing | false NOT_AFFECTED (family A) — see below | Open |
+| RWF-062 | `vuln-lib` (synthetic fixture) | With TypeScript constructor overloads, `new A()` resolves to the first overload SIGNATURE, a node with no body; the implementation's calls hang from a node nothing reaches | false NOT_AFFECTED — see below | Open |
 
 ---
 
@@ -16313,6 +16319,42 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-18`)
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-19`) and § 4 (`implicit-super-constructor`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+### Status update — fixed by task A-1 (2026-09-28)
+
+**Status:** **Fixed** (task `A-1`, ADR 0008 § 2's implicit-`super` row).
+Supersedes the Status line above.
+
+A derived class with no constructor is now an invocation site
+(`implicit_super`, `src/code-intelligence/invocation-sites.ts`): its
+synthesized implicit-constructor node gets exactly one account, the
+base constructor, resolved through the same authorities as `new Base()`
+(ADR 0008 § 4: "resolved, because the language guarantees the call"), or
+an unknown edge when the base is not attributable. The false premise in
+`source-index.ts` ("an implicit constructor provably does nothing") is
+corrected in place. Reproduced against real Node, failing on the base
+commit `c5ca885` and passing after:
+`tests/oracle/a1-invocation-sites.test.ts` (`implicit-super.*`: local
+base and a chain → `AFFECTED`; an unattributable base → `UNKNOWN`; a
+never-constructed subclass → `NOT_AFFECTED`, the precision control).
+Graph level: `src/code-intelligence/call-graph.invocation-account.test.ts`.
+
+**What remains open at these sites (task A-1 audit, finding 5).** The
+new account resolves its callee through the SAME authorities a call's
+callee uses, so their open defects reach it too: PRM-20 (a trailing
+member chain is truncated -- `class S extends lib.safe.Inner {}`,
+`` lib.safe.Inner`x` `` and `@lib.safe.Inner class X {}` each resolve to
+`lib.safe` and remain a family-C false `NOT_AFFECTED`, measured by the
+audit on base and branch), PRM-104 (a reassigned `function` declaration),
+PRM-16/17 (VT-210's higher-order parameter) and PRM-18 (VT-208's static
+receiver type). They are fixed once, for every site, by A-5 and A-6.
+
+**Not closed by this status (RWF-060).** When the base is an ambient or
+builtin constructor (`class P extends Promise {}`, a `stream.Readable`
+subclass), the implicit constructor forwards `new P(...)`'s arguments to
+it, and a callback among them runs. That is accounted, like `new
+Promise(...)` itself, by the unproven `ambient_global_callee` /
+`builtin_module_callee` account, and is registered as RWF-060 (task A-3).
+
 ---
 
 ## PRM-20 — `bindCallee` resolves a trailing method chain (`x.y()`) to the receiver `x` itself, discarding which method was called
@@ -16331,6 +16373,14 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-20`)
 **Pinned test:** `symbol-binder.test.ts` ("ignores a trailing method chain") expects exactly this as its recorded result; AGENTS.md § G forbids pinning it as expected going forward.
 
 **Correction (2026-09-26, task `remediation-reconciliation`):** the `Fix lane` line above states lane C. `docs/REMEDIATION-PLAN.md` § 2.2 assigns this finding to **lane A** (call graph resolution authority, ADR 0008's A2, task **A-6**), which is authoritative for lane assignment — the plan was measured, this field was partly inferred (`REMEDIATION-PLAN.md` § 2, introduction). The `Fix lane` line is left as originally written, per this register's append-only discipline; follow the plan.
+
+**Note (2026-09-28, task `A-1`):** the same truncation now also reaches
+the three sites A-1 accounts for, because they resolve their callee
+through `bindCallee` too: an `extends` base (`class S extends
+lib.safe.Inner {}`), a tag (`` lib.safe.Inner`x` ``) and a decorator
+(`@lib.safe.Inner class X {}`) -- each a family-C false `NOT_AFFECTED`,
+measured by A-1's independent audit on the base and the branch. A-6's fix
+to `bindCallee` covers them with no separate work.
 
 ---
 
@@ -16590,6 +16640,51 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 4, "PRM-36: 
 `walkFile` classifies only `CallExpression` and `NewExpression` nodes; a `TaggedTemplateExpression` (`` lib.parse`x` ``) is neither, so it receives no edge at all — not even an unresolved one. Family C certifies the tagged function unreachable although Node invokes it. **ID assigned by task `record-soundness-audits`** from an unnumbered mechanism in round 1 § 5 item 1, per that task's Step 2.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 5 item 1 ("tagged template")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+### Status update — fixed by task A-1 (2026-09-28)
+
+**Status:** **Fixed** (task `A-1`, ADR 0008 § 2's tagged-template row).
+Supersedes the Status line above.
+
+A `TaggedTemplateExpression` is now an invocation site
+(`tagged_template`): after the shared loader classification, its tag is
+resolved exactly like a call's callee, and an unattributable tag gets an
+unknown edge. VT-213's inline-callback fallback (PRM-13) is deliberately
+not extended to it. The loader classification of the tag also closed a
+second defect this task found, RWF-057. Reproduced against real Node,
+failing on the base commit `c5ca885` and passing after:
+`tests/oracle/a1-invocation-sites.test.ts` (`tagged-template.*`).
+
+The tag is accounted from the owner that EVALUATES the template, which
+differs from the walk's owner in two positions (task A-1 audit, finding
+2): in an instance field initializer it is the class's constructor, and
+in an accessor body -- which has no node of its own until A-4 -- the
+account is withdrawn to unknown. Oracle cases
+`tagged-template.instance-field-*`.
+
+**The cost of the constructor attribution (task A-1 audit, round 2).**
+A site in an instance field initializer is reachable only when the
+class's construction is. Where construction is not modelled --
+`Reflect.construct(A, [])`, or any ambient or builtin API a class is
+handed and constructs -- it is not: `` class A { f = lib.parse`x`; }
+Reflect.construct(A, []); `` is a family-C false `NOT_AFFECTED` on the
+branch (the base also answers `NOT_AFFECTED`, having no tag edge at all;
+A-1's first round, attributing the tag to the module, answered
+`AFFECTED`). Explicit and implicit constructor bodies already carry the
+same exposure; the hole is AUD-01's (an ambient callee handed a function
+value gets no edge), closed by A-3, whose acceptance now requires such a
+class to reach its constructor node (`docs/REMEDIATION-PLAN.md` § 5a, "A-1
+additions to lane-A acceptance").
+
+**What remains open at these sites (task A-1 audit, finding 5).** The
+new account resolves its callee through the SAME authorities a call's
+callee uses, so their open defects reach it too: PRM-20 (a trailing
+member chain is truncated -- `class S extends lib.safe.Inner {}`,
+`` lib.safe.Inner`x` `` and `@lib.safe.Inner class X {}` each resolve to
+`lib.safe` and remain a family-C false `NOT_AFFECTED`, measured by the
+audit on base and branch), PRM-104 (a reassigned `function` declaration),
+PRM-16/17 (VT-210's higher-order parameter) and PRM-18 (VT-208's static
+receiver type). They are fixed once, for every site, by A-5 and A-6.
 
 ---
 
@@ -16951,6 +17046,67 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-114`
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-115`) and § 4 (`p3-ts-decorator-*`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+### Status update — fixed by task A-1 (2026-09-28)
+
+**Status:** **Fixed** (task `A-1`, ADR 0008 § 2's decorator row).
+Supersedes the Status line above.
+
+A `Decorator` is now an invocation site (`decorator`), legacy and
+standard, on a class, a member or (legacy) a parameter -- wherever the
+compiled program calls it. TypeScript ERASES a decorator on anything
+ambient (`declare`), on a bodiless method or constructor (abstract,
+overload), on a parameter of anything but a constructor or method, on an
+object-literal member and on an index signature, in every decorator
+mode; those are not sites (task A-1 audit, finding 1: resolving them
+fabricated an edge and a false `AFFECTED`). It is attributed to the
+owner that evaluates the class DEFINITION -- never to the decorated
+member, which the walk pushes before reaching its decorators and which
+may never run; for a class written in an instance field initializer that
+owner is the enclosing class's constructor, and in an accessor body the
+account is withdrawn to unknown (audit finding 2) -- and resolved like a
+callee; a decorator factory's result is an unattributable call result,
+so unknown.
+Reproduced against real Node (TypeScript compiled with the repository's
+own compiler), failing on the base commit `c5ca885` and passing after:
+`tests/oracle/a1-invocation-sites.test.ts` (`decorator.legacy.*`,
+`decorator.standard.*`, including two precision controls: a decorated
+class inside a function that never runs stays `NOT_AFFECTED`), and the
+audit's cases (`decorator.*.erased-*`, `decorator.standard.instance-field-*`,
+`decorator.standard.getter-body-class-never-read`, which is `UNKNOWN` --
+a sound precision cost against the base's correct `NOT_AFFECTED`, until
+an accessor is its own owner).
+
+**The cost of the constructor attribution (task A-1 audit, round 2).**
+A site in an instance field initializer is reachable only when the
+class's construction is. Where construction is not modelled --
+`Reflect.construct(A, [])`, or any ambient or builtin API a class is
+handed and constructs -- it is not: `` class A { f = lib.parse`x`; }
+Reflect.construct(A, []); `` is a family-C false `NOT_AFFECTED` on the
+branch (the base also answers `NOT_AFFECTED`, having no tag edge at all;
+A-1's first round, attributing the tag to the module, answered
+`AFFECTED`). Explicit and implicit constructor bodies already carry the
+same exposure; the hole is AUD-01's (an ambient callee handed a function
+value gets no edge), closed by A-3, whose acceptance now requires such a
+class to reach its constructor node (`docs/REMEDIATION-PLAN.md` § 5a, "A-1
+additions to lane-A acceptance").
+
+Not fixed here: a call written INSIDE a member decorator's expression
+(`@make(arg()) m() {}`) is still walked under the member, as before A-1
+-- a misattributed edge, registered as RWF-058. It cannot hide a target:
+such a decorator's own account is the call of a call result, an unknown
+edge from the class-definition owner, which withholds family C over that
+region.
+
+**What remains open at these sites (task A-1 audit, finding 5).** The
+new account resolves its callee through the SAME authorities a call's
+callee uses, so their open defects reach it too: PRM-20 (a trailing
+member chain is truncated -- `class S extends lib.safe.Inner {}`,
+`` lib.safe.Inner`x` `` and `@lib.safe.Inner class X {}` each resolve to
+`lib.safe` and remain a family-C false `NOT_AFFECTED`, measured by the
+audit on base and branch), PRM-104 (a reassigned `function` declaration),
+PRM-16/17 (VT-210's higher-order parameter) and PRM-18 (VT-208's static
+receiver type). They are fixed once, for every site, by A-5 and A-6.
+
 ---
 
 ## PRM-116 — A JSX element is a call to its configured factory with no modeled edge
@@ -17098,6 +17254,14 @@ no ADR 0008 rule covers a getter read (the Decision record's own table:
 getter "Not covered").
 
 **Registered by task A-0.** Not fixed here.
+
+**Note (2026-09-28, task `A-1`):** the two site kinds A-1 added -- a
+tagged template and a decorator -- do NOT inherit this attribution. A
+site of theirs inside an accessor body is accounted from the owner of the
+accessor's definition, as an UNKNOWN edge (its target kept as the
+potential target), because the accessor may or may not run and has no
+node of its own until A-4. Calls and `new` expressions in an accessor
+body keep the attribution this finding records.
 
 ---
 
@@ -17420,3 +17584,229 @@ to "12 of 17... the other 5", corrected the citation to RWF-001 and
 RWF-006 (D-09's actual two causes), and added a one-line note stating the
 count was stale and why, rather than silently overwriting a record
 without saying what changed.
+
+## RWF-057 — A loader capability used as a tagged template's tag runs code the module-load closure never classified
+
+**Status:** **Fixed** (task `A-1`, 2026-09-28) — see below
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B (the analyzer assumed a tagged template's tag loads
+nothing; real Node's `vm` compiles and runs the template text)
+**Proof family affected:** A (and B/C through the call graph, which gave
+the site no account at all -- PRM-37)
+**Severity:** High (a false `NOT_AFFECTED`)
+**Fix lane:** A — call graph, with the shared loader classifier
+
+**Discovered:** by task `A-1`, while giving a tagged template's tag the
+loader classification a call's callee gets.
+
+`` vm.runInThisContext`process.mainModule.require("vuln-lib").parse("x")` ``
+compiles and runs the template text: the tag receives the template's
+strings array, which `vm` coerces to a string (measured on Node v22.11.0;
+`` Function`…` `` likewise compiles its text, and `` eval`…` `` and
+`` require`…` `` do not run it). `findClosureWideningConstructs`
+(`src/code-intelligence/loader-constructs.ts`) checked only a tagged
+template's SUBSTITUTIONS for an escaping capability, never its TAG, so
+such a program, with no static `require` of `vuln-lib`, was a family-A
+false `NOT_AFFECTED` (the same program with an ordinary
+`vm.runInThisContext("…")` call was correctly `UNKNOWN`). Measured with
+the oracle harness on the base commit `c5ca885`.
+
+**How it was closed.** `classifyClosureWideningImplicitCallee` (new, in
+`loader-constructs.ts`) classifies a callee the language invokes without
+a call expression -- a tag, a decorator, an `extends` expression -- by
+the same precedence a call's callee gets. The closure scanner applies it
+to every tag, recording the construct at the template, and keeps
+recording an escaping substitution at the substitution, as before. The
+call graph gives the same site an account through
+`classifyClosureWideningTaggedTemplate`, which applies the same two
+checks. Tests: `src/code-intelligence/loader-constructs.tagged-template.test.ts`
+(both layers, and that they agree) and
+`tests/oracle/a1-invocation-sites.test.ts` (`tagged-template.vm-tag`).
+
+## RWF-058 — A call inside a member decorator's expression is attributed to the decorated member
+
+**Status:** Open
+**Failure class:** fabricated edge — a misattributed caller. No verdict
+is known to move (see below), but AGENTS.md § E makes a fabricated call
+edge a soundness defect in itself.
+**Defect class:** A-adjacent (the call is right; the OWNER it is
+attributed to is not the code that runs it)
+**Proof family affected:** none known
+**Severity:** Low (explainability: an `AFFECTED` path through such a
+decorator names the wrong caller)
+**Fix lane:** A — call graph (backlog `BL-035`)
+
+**Discovered:** by task `A-1`, while attributing decorators to the owner
+that evaluates their class definition.
+
+`walkFile` pushes a class member's own node before it walks the member's
+children, and a member's (or its parameters') decorators are among those
+children. Task A-1 attributes the decorator's own invocation to the
+class-definition owner, but every call written INSIDE the decorator's
+expression is still walked under the member. (A tagged template written
+there is not: A-1 accounts its own site kinds from the owner that
+evaluates them.) Measured on the branch of
+task A-1: for
+
+```ts
+function arg() { return 1; }
+function make(x: any) { return function (...a: any[]) {}; }
+class X {
+  @make(arg())
+  m() {}
+}
+```
+
+the graph has `m → make` and `m → arg` (both run at class definition,
+whether or not `m` is ever called) and the module node has one unknown
+edge, the decorator's own account (the call of `make(...)`'s result).
+
+**Why no verdict is known to move.** A decorator whose expression
+contains a call has, as its callee, a call result or an expression no
+authority attributes, so its own account from the class-definition owner
+is an unknown edge, which withholds family C over that region. Family B
+does not apply because the called function is in the graph. The defect
+is the wrong caller, which an `AFFECTED` path would report.
+
+**The same shape was fixed once before.** RWF-023 moved a member's
+computed KEY to the class-definition owner by adding that edge and
+keeping the member's (its "Monotonicity" note). `BL-035` applies the
+same approach to a member decorator's expression.
+
+## RWF-059 — A call in an instance field initializer is attributed to the owner of the class definition, not the constructor that runs it
+
+**Status:** Open
+**Failure class:** fabricated edge / false AFFECTED (a class never
+constructed); over-approximation otherwise
+**Defect class:** A-adjacent (the call is right; the OWNER is not the
+code that runs it)
+**Proof family affected:** none (the direction is over-approximation)
+**Severity:** Medium (AGENTS.md § E: a fabricated edge is a soundness
+defect even where no false `NOT_AFFECTED` follows)
+**Fix lane:** A — call graph (backlog `BL-036`)
+
+**Discovered:** recorded by RWF-023 as "an open precision candidate"
+(its "Remaining limitations": "An instance field's VALUE and an
+accessor's BODY are attributed to the module"); registered as a finding
+by task `A-1`, whose independent audit reproduced the same attribution
+moving a verdict when A-1's new decorator site first inherited it.
+
+`walkFile` pushes only function-like nodes, so a non-static field's
+initializer is walked under the owner of the class definition -- the
+module for a class at module scope -- although it runs during
+construction. `class A { f = lib.parse("x"); }` with no `new A()` is
+`AFFECTED` on `main`; real Node never calls `parse`. Only a precision
+candidate by RWF-023's reading; but the edge `module → parse` is one the
+program does not have, which AGENTS.md § E makes a defect in itself.
+
+The ACCESSOR half of RWF-023's note is PRM-118 (task A-4).
+
+**Not the new sites.** Task A-1 accounts its own sites (tagged
+templates, decorators) from the owner that evaluates them: in an
+instance field initializer, the class's constructor -- explicit, or the
+synthesized implicit constructor's node. Calls and `new` expressions keep
+the pre-existing attribution: moving them can shrink reachability where
+construction is not modelled (RWF-023's "Monotonicity"), which is a
+decision for the task that fixes this. A-1's own sites already carry that
+cost -- see the constructor-attribution note in PRM-37's status update
+(`Reflect.construct`) -- which A-3 closes.
+
+## RWF-060 — An implicit constructor forwards its arguments into an ambient or builtin base, and nothing accounts for them
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B (the analyzer assumes constructing the subclass runs
+only the base's own code; the base runs a callback it is handed)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`, predating A-1)
+**Fix lane:** A — task A-3 (see `docs/REMEDIATION-PLAN.md` § 5a, "A-1
+additions to lane-A acceptance")
+
+**Discovered:** by task A-1's independent audit; reproduced again by
+task A-1 with the oracle harness (Node v22.11.0), on the branch; the
+audit measured the same on the base `c5ca885`.
+
+```js
+const lib = require("vuln-lib");
+class P extends Promise {}
+new P(() => lib.parse("x")); // family C: NOT_AFFECTED; Node calls parse
+```
+
+The same holds for a named executor (`function ex() {...}; new P(ex)`)
+and for a builtin-module base (`class R extends require("stream").Readable
+{}; new R({ read() { lib.parse("x"); ... } }).resume()`). The explicit
+constructor twin (`constructor(f) { super(f); }`) is correctly `UNKNOWN`
+(its `super(...)` call gets an unknown edge).
+
+`new P(...)` resolves to P's implicit-constructor node. Task A-1 gives
+that node its `implicit_super` account; for an ambient or builtin base
+that account is the same unproven no-edge account `new Promise(...)`
+gets (`ambient_global_callee`, `builtin_module_callee`). But the
+arguments are written at the distant `new P(...)` site, whose callee is
+RESOLVED -- so ADR 0008 § 2's escape row as written ("an argument ... of
+a call or `new` whose callee is ambient, builtin, unresolved or unknown")
+would not reach them, and A-3 as specified would not close this.
+`UNPROVEN_NO_EDGE_LEDGER` names RWF-060 under both reasons, and task A-1
+adds the case to A-3's acceptance.
+
+## RWF-061 — A `vm.Script` reached through a subclass or a factory runs code the module-load closure never records
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (the `vm.Script` capability is tracked only through
+an inline `new vm.Script(...)` or a direct alias; the value reaching
+`.runInThisContext()` through a subclass or a function return is not)
+**Proof family affected:** A
+**Severity:** High — P1 (a false `NOT_AFFECTED`, predating A-1)
+**Fix lane:** C — loader capability flow (backlog `BL-037`)
+
+**Discovered:** by task A-1's independent audit; reproduced again by
+task A-1 with the oracle harness (Node v22.11.0).
+
+```js
+const vm = require("vm");
+class X extends vm.Script {}
+new X('process.mainModule.require("vuln-lib").parse("x")').runInThisContext();
+// family A: NOT_AFFECTED; Node calls parse. The same with an explicit
+// super(c), and with: function mk(c) { return new vm.Script(c); }
+```
+
+`isVmConstructedInstance` (`src/code-intelligence/loader-constructs.ts`)
+recognises `new vm.Script(...)` inline or through a direct alias only.
+Outside task A-1's scope (lane C); not fixed here.
+
+## RWF-062 — `new A()` resolves to a constructor overload signature, not the constructor that runs
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A (the edge's target is a declaration the program does
+not execute: an overload signature, which has no body)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`, predating A-1)
+**Fix lane:** A — call graph (backlog `BL-038`)
+
+**Discovered:** by task A-1's independent audit (round 2); reproduced
+again by task A-1 with the oracle harness (Node v22.11.0, TypeScript
+compiled by the repository's own compiler), on the branch; the audit
+measured the same on the base `c5ca885`.
+
+```ts
+import lib = require("vuln-lib");
+class A {
+  constructor(a: string);
+  constructor(a?: any) { lib.parse("x"); }
+}
+new A(); // family C: NOT_AFFECTED; Node calls parse
+```
+
+The graph has `<module> → A@3` -- the first `ConstructorDeclaration`,
+the overload -- and the implementation body's calls hang from `A@4`,
+which nothing reaches. Function, method and static-method overloads fail
+closed to `UNKNOWN`; only constructors are hit.
+
+**Coupled to A-1.** `evaluatingOwnerOf` (`call-graph.ts`) attributes a
+site in an instance field initializer to the class's first
+`ConstructorDeclaration` -- deliberately the same node `new` resolves to
+today, so that it is reached. The fix for this finding must change both
+together: to the constructor that has a body.
+
