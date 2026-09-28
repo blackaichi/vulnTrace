@@ -376,6 +376,100 @@ export interface CallEdge {
   readonly location?: SourceLocation;
 }
 
+/**
+ * ADR 0008 invariant A1 (task A-1): every invocation-capable site in a
+ * walked file yields an ACCOUNT, and there is no silent outcome. The
+ * producers (`call-graph.ts`'s invocation-site handlers) return this
+ * closed union rather than `CallEdge | undefined`, so a branch that
+ * forgets to account for a site is a type error, not a missing edge.
+ *
+ * - `edges`: one or more call edges, each resolved or unknown. ADR 0008
+ *   § 1 adds a third resolution kind, `possible`, in task A-2; until then
+ *   an over-approximated invocation this graph cannot prove is `unknown`.
+ * - `unproven_no_edge`: the site gets no edge, AND nothing proves that is
+ *   sound. See {@link UnprovenNoEdgeReason}.
+ *
+ * WHAT IS DELIBERATELY ABSENT: a `no_edge` account backed by a proof. ADR
+ * 0008 § 2 closes the set of no-edge proofs (`AmbientStaticRequire`,
+ * `PrimitiveOnlyArguments`, `NonInvokingBuiltin`, `ProvablyDeadBranch`).
+ * No branch of today's graph establishes any of them (each reason below
+ * says why), so none is claimed. The lane-A task that makes one real adds
+ * its variant here, with its owner test, and deletes the unproven reason
+ * it replaces.
+ */
+export type InvocationAccount =
+  | {
+      readonly kind: "edges";
+      readonly edges: readonly [CallEdge, ...CallEdge[]];
+    }
+  | {
+      readonly kind: "unproven_no_edge";
+      readonly reason: UnprovenNoEdgeReason;
+    };
+
+/**
+ * The no-edge branches the graph still takes WITHOUT a proof, each named
+ * by the certified decision it comes from. They are open soundness
+ * defects, not exceptions: each is reproduced as a false NOT_AFFECTED in
+ * `tests/validation/FINDINGS.md`, and each is removed by a named lane-A
+ * task ({@link UNPROVEN_NO_EDGE_LEDGER}). ADR 0008's end state is that
+ * this type is empty.
+ *
+ * - `ambient_global_callee` (VT-201): the callee's root identifier is on
+ *   the ambient-global list. A callback passed to it, an own export called
+ *   through `exports`, an inspected argument -- all invisible.
+ * - `builtin_module_callee` (VT-305): the callee is bound to a Node
+ *   builtin module. A callback passed to it is invisible.
+ * - `static_require_by_text` (P1-B3b): `require("x")` recognised by its
+ *   spelling, not by proving `require` is the ambient one; a local
+ *   `function require` is never seen. `AmbientStaticRequire` needs that
+ *   lexical proof.
+ * - `constant_folded_branch` (VT-211): a site in the branch an `if` whose
+ *   condition `evaluateConstantBoolean` folds never takes. Strict equality
+ *   of same-type literals is a proof; the loose `==`/`!=` folding it also
+ *   performs is not, so the account as a whole is unproven until the two
+ *   are separated.
+ */
+export type UnprovenNoEdgeReason =
+  | "ambient_global_callee"
+  | "builtin_module_callee"
+  | "static_require_by_text"
+  | "constant_folded_branch";
+
+/**
+ * Who owns each {@link UnprovenNoEdgeReason}: the open findings it is the
+ * mechanism of, and the lane-A task (ADR 0008 § 8) that removes it.
+ * `call-graph.invocation-account.test.ts` requires every finding named
+ * here to still be OPEN, so closing one without deleting its reason --
+ * or deleting a reason while its finding stays open -- fails a test.
+ */
+export const UNPROVEN_NO_EDGE_LEDGER: Readonly<
+  Record<
+    UnprovenNoEdgeReason,
+    {
+      readonly closedBy: "A-3" | "A-5";
+      readonly findings: readonly [string, ...string[]];
+    }
+  >
+> = {
+  // `console.log(obj)` (PRM-117) is an ambient root; `util.inspect(obj)`
+  // and `util.format("%o", obj)` (PRM-117) are bound to a builtin module.
+  // RWF-060: a derived class with no constructor whose base is ambient
+  // (`extends Promise`) or builtin (`extends stream.Readable`) takes the
+  // same account for its implicit `super`, and the arguments of the
+  // `new Sub(...)` that runs it are not accounted anywhere.
+  ambient_global_callee: {
+    closedBy: "A-3",
+    findings: ["AUD-01", "AUD-02", "PRM-117", "RWF-060"],
+  },
+  builtin_module_callee: {
+    closedBy: "A-3",
+    findings: ["PRM-12", "PRM-117", "RWF-060"],
+  },
+  static_require_by_text: { closedBy: "A-5", findings: ["PRM-15"] },
+  constant_folded_branch: { closedBy: "A-5", findings: ["PRM-14"] },
+};
+
 /** The structure Reachability operates over (see docs/SDD.md § 18). */
 export interface CallGraph {
   readonly nodes: readonly GraphNode[];

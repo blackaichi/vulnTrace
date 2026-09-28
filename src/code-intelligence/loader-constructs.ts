@@ -8,6 +8,7 @@ import {
   isConstDeclaration,
   resolveSingleAssignmentValue,
 } from "./local-aliases.js";
+import { invocationSiteOf } from "./invocation-sites.js";
 import type { ModuleModel } from "./module-model.js";
 import { toSourceLocation, type SourceIndex } from "./source-index.js";
 
@@ -1705,6 +1706,67 @@ export function classifyClosureWideningCall(
 }
 
 /**
+ * The closure-widening reason for a callee the language invokes WITHOUT a
+ * `CallExpression` or `NewExpression` (task A-1): a tagged template's tag,
+ * a decorator, or the `extends` expression a derived class's implicit
+ * constructor runs through `super(...args)`. `undefined` when the callee
+ * is not a loader construct.
+ *
+ * The same precedence {@link classifyClosureWideningCall} gives a call's
+ * callee, minus the forms keyed on a call's own shape: a bare `eval` or
+ * `require` first, by the same spelling that function matches, then the
+ * general {@link classifyLoaderConstruct} dispatch. There is no static
+ * `require("literal")` short-circuit, because no implicit invocation of
+ * `require` has a string literal argument.
+ *
+ * Why this exists: an implicit invocation is still an invocation of a
+ * loader. `` vm.runInThisContext`code` `` compiles and runs `code` -- the
+ * tag receives the template's strings array, which the vm coerces to the
+ * source text (verified on Node v22.11.0) -- and before task A-1 neither
+ * layer classified a tag at all. The forms that real Node rejects at the
+ * call (`` require`x` ``, a decorator whose loader receives a class) are
+ * classified too: fail closed, and no precision a real program would
+ * notice.
+ */
+export function classifyClosureWideningImplicitCallee(
+  callee: ts.Expression,
+  context: LoaderClassificationContext,
+): DynamicCallReason | undefined {
+  if (ts.isIdentifier(callee) && callee.text === "eval") {
+    return "eval";
+  }
+  if (ts.isIdentifier(callee) && callee.text === "require") {
+    return "dynamic_require";
+  }
+  return classifyLoaderConstruct(callee, context);
+}
+
+/**
+ * The closure-widening reason for one tagged template, or `undefined`
+ * (task A-1). Its tag first ({@link classifyClosureWideningImplicitCallee}),
+ * then its substitutions, each of which the tag receives as an argument
+ * -- the same order {@link classifyClosureWideningCall} checks a call's
+ * callee and then its arguments. `CallGraph` uses it for the tag's
+ * account; {@link findClosureWideningConstructs} applies the same two
+ * checks, recording each at its own position, so the two layers cannot
+ * disagree about a tagged template any more than about a call.
+ */
+export function classifyClosureWideningTaggedTemplate(
+  node: ts.TaggedTemplateExpression,
+  context: LoaderClassificationContext,
+): DynamicCallReason | undefined {
+  const tagReason = classifyClosureWideningImplicitCallee(node.tag, context);
+  if (tagReason !== undefined) {
+    return tagReason;
+  }
+  return taggedTemplateSubstitutionsOf(node).some((substitution) =>
+    isEscapingCapabilityUse(substitution, context),
+  )
+    ? "loader_capability_escape"
+    : undefined;
+}
+
+/**
  * `<ModuleCtor>.<member>` names that ARE one of the module system's own
  * mutable registries. Node's CJS loader aliases each of these under a
  * second name on `require` as well (`Module._extensions ===
@@ -2987,10 +3049,11 @@ function isModuleLoaderAssignmentMutation(
  *   the escape via its RHS (this branch) rather than a spurious mutation
  *   flag on `.exports` itself (which stays safe-listed on the target
  *   side);
- * - a tagged template's substitutions
- *   ({@link taggedTemplateSubstitutionsOf}) -- call-shaped, but neither a
+ * - a tagged template, tag and substitutions
+ *   ({@link classifyClosureWideningTaggedTemplate}, shared with
+ *   `CallGraph` since task A-1) -- call-shaped, but neither a
  *   `CallExpression` nor a `NewExpression`, so
- *   {@link classifyClosureWideningCall}'s argument check cannot see it;
+ *   {@link classifyClosureWideningCall} cannot see it;
  * - `export { localName };` (a same-file named re-export of a local
  *   capability-bound identifier; deliberately NOT `export { x } from
  *   "pkg"`, which re-exports something from elsewhere, not this file's
@@ -3049,17 +3112,41 @@ export function findClosureWideningConstructs(
         record(reason, node);
       }
     } else if (ts.isTaggedTemplateExpression(node)) {
-      // VT-307c-value-flow-closure: a tagged template hands every
-      // substitution to the tag function as an argument, but is neither
-      // a CallExpression nor a NewExpression, so
-      // `classifyClosureWideningCall`'s argument check never sees it.
-      // Closure-only, like the other non-call escape positions here --
-      // CallGraph has no edge shape for it (see this function's own doc
-      // comment).
+      // A tagged template is a call to its tag with the substitutions as
+      // arguments, but is neither a CallExpression nor a NewExpression.
+      // VT-307c-value-flow-closure checked only its substitutions here.
+      // Task A-1 adds the TAG: `` vm.runInThisContext`code` `` runs
+      // `code`, and was a family-A false NOT_AFFECTED while only the
+      // substitutions were checked. CallGraph accounts for the same site
+      // through `classifyClosureWideningTaggedTemplate`, which applies
+      // these same two checks in this order; each is recorded here at its
+      // own position (the tag at the template, a substitution at itself).
+      const tagReason = classifyClosureWideningImplicitCallee(
+        node.tag,
+        context,
+      );
+      if (tagReason !== undefined) {
+        record(tagReason, node);
+      }
       for (const substitution of taggedTemplateSubstitutionsOf(node)) {
         if (isEscapingCapabilityUse(substitution, context)) {
           record("loader_capability_escape", substitution);
         }
+      }
+    } else if (ts.isDecorator(node) && invocationSiteOf(node) !== undefined) {
+      // Task A-1: a decorator the compiled program calls (the same
+      // predicate CallGraph uses, so an erased decorator is neither a
+      // call-graph site nor a loader construct) is a call of its
+      // expression at class definition -- classified as CallGraph
+      // classifies it. No real Node loader runs anything useful when
+      // handed a class, but the two layers must not disagree about what a
+      // loader invocation is (VT-307c-fix-3).
+      const reason = classifyClosureWideningImplicitCallee(
+        node.expression,
+        context,
+      );
+      if (reason !== undefined) {
+        record(reason, node);
       }
     } else if (ts.isBinaryExpression(node)) {
       const targetReason = isModuleLoaderAssignmentMutation(node, context);

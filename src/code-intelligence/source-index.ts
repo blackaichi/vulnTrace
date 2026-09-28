@@ -259,7 +259,12 @@ function inferAssignedName(node: ts.Node): string | undefined {
   return undefined;
 }
 
-function classHasOwnConstructor(
+/**
+ * Whether a class declares its own constructor. Shared with
+ * `invocation-sites.ts`, which must agree with the implicit-constructor
+ * synthesis below on exactly which classes have one.
+ */
+export function classHasOwnConstructor(
   node: ts.ClassDeclaration | ts.ClassExpression,
 ): boolean {
   return node.members.some((member) => ts.isConstructorDeclaration(member));
@@ -277,13 +282,24 @@ function classHasOwnConstructor(
  * block an otherwise-confirmed `unreachable` conclusion elsewhere in the
  * same search (see ADV2-041, tests/adversarial-v2/).
  *
- * Synthesizing this entry is safe: its `location` (the class's own
- * name-identifier position) corresponds to no real `ConstructorDeclaration`
- * node, so `walkFile`'s traversal can never treat it as a `from` context
- * to visit further calls from -- an implicit constructor provably does
- * nothing, and this entry can never acquire outgoing edges of its own.
- * Named the same way an explicit constructor already is (see
- * {@link inferAssignedName}): the enclosing class's own name.
+ * Its `location` (the class's own name-identifier position) corresponds
+ * to no real `ConstructorDeclaration` node, so `walkFile`'s traversal
+ * never pushes it as the owner of the calls it walks. Named the same way
+ * an explicit constructor already is (see {@link inferAssignedName}): the
+ * enclosing class's own name.
+ *
+ * CORRECTED BY TASK A-1 (PRM-19). This comment used to conclude that "an
+ * implicit constructor provably does nothing, and this entry can never
+ * acquire outgoing edges of its own". For a DERIVED class that is false:
+ * its implicit constructor is `constructor(...args) { super(...args); }`,
+ * and real Node runs the base constructor for every `new Sub()`. Family C
+ * then certified the base constructor's body unreachable. The walk now
+ * gives a derived class's implicit constructor exactly one account, the
+ * edge to its base (`implicit_super`, `invocation-sites.ts`), from THIS
+ * node. Instance field initializers, which any implicit constructor also
+ * runs, are walked where they are written, under the owner of the class
+ * definition -- the pre-existing attribution (RWF-018/019), unchanged by
+ * A-1.
  */
 /**
  * Builds a {@link ClassMemberOwnership}, or `undefined` when the enclosing
