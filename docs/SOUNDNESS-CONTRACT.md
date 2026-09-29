@@ -47,10 +47,15 @@ site ([ADR 0008](adr/0008-invocation-accounting-and-resolution-authority.md)
 program may or may not perform, carrying its target) can **never** be
 part of an `AFFECTED` path, and a target reached only through `possible`
 edges is `UNKNOWN`, never `AFFECTED`. *(Project-owner decision, ADR 0008
-"Decision record — project owner, 2026-09-26", Decision 2. The `possible`
-edge kind does not exist yet: task A-2 introduces it, and this rule is
-binding on it. Until then every edge is `resolved` or `unknown`, and
-reachability follows `resolved` edges only.)*
+"Decision record — project owner, 2026-09-26", Decision 2. Task A-2
+introduced the `possible` edge kind, `CallEdgeResolution` in
+`src/domain/graph.ts`: `analyzeReachability` returns `reachable` only
+from a search over `resolved` edges alone, and a target it reaches only
+through a `possible` edge is `unknown` with a `possibleOnlyPath` witness,
+reported as `value_uncertainty` / `possible_invocation`. Owners:
+`src/analysis/reachability.affected-path.test.ts` and
+`src/analysis/verdict.possible-edge.test.ts`. No producer emits a
+`possible` edge yet; tasks A-3 and A-4 will.)*
 
 ### `NOT_AFFECTED`
 
@@ -200,7 +205,7 @@ loaded — it may well be both. It says the specific symbol is never called.
 | --- | --- |
 | `target` | `{module, export}`, restated so the evidence stands alone. |
 | `entrypointRoots` | The roots the search started from. |
-| `reachableSubgraphComplete: true` | The set of nodes reachable from the entrypoint source node over resolved edges was enumerated **to exhaustion** AND contained **no unresolved edge anywhere in it**. |
+| `reachableSubgraphComplete: true` | The set of nodes reachable from the entrypoint source node over resolved and `possible` edges was enumerated **to exhaustion** AND contained **no unresolved edge anywhere in it**, and the target was not reached through a `possible` edge. |
 
 Both halves of that last field are load-bearing, and both are captured by
 the one flag because `analyzeReachability` returns `unreachable` only when
@@ -216,8 +221,10 @@ against `reachableSubgraphComplete`. It never counts as a resolved path to
 the target (§ 1, `AFFECTED`), and it is never discarded as "not taken"
 either — an over-approximated invocation that provably cannot reach the
 target leaves family C standing, and one that might reach it withholds the
-proof. *(Decision 2, as in § 1. Introduced with the edge kind by task A-2,
-and binding on it.)*
+proof. *(Decision 2, as in § 1. Implemented by task A-2: the search's
+second phase covers the region behind the `possible` edges, and the
+VT-300 guard's traversal (`collectReachableUnknownEdges`) follows them
+too, so a widening construct behind one withdraws family B.)*
 
 **Every invocation site is accounted for.** The reachable subgraph is only
 as complete as the call graph's accounting of the sites inside it: a site

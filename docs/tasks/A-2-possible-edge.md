@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: A-2
 - **Branch**: a-2-possible-edge
 - **Base SHA**: b7c8f574739806fb3df7d67a2bbcd76e636d6bc9
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `c39def2` docs(tasks): A-2 task file — the possible edge kind
+  - `b4ab0b9` feat(A-2): the possible edge kind — domain type, reachability semantics, possible_invocation
+  - `a3e2f82` test(A-2): the possible edge — Decision 2's three halves, VT-300, verdicts, coverage, schema, differential
+  - (this commit) docs(A-2): records — contract, plan § 5a, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -231,3 +235,77 @@ Validation: exactly the five known failures of OPEN-DEBTS D-09.
 In the format of `AGENTS.md` § J. Also report, in "Anything requiring
 manual review": the `verdict.ts` deviation above, and the new optional
 `coverage.callsPossible` output field.
+
+## Corrections (2026-09-28)
+
+Appended during the task; the text above is unchanged.
+
+1. **The consumer list in "Project context" was incomplete.** It was
+   measured over `src/` and `scripts/` only. The independent audit found
+   a further consumer under `tests/`: the binding-grammar harness
+   (`tests/binding-grammar/harness.ts`, `observe()`), which read every
+   edge that was not `unknown` as `EXACT <target>`, so a resolved edge
+   downgraded to `possible` would have passed as agreeing. Re-measured
+   over `tests/` and every script: it is the only one (the other
+   `resolution.kind` hits there are module resolutions). The harness now
+   observes `POSSIBLE <target>`, and the guard makes every `POSSIBLE`
+   observation a violation no disagreements row can silence — a
+   fabrication unless it names the expected target.
+2. **"identical to the base, field by field"** (What to do 2, and the
+   acceptance criterion) holds for `analyzeReachability`'s result, apart
+   from its `coverage`: every coverage object now also carries
+   `callsPossible` (0 on a graph with no `possible` edge), so every scan's
+   JSON gains that one field. The verbatim-base test compares with the
+   current `computeCoverage` for that reason.
+
+## Outcome (2026-09-29)
+
+**Acceptance criteria**: all **yes**, with correction 2 above on "identical
+to the base".
+
+- `CallEdgeResolution` has `possible` (`src/domain/graph.ts`), documented
+  with the three producer obligations.
+- Reachability: two phases (`src/analysis/reachability.ts`). Checked on
+  hand-built graphs, against a set-based oracle over 3,000 seeded random
+  graphs (every outcome sampled more than 50 times), and byte for byte
+  against a verbatim copy of the base algorithm on 3,000 graphs without
+  `possible` edges.
+- `collectReachableUnknownEdges` follows `possible` edges; family B is
+  withdrawn by a widening construct behind one, on a real project.
+- Through the production `buildFinding`: UNKNOWN with
+  `value_uncertainty` / `possible_invocation`, never AFFECTED or
+  NOT_AFFECTED; family C kept by a clean region, withdrawn by an unknown
+  edge behind one (`src/analysis/verdict.possible-edge.test.ts`).
+- Six categories; `possible_invocation` in both schema reason enums;
+  `coverage.callsPossible` optional; the HTML report shows it.
+- The differential tool renders `~> target` and classifies site changes
+  into and out of `possible`, mixed sites included.
+- `affected-path-resolved-edges-only`: two owners, all three halves; run
+  by the Foundation gate.
+- Mutations, each caught by named tests (the task's PR lists them):
+  phase 1 following `possible` as resolved; `possible` edges never
+  followed; unknown edges behind a `possible` edge dropped; the
+  possible-only reach not reported; VT-300 skipping `possible` edges;
+  `verdict.ts` dropping `possible_invocation`; coverage ignoring
+  `possible`; `edgeTargets` ignoring `possible`. The phase-2 mutations
+  were re-run after the phase-2 rewrite.
+- Failing first: 30 of the new tests fail on the base implementation;
+  all pass on the branch.
+- Differentials (`node scripts/differential.mjs`, 139 cases): graph 0,
+  proof 0, verdict 0, none unmeasured. Expected: nothing emits a
+  `possible` edge yet, so this is not evidence of soundness (OPEN-DEBTS
+  D-12).
+- Validation: exactly the five known failures of OPEN-DEBTS D-09, each at
+  its documented verdict.
+- Independent audit: `CERTIFIED`, five non-blocking findings, all
+  addressed in this task: the binding-grammar consumer (correction 1);
+  a test for the graph mutators; phase 2 building a path per edge (now
+  parent links and one materialized witness); the differential tool's
+  mixed sites; two wording overclaims (correction 2, and a stale VT-300
+  comment in `verdict.ts`).
+
+**Deviations**: the `verdict.ts` mapping (see the premises); the
+binding-grammar harness and guard, not in ADR 0008 § 8's file list, are
+changed because they consume the edge kind.
+
+**Discovered**: none.
