@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-09-28, by `A-1`.
+**Last updated:** 2026-09-28, by `A-2`.
 
 ## Objective
 
@@ -33,6 +33,11 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   PRM-19), and found and fixed RWF-057 (a `vm` tag). The no-edge branches
   still taken without a proof are named in `UNPROVEN_NO_EDGE_LEDGER`
   (`src/domain/graph.ts`) with the task that removes each (A-3, A-5).
+  `A-2` added the `possible` edge kind (ADR 0008 § 1): reachability
+  searches the code behind one, never reports an `AFFECTED` path through
+  one, and answers `UNKNOWN` (`possible_invocation`) for a target reached
+  only through one. No producer emits one yet; what binds A-3's and A-4's
+  producers is in REMEDIATION-PLAN § 5a, "A-2 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -63,22 +68,22 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`A-1` — `InvocationAccount`, syntax-kind census, handler table; tagged
-templates, decorators, implicit `super`
-([task file](tasks/A-1-invocation-account.md)): `READY_FOR_REVIEW`, its
-pull request awaiting the project owner. `BL-029` merged as PR #77.
+`A-2` — the `possible` edge kind: domain type, reachability semantics,
+`value_uncertainty` subtype ([task file](tasks/A-2-possible-edge.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `A-1`
+merged as PR #78.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-1`:
-`A-2`, the `possible` edge kind, bound by the rule `A-1` wrote into
-[`SOUNDNESS-CONTRACT.md`](SOUNDNESS-CONTRACT.md) § 1 and § 3 and by the
-`affected-path-resolved-edges-only` invariant, whose owner test it must
-extend.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-2`:
+`A-3` (escaped function values, own-export calls, the invoking and
+non-invoking allowlists, JSX, hook assignments), the first producer of
+`possible` edges, bound by REMEDIATION-PLAN § 5a's A-0, A-1 and A-2
+additions.
 
 ## Recently discovered
 
-From `A-1`: `BL-037` (**P1**, RWF-061: a `vm.Script` reached through a
+From `A-2`: none. From `A-1`: `BL-037` (**P1**, RWF-061: a `vm.Script` reached through a
 subclass or factory is a family-A false `NOT_AFFECTED`), `BL-038` (**P1**,
 RWF-062: `new A()` resolves to a constructor overload signature), RWF-060 (**P1**,
 an implicit constructor forwarding a callback into an ambient or builtin

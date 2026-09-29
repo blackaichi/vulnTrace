@@ -569,6 +569,39 @@ update).
       Reflect.construct(A, []); `` is `UNKNOWN` or `AFFECTED`, never
       `NOT_AFFECTED` (FINDINGS.md, PRM-37's A-1 status update).
 
+#### A-2 additions to lane-A acceptance
+
+Added by task A-2 (2026-09-28), which introduced the `possible` edge
+kind with no producer. Its semantics are enforced where the edge is
+consumed (`src/analysis/reachability.ts`; the owners of
+`affected-path-resolved-edges-only`). What a PRODUCER must guarantee
+cannot be checked there, so it binds the tasks that emit one
+(`CallEdgeResolution`'s documentation in `src/domain/graph.ts` states the
+same three rules).
+
+**A-3** and **A-4** each also accept only when:
+
+- [ ] Every `possible` edge they emit points at a node whose file the
+      graph WALKS, exactly as for a resolved edge. Reachability reads a
+      node with no outgoing edges as "searched, calls nothing", so a
+      `possible` edge into an unwalked body would make an unsearched
+      region look complete — a false family C. A test over the corpora
+      and the task's reproductions asserts, for every emitted `possible`
+      edge, that its target is a node of the graph and that its file was
+      walked.
+- [ ] A `possible` edge is emitted only for an over-approximation ADR 0008
+      § 2 names, to an attributable target. An unattributable value gets
+      an `unknown` edge (§ 3), and a call the language guarantees gets a
+      resolved edge with its authority (§ 4), never a `possible` one.
+- [ ] At least one reproduction per emitted site kind reaches the
+      production `buildFinding` on a real project through an emitted (not
+      injected) `possible` edge and is `UNKNOWN` with
+      `value_uncertainty` / `possible_invocation`, extending
+      `src/analysis/verdict.possible-edge.test.ts`.
+- [ ] The graph differential reports the emitted edges in the
+      differential tool's `withdrawn to possible` / `unknown to possible`
+      classes, case by case.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

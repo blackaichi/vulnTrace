@@ -37,13 +37,13 @@
   },
   "fullSuite": {
     "command": "npm test",
-    "commit": "bl-029-differential-tool (base a42ce00)",
-    "measuredAt": "2026-09-28",
+    "commit": "a-2-possible-edge (base b7c8f57)",
+    "measuredAt": "2026-09-29",
     "deterministic": true,
     "status": "PASS",
-    "files": 191,
-    "tests": 4563,
-    "durationSeconds": 285.1
+    "files": 198,
+    "tests": 4830,
+    "durationSeconds": 319.26
   },
   "adversarial": {
     "command": "npm run test:adversarial",
