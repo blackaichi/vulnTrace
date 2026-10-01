@@ -9,8 +9,10 @@
  *
  * What it enumerates is listed below and in the generated file's header.
  * `tests/oracle/builtin-admission.test.ts` checks that every entry exists,
- * as a function, in the Node the suite runs on. Which of these a call may
- * use to skip an edge, and how, is `builtin-callables.ts`'s -- this file
+ * as a function, in the Node the suite runs on, or is a version-dependent
+ * key recorded in `builtin-callables.ts`
+ * (`VERSION_DEPENDENT_BUILTIN_CALLABLES`). Which of these a call may use
+ * to skip an edge, and how, is `builtin-callables.ts`'s -- this file
  * only produces the data.
  */
 import { writeFileSync } from "node:fs";
@@ -123,7 +125,8 @@ const lines = [
   " * by `scripts/generate-builtin-callables.mjs` (do not edit by hand).",
   " * `builtin-callables.ts` owns what the table MEANS; this module is only",
   " * the data. `tests/oracle/builtin-admission.test.ts` checks that every",
-  " * entry exists, as a function, in the real Node the suite runs on.",
+  " * entry exists, as a function, in the real Node the suite runs on, or",
+  " * is listed in `VERSION_DEPENDENT_BUILTIN_CALLABLES` there.",
   " *",
   " * Key forms: `global:<path>` for an ambient global (`global:setTimeout`,",
   " * `global:Array.isArray`, `global:process.nextTick`) and",

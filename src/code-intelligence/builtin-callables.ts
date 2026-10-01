@@ -59,6 +59,64 @@ export function isKnownBuiltinCallable(key: string): boolean {
 }
 
 /**
+ * The known builtin callables that are NOT in every Node.js this project
+ * supports (`engines.node` `>=20`; CI runs Node 20 and 26), each with what
+ * was measured: which CI Node lacks it (PR #80's first CI run). The table
+ * is enumerated from one Node (see the data file's header), so a key can
+ * be newer or older than the Node a target runs on.
+ *
+ * Keeping such a key is sound: membership grants nothing by itself.
+ * Authority comes only from {@link BUILTIN_BEHAVIOUR} and
+ * {@link RETURNS_PRIMITIVE}, and no key here may carry either (checked by
+ * the admission test). On a Node without the member, a call to it either
+ * throws -- no edge -- or reaches a function the program put there, which
+ * is the same overwritten-builtin case the escape row already accounts
+ * for on a Node that has the member (an escaping assignment, or the
+ * function escaping into the builtin that stored it).
+ *
+ * `tests/oracle/builtin-admission.test.ts` fails on any key missing from
+ * the Node it runs on that is not listed here.
+ */
+export const VERSION_DEPENDENT_BUILTIN_CALLABLES: Readonly<
+  Record<string, string>
+> = {
+  "global:Array.fromAsync": "absent in Node 20",
+  "global:JSON.isRawJSON": "absent in Node 20",
+  "global:JSON.rawJSON": "absent in Node 20",
+  "global:Object.groupBy": "absent in Node 20",
+  "global:Promise.withResolvers": "absent in Node 20",
+  "module:fs:glob": "absent in Node 20",
+  "module:fs:globSync": "absent in Node 20",
+  "module:fs:promises.glob": "absent in Node 20",
+  "module:http:CloseEvent": "absent in Node 20",
+  "module:http:MessageEvent": "absent in Node 20",
+  "module:http:WebSocket": "absent in Node 20",
+  "module:util:getCallSite": "absent in Node 20 and Node 26",
+  "global:process.assert": "absent in Node 26",
+  "module:assert:CallTracker": "absent in Node 26",
+  "module:buffer:SlowBuffer": "absent in Node 26",
+  "module:timers:active": "absent in Node 26",
+  "module:timers:enroll": "absent in Node 26",
+  "module:timers:unenroll": "absent in Node 26",
+  "module:tls:createSecurePair": "absent in Node 26",
+  "module:util:isBoolean": "absent in Node 26",
+  "module:util:isBuffer": "absent in Node 26",
+  "module:util:isDate": "absent in Node 26",
+  "module:util:isError": "absent in Node 26",
+  "module:util:isFunction": "absent in Node 26",
+  "module:util:isNull": "absent in Node 26",
+  "module:util:isNullOrUndefined": "absent in Node 26",
+  "module:util:isNumber": "absent in Node 26",
+  "module:util:isObject": "absent in Node 26",
+  "module:util:isPrimitive": "absent in Node 26",
+  "module:util:isRegExp": "absent in Node 26",
+  "module:util:isString": "absent in Node 26",
+  "module:util:isSymbol": "absent in Node 26",
+  "module:util:isUndefined": "absent in Node 26",
+  "module:util:log": "absent in Node 26",
+};
+
+/**
  * Excluded from admission BY NAME, whatever a probe shows (ADR 0008
  * Amendment A-0 part A): `new Proxy` and `Proxy.revocable` retain their
  * handler, whose traps run on every later operation on the proxy, which
