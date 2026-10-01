@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
 import {
   ALL_BUILTIN_ARG_KINDS,
+  callExpressionAt,
   probeBuiltinArgKind,
   probeBuiltinInvocation,
+  probePosition,
+  probeRetention,
+  type BuiltinCallShape,
 } from "../../src/testing/oracle/builtin-probe.js";
 
 /**
@@ -84,6 +88,73 @@ describe("probeBuiltinInvocation: detects every listed real-Node invocation surf
   it("rejects a callTemplate missing the __ARG__ placeholder", () => {
     expect(() => probeBuiltinArgKind("Math.max(1)", "valueOf")).toThrow(
       /__ARG__/,
+    );
+  });
+});
+
+/**
+ * Task A-3a: what the allowlist admission ruling (ADR 0008, 2026-09-27)
+ * requires of the probe itself.
+ */
+describe("the probe reports a throw apart from a hook, and sees deferred hooks (task A-3a)", () => {
+  it("a builtin that throws with no hook firing reports `threw`, not a hook", () => {
+    // JSON.parse coerces a function argument with the builtin
+    // Function.prototype.toString (no user hook) and throws on the text.
+    const result = probeBuiltinArgKind("JSON.parse(__ARG__)", "function");
+    expect(result.fired).toEqual([]);
+    expect(result.ranUserCode).toBe(false);
+    expect(result.threw).toMatch(/JSON/);
+  });
+
+  it("a hook that fires before the builtin throws is still a hook, and the throw is still reported", () => {
+    const result = probeBuiltinArgKind("JSON.parse(__ARG__)", "toString");
+    expect(result.fired).toEqual(["toString"]);
+    expect(result.threw).toBeDefined();
+  });
+
+  it("a hook the builtin schedules for later (a thenable's `then`) is observed", () => {
+    const result = probeBuiltinArgKind("Promise.resolve(__ARG__)", "then");
+    expect(result.fired).toContain("then");
+  });
+});
+
+describe("probePosition and probeRetention (task A-3a)", () => {
+  const isArray: BuiltinCallShape = {
+    setup: "",
+    callee: "Array.isArray",
+    form: "call",
+    arity: 1,
+  };
+  const freeze: BuiltinCallShape = {
+    setup: "",
+    callee: "Object.freeze",
+    form: "call",
+    arity: 1,
+  };
+
+  it("probes one position with a filler at every other position", async () => {
+    const result = await probePosition(
+      { setup: "", callee: "Object.is", form: "call", arity: 2 },
+      1,
+      "valueOf",
+      "{}",
+    );
+    expect(result.fired).toEqual([]);
+    expect(callExpressionAt(freeze, 0, "__arg", `"x"`)).toBe(
+      "Object.freeze(__arg)",
+    );
+  });
+
+  it("a builtin returning its argument retains it (operations on the result run its getter)", async () => {
+    const retention = await probeRetention(freeze, 0, "getter", `"x"`);
+    expect(retention.onResult).toContain("getter");
+  });
+
+  it("a builtin returning a boolean retains nothing, and leaves the argument as it was", async () => {
+    const retention = await probeRetention(isArray, 0, "getter", `"x"`);
+    expect(retention.onResult).toEqual([]);
+    expect(retention.onArgumentAfterCall).toEqual(
+      retention.onArgumentWithoutCall,
     );
   });
 });
