@@ -232,14 +232,16 @@ touches resolution semantics); the closure's whole-file widening scan
 
 ### D-09 — Known validation failures
 
-Five of the 17 real-world cases are kept **deliberately failing**, because
+Six of the 17 real-world cases are kept **deliberately failing**, because
 a disagreement with an independently-researched oracle is recorded rather
-than fixed away or re-scoped to match the tool.
+than fixed away or re-scoped to match the tool. (Five until task A-3a,
+which added `RWB-07`; see its row.)
 
 | Case | Expected | Actual | Cause |
 | --- | --- | --- | --- |
 | `RWB-03` | `AFFECTED` | `UNKNOWN` | RWF-006 — a webpack-bundled, getter-defined class export is not recognised as constructible/method-bearing. |
 | `RWB-05` | `NOT_AFFECTED` | `UNKNOWN` | **D-06 (RWF-002)**. The target now resolves exactly; what blocks the proof is unresolved edges elsewhere in `qs`'s own real dependencies. |
+| `RWB-07` | `NOT_AFFECTED` | `UNKNOWN` | **Task A-3a's fail-closed default, a sound precision cost.** `loadModernConfig(text)`, an exported function, hands its parameter to `JSON.parse`, whose first position coerces an object through `toString` / `Symbol.toPrimitive`: protocol hooks no position admission can cover before task A-4 accounts protocol members (ADR 0008's allowlist admission ruling, condition (b)). REMEDIATION-PLAN § 5a anticipated it; A-4 must re-admit the position ("A-3a additions"). |
 | `RWB-09b` | `NOT_AFFECTED` | `NO_FINDING` | **A benchmark oracle-design limitation, not an analyzer defect.** The correct result really is no finding at all — the instance is confidently outside every affected range — and the case format has no way to express that as an expected outcome. |
 | `VAL-002` | `AFFECTED` | `UNKNOWN` | RWF-001 — a UMD `module.exports` assignment via a locally-aliased variable is invisible to export detection. |
 | `VAL-003` | `NOT_AFFECTED` | `UNKNOWN` | RWF-001, the same gap in the other direction — which is the point: it degrades precision **both** ways and never produces a false answer. |
@@ -780,6 +782,30 @@ without a proof are now named in code (`UNPROVEN_NO_EDGE_LEDGER`,
 `AUD-02`, `PRM-12`, `PRM-14`, `PRM-15`, `PRM-117`, `RWF-060`) and the
 lane-A task
 that removes it. This entry still stands.
+
+**Progress, added by task `A-3a` (2026-10-01).** Task A-3a
+(`docs/tasks/A-3a-escaped-values.md`; backlog `A-3` split into A-3a and
+A-3b by the project owner) fixed `AUD-01`, `PRM-12`, `PRM-114`,
+`PRM-117` and `RWF-060`: ADR 0008 § 2's escape row, § 3's fail-closed
+default and § 4's documented invoking builtins, with the non-invoking
+allowlist admitted mechanically by a real-Node test run in CI. 26 new
+real-Node reproductions fail on the base; the A-0 records for `S1`, the
+enumerable descriptor and `S3` are closed. Two unproven no-edge reasons
+are gone (`builtin_module_callee`, and `ambient_global_callee` for every
+root but the CommonJS module-scope bindings, now `module_scope_callee`,
+task A-3b); the builtin no-edge accounts are backed by proofs. It found
+`RWF-063` (a builtin object monkeypatched through a parameter or a
+container, predating it; the `const`-alias form fixed here, the rest
+backlog `BL-039`) and `RWF-064` (the builtin probe could not see a
+deferred hook; fixed in part: a hook only a structured argument reaches
+is still beyond it, so admission also rests on reading the
+implementation). Its independent audit blocked the first version on four
+findings (builtin names outside the escape row's list, operator operands
+given resolved edges, a destructured builtin name, an admitted position
+with a structured-argument path), all fixed in the same task. Its
+precision cost before A-4 is measured in its
+report: one validation case, `RWB-07`, `NOT_AFFECTED` → `UNKNOWN` (D-09).
+This entry still stands.
 
 ## 2. Target intelligence is not analyzer uncertainty
 

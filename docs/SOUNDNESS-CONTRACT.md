@@ -54,8 +54,9 @@ from a search over `resolved` edges alone, and a target it reaches only
 through a `possible` edge is `unknown` with a `possibleOnlyPath` witness,
 reported as `value_uncertainty` / `possible_invocation`. Owners:
 `src/analysis/reachability.affected-path.test.ts` and
-`src/analysis/verdict.possible-edge.test.ts`. No producer emits a
-`possible` edge yet; tasks A-3 and A-4 will.)*
+`src/analysis/verdict.possible-edge.test.ts`. Task A-3a is the first
+producer: a function value escaping into code the graph does not model,
+ADR 0008 § 2's escape row; A-3b and A-4 add theirs.)*
 
 ### `NOT_AFFECTED`
 

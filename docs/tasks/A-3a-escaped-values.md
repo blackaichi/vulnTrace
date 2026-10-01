@@ -2,11 +2,16 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: A-3a
 - **Branch**: a-3a-escaped-values
 - **Base SHA**: 51c980c766a5976e8936a645f0c79228d2d10d38
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `862c51d` docs(tasks): A-3a task file — escaped function values, builtin admission, hook assignments
+  - `6bdb2e6` test(A-3a): real-Node reproductions — escaped values, invoking builtins, hook assignments, RWF-060
+  - `b0b8f31` test(A-3a): mechanical admission — the builtin probe, the builtin table, the admission test
+  - `3de78b0` fix(A-3a): escape row, builtin accounts, hook assignments, RWF-060, Reflect.construct
+  - (this commit) docs(A-3a): records — findings, debts, plan § 5a, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -300,3 +305,96 @@ In the format of `AGENTS.md` § J. Also report: the admission table
 (every candidate, its positions, the hooks that fired, admitted or not
 and why); the precision cost and what A-4 can recover; the plan
 statement on CI that no longer holds; the PRM-114 scope move.
+
+## Corrections (2026-10-01)
+
+Appended during the task; the text above is unchanged.
+
+1. **"Findings closed: AUD-01 (except the shapes A-4 owns: iterators and
+   `toJSON`)".** Inexact. The iterator and `toJSON` shapes are separate
+   round-2 items ADR 0008 § 8 gives A-4, not AUD-01 variants; AUD-01's
+   own record (callbacks to ambient builtins, the descriptor getter and
+   the Proxy traps A-0 appended) is closed in full.
+2. **"`ambient_global_callee` is narrowed".** It was narrowed and RENAMED
+   `module_scope_callee`, since what remains is not about ambient
+   globals.
+3. **The builtin table is rooted in `AMBIENT_GLOBAL_NAMES` only**, not in
+   every global Node supplies: the first version also listed `URL`,
+   `atob`, `TextEncoder` and seven more, whose writes the escape row did
+   not see (the first independent audit; see FINDINGS RWF-063).
+4. **`require("<builtin>").member(...)` is NOT identified as the
+   builtin** (What to do 4 named it as an authority): trusting it turned
+   base `UNKNOWN`s into false `NOT_AFFECTED`s through monkeypatch forms
+   RWF-063 leaves open (the second independent audit).
+5. **Additions not in "What to do"**, each required to make a criterion
+   hold: `RETURNS_PRIMITIVE` (builtins whose result is always primitive,
+   checked against real Node -- precision of the fail-closed default);
+   the post-walk withdrawal of a `possible` edge into an unwalked file and
+   the `onCallGraph` seam's `walkedFiles`, so the A-2 obligation holds by
+   construction and is checked over the corpora;
+   `scripts/generate-builtin-callables.mjs`.
+6. **Admissions withdrawn after measurement or audit:** `fs.readFileSync`
+   and `clearImmediate` (probe), `fs.existsSync`, `clearTimeout`,
+   `clearInterval` (structured arguments the probe cannot build; RWF-064
+   is therefore fixed in part).
+7. **Test fixtures edited.** Two unit fixtures replace an unrelated
+   builtin call with an equivalent template literal on the same line
+   (`String(fn)`, `console.log(..., module.exports)`), so the controls
+   that use them keep testing their own mechanism; one A-1 oracle case
+   hands `String.raw` a primitive (`"" + …`); the RWF-047 widening suite
+   observes the probed call's own edge. Each is explained where it is
+   made.
+8. **The oracle suite's exit code.** With every test passing, the A-3a
+   oracle suite first exited 1 on vitest's `Timeout calling
+   "onTaskUpdate"` (3 runs of 3; the base suite ran clean 2 of 2). The
+   cause was load: the admission test ran up to 44 real-Node probes at
+   once. On the project owner's instruction the admission test was split
+   (`builtin-admission.test.ts`, `.globals.test.ts`, `.modules.test.ts`),
+   and so were the reproductions (`a3a-escaped-values.test.ts`,
+   `.audit.test.ts`); what removed the error was capping the probes at
+   four concurrent processes (clean 3 runs of 3). Recorded on backlog
+   BL-033.
+
+## Outcome (2026-10-01)
+
+**Acceptance criteria**: all **yes**.
+
+- Reproductions: 46 real-Node cases (`tests/oracle/a3a-escaped-values.test.ts`);
+  26 of the first 28 fail on the base; of the 18 added from the
+  independent audit, 16 fail on the commit they were found on and two
+  are open-defect records owned by PRM-13 (VT-213, task A-5), the correct
+  verdict left standing (with the parameter named `setTimeout`, three in
+  all).
+- A-0 records `S1.*`, `S2.defineProperty-enumerable.*`, `S3.*` deleted,
+  asserting `UNKNOWN`; `S4.*` stay `NOT_AFFECTED`; `S2.defineProperty.*`
+  are `UNKNOWN`; `S2.literal.*` stay `AFFECTED`.
+- Mechanical admission: `tests/oracle/builtin-admission.test.ts`, run in
+  CI. Admitted: `Array.isArray`, `Object.is` (both), `Number.isInteger` /
+  `isFinite` / `isNaN` / `isSafeInteger`, `Object.keys`,
+  `Object.getOwnPropertyNames`, `Buffer.isBuffer`, the `path` functions.
+  Not admitted, with the hooks that fired: `console.log`, `util.inspect`,
+  `util.format` (`util.inspect.custom`); `JSON.stringify` (getter,
+  `toJSON`); `Object.assign`, `Object.entries` (getter; retaining);
+  `JSON.parse` #0 (`toString`, `Symbol.toPrimitive` -- protocol hooks,
+  condition (b) cannot pass before A-4) and #1 (calls its function);
+  `fs.readFileSync`, `clearImmediate`, `fs.existsSync`, `clearTimeout`,
+  `clearInterval` (Corrections 6). `new Proxy` / `Proxy.revocable` are
+  excluded by name.
+- Proofs: `primitive_only_arguments` and `non_invoking_builtin`, each
+  with owner tests in `src/code-intelligence/call-graph.escape-row.test.ts`;
+  `builtin_module_callee` deleted; `module_scope_callee` (AUD-02) left to
+  A-3b.
+- A-2 obligations: enforced after the walk and asserted over all three
+  corpora and every oracle case; one production-`buildFinding`
+  reproduction per emitting site kind
+  (`src/analysis/verdict.possible-edge.test.ts`).
+- Mutations: 19, each caught by a named test (the report lists them).
+- Differentials (139 cases): graph 21 cases changed, +401/−0 sites, none
+  re-resolved; proof 2 findings; verdict 1 (`RWB-07` `NOT_AFFECTED` →
+  `UNKNOWN`, the anticipated cost), none into `NOT_AFFECTED`.
+- Validation: six known failures (OPEN-DEBTS D-09), `RWB-07` added.
+- Independent audit: `BLOCKED` three times (all findings in scope, fixed
+  and reproduced), then `CERTIFIED`.
+
+**Discovered**: RWF-063 (backlog `BL-039`, P1), RWF-064 (fixed in part),
+PRM-13's false-`AFFECTED` direction (appended there).

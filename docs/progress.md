@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-09-28, by `A-2`.
+**Last updated:** 2026-10-01, by `A-3a`.
 
 ## Objective
 
@@ -36,8 +36,15 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   `A-2` added the `possible` edge kind (ADR 0008 § 1): reachability
   searches the code behind one, never reports an `AFFECTED` path through
   one, and answers `UNKNOWN` (`possible_invocation`) for a target reached
-  only through one. No producer emits one yet; what binds A-3's and A-4's
-  producers is in REMEDIATION-PLAN § 5a, "A-2 additions".
+  only through one. `A-3a` (the first half of `A-3`, split by the project
+  owner) is its first producer: ADR 0008 § 2's escape row, § 3's
+  fail-closed default and § 4's documented invoking builtins. A builtin is
+  identified by binding, never by spelling, and accounted by a table
+  (`src/code-intelligence/builtin-callables.ts`) whose non-invoking
+  positions are admitted mechanically by a real-Node test run in CI
+  (`tests/oracle/builtin-admission.test.ts`); assignments into builtin
+  values are escapes. Fixed AUD-01, PRM-12, PRM-114, PRM-117, RWF-060. What
+  binds A-3b and A-4 next: REMEDIATION-PLAN § 5a, "A-3a additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -51,7 +58,7 @@ dropped finding. The README says this (`README.md:80-88`, since
 `tests/validation/FINDINGS.md` RWF-053 — an earlier version of this line
 said the notice did not exist, which was false).
 `npm run test:validation` is hermetic since `D-03` (replays a recorded
-OSV snapshot) but is still not run in CI: five of its cases are
+OSV snapshot) but is still not run in CI: six of its cases are
 deliberately kept failing (OPEN-DEBTS D-09) and the suite exits non-zero
 by design regardless of network access (backlog `BL-030`).
 
@@ -68,22 +75,28 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`A-2` — the `possible` edge kind: domain type, reachability semantics,
-`value_uncertainty` subtype ([task file](tasks/A-2-possible-edge.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `A-1`
-merged as PR #78.
+`A-3a` — escaped function values; invoking and non-invoking builtins with
+mechanical admission; global hook assignments
+([task file](tasks/A-3a-escaped-values.md)): `READY_FOR_REVIEW`, its pull
+request awaiting the project owner. `A-2` merged as PR #79.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-2`:
-`A-3` (escaped function values, own-export calls, the invoking and
-non-invoking allowlists, JSX, hook assignments), the first producer of
-`possible` edges, bound by REMEDIATION-PLAN § 5a's A-0, A-1 and A-2
-additions.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-3a`:
+`A-3b` (own-export calls, JSX). A-4 (protocol members, accessors) is the
+task that recovers A-3a's precision cost: it must re-admit the builtin
+positions that fire only protocol hooks (`JSON.parse`, `String`, `Math`,
+`new Error`, …; RWB-07), REMEDIATION-PLAN § 5a "A-3a additions" — a
+change of order (A-4 before A-3b) is worth the project owner's
+consideration.
 
 ## Recently discovered
 
-From `A-2`: none. From `A-1`: `BL-037` (**P1**, RWF-061: a `vm.Script` reached through a
+From `A-3a`: `BL-039` (**P1**, RWF-063: a builtin object monkeypatched
+through a parameter, container or destructuring of the global object
+keeps the table's no-edge proof), RWF-064 (the builtin probe; fixed in
+part), and PRM-13's false-`AFFECTED` direction (VT-213, task A-5). From
+`A-2`: none. From `A-1`: `BL-037` (**P1**, RWF-061: a `vm.Script` reached through a
 subclass or factory is a family-A false `NOT_AFFECTED`), `BL-038` (**P1**,
 RWF-062: `new A()` resolves to a constructor overload signature), RWF-060 (**P1**,
 an implicit constructor forwarding a callback into an ambient or builtin

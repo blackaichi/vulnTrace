@@ -602,6 +602,48 @@ same three rules).
       differential tool's `withdrawn to possible` / `unknown to possible`
       classes, case by case.
 
+#### A-3a additions to lane-A acceptance
+
+Added by task A-3a (2026-10-01). The criteria above are unchanged; this
+records how `A-3` was split, one statement above that no longer holds,
+and what A-3a's outcome binds on the tasks after it.
+
+**The split.** The project owner split backlog row `A-3` on 2026-09-30
+into **A-3a** (escaped function values, the invoking and non-invoking
+builtins with mechanical admission, global hook assignments, the "A-1
+additions") and **A-3b** (own-export calls AUD-02, JSX PRM-116). Every
+"A-3" criterion above applies to the half that owns its subject; the
+"A-2 additions" apply to each half for the `possible` edges it emits.
+
+**A statement above that no longer holds.** "CI does not run the probe
+today" was true when measured (2026-09-27). Since task
+RWF-051-typecheck, `.github/workflows/ci.yml` runs `npm run test:oracle`,
+whose suite is `tests/oracle/**`; A-3a's admission test
+(`tests/oracle/builtin-admission.test.ts`) runs there, and the CI
+configuration was not changed.
+
+**A-4** also accepts only when:
+
+- [ ] Every argument position A-3a could not admit BECAUSE a protocol
+      hook fires there (condition (b) cannot pass before protocol
+      members are accounted) is re-probed and, where the admission test
+      now passes, admitted: at least `JSON.parse`'s first position
+      (RWB-07's `NOT_AFFECTED`, lost by A-3a), `String`, `Number`,
+      `parseInt`, `parseFloat`, `encodeURIComponent`, the `Math`
+      functions, `new Error` / `new Date`'s first positions, and the
+      builtin constructors commonly subclassed with no constructor
+      (`Error`, `events`' `EventEmitter`), whose forwarded arguments A-3a
+      accounts with an unknown edge at the implicit constructor. The
+      report lists each position with its hooks and oracle cases, and
+      each verdict it restores.
+
+**A-3b** also accepts only when:
+
+- [ ] `module_scope_callee` (the last unproven reason A-3a left on the
+      builtin side: a call rooted in `module`, `exports`, `require`,
+      `__dirname`, `__filename`) is removed or its remainder is named in
+      `UNPROVEN_NO_EDGE_LEDGER` with the findings it carries.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None
