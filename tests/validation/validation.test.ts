@@ -11,6 +11,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 import { runScanCommand } from "../../src/cli/scan.js";
+import { possibleEdgeProblems } from "../../src/testing/possible-edge-obligation.js";
 import { validateScanOutput } from "../../src/cli/output.js";
 import { SnapshotOsvProvider } from "../../src/testing/snapshot-osv-provider.js";
 
@@ -173,13 +174,22 @@ describe("VulnTrace real-world CVE validation suite", () => {
       // configPathOverride both point at the TEMP copy (VT-302), never the
       // original fixture under tests/validation/fixtures/ -- see this
       // file's header comment for why scanning in place is unsafe.
+      let edgeProblems: string[] = [];
       const exitCode = await runScanCommand({
         projectPathArg: fixtureDir,
         configPathOverride: path.join(fixtureDir, "vulntrace.yml"),
         noCache: true,
         provider: new SnapshotOsvProvider(),
         io,
+        // Task A-3a: A-2's producer obligation, over this corpus.
+        onCallGraph: (observed) => {
+          edgeProblems = possibleEdgeProblems(observed);
+        },
       });
+      expect(
+        edgeProblems,
+        "every possible edge points into a walked file (REMEDIATION-PLAN § 5a, A-2 additions)",
+      ).toEqual([]);
 
       let actual = "NO_OUTPUT";
       let schemaIssues: unknown[] = [];

@@ -224,7 +224,12 @@ export const TAGGED_TEMPLATES: readonly A1Case[] = [
       language: "js",
       expected: "AFFECTED",
     },
-    (fn) => `String.raw\`a\${lib.${fn}("x")}\`;\n`,
+    // Task A-3a: the substitution hands String.raw a primitive (`"" + …`).
+    // Handed the call's result itself, String.raw -- which coerces a
+    // substitution with `toString`, a protocol hook no position admission
+    // covers before task A-4 -- is the fail-closed default, and the
+    // negative control (the hook calling `safe`) would be UNKNOWN too.
+    (fn) => `String.raw\`a\${"" + lib.${fn}("x")}\`;\n`,
   ),
   {
     id: "tagged-template.unattributable-tag",

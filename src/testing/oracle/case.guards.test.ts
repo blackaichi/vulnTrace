@@ -42,6 +42,7 @@ describe("OracleVariantResult: ground truth cannot be omitted (compile-time)", (
         output: undefined,
         findings: [],
         unreportedCandidates: [],
+        possibleEdgeProblems: [],
       },
     };
     expect(incomplete).toBeDefined();

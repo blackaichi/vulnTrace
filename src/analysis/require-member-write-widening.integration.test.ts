@@ -138,8 +138,22 @@ async function observeProbe(
   if (!probe) {
     return { observation: { kind: "no-probe" }, file };
   }
+  // The PROBED call is the `….run()` on the last line that has one (a
+  // source with none -- the loud-fixture check -- probes every edge). Since
+  // task A-3a a write through a builtin in `probe()` is a site of its own
+  // (`Object.defineProperty(mod, …)` hands `mod` and `patched` to a
+  // builtin: an unknown and a possible edge), so the row observes the
+  // probed call's edge, not every edge `probe()` has.
+  const probedLine = source
+    .split("\n")
+    .map((line, index) => (/\.run\(\)/.test(line) ? index + 1 : 0))
+    .filter((line) => line > 0)
+    .at(-1);
   const edges = graph.edges.filter(
-    (e) => e.from === probe.id && e.type !== "module_load",
+    (e) =>
+      e.from === probe.id &&
+      e.type !== "module_load" &&
+      (probedLine === undefined || e.location?.line === probedLine),
   );
   const [edge] = edges;
   if (!edge) {

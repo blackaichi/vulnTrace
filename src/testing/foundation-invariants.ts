@@ -375,8 +375,10 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
     id: "VT-INV-A1-invocation-accounting",
     invariant:
       "Every site of the kinds the census marks `site` (calls, `new`, " +
-      "tagged templates, decorators, implicit `super`) in a walked file " +
-      "yields an account: edges, or a no-edge account. Every ts.SyntaxKind " +
+      "tagged templates, decorators, implicit `super`, assignments into " +
+      "an ambient or builtin value) in a walked file yields an account: " +
+      "edges, a no-edge account backed by a proof from ADR 0008 § 2's " +
+      "closed set, or an unproven no-edge account. Every ts.SyntaxKind " +
       "is classified, and every invocation-capable kind that is not yet " +
       "accounted (`pending`), like every no-edge account given without a " +
       "proof, names the open findings and lane-A task that own it.",
@@ -385,6 +387,7 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "src/code-intelligence/invocation-sites.census.test.ts",
       "src/code-intelligence/invocation-sites.site-coverage.test.ts",
       "src/code-intelligence/call-graph.invocation-account.test.ts",
+      "src/code-intelligence/call-graph.escape-row.test.ts",
     ],
     note:
       "Task A-1. The census owns the classification of every syntax kind " +
@@ -394,8 +397,34 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "what the three A-1 sites (tagged templates, decorators, implicit " +
       "`super`) are accounted as, and the unproven no-edge ledger: one " +
       "producing program per reason, every named finding still open. " +
-      "Pending kinds (JSX, protocol members, accessors, hook assignments) " +
-      "are open defects of A-3/A-4, named in the census.",
+      "Task A-3a added the two builtin no-edge proofs " +
+      "(`primitive_only_arguments`, `non_invoking_builtin`), owned by the " +
+      "escape-row test with a named test for each rule a mutation could " +
+      "remove (lexical identity, the name exclusion of `new Proxy`, the " +
+      "escape row's precedence, the fail-closed default); which positions " +
+      "are admitted is decided MECHANICALLY by " +
+      "`tests/oracle/builtin-admission.test.ts`, run in CI by " +
+      "`npm run test:oracle` (it spawns real Node, so it is not a " +
+      "Foundation-gate owner). Pending kinds (JSX, protocol members, " +
+      "accessors) are open defects of A-3b/A-4, named in the census.",
+  },
+  {
+    id: "possible-edge-into-walked-file",
+    invariant:
+      "Every `possible` edge the call graph emits points at a node of the " +
+      "graph in a file the walk walked; one that would not is withdrawn to " +
+      "an unknown edge naming its target.",
+    foundation: "ADR-0008",
+    owners: ["src/code-intelligence/call-graph.escape-row.test.ts"],
+    note:
+      "REMEDIATION-PLAN § 5a, 'A-2 additions', obligation 1; task A-3a, " +
+      "the first producer. Enforced after the walk in `buildCallGraph` " +
+      "(a resource limit can stop the walk after a file was discovered), " +
+      "owned by the escape-row test (the withdrawal under a node limit, " +
+      "and the checker `src/testing/possible-edge-obligation.ts`), and " +
+      "asserted over the three corpora by the adversarial and validation " +
+      "suites and over every oracle case by the harness, through " +
+      "`runScanCommand`'s `onCallGraph` seam.",
   },
   {
     id: "affected-path-resolved-edges-only",

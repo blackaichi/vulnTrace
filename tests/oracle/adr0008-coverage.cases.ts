@@ -99,6 +99,18 @@ export interface Scenario {
    */
   readonly probeExpect:
     { readonly kind: BuiltinArgKind; readonly fires: string } | "none";
+  /**
+   * How the negative control is derived (task A-3a). The default,
+   * `hook-calls-safe`, is the case with the hook calling `lib.safe`. Once
+   * a trigger is accounted by an unknown edge (ADR 0008 § 3's fail-closed
+   * default: a builtin whose position is not admitted), that variant is
+   * UNKNOWN too, so: `no-trigger` keeps the setup with the hook calling
+   * `lib.safe` and drops the trigger; `prelude-only` drops the setup as
+   * well, for a setup that is itself accounted by an unknown edge (a
+   * named object handed to `Object.defineProperty`, a Proxy trap that
+   * forwards through `Reflect` with values the graph cannot attribute).
+   */
+  readonly negative?: "hook-calls-safe" | "no-trigger" | "prelude-only";
 }
 
 export function entrySource(
@@ -112,6 +124,19 @@ export function entrySource(
     scenario.trigger +
     (direct ? `lib.parse("x");\n` : "")
   );
+}
+
+/** The negative control's source (see {@link Scenario.negative}). */
+export function negativeSource(scenario: Scenario, direct = false): string {
+  const tail = direct ? `lib.parse("x");\n` : "";
+  switch (scenario.negative ?? "hook-calls-safe") {
+    case "hook-calls-safe":
+      return entrySource(scenario, "safe", direct);
+    case "no-trigger":
+      return PRELUDE + scenario.setup("safe") + tail;
+    case "prelude-only":
+      return PRELUDE + tail;
+  }
 }
 
 export function oracleCase(scenario: Scenario): OracleCase {
@@ -128,11 +153,11 @@ export function oracleCase(scenario: Scenario): OracleCase {
       controls: {
         positive: {
           name: "positive-control",
-          project: project(entrySource(scenario, "safe", true)),
+          project: project(negativeSource(scenario, true)),
         },
         negative: {
           name: "negative-control",
-          project: project(entrySource(scenario, "safe")),
+          project: project(negativeSource(scenario)),
         },
       },
     },
@@ -156,6 +181,7 @@ export const S1: readonly Scenario[] = [
     trigger: `console.log(obj);\n`,
     probeTemplate: "console.log(__ARG__)",
     probeExpect: { kind: "inspectCustom", fires: "inspectCustom" },
+    negative: "no-trigger",
   },
   {
     id: "S1.util.inspect",
@@ -165,6 +191,7 @@ export const S1: readonly Scenario[] = [
     trigger: `const shown = util.inspect(obj);\n`,
     probeTemplate: "util.inspect(__ARG__)",
     probeExpect: { kind: "inspectCustom", fires: "inspectCustom" },
+    negative: "no-trigger",
   },
   {
     id: "S1.util.format-o",
@@ -174,6 +201,7 @@ export const S1: readonly Scenario[] = [
     trigger: `const shown = util.format("%o", obj);\n`,
     probeTemplate: 'util.format("%o", __ARG__)',
     probeExpect: { kind: "inspectCustom", fires: "inspectCustom" },
+    negative: "no-trigger",
   },
 ];
 
@@ -266,6 +294,15 @@ export const S2: readonly Scenario[] = GETTER_FORMS.flatMap((form) =>
     trigger: reader.trigger,
     probeTemplate: reader.probeTemplate,
     probeExpect: { kind: "getter", fires: "getter" },
+    // Task A-3a: the three reader BUILTINS are fail-closed on a named
+    // object (no position admitted); `{...o}` is not a call. Both
+    // `defineProperty` forms hand a named object to Object.defineProperty
+    // in the setup itself.
+    negative: form.key.startsWith("defineProperty")
+      ? "prelude-only"
+      : reader.key === "spread"
+        ? "hook-calls-safe"
+        : "no-trigger",
   })),
 );
 
@@ -289,6 +326,7 @@ export const S3: readonly Scenario[] = [
     trigger: `const keys = Object.keys(p);\n`,
     probeTemplate: "Object.keys(__ARG__)",
     probeExpect: { kind: "proxyPlainObject", fires: "proxy:ownKeys" },
+    negative: "prelude-only",
   },
   {
     id: "S3.Object.getOwnPropertyNames.ownKeys",
@@ -298,6 +336,7 @@ export const S3: readonly Scenario[] = [
     trigger: `const names = Object.getOwnPropertyNames(p);\n`,
     probeTemplate: "Object.getOwnPropertyNames(__ARG__)",
     probeExpect: { kind: "proxyPlainObject", fires: "proxy:ownKeys" },
+    negative: "prelude-only",
   },
   {
     id: "S3.in.has",
@@ -307,6 +346,7 @@ export const S3: readonly Scenario[] = [
     trigger: `const found = "k" in p;\n`,
     probeTemplate: '"k" in __ARG__',
     probeExpect: { kind: "proxyPlainObject", fires: "proxy:has" },
+    negative: "prelude-only",
   },
   {
     id: "S3.JSON.stringify.ownKeys",
@@ -316,6 +356,7 @@ export const S3: readonly Scenario[] = [
     trigger: `const text = JSON.stringify(p);\n`,
     probeTemplate: "JSON.stringify(__ARG__)",
     probeExpect: { kind: "proxyPlainObject", fires: "proxy:ownKeys" },
+    negative: "prelude-only",
   },
   {
     id: "S3.JSON.stringify.get",
@@ -325,6 +366,7 @@ export const S3: readonly Scenario[] = [
     trigger: `const text = JSON.stringify(p);\n`,
     probeTemplate: "JSON.stringify(__ARG__)",
     probeExpect: { kind: "proxyPlainObject", fires: "proxy:get" },
+    negative: "prelude-only",
   },
   {
     // ADDED by task A-0: the handler is a named object, not an object
@@ -341,6 +383,7 @@ export const S3: readonly Scenario[] = [
     trigger: `const keys = Object.keys(p);\n`,
     probeTemplate: "Object.keys(__ARG__)",
     probeExpect: { kind: "proxyPlainObject", fires: "proxy:ownKeys" },
+    negative: "prelude-only",
   },
   {
     // ADDED by task A-0: the named-handler shape triggered by an OPERATOR,
@@ -356,6 +399,7 @@ export const S3: readonly Scenario[] = [
     trigger: `const found = "k" in p;\n`,
     probeTemplate: '"k" in __ARG__',
     probeExpect: { kind: "proxyPlainObject", fires: "proxy:has" },
+    negative: "prelude-only",
   },
 ];
 

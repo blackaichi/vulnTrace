@@ -215,15 +215,17 @@ describe("a derived class's implicit constructor constructs its base (PRM-19)", 
     expect(unknownReasons(built.graph, w)).toEqual(["worker_execution"]);
   });
 
-  it("accounts an ambient base as the unproven ambient-global account, not as silence", async () => {
+  it("accounts an ambient base by the builtin table: the forwarded arguments are values it cannot see (task A-3a)", async () => {
+    // Before task A-3a this was the unproven `ambient_global_callee`
+    // account. `Error`'s first position runs `toString` on a non-primitive
+    // message, which no position admission covers before task A-4, so the
+    // forwarded `...args` get the fail-closed unknown edge.
     const built = await build({
       "index.js": `class MyError extends Error {}\n`,
     });
     const myError = nodeNamed(built.graph, "MyError", "constructor");
-    expect(edgesFrom(built.graph, myError)).toEqual([]);
-    expect(unprovenReasons(built, "implicit_super")).toEqual([
-      "ambient_global_callee",
-    ]);
+    expect(unknownReasons(built.graph, myError)).toEqual(["escaped_value"]);
+    expect(unprovenReasons(built, "implicit_super")).toEqual([]);
   });
 
   it("gives a base class, and a class with its own constructor, no implicit-super account", async () => {
@@ -448,12 +450,8 @@ describe("a tagged template or decorator is accounted from the owner that evalua
 const PRODUCERS: Readonly<
   Record<UnprovenNoEdgeReason, { source: string; site: string }>
 > = {
-  ambient_global_callee: {
-    source: `setTimeout(() => {}, 0);\n`,
-    site: "call",
-  },
-  builtin_module_callee: {
-    source: `const fs = require("fs");\nfs.readFileSync("x");\n`,
+  module_scope_callee: {
+    source: `exports.f = function () {};\nexports.f();\n`,
     site: "call",
   },
   static_require_by_text: {

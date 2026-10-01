@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { adversarialV1Provider } from "../../../src/testing/adversarial-providers.js";
 import { runScanCommand } from "../../../src/cli/scan.js";
+import { possibleEdgeProblems } from "../../../src/testing/possible-edge-obligation.js";
 import { validateScanOutput } from "../../../src/cli/output.js";
 
 /**
@@ -204,13 +205,22 @@ describe("VulnTrace adversarial validation suite", () => {
       const fixtureDir = path.join(FIXTURES_ROOT, scenario.dir);
       const { io, stdout, stderr } = fakeIo();
 
+      let edgeProblems: string[] = [];
       const exitCode = await runScanCommand({
         projectPathArg: fixtureDir,
         configPathOverride: path.join(fixtureDir, "vulntrace.yml"),
         provider,
         noCache: true,
         io,
+        // Task A-3a: A-2's producer obligation, over this corpus.
+        onCallGraph: (observed) => {
+          edgeProblems = possibleEdgeProblems(observed);
+        },
       });
+      expect(
+        edgeProblems,
+        "every possible edge points into a walked file (REMEDIATION-PLAN § 5a, A-2 additions)",
+      ).toEqual([]);
 
       let actual = "NO_OUTPUT";
       let schemaIssues: unknown[] = [];

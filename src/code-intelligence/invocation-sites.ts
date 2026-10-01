@@ -1,4 +1,6 @@
+import { isBuiltin } from "node:module";
 import ts from "typescript";
+import { escapingAssignmentOf, type EscapeRoot } from "./escape-row.js";
 import { classHasOwnConstructor } from "./source-index.js";
 
 /**
@@ -22,9 +24,14 @@ import { classHasOwnConstructor } from "./source-index.js";
  *   PRM-19).
  */
 
-/** The site kinds A-1 accounts for. Later lane-A tasks add theirs. */
+/** The site kinds A-1 accounts for, and `escaping_assignment` (task A-3a). Later lane-A tasks add theirs. */
 export type InvocationSiteKind =
-  "call" | "construct" | "tagged_template" | "decorator" | "implicit_super";
+  | "call"
+  | "construct"
+  | "tagged_template"
+  | "decorator"
+  | "implicit_super"
+  | "escaping_assignment";
 
 export type ClassLike = ts.ClassDeclaration | ts.ClassExpression;
 
@@ -54,6 +61,18 @@ export type InvocationSite =
       readonly node: ClassLike;
       /** The `extends` expression: the constructor `super(...args)` runs. */
       readonly base: ts.Expression;
+    }
+  | {
+      /**
+       * Task A-3a, ADR 0008 § 2's escape row: "the right-hand side of an
+       * assignment to a member rooted in an ambient or builtin value". The
+       * runtime may invoke what is stored (`Error.prepareStackTrace = f`,
+       * PRM-114), and a later call of the builtin reaches it
+       * (`Math.max = f; Math.max(1)`).
+       */
+      readonly kind: "escaping_assignment";
+      readonly node: ts.BinaryExpression;
+      readonly root: EscapeRoot;
     };
 
 /**
@@ -79,6 +98,10 @@ export function invocationSiteOf(node: ts.Node): InvocationSite | undefined {
   if (ts.isClassDeclaration(node) || ts.isClassExpression(node)) {
     const base = implicitSuperBaseOf(node);
     return base ? { kind: "implicit_super", node, base } : undefined;
+  }
+  if (ts.isBinaryExpression(node)) {
+    const root = escapingAssignmentOf(node, isBuiltin);
+    return root ? { kind: "escaping_assignment", node, root } : undefined;
   }
   return undefined;
 }
@@ -229,10 +252,19 @@ export type CensusEntry =
       readonly site: InvocationSiteKind;
       /** Set when only some nodes of the kind are sites. */
       readonly when?: string;
+      /**
+       * Set when other nodes of the kind are invocation-capable and still
+       * unaccounted: the part a later lane-A task owns (task A-3a's
+       * `BinaryExpression`, whose protocol-named property writes are A-4's).
+       */
+      readonly pending?: Omit<
+        Extract<CensusEntry, { role: "pending" }>,
+        "role"
+      >;
     }
   | {
       readonly role: "pending";
-      readonly tasks: readonly ("A-3" | "A-4")[];
+      readonly tasks: readonly ("A-3b" | "A-4")[];
       readonly findings: readonly string[];
       readonly what: string;
     }
@@ -280,7 +312,7 @@ const ACCESSOR_DEFINITION: CensusEntry = {
 };
 const JSX_ELEMENT: CensusEntry = {
   role: "pending",
-  tasks: ["A-3"],
+  tasks: ["A-3b"],
   findings: ["PRM-116"],
   what: "a JSX element is a call to the configured factory, which may render the component: ADR 0008 § 2's JSX row",
 };
@@ -316,15 +348,19 @@ export const SYNTAX_KIND_CENSUS = {
   JsxSelfClosingElement: JSX_ELEMENT,
   JsxOpeningFragment: {
     role: "pending",
-    tasks: ["A-3"],
+    tasks: ["A-3b"],
     findings: ["PRM-116"],
-    what: "a fragment is a call to the configured factory too; ADR 0008 § 2 names only non-intrinsic element tags, so A-3 decides its account",
+    what: "a fragment is a call to the configured factory too; ADR 0008 § 2 names only non-intrinsic element tags, so A-3b decides its account",
   },
   BinaryExpression: {
-    role: "pending",
-    tasks: ["A-3", "A-4"],
-    findings: ["PRM-114", "PRM-38"],
-    what: "an assignment can register a function where the runtime invokes it: a hook on an ambient or builtin value (A-3, ADR 0008 § 2's escape row, PRM-114) or a protocol-named property (A-4). Its operators' coercions are use sites (see USE_SITE)",
+    role: "site",
+    site: "escaping_assignment",
+    when: "an assignment (`=`, `||=`, `&&=`, `??=`) that stores a value which may carry the program's own code into an ambient global, a member of one, or a member of a builtin module's value (task A-3a, ADR 0008 § 2's escape row, PRM-114)",
+    pending: {
+      tasks: ["A-4"],
+      findings: ["PRM-38"],
+      what: "an assignment to a protocol-named property registers a method the runtime invokes implicitly (A-4). Its operators' coercions are use sites (see USE_SITE)",
+    },
   },
   MethodDeclaration: PROTOCOL_DEFINITION,
   PropertyAssignment: PROTOCOL_DEFINITION,

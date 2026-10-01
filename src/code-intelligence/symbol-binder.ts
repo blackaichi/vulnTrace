@@ -13,6 +13,16 @@ export interface CanonicalSymbolTarget {
 export interface SymbolBindingResolved {
   readonly kind: "resolved";
   readonly target: CanonicalSymbolTarget;
+  /**
+   * Task A-3a: the members the expression reads AFTER the export it binds
+   * to -- `["b"]` for `lib.a.b` with `lib` a whole-module binding, `[]` for
+   * `lib.a`. `target` names the export only; a VALUE whose chain is not
+   * empty is some member of that export, not the export itself. The call
+   * graph's escape row attributes an escaped value only when this is
+   * empty. (Callees still ignore it: refusing a trailing chain on a callee
+   * is task A-6's, PRM-20.)
+   */
+  readonly unconsumedChain: readonly string[];
 }
 
 /**
@@ -59,6 +69,15 @@ export interface SymbolBindingDeclarationOnly {
 export interface SymbolBindingBuiltin {
   readonly kind: "builtin";
   readonly specifier: string;
+  /**
+   * Task A-3a: the builtin module's member the expression denotes, as the
+   * binding's own declaration and the expression's property chain give it
+   * -- `["readFile"]` for `fs.readFile` (whole-module binding) and for
+   * `readFile` from `const { readFile } = require("fs")`, `["promises",
+   * "readFile"]` for `fs.promises.readFile`, `[]` for the module value
+   * itself. What the builtin table (`builtin-callables.ts`) is keyed by.
+   */
+  readonly exportPath: readonly string[];
 }
 
 /** The callee does not reference an imported binding at all (e.g. a call to a locally-defined function). */
@@ -256,7 +275,10 @@ function importBindingFor(
     //   reference passes through `resolveImportProvenanceDeclaration`.
     //
     // Enumerated by the RWF-046a re-audit, and true today:
-    //   - `importBindingFor` has exactly one caller, `bindCallee` below;
+    //   - `importBindingFor` has exactly one caller that names an export,
+    //     `bindCallee` below (task A-3a added `importSpecifierOf`, which
+    //     reads the SPECIFIER only, to decide whether a write stores into
+    //     a builtin module's value);
     //   - `resolveImportProvenanceDeclaration` has exactly one caller,
     //     `importBindingFor` above;
     //   - every other production reader of `ModuleModel.imports` /
@@ -306,6 +328,19 @@ function importBindingFor(
   // `ImportEqualsDeclaration` binds the whole module, which converges on
   // the same shape (see module-model.ts's `toImportBinding`).
   return { specifier, kind: "default" };
+}
+
+/**
+ * The module specifier the exact declaration of `reference` binds it to,
+ * when that declaration is an import or a `require("<literal>")` binding
+ * (task A-3a) -- the same authority {@link bindCallee} uses, without the
+ * resolver. The escape row asks it to decide, synchronously, whether a
+ * write through `reference` stores into a builtin module's value.
+ */
+export function importSpecifierOf(
+  reference: ts.Identifier,
+): string | undefined {
+  return importBindingFor(reference)?.specifier;
 }
 
 /**
@@ -360,6 +395,10 @@ export async function bindCallee(
   }
 
   let exportedName: string;
+  // Task A-3a: the member path the whole expression denotes, from the
+  // binding, and how much of the chain naming the export consumed.
+  let exportPath: readonly string[];
+  let unconsumedChain: readonly string[];
 
   if (binding.kind === "named") {
     // A trailing property chain here (e.g. `vulnerable.someMethod()`) is a
@@ -371,11 +410,15 @@ export async function bindCallee(
     // identifier's spelling could stand in for an export name
     // (RWF-046a).
     exportedName = binding.importedName;
+    exportPath = [binding.importedName, ...shape.propertyChain];
+    unconsumedChain = shape.propertyChain;
   } else if (binding.kind === "default" || binding.kind === "namespace") {
-    const [firstProperty] = shape.propertyChain;
+    const [firstProperty, ...rest] = shape.propertyChain;
     // No property access at all means the default export / whole module
     // is being called directly (e.g. `module.exports = function () {}`).
     exportedName = firstProperty ?? "default";
+    exportPath = shape.propertyChain;
+    unconsumedChain = rest;
   } else {
     return { kind: "not_an_import" };
   }
@@ -405,6 +448,7 @@ export async function bindCallee(
     return {
       kind: "builtin",
       specifier: resolution.specifier,
+      exportPath,
     };
   }
 
@@ -415,5 +459,6 @@ export async function bindCallee(
       specifier: binding.specifier,
       exportedName,
     },
+    unconsumedChain,
   };
 }

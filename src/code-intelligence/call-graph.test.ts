@@ -377,7 +377,7 @@ describe("buildCallGraph: Node builtin modules (VT-305, RWF-007)", () => {
     });
   });
 
-  it("preserves VT-213 callback-flow modeling for a builtin call that takes a real callback (fs.readFile(file, callback))", async () => {
+  it("gives a callback handed to a builtin module's member a POSSIBLE edge, and searches it (fs.readFile(file, callback); task A-3a)", async () => {
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
     const entry = write(
@@ -398,15 +398,18 @@ describe("buildCallGraph: Node builtin modules (VT-305, RWF-007)", () => {
     expect(vulnerableNode).toBeDefined();
 
     // The builtin call site itself must still connect to its inline
-    // callback argument -- classifying `fs` as a builtin must never
-    // suppress VT-213's higher-order callback modeling.
+    // callback argument -- classifying `fs` as a builtin must never leave
+    // the callback's body unsearched. Until task A-3a that connection was
+    // VT-213's RESOLVED edge; ADR 0008 § 6 reopened its authority, and the
+    // escape row gives a builtin that is not a documented invoking builtin
+    // (§ 4) a POSSIBLE edge: searched, never part of an AFFECTED path.
     const mainEdge = graph.edges.find((e) => e.from === mainNode?.id);
     expect(mainEdge).toMatchObject({
       type: "callback",
-      resolution: { kind: "resolved" },
+      resolution: { kind: "possible" },
     });
     const callbackNodeId =
-      mainEdge?.resolution.kind === "resolved"
+      mainEdge?.resolution.kind === "possible"
         ? mainEdge.resolution.target
         : undefined;
     expect(callbackNodeId).toBeDefined();
