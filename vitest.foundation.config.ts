@@ -87,6 +87,7 @@ export default defineConfig({
       "src/code-intelligence/invocation-sites.census.test.ts",
       "src/code-intelligence/invocation-sites.site-coverage.test.ts",
       "src/code-intelligence/call-graph.invocation-account.test.ts",
+      "src/code-intelligence/call-graph.escape-row.test.ts",
       "src/analysis/reachability.affected-path.test.ts",
       "src/analysis/verdict.possible-edge.test.ts",
     ],

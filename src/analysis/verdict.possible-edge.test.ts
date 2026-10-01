@@ -25,9 +25,11 @@ import {
  * - a `possible` edge whose region provably cannot reach the target
  *   leaves family C standing.
  *
- * No producer emits a `possible` edge yet (A-3 and A-4 will), so each row
- * takes a REAL graph built from a real on-disk project and adds one
- * `possible` edge to a real node, exactly as those producers will. The
+ * When task A-2 wrote these rows no producer emitted a `possible` edge, so
+ * each takes a REAL graph built from a real on-disk project and adds one
+ * `possible` edge to a real node, exactly as a producer would. Task A-3a's
+ * producers are exercised at the end, through edges the production graph
+ * builder EMITS (REMEDIATION-PLAN § 5a, "A-2 additions"). The
  * projects are loud (AGENTS.md § G): `vuln-lib` exports both names every
  * case binds, so an edge attributed to the wrong function resolves to the
  * wrong target instead of degrading quietly to UNKNOWN.
@@ -372,4 +374,64 @@ describe("VT-300 sees a widening construct behind a possible edge (family B)", (
     expect(outcome.verdict, describeOutcome(outcome)).toBe("NOT_AFFECTED");
     expect(outcome.family).toBe("B");
   });
+});
+
+/**
+ * Task A-3a, REMEDIATION-PLAN § 5a ("A-2 additions"): one reproduction per
+ * site kind that EMITS a `possible` edge, through the production graph
+ * builder and `buildFinding`, with no edge injected. Each hands a function
+ * that calls the target to code the graph does not model; each must be
+ * UNKNOWN with `value_uncertainty` / `possible_invocation`.
+ */
+describe("A-3a's emitted possible edges reach buildFinding as possible_invocation", () => {
+  const SITE_KINDS: readonly {
+    readonly name: string;
+    readonly body: string;
+  }[] = [
+    {
+      name: "an argument of a builtin call (fs.readFile's callback)",
+      body: 'require("fs").readFile("x", callsVulnerable);\n',
+    },
+    {
+      name: "a member of an object-literal argument (an inline Proxy trap)",
+      body: "new Proxy({}, { get: callsVulnerable });\n",
+    },
+    {
+      name: "an assignment into a builtin value (Error.prepareStackTrace)",
+      body: "Error.prepareStackTrace = callsVulnerable;\n",
+    },
+    {
+      name: "an argument an implicit constructor forwards to a builtin base (RWF-060)",
+      body:
+        'class R extends require("stream").Readable {}\n' +
+        "new R({ read: callsVulnerable });\n",
+    },
+  ];
+
+  it.each(SITE_KINDS.map((k) => [k.name, k] as const))(
+    "%s",
+    async (_name, kind) => {
+      const proof = await workspace.materialize({
+        ...FAMILY_C_PROJECT,
+        files: {
+          ...FAMILY_C_PROJECT.files,
+          "src/index.js":
+            'const { safe, vulnerable } = require("vuln-lib");\n' +
+            "function main(){ return safe(1); }\n" +
+            "function callsVulnerable(){ return vulnerable(1); }\n" +
+            kind.body +
+            "module.exports = { main };\n",
+        },
+      });
+      expect(
+        proof.inputs.graph.edges.some((e) => e.resolution.kind === "possible"),
+        "the production graph emits the possible edge",
+      ).toBe(true);
+      const outcome = await runProof(proof.inputs);
+      expect(outcome.verdict, describeOutcome(outcome)).toBe("UNKNOWN");
+      expect(reasonsOf(outcome)).toContain(
+        "value_uncertainty/possible_invocation",
+      );
+    },
+  );
 });

@@ -21,6 +21,6 @@ function run(userInput) {
 module.exports = { run };
 
 // Mentions, never mutation targets.
-console.log("exports are", module.exports);
+const described = `exports are ${module.exports}`;
 const copy = { ...module.exports };
 void copy;

@@ -128,6 +128,8 @@ export const UNCERTAINTY_REASONS = [
   "unsupported_literal_receiver",
   "unsupported_expression_receiver",
   "unsupported_computed_callee",
+  // --- An escaped value the graph cannot attribute (ADR 0008 § 3, task A-3a) ---
+  "escaped_value",
   "declaration_only_resolution",
   "aliased_require",
   "create_require",
@@ -233,6 +235,14 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // returned function invoked directly (`f()()`), or one chosen by an
   // operator (`(Map || ListCache)()`).
   unsupported_computed_callee: "unmodeled_construct",
+  // Task A-3a, ADR 0008 § 3: "an escaped function value that cannot be
+  // attributed, and any invocation-capable site not otherwise handled:
+  // `unmodeled_construct` (… a new *subtype* token such as
+  // `escaped_callable` …; not a category)". Named `escaped_value` because
+  // what escapes need not be a function: `console.log(obj)` hands a builtin
+  // an object whose `[util.inspect.custom]` it runs (PRM-117). The builtin
+  // is modeled; what it is handed is not.
+  escaped_value: "unmodeled_construct",
   // Both workspace shapes are genuine, closeable frontend gaps: a `pkg-*`
   // or brace pattern is documented npm workspace syntax this analyzer
   // declines to interpret, and a `pnpm-workspace.yaml` layout is a file it

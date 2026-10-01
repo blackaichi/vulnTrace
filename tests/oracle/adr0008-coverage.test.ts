@@ -61,18 +61,19 @@ type Pin =
     }
   | { readonly kind: "sound-called" }
   | { readonly kind: "sound-not-called" }
-  | { readonly kind: "precision-control" };
+  | { readonly kind: "precision-control" }
+  /**
+   * An `open-defect` record a lane-A task closed: its record was deleted,
+   * and the case asserts the verdict REMEDIATION-PLAN § 5a requires
+   * (`UNKNOWN`), with real Node calling the target.
+   */
+  | { readonly kind: "closed"; readonly rwf: string; readonly by: string };
 
-/** Every false NOT_AFFECTED below: family C over a complete subgraph. */
-const OBSERVED_FALSE_NOT_AFFECTED: VerdictObservation = {
-  verdict: "NOT_AFFECTED",
-  proofFamily: "C",
-  target: "vuln-lib#parse",
-  reachableSubgraphComplete: true,
-  unknownEdges: 0,
-};
-
-/** Every false AFFECTED below: a concrete-looking path real Node never takes. */
+/**
+ * Every false AFFECTED below: a concrete-looking path real Node never
+ * takes. (Every false NOT_AFFECTED this suite pinned -- family C over a
+ * complete subgraph -- was closed by task A-3a; see `closed` pins.)
+ */
 const OBSERVED_FALSE_AFFECTED: VerdictObservation = {
   verdict: "AFFECTED",
   proofFamily: "-",
@@ -81,18 +82,14 @@ const OBSERVED_FALSE_AFFECTED: VerdictObservation = {
   unknownEdges: 0,
 };
 
-const fna = (rwf: string): Pin => ({
-  kind: "open-defect",
-  rwf,
-  failure: "false NOT_AFFECTED",
-  observed: OBSERVED_FALSE_NOT_AFFECTED,
-});
-const fa = (rwf: string): Pin => ({
+const fa = (rwf: string, unknownEdges = 0): Pin => ({
   kind: "open-defect",
   rwf,
   failure: "false AFFECTED",
-  observed: OBSERVED_FALSE_AFFECTED,
+  observed: { ...OBSERVED_FALSE_AFFECTED, unknownEdges },
 });
+/** Closed by task A-3a: the case is UNKNOWN (REMEDIATION-PLAN § 5a, "A-0 additions"). */
+const closedByA3a = (rwf: string): Pin => ({ kind: "closed", rwf, by: "A-3a" });
 
 const READERS = [
   "JSON.stringify",
@@ -105,10 +102,13 @@ const forReaders = (form: string, pin: Pin): Record<string, Pin> =>
 
 /** The measured result on `main` for every case, and the finding that owns it. */
 const PINS: Readonly<Record<string, Pin>> = {
-  // S1 -- util.inspect.custom: PRM-117 (new).
-  "S1.console.log": fna("PRM-117"),
-  "S1.util.inspect": fna("PRM-117"),
-  "S1.util.format-o": fna("PRM-117"),
+  // S1 -- util.inspect.custom: PRM-117. Closed by task A-3a through the
+  // fail-closed default: none of the three builtins is admitted (the
+  // admission test measures `util.inspect.custom` firing), and `obj` is
+  // not attributable, so the call gets an unknown edge.
+  "S1.console.log": closedByA3a("PRM-117"),
+  "S1.util.inspect": closedByA3a("PRM-117"),
+  "S1.util.format-o": closedByA3a("PRM-117"),
 
   // S2 -- getters. Only an OWN ENUMERABLE getter is read by these four
   // readers (measured). The object-literal getter is right today only
@@ -118,19 +118,30 @@ const PINS: Readonly<Record<string, Pin>> = {
   // non-enumerable and is correctly NOT_AFFECTED; the enumerable one is
   // the AUD-01 descriptor shape sweep round 2 recorded.
   ...forReaders("literal", { kind: "sound-called" }),
-  ...forReaders("class-instance", fa("PRM-118")),
+  // PRM-118 (task A-4). Re-measured by task A-3a: the three reader
+  // builtins are now fail-closed on the named instance (one unknown edge);
+  // `{...o}` is not a call. Still a false AFFECTED through the getter
+  // body's attribution to the class-definition owner.
+  ...forReaders("class-instance", fa("PRM-118", 1)),
+  "S2.class-instance.spread": fa("PRM-118"),
   ...forReaders("class-static", fa("PRM-118")),
   ...forReaders("defineProperty", { kind: "sound-not-called" }),
-  ...forReaders("defineProperty-enumerable", fna("AUD-01")),
+  // AUD-01, closed by task A-3a: the descriptor's getter is a possible
+  // edge (the escape row, "a property descriptor"), and the named object
+  // handed to Object.defineProperty an unknown one.
+  ...forReaders("defineProperty-enumerable", closedByA3a("AUD-01")),
 
   // S3 -- Proxy traps: the AUD-01 handler shape sweep round 2 recorded.
-  "S3.Object.keys.ownKeys": fna("AUD-01"),
-  "S3.Object.getOwnPropertyNames.ownKeys": fna("AUD-01"),
-  "S3.in.has": fna("AUD-01"),
-  "S3.JSON.stringify.ownKeys": fna("AUD-01"),
-  "S3.JSON.stringify.get": fna("AUD-01"),
-  "S3.Object.keys.ownKeys.named-handler": fna("AUD-01"),
-  "S3.in.has.named-handler": fna("AUD-01"),
+  // Closed by task A-3a: an inline handler's traps are possible edges from
+  // `new Proxy` (the escape row), a named handler an unknown edge
+  // (`new Proxy` is never admitted, Amendment A-0 part A).
+  "S3.Object.keys.ownKeys": closedByA3a("AUD-01"),
+  "S3.Object.getOwnPropertyNames.ownKeys": closedByA3a("AUD-01"),
+  "S3.in.has": closedByA3a("AUD-01"),
+  "S3.JSON.stringify.ownKeys": closedByA3a("AUD-01"),
+  "S3.JSON.stringify.get": closedByA3a("AUD-01"),
+  "S3.Object.keys.ownKeys.named-handler": closedByA3a("AUD-01"),
+  "S3.in.has.named-handler": closedByA3a("AUD-01"),
 
   // S4 -- precision controls lane A must keep.
   "S4.Array.isArray": { kind: "precision-control" },
@@ -203,6 +214,11 @@ describe.each(ALL.map((s) => [s.id, s] as const))("%s", (_id, scenario) => {
     if (pin.kind === "sound-not-called") {
       expect(called, "real Node never calls the target").toBe(false);
       expect(["NOT_AFFECTED", "UNKNOWN"]).toContain(live.verdict);
+      return;
+    }
+    if (pin.kind === "closed") {
+      expect(called, "real Node calls the target").toBe(true);
+      expect(live.verdict, `${pin.rwf}, closed by ${pin.by}`).toBe("UNKNOWN");
       return;
     }
 

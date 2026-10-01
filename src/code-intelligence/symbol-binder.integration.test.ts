@@ -114,6 +114,7 @@ describe("bindCallee end-to-end: real files, real resolver, real fixture-lib tar
           specifier: "fixture-lib",
           exportedName: "vulnerable",
         },
+        unconsumedChain: [],
       });
     }
   });

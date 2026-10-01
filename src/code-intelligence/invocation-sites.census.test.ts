@@ -9,6 +9,7 @@ import {
   SYNTAX_KIND_CENSUS,
   censusEntryFor,
   invocationSiteOf,
+  type CensusEntry,
   type InvocationSiteKind,
 } from "./invocation-sites.js";
 
@@ -68,15 +69,20 @@ describe("the syntax-kind census", () => {
     expect(problems).toEqual([]);
   });
 
-  it("every pending entry names an OPEN finding", () => {
+  it("every pending entry, and every pending part of a site entry, names an OPEN finding", () => {
     const { findings } = loadDefectRegisters();
     const problems = Object.entries(SYNTAX_KIND_CENSUS).flatMap(
-      ([name, entry]) =>
-        entry.role === "pending"
-          ? entry.findings.flatMap((id) =>
-              rwfReferenceProblems(id, findings).map((p) => `${name}: ${p}`),
-            )
-          : [],
+      ([name, entry]: [string, CensusEntry]) => {
+        const pending =
+          entry.role === "pending"
+            ? entry
+            : entry.role === "site"
+              ? entry.pending
+              : undefined;
+        return (pending?.findings ?? []).flatMap((id) =>
+          rwfReferenceProblems(id, findings).map((p) => `${name}: ${p}`),
+        );
+      },
     );
     expect(problems).toEqual([]);
   });
@@ -101,6 +107,10 @@ const SITE_EXAMPLES: Readonly<
   ClassExpression: {
     source: "const Sub = class extends Base {};",
     site: "implicit_super",
+  },
+  BinaryExpression: {
+    source: "Error.prepareStackTrace = () => 1;",
+    site: "escaping_assignment",
   },
 };
 

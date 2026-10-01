@@ -80,6 +80,17 @@ export type DynamicCallReason =
   | "unsupported_literal_receiver"
   | "unsupported_expression_receiver"
   | "unsupported_computed_callee"
+  /**
+   * Task A-3a (ADR 0008 § 3): a value that may carry the program's own
+   * code -- a function, or an object whose methods a builtin may run --
+   * escapes into code the graph does not model (an argument of a builtin
+   * call at a position not admitted to the non-invoking allowlist, a value
+   * stored on an ambient or builtin object, the arguments an implicit
+   * constructor forwards to an ambient or builtin base), and the graph
+   * cannot attribute it. `unmodeled_construct`, non-widening: the value is
+   * already in scope, in a module already loaded.
+   */
+  | "escaped_value"
   | "declaration_only_resolution"
   | "aliased_require"
   | "create_require"
@@ -322,7 +333,13 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "unsupported_expression_receiver":
     case "unsupported_computed_callee":
     case "dynamic_member_access":
-    case "unresolved_target": {
+    case "unresolved_target":
+    case "escaped_value": {
+      // Task A-3a, `escaped_value`: the escaped value is already in scope,
+      // in a module the graph already loaded; a builtin running it cannot
+      // introduce a module graph construction never discovered. (A builtin
+      // that LOADS code is a loader construct, classified before any
+      // escape is considered.)
       return false;
     }
     default:
@@ -414,19 +431,18 @@ export interface CallEdge {
  * forgets to account for a site is a type error, not a missing edge.
  *
  * - `edges`: one or more call edges, each resolved, possible or unknown.
- *   Task A-2 added the `possible` kind (ADR 0008 § 1); no handler emits
- *   one yet. Its producers are A-3 and A-4, and until they land an
- *   over-approximated invocation this graph cannot prove is `unknown`.
+ *   Task A-2 added the `possible` kind (ADR 0008 § 1); task A-3a is its
+ *   first producer (escaped function values, ADR 0008 § 2's escape row).
+ * - `no_edge`: the site gets no edge, and a {@link NoEdgeProof} from ADR
+ *   0008 § 2's closed set says why none is needed.
  * - `unproven_no_edge`: the site gets no edge, AND nothing proves that is
  *   sound. See {@link UnprovenNoEdgeReason}.
  *
- * WHAT IS DELIBERATELY ABSENT: a `no_edge` account backed by a proof. ADR
- * 0008 § 2 closes the set of no-edge proofs (`AmbientStaticRequire`,
+ * ADR 0008 § 2 closes the set of no-edge proofs (`AmbientStaticRequire`,
  * `PrimitiveOnlyArguments`, `NonInvokingBuiltin`, `ProvablyDeadBranch`).
- * No branch of today's graph establishes any of them (each reason below
- * says why), so none is claimed. The lane-A task that makes one real adds
- * its variant here, with its owner test, and deletes the unproven reason
- * it replaces.
+ * Task A-3a made the two builtin ones real; the other two are still
+ * unproven reasons below (`static_require_by_text`,
+ * `constant_folded_branch`, both task A-5's).
  */
 export type InvocationAccount =
   | {
@@ -434,9 +450,36 @@ export type InvocationAccount =
       readonly edges: readonly [CallEdge, ...CallEdge[]];
     }
   | {
+      readonly kind: "no_edge";
+      readonly proof: NoEdgeProof;
+    }
+  | {
       readonly kind: "unproven_no_edge";
       readonly reason: UnprovenNoEdgeReason;
     };
+
+/**
+ * Why a call of a known builtin (`code-intelligence/builtin-callables.ts`)
+ * needs no edge (ADR 0008 § 2's closed no-edge proofs; task A-3a). Both
+ * hold only for a callee PROVEN to be the builtin: an ambient global whose
+ * root name no enclosing scope declares, or a builtin module's export
+ * reached through the binder's own declaration authority -- never a name
+ * that merely looks like one. `builtin` is the behaviour key
+ * (`"call global:Array.isArray"`, `"call module:path:join"`).
+ *
+ * - `primitive_only_arguments`: every argument is provably primitive, so
+ *   the builtin is handed nothing that can carry the program's own code.
+ * - `non_invoking_builtin`: every argument is primitive or sits at a
+ *   position admitted to the non-invoking allowlist (mechanically, by
+ *   `tests/oracle/builtin-admission.test.ts`), and no argument is an
+ *   attributable function (the escape row would give that one an edge,
+ *   and it takes precedence over every admitted position).
+ *
+ * Each variant's owner test is in `call-graph.invocation-account.test.ts`.
+ */
+export type NoEdgeProof =
+  | { readonly kind: "primitive_only_arguments"; readonly builtin: string }
+  | { readonly kind: "non_invoking_builtin"; readonly builtin: string };
 
 /**
  * The no-edge branches the graph still takes WITHOUT a proof, each named
@@ -446,11 +489,14 @@ export type InvocationAccount =
  * task ({@link UNPROVEN_NO_EDGE_LEDGER}). ADR 0008's end state is that
  * this type is empty.
  *
- * - `ambient_global_callee` (VT-201): the callee's root identifier is on
- *   the ambient-global list. A callback passed to it, an own export called
- *   through `exports`, an inspected argument -- all invisible.
- * - `builtin_module_callee` (VT-305): the callee is bound to a Node
- *   builtin module. A callback passed to it is invisible.
+ * - `module_scope_callee` (VT-201, narrowed by task A-3a): the callee is
+ *   rooted in one of the CommonJS module-scope bindings `module`,
+ *   `exports`, `require`, `__dirname`, `__filename`, and no enclosing scope
+ *   declares it. A module calling its own export through `exports.x()` is
+ *   invisible (AUD-02). Until A-3a this reason covered every ambient
+ *   global by its spelling; A-3a accounts for the others (escaped values,
+ *   the builtin table and its proofs), and removed `builtin_module_callee`
+ *   (VT-305) the same way.
  * - `static_require_by_text` (P1-B3b): `require("x")` recognised by its
  *   spelling, not by proving `require` is the ambient one; a local
  *   `function require` is never seen. `AmbientStaticRequire` needs that
@@ -462,10 +508,7 @@ export type InvocationAccount =
  *   are separated.
  */
 export type UnprovenNoEdgeReason =
-  | "ambient_global_callee"
-  | "builtin_module_callee"
-  | "static_require_by_text"
-  | "constant_folded_branch";
+  "module_scope_callee" | "static_require_by_text" | "constant_folded_branch";
 
 /**
  * Who owns each {@link UnprovenNoEdgeReason}: the open findings it is the
@@ -478,25 +521,13 @@ export const UNPROVEN_NO_EDGE_LEDGER: Readonly<
   Record<
     UnprovenNoEdgeReason,
     {
-      readonly closedBy: "A-3" | "A-5";
+      readonly closedBy: "A-3b" | "A-5";
       readonly findings: readonly [string, ...string[]];
     }
   >
 > = {
-  // `console.log(obj)` (PRM-117) is an ambient root; `util.inspect(obj)`
-  // and `util.format("%o", obj)` (PRM-117) are bound to a builtin module.
-  // RWF-060: a derived class with no constructor whose base is ambient
-  // (`extends Promise`) or builtin (`extends stream.Readable`) takes the
-  // same account for its implicit `super`, and the arguments of the
-  // `new Sub(...)` that runs it are not accounted anywhere.
-  ambient_global_callee: {
-    closedBy: "A-3",
-    findings: ["AUD-01", "AUD-02", "PRM-117", "RWF-060"],
-  },
-  builtin_module_callee: {
-    closedBy: "A-3",
-    findings: ["PRM-12", "PRM-117", "RWF-060"],
-  },
+  // `exports.x()` / `module.exports.x()`: a module calling its own export.
+  module_scope_callee: { closedBy: "A-3b", findings: ["AUD-02"] },
   static_require_by_text: { closedBy: "A-5", findings: ["PRM-15"] },
   constant_folded_branch: { closedBy: "A-5", findings: ["PRM-14"] },
 };

@@ -5,9 +5,27 @@ import type {
   DynamicCallReason,
   GraphNode,
   GraphNodeId,
+  GraphNodeKind,
   InvocationAccount,
   UnprovenNoEdgeReason,
 } from "../domain/graph.js";
+import {
+  NEVER_ADMITTED,
+  behaviourKey,
+  builtinBehaviour,
+  isAdmittedPosition,
+  isKnownBuiltinCallable,
+  type BuiltinCallForm,
+} from "./builtin-callables.js";
+import {
+  AMBIENT_GLOBAL_NAMES,
+  ambientGlobalKeyOf,
+  escapingValuesOf,
+  isModuleScopeRoot,
+  memberChainOf,
+  skipOuterExpressions,
+  type EscapingValue,
+} from "./escape-row.js";
 import type { KnownPackageRoots } from "../domain/resolved-target.js";
 import {
   commonJsExportForwardingHop,
@@ -47,7 +65,11 @@ import {
   isFunctionLike,
   toSourceLocation,
 } from "./source-index.js";
-import { bindCallee, type SymbolBindingResolved } from "./symbol-binder.js";
+import {
+  bindCallee,
+  type SymbolBindingResolved,
+  type SymbolBindingResult,
+} from "./symbol-binder.js";
 import type { TsProject } from "./ts-project.js";
 
 function locationKey(location: { line?: number; column?: number }): string {
@@ -67,118 +89,6 @@ const LOADER_EDGE_TYPE: Partial<Record<DynamicCallReason, CallEdge["type"]>> = {
   dynamic_import: "import",
   dynamic_require: "import",
 };
-
-/**
- * Ambient ECMAScript/Node.js globals that can never resolve to a tracked
- * import or an analyzed local declaration, and can never be the target of
- * a vulnerable-symbol rule (they aren't installable npm packages). Calls
- * and constructions rooted in one of these are intentionally left without
- * a graph edge (see VT-201, docs/SDD.md § 3.1) -- flagging every
- * `console.log()`/`new Map()` in a real codebase as an explicit UNKNOWN
- * edge would make almost every real-world scan degrade to UNKNOWN, since
- * virtually all real code calls some builtin somewhere; that is a far
- * worse outcome than the silent-edge gap VT-201 closes. Every OTHER
- * unresolvable call-like construct -- crucially, anything rooted in a
- * local parameter, variable, or constructed instance the analyzer cannot
- * fully trace -- still becomes an explicit `unsupported_construct` edge
- * (see {@link classifyCall}, {@link classifyNew}); this list only bounds
- * that to a known, finite, auditable set of ambient identifiers, never
- * anything project-defined.
- */
-const KNOWN_GLOBAL_IDENTIFIERS: ReadonlySet<string> = new Set([
-  "console",
-  "Math",
-  "JSON",
-  "Object",
-  "Array",
-  "String",
-  "Number",
-  "Boolean",
-  "Date",
-  "RegExp",
-  "Error",
-  "TypeError",
-  "RangeError",
-  "SyntaxError",
-  "ReferenceError",
-  "EvalError",
-  "URIError",
-  "AggregateError",
-  "Promise",
-  "Map",
-  "Set",
-  "WeakMap",
-  "WeakSet",
-  "Symbol",
-  "Proxy",
-  "Reflect",
-  "Function",
-  "ArrayBuffer",
-  "SharedArrayBuffer",
-  "DataView",
-  "Int8Array",
-  "Uint8Array",
-  "Uint8ClampedArray",
-  "Int16Array",
-  "Uint16Array",
-  "Int32Array",
-  "Uint32Array",
-  "Float32Array",
-  "Float64Array",
-  "BigInt",
-  "BigInt64Array",
-  "BigUint64Array",
-  "Intl",
-  "globalThis",
-  "setTimeout",
-  "setInterval",
-  "setImmediate",
-  "clearTimeout",
-  "clearInterval",
-  "clearImmediate",
-  "queueMicrotask",
-  "structuredClone",
-  "parseInt",
-  "parseFloat",
-  "isNaN",
-  "isFinite",
-  "encodeURIComponent",
-  "decodeURIComponent",
-  "encodeURI",
-  "decodeURI",
-  "fetch",
-  "process",
-  "Buffer",
-  "module",
-  "exports",
-  "require",
-  "__dirname",
-  "__filename",
-  "global",
-]);
-
-function isKnownGlobalIdentifier(name: string): boolean {
-  return KNOWN_GLOBAL_IDENTIFIERS.has(name);
-}
-
-/**
- * The leftmost identifier of a call/construct callee's expression chain
- * (`foo` for `foo()`/`foo.bar()`/`foo.bar.baz()`/`foo[x]()`), or
- * `undefined` when the callee isn't rooted in a plain identifier at all
- * (e.g. `foo().bar()`) -- used only to check {@link isKnownGlobalIdentifier}
- * before deciding whether an unresolvable call-like construct still
- * deserves an explicit UNKNOWN edge.
- */
-function rootIdentifierOf(expr: ts.Expression): string | undefined {
-  let current: ts.Expression = expr;
-  while (
-    ts.isPropertyAccessExpression(current) ||
-    ts.isElementAccessExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return ts.isIdentifier(current) ? current.text : undefined;
-}
 
 function functionNodeId(filePath: string, fn: IndexedFunction): GraphNodeId {
   return `${filePath}#${fn.name ?? "<anonymous>"}@${locationKey(fn.location)}`;
@@ -1670,6 +1580,13 @@ interface WalkContext {
   readonly onInvocationAccount?: (
     observation: InvocationAccountObservation,
   ) => void;
+  /**
+   * Task A-3a: the kind of a registered node, so that a documented
+   * invoking builtin gets a resolved edge only to a value it can invoke in
+   * its form (`Reflect.construct` constructs a class constructor; a timer
+   * calls anything but one).
+   */
+  readonly nodeKindOf: (id: GraphNodeId) => GraphNodeKind | undefined;
 }
 
 /**
@@ -1712,6 +1629,458 @@ function resolvesToUnrelatedConstructor(
   );
 }
 
+// ---------------------------------------------------------------------------
+// Task A-3a: builtin callees and escaped values (ADR 0008 § 2's escape row,
+// § 3's fail-closed default, § 4's documented invoking builtins and
+// non-invoking allowlist)
+// ---------------------------------------------------------------------------
+
+/**
+ * A callee PROVEN to be a builtin: `key` is its builtin-table key
+ * (`builtin-callables.ts`), and `ofBuiltinValue` says the callee is a
+ * member of a value Node supplies -- an ambient global object
+ * ({@link AMBIENT_GLOBAL_NAMES}) or a builtin module -- so that a member
+ * Node does NOT supply is the program's own addition, an unknown callee.
+ */
+interface BuiltinCallee {
+  readonly key: string;
+  readonly ofBuiltinValue: boolean;
+}
+
+/**
+ * The builtin a callee denotes, from two authorities and nothing else:
+ * the binder's declaration authority for a builtin module's export
+ * (`fs.readFile`, a destructured `readFile`), and a root identifier no
+ * scope declares (`escape-row.ts`'s `isAmbientRoot`) for an ambient
+ * global. Never a spelling alone.
+ */
+function builtinCalleeOf(
+  callee: ts.Expression,
+  binding: SymbolBindingResult,
+): BuiltinCallee | undefined {
+  if (binding.kind === "builtin") {
+    return {
+      key: `module:${binding.specifier}:${binding.exportPath.join(".")}`,
+      ofBuiltinValue: true,
+    };
+  }
+  const { root } = memberChainOf(callee);
+  const ambient = ambientGlobalKeyOf(callee);
+  if (ambient !== undefined && ts.isIdentifier(root)) {
+    return {
+      key: ambient,
+      ofBuiltinValue: AMBIENT_GLOBAL_NAMES.has(root.text),
+    };
+  }
+  // `require("<builtin>").member(...)` is deliberately NOT identified as
+  // the builtin. The base gave it an unknown edge, and a builtin module
+  // object can be monkeypatched through a parameter, a container or a
+  // returned value the escape row does not follow (RWF-063): trusting this
+  // form turned those base UNKNOWNs into false NOT_AFFECTEDs (task A-3a's
+  // re-audit). It stays an unknown callee.
+  return undefined;
+}
+
+/**
+ * The graph node an attributable escaping value denotes, from the same
+ * authorities a callee uses and no others: the declaration a local
+ * binding denotes (`escape-row.ts`, `named-bindings.ts`), and an exact
+ * import whose WHOLE member chain the export consumed (`lib.parse`, never
+ * `lib.a.b`, which is a member of `a`). `"builtin"` for a builtin
+ * module's own function passed as a value (it carries none of the
+ * program's code). `undefined` when the value cannot be attributed.
+ *
+ * VT-208 (the checker's static type), VT-210 (a parameter's same-file
+ * call sites) and VT-214 (alias chains) are deliberately NOT consulted:
+ * each is reopened by ADR 0008 § 6, and a possible edge to a wrong target
+ * would hide the value that really escapes.
+ *
+ * An imported target's file is discovered and walked exactly as a
+ * resolved edge's is (A-2's producer obligation 2).
+ */
+async function escapeTargetOf(
+  value: Exclude<EscapingValue, { readonly kind: "opaque" }>,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<GraphNodeId | "builtin" | undefined> {
+  switch (value.kind) {
+    case "function":
+      return nodeIdForIndexedDeclaration(value.node, prepared);
+    case "class":
+      return classConstructorNodeIdFor(value.node, prepared);
+    case "import": {
+      const binding = await bindCallee(
+        value.expr,
+        ctx.resolver,
+        prepared.index.filePath,
+      );
+      if (binding.kind === "builtin") {
+        return "builtin";
+      }
+      if (binding.kind !== "resolved" || binding.unconsumedChain.length > 0) {
+        return undefined;
+      }
+      ctx.onDiscoverFile(binding.target.modulePath);
+      const targetFile = ctx.ensurePrepared(binding.target.modulePath);
+      if (
+        !targetFile ||
+        resolvesToUnrelatedConstructor(value.expr, binding, targetFile)
+      ) {
+        return undefined;
+      }
+      return (
+        targetFile.exportNameToNodeId.get(binding.target.exportedName) ??
+        (await resolveReExportChain(
+          targetFile,
+          binding.target.exportedName,
+          ctx,
+          new Set(),
+        ))
+      );
+    }
+  }
+}
+
+/** The arguments of a site, or `"forwarded"`: values the site cannot see (an implicit constructor's `...args`, a decorator's target). */
+type SiteArguments = readonly ts.Expression[] | "forwarded";
+
+/** An unknown edge for a value that escapes and cannot be attributed (ADR 0008 § 3). */
+function escapedValueEdge(
+  from: GraphNodeId,
+  location: ReturnType<typeof toSourceLocation>,
+): CallEdge {
+  return {
+    from,
+    type: "callback",
+    resolution: {
+      kind: "unknown",
+      reason: "escaped_value",
+      potentialTargets: [],
+    },
+    location,
+  };
+}
+
+/**
+ * The account of a call or `new` of a KNOWN builtin (ADR 0008 § 2, § 3,
+ * § 4; the allowlist admission ruling), argument by argument:
+ *
+ * - an attributable function or class the argument carries (itself, or a
+ *   member of an object or array literal it is) gets an edge: RESOLVED
+ *   when it IS the argument at a documented invoking position and the
+ *   builtin's form can invoke it, POSSIBLE otherwise. The escape row takes
+ *   precedence over every admitted position;
+ * - a value the argument carries that the graph cannot attribute gets an
+ *   UNKNOWN edge (`escaped_value`), unless the position is admitted to the
+ *   non-invoking allowlist (`new Proxy` / `Proxy.revocable` never are);
+ * - a provably primitive argument, or a literal holding only such values,
+ *   carries nothing.
+ *
+ * With no edge at all, the account is a no-edge proof:
+ * `primitive_only_arguments` when no argument carries anything,
+ * `non_invoking_builtin` when every value that could not be attributed
+ * sits at an admitted position.
+ */
+async function builtinAccount(
+  builtin: string,
+  form: BuiltinCallForm,
+  args: SiteArguments,
+  from: GraphNodeId,
+  location: ReturnType<typeof toSourceLocation>,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<InvocationAccount> {
+  const key = behaviourKey(builtin, form);
+  const behaviour = builtinBehaviour(builtin, form);
+  const admits = (position: number | "any"): boolean =>
+    !NEVER_ADMITTED.has(key) &&
+    (position === "any"
+      ? behaviour.admitted === "all"
+      : isAdmittedPosition(behaviour, position));
+  const edges: CallEdge[] = [];
+  let carriesNothing = true;
+
+  if (args === "forwarded") {
+    // Values the site cannot see: every position may hold anything.
+    carriesNothing = false;
+    if (!admits("any")) {
+      edges.push(escapedValueEdge(from, location));
+    }
+  } else {
+    for (const [index, arg] of args.entries()) {
+      // A spread lands at this position and every later one.
+      const spread = ts.isSpreadElement(arg);
+      const expression = spread ? arg.expression : arg;
+      const values = escapingValuesOf(expression);
+      if (values.length === 0) {
+        continue;
+      }
+      carriesNothing = false;
+      const argLocation = toSourceLocation(prepared.index.sourceFile, arg);
+      const admitted = admits(spread ? "any" : index);
+      const invoking = spread
+        ? undefined
+        : behaviour.invokes?.find((p) => p.position === index);
+      for (const value of values) {
+        const target =
+          value.kind === "opaque"
+            ? undefined
+            : await escapeTargetOf(value, prepared, ctx);
+        if (target === "builtin") {
+          continue;
+        }
+        if (target === undefined) {
+          if (!admitted) {
+            edges.push(escapedValueEdge(from, argLocation));
+          }
+          continue;
+        }
+        const kind = ctx.nodeKindOf(target);
+        const guaranteed =
+          invoking !== undefined &&
+          value.kind !== "opaque" &&
+          value.direct &&
+          (invoking.as === "construct"
+            ? kind === "constructor"
+            : kind !== undefined && kind !== "constructor");
+        edges.push({
+          from,
+          type: "callback",
+          resolution: { kind: guaranteed ? "resolved" : "possible", target },
+          location: argLocation,
+        });
+      }
+    }
+  }
+
+  const [first, ...rest] = edges;
+  if (first) {
+    return { kind: "edges", edges: [first, ...rest] };
+  }
+  return {
+    kind: "no_edge",
+    proof: {
+      kind: carriesNothing
+        ? "primitive_only_arguments"
+        : "non_invoking_builtin",
+      builtin: key,
+    },
+  };
+}
+
+/**
+ * ADR 0008 § 2's escape row at a callee the graph could not attribute
+ * (unresolved, unknown, or a member of a builtin value Node does not
+ * supply): the site already carries its unknown edge, which blocks every
+ * negative proof over the region; each attributable function the
+ * arguments carry gets a POSSIBLE edge as well, so the code behind it is
+ * searched -- its own unknown edges and closure-widening constructs count
+ * (task A-2). A value it cannot attribute adds nothing the callee's
+ * unknown edge does not already say.
+ *
+ * Applied only when every edge of the account is unknown: a resolved
+ * account needs no escape, and VT-213's resolved edge to an inline
+ * callback is task A-5's (PRM-13).
+ */
+async function withEscapesAtUnknownCallee(
+  account: InvocationAccount,
+  args: readonly ts.Expression[],
+  from: GraphNodeId,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<InvocationAccount> {
+  if (
+    account.kind !== "edges" ||
+    account.edges.some((edge) => edge.resolution.kind !== "unknown")
+  ) {
+    return account;
+  }
+  const escapes: CallEdge[] = [];
+  for (const arg of args) {
+    const expression = ts.isSpreadElement(arg) ? arg.expression : arg;
+    for (const value of escapingValuesOf(expression)) {
+      if (value.kind === "opaque") {
+        continue;
+      }
+      const target = await escapeTargetOf(value, prepared, ctx);
+      if (target !== undefined && target !== "builtin") {
+        escapes.push({
+          from,
+          type: "callback",
+          resolution: { kind: "possible", target },
+          location: toSourceLocation(prepared.index.sourceFile, arg),
+        });
+      }
+    }
+  }
+  return escapes.length === 0
+    ? account
+    : {
+        kind: "edges",
+        edges: [...account.edges, ...escapes] as [CallEdge, ...CallEdge[]],
+      };
+}
+
+/**
+ * RWF-060. Where a class's IMPLICIT-constructor chain ends: a derived
+ * class with no constructor passes its arguments to its base's
+ * constructor, and so on up the chain, until a class with its own
+ * constructor (`explicit`: the arguments become its parameters), a base
+ * class (`none`), a builtin constructor (`builtin`), or a base the graph
+ * cannot attribute (`unknown`). Bases are bound by the same authorities a
+ * `new` callee is: the lexical declaration, an exact import, the builtin
+ * table's identity.
+ */
+type ImplicitChainEnd =
+  | { readonly kind: "explicit" | "none" | "unknown" }
+  | { readonly kind: "builtin"; readonly builtin: string };
+
+const MAX_IMPLICIT_CHAIN = 8;
+
+async function implicitChainEndOf(
+  cls: ts.ClassLikeDeclaration,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+  depth = 0,
+): Promise<ImplicitChainEnd> {
+  if (depth > MAX_IMPLICIT_CHAIN) {
+    return { kind: "unknown" };
+  }
+  if (cls.members.some(ts.isConstructorDeclaration)) {
+    return { kind: "explicit" };
+  }
+  const base = cls.heritageClauses?.find(
+    (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+  )?.types[0]?.expression;
+  if (!base) {
+    return { kind: "none" };
+  }
+  const binding = await bindCallee(base, ctx.resolver, prepared.index.filePath);
+  const builtin = builtinCalleeOf(base, binding);
+  if (builtin) {
+    return isKnownBuiltinCallable(builtin.key)
+      ? { kind: "builtin", builtin: builtin.key }
+      : { kind: "unknown" };
+  }
+  const unwrapped = skipOuterExpressions(base);
+  if (ts.isIdentifier(unwrapped)) {
+    const local = resolveNamedBinding(unwrapped);
+    if (local.kind === "class") {
+      return implicitChainEndOf(local.declaration, prepared, ctx, depth + 1);
+    }
+  }
+  if (binding.kind === "resolved" && binding.unconsumedChain.length === 0) {
+    const targetFile = ctx.ensurePrepared(binding.target.modulePath);
+    const baseClass = targetFile
+      ? exportedClassOf(targetFile, binding.target.exportedName)
+      : undefined;
+    if (targetFile && baseClass) {
+      return implicitChainEndOf(baseClass, targetFile, ctx, depth + 1);
+    }
+  }
+  return { kind: "unknown" };
+}
+
+/** The class declaration whose constructor node implements export `name` of `file`, if it is one. */
+const exportedClassCache = new WeakMap<
+  FileGraphData,
+  Map<string, ts.ClassLikeDeclaration | undefined>
+>();
+
+function exportedClassOf(
+  file: FileGraphData,
+  name: string,
+): ts.ClassLikeDeclaration | undefined {
+  let byName = exportedClassCache.get(file);
+  if (!byName) {
+    byName = new Map();
+    exportedClassCache.set(file, byName);
+  }
+  if (!byName.has(name)) {
+    byName.set(name, locateExportedClass(file, name));
+  }
+  return byName.get(name);
+}
+
+/** Uncached {@link exportedClassOf}: one scan of the file's functions per (file, export name). */
+function locateExportedClass(
+  file: FileGraphData,
+  name: string,
+): ts.ClassLikeDeclaration | undefined {
+  const nodeId = file.exportNameToNodeId.get(name);
+  const fn = file.index.functions.find(
+    (candidate) =>
+      candidate.kind === "constructor" &&
+      functionNodeId(file.index.filePath, candidate) === nodeId,
+  );
+  if (
+    !fn ||
+    fn.location.line === undefined ||
+    fn.location.column === undefined
+  ) {
+    return undefined;
+  }
+  const sourceFile = file.index.sourceFile;
+  let node: ts.Node | undefined = findNodeAtPosition(
+    sourceFile,
+    sourceFile.getPositionOfLineAndCharacter(
+      fn.location.line - 1,
+      fn.location.column - 1,
+    ),
+  );
+  while (node && !ts.isClassDeclaration(node) && !ts.isClassExpression(node)) {
+    node = node.parent;
+  }
+  return node;
+}
+
+/**
+ * RWF-060, at the `new` site: when the constructed class's implicit
+ * constructor chain ends at a builtin, the site's arguments are accounted
+ * as the arguments of a construction of that builtin (the Promise
+ * executor is resolved, a `Readable`'s `read` option is possible, a value
+ * the graph cannot attribute is unknown); when it ends at a base the graph
+ * cannot attribute, as the arguments of an unknown callee. The site's own
+ * resolved edge to the constructor stands; these are added to it.
+ */
+async function forwardedArgumentEdges(
+  cls: ts.ClassLikeDeclaration | undefined,
+  classFile: FileGraphData,
+  args: readonly ts.Expression[],
+  from: GraphNodeId,
+  location: ReturnType<typeof toSourceLocation>,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<readonly CallEdge[]> {
+  if (!cls) {
+    return [];
+  }
+  const end = await implicitChainEndOf(cls, classFile, ctx);
+  if (end.kind === "builtin") {
+    const account = await builtinAccount(
+      end.builtin,
+      "construct",
+      args,
+      from,
+      location,
+      prepared,
+      ctx,
+    );
+    return account.kind === "edges" ? account.edges : [];
+  }
+  if (end.kind === "unknown") {
+    const account = await withEscapesAtUnknownCallee(
+      { kind: "edges", edges: [escapedValueEdge(from, location)] },
+      args,
+      from,
+      prepared,
+      ctx,
+    );
+    return account.kind === "edges" ? account.edges.slice(1) : [];
+  }
+  return [];
+}
+
 /** A site accounted for by exactly one edge. */
 function edgeAccount(edge: CallEdge): InvocationAccount {
   return { kind: "edges", edges: [edge] };
@@ -1730,11 +2099,10 @@ function unprovenNoEdge(reason: UnprovenNoEdgeReason): InvocationAccount {
  * Classifies and (when possible) resolves one call expression into its
  * {@link InvocationAccount} (see docs/SDD.md § 18, § 3.1's VT-201
  * completeness invariant, ADR 0008 invariant A1). Accounted with no edge
- * only when the callee is a known ambient global/builtin (see
- * {@link KNOWN_GLOBAL_IDENTIFIERS}) or a static `require("x")` -- never
- * merely because resolution failed, and never silently: each of those is
- * an `unproven_no_edge` account naming the certified decision it comes
- * from. Every other visited call, including one bound to a local
+ * only with a no-edge proof for a call of a known builtin (task A-3a,
+ * {@link builtinAccount}), or, unproven, for a static `require("x")` and a
+ * callee rooted in a CommonJS module-scope binding -- never merely because
+ * resolution failed, and never silently. Every other visited call, including one bound to a local
  * parameter/variable this binder cannot trace (a function value flowing
  * through an argument, a method call on a locally-constructed instance),
  * still produces an explicit `unknown(unsupported_construct)` edge rather
@@ -1761,16 +2129,22 @@ async function classifyCall(
   // as a module loader; only the edge SHAPE is decided here.
   const loaderReason = classifyClosureWideningCall(call, prepared);
   if (loaderReason) {
-    return edgeAccount({
+    return withEscapesAtUnknownCallee(
+      edgeAccount({
+        from,
+        type: LOADER_EDGE_TYPE[loaderReason] ?? "direct",
+        resolution: {
+          kind: "unknown",
+          reason: loaderReason,
+          potentialTargets: [],
+        },
+        location,
+      }),
+      call.arguments,
       from,
-      type: LOADER_EDGE_TYPE[loaderReason] ?? "direct",
-      resolution: {
-        kind: "unknown",
-        reason: loaderReason,
-        potentialTargets: [],
-      },
-      location,
-    });
+      prepared,
+      ctx,
+    );
   }
 
   if (isStaticRequireCall(call)) {
@@ -1781,9 +2155,17 @@ async function classifyCall(
     return unprovenNoEdge("static_require_by_text");
   }
 
-  return classifyCallee(call.expression, call, from, location, prepared, ctx, {
-    inlineCallbackCall: call,
-  });
+  // Task A-3a: an unknown callee's arguments escape into it (ADR 0008 § 2).
+  return withEscapesAtUnknownCallee(
+    await classifyCallee(call.expression, call, from, location, prepared, ctx, {
+      inlineCallbackCall: call,
+      args: call.arguments,
+    }),
+    call.arguments,
+    from,
+    prepared,
+    ctx,
+  );
 }
 
 /**
@@ -1801,6 +2183,11 @@ async function classifyCall(
  * not extended to the new sites. It is an open displacement defect
  * (PRM-13, A-5), and a tag or decorator it could not attribute keeps its
  * honest unknown edge instead.
+ *
+ * `args` (task A-3a) is what the site hands the callee, for the builtin
+ * table's account ({@link builtinAccount}): a call's arguments, a tagged
+ * template's substitutions, `"forwarded"` for a decorator (its target is
+ * the decorated class or member).
  */
 async function classifyCallee(
   callee: ts.Expression,
@@ -1809,7 +2196,10 @@ async function classifyCallee(
   location: ReturnType<typeof toSourceLocation>,
   prepared: FileGraphData,
   ctx: WalkContext,
-  options: { readonly inlineCallbackCall?: ts.CallExpression },
+  options: {
+    readonly inlineCallbackCall?: ts.CallExpression;
+    readonly args: SiteArguments;
+  },
 ): Promise<InvocationAccount> {
   const binding = await bindCallee(
     callee,
@@ -1946,14 +2336,41 @@ async function classifyCallee(
   // locally-constructed instance (`instance.method()`). Silently
   // returning `undefined` here (pre-VT-201 behavior) let the vulnerable
   // dependency vanish from the graph entirely rather than being flagged
-  // uncertain. Known ambient globals/builtins are the sole exception --
-  // flagging every `console.log()` this way would make almost every real
-  // scan degrade to UNKNOWN. VT-201's premise that they "can never be a
-  // vulnerable-rule target" is reopened by ADR 0008 § 6 (AUD-01, AUD-02):
-  // what they are handed can be. Hence an UNPROVEN account, until A-3.
-  const root = rootIdentifierOf(callee);
-  if (root && isKnownGlobalIdentifier(root)) {
-    return unprovenNoEdge("ambient_global_callee");
+  // uncertain. VT-201 exempted every ambient global and builtin, by
+  // spelling; ADR 0008 § 6 reopened that (AUD-01, PRM-12, PRM-117): what a
+  // builtin is handed can be the program's own code. Since task A-3a a
+  // callee PROVEN to be a builtin is accounted by the builtin table and
+  // the escape row ({@link builtinAccount}); a member of a builtin value
+  // Node does not supply is the program's own, an unknown callee. Only
+  // the CommonJS module-scope roots keep an unproven account (AUD-02,
+  // task A-3b).
+  const { root } = memberChainOf(callee);
+  if (ts.isIdentifier(root) && isModuleScopeRoot(root)) {
+    return unprovenNoEdge("module_scope_callee");
+  }
+  const builtin = builtinCalleeOf(callee, binding);
+  if (builtin && isKnownBuiltinCallable(builtin.key)) {
+    return builtinAccount(
+      builtin.key,
+      "call",
+      options.args,
+      from,
+      location,
+      prepared,
+      ctx,
+    );
+  }
+  if (builtin?.ofBuiltinValue) {
+    return edgeAccount({
+      from,
+      type: ts.isPropertyAccessExpression(callee) ? "method" : "direct",
+      resolution: {
+        kind: "unknown",
+        reason: classifyUnsupportedConstruct(callee),
+        potentialTargets: [],
+      },
+      location,
+    });
   }
 
   // VT-208: a method call on a receiver this binder can't attribute by
@@ -2030,20 +2447,13 @@ async function classifyCallee(
     }
   }
 
-  // VT-305 (RWF-007): a Node builtin (`fs.readFile(...)`, `path.basename`,
-  // ...) is a known external runtime module -- it must never fabricate an
-  // `unsupported_construct` edge merely because it has no local source
-  // file to attribute the call to. Deliberately checked here, AFTER the
-  // inline-callback fallback above (not alongside
-  // `isKnownGlobalIdentifier`'s earlier check): unlike ambient globals,
-  // builtin methods very commonly take a real callback argument
-  // (`fs.readFile(file, callback)`) whose own call-graph connection VT-213
-  // must still get a chance to make. VT-305's premise that a builtin "is
-  // not uncertainty" is reopened by ADR 0008 § 6 (PRM-12): a callback it
-  // is handed can run. Hence an UNPROVEN account, until A-3.
-  if (binding.kind === "builtin") {
-    return unprovenNoEdge("builtin_module_callee");
-  }
+  // VT-305 (RWF-007) used to account a Node builtin module's member HERE,
+  // after VT-213, so that `fs.readFile(file, () => ...)` got VT-213's
+  // resolved edge to the callback. Since task A-3a every builtin-bound
+  // callee is accounted above, before VT-208/210/214/213: a callback a
+  // builtin is handed gets the escape row's edge -- resolved only at a
+  // documented invoking position (ADR 0008 § 4), possible otherwise --
+  // never VT-213's resolved one, whose authority ADR 0008 § 6 reopened.
 
   // P1-B1: the same fallback edge this has always emitted, with the
   // specific frontend gap named instead of the catch-all token. Purely
@@ -2072,9 +2482,9 @@ async function classifyCallee(
  * found reachable no matter how directly it was called (see ADV-020's
  * completion report). Every visited construction now produces an edge:
  * resolved when the constructed class is attributable to an import or
- * local declaration, `unknown(unsupported_construct)` otherwise, unless
- * the callee is a known ambient global constructor (`new Map()`,
- * `new Date()`, ...) or a builtin, which is accounted `unproven_no_edge`.
+ * local declaration, `unknown(unsupported_construct)` otherwise, and a
+ * known builtin constructor (`new Map()`, `new Promise(executor)`) by the
+ * builtin table (task A-3a, {@link builtinAccount}).
  * Full class-name -> constructor-node resolution accuracy (matching an
  * exported class name to its own constructor's graph node) is VT-207's
  * job, not this task's — VT-201 only guarantees the construct is never
@@ -2091,11 +2501,19 @@ async function classifyNew(
   // bindCallee/the known-global fallback for the same reason. For a `new`
   // expression the shared classifier skips its call-only forms entirely,
   // so this stays exactly the `classifyLoaderConstruct` dispatch it was.
-  return classifyConstructee(
-    node.expression,
-    classifyClosureWideningCall(node, prepared),
+  const args = node.arguments ?? [];
+  return withEscapesAtUnknownCallee(
+    await classifyConstructee(
+      node.expression,
+      classifyClosureWideningCall(node, prepared),
+      from,
+      toSourceLocation(prepared.index.sourceFile, node),
+      prepared,
+      ctx,
+      args,
+    ),
+    args,
     from,
-    toSourceLocation(prepared.index.sourceFile, node),
     prepared,
     ctx,
   );
@@ -2107,7 +2525,10 @@ async function classifyNew(
  * implicit constructor runs through `super(...args)`, which the language
  * constructs exactly as `new Base(...args)` would. `loaderReason` is the
  * site's own loader classification, decided by the caller because a
- * `new` expression and an `extends` clause ask it differently.
+ * `new` expression and an `extends` clause ask it differently. `args`
+ * (task A-3a) is what the construction is handed: a `new` expression's
+ * arguments, or `"forwarded"` for an implicit `super(...args)`, whose
+ * arguments are whatever each construction of the derived class passed.
  */
 async function classifyConstructee(
   callee: ts.Expression,
@@ -2116,7 +2537,31 @@ async function classifyConstructee(
   location: ReturnType<typeof toSourceLocation>,
   prepared: FileGraphData,
   ctx: WalkContext,
+  args: SiteArguments,
 ): Promise<InvocationAccount> {
+  // RWF-060: a resolved construction whose class's implicit-constructor
+  // chain ends at a builtin (or an unattributable base) also hands the
+  // site's arguments to it.
+  const forwarded = async (
+    edge: CallEdge,
+    cls: ts.ClassLikeDeclaration | undefined,
+    classFile: FileGraphData | undefined,
+  ): Promise<InvocationAccount> => {
+    if (args === "forwarded" || !classFile) {
+      return edgeAccount(edge);
+    }
+    const more = await forwardedArgumentEdges(
+      cls,
+      classFile,
+      args,
+      from,
+      location,
+      prepared,
+      ctx,
+    );
+    return { kind: "edges", edges: [edge, ...more] };
+  };
+
   if (loaderReason) {
     return edgeAccount({
       from,
@@ -2146,15 +2591,24 @@ async function classifyConstructee(
       );
 
       if (targetNodeId) {
-        return edgeAccount({
-          from,
-          type: "constructor",
-          resolution: { kind: "resolved", target: targetNodeId },
-          location,
-        });
+        return forwarded(
+          {
+            from,
+            type: "constructor",
+            resolution: { kind: "resolved", target: targetNodeId },
+            location,
+          },
+          targetFile && binding.unconsumedChain.length === 0
+            ? exportedClassOf(targetFile, binding.target.exportedName)
+            : undefined,
+          targetFile,
+        );
       }
 
-      // VT-209: see classifyCallee's identical handling above.
+      // VT-209: see classifyCallee's identical handling above. RWF-060's
+      // forwarded arguments are not followed through a re-export chain:
+      // the chain's end is not located here. An open limit, recorded in
+      // task A-3a's report.
       if (targetFile) {
         const chased = await resolveReExportChain(
           targetFile,
@@ -2239,24 +2693,52 @@ async function classifyConstructee(
   // receiver, all of which remain Block C's.
   const localTarget = constructableNodeIdFor(callee, prepared);
   if (localTarget) {
+    const unwrapped = skipOuterExpressions(callee);
+    const local = ts.isIdentifier(unwrapped)
+      ? resolveNamedBinding(unwrapped)
+      : undefined;
+    return forwarded(
+      {
+        from,
+        type: "constructor",
+        resolution: { kind: "resolved", target: localTarget },
+        location,
+      },
+      local?.kind === "class" ? local.declaration : undefined,
+      prepared,
+    );
+  }
+
+  // Task A-3a: see classifyCallee's identical branch. A builtin
+  // constructor (`new Promise(executor)`, `new Map(entries)`, an implicit
+  // `super(...args)` into one) is accounted by the builtin table.
+  const { root } = memberChainOf(callee);
+  if (ts.isIdentifier(root) && isModuleScopeRoot(root)) {
+    return unprovenNoEdge("module_scope_callee");
+  }
+  const builtin = builtinCalleeOf(callee, binding);
+  if (builtin && isKnownBuiltinCallable(builtin.key)) {
+    return builtinAccount(
+      builtin.key,
+      "construct",
+      args,
+      from,
+      location,
+      prepared,
+      ctx,
+    );
+  }
+  if (builtin?.ofBuiltinValue) {
     return edgeAccount({
       from,
       type: "constructor",
-      resolution: { kind: "resolved", target: localTarget },
+      resolution: {
+        kind: "unknown",
+        reason: classifyUnsupportedConstruct(callee),
+        potentialTargets: [],
+      },
       location,
     });
-  }
-
-  const root = rootIdentifierOf(callee);
-  if (root && isKnownGlobalIdentifier(root)) {
-    return unprovenNoEdge("ambient_global_callee");
-  }
-
-  // VT-305 (RWF-007): see the equivalent, more fully-explained check in
-  // classifyCallee -- a Node builtin is a known external module, never
-  // `unsupported_construct`.
-  if (binding.kind === "builtin") {
-    return unprovenNoEdge("builtin_module_callee");
   }
 
   // P1-B1: see classifyCallee's identical fallback. A construction shares
@@ -2304,7 +2786,19 @@ async function classifyTaggedTemplate(
       location,
     });
   }
-  return classifyCallee(node.tag, node, from, location, prepared, ctx, {});
+  // Task A-3a: the tag is handed the strings array (a fresh array of
+  // strings, carrying none of the program's code) at position 0, and the
+  // substitutions' values from position 1 on. The template literal itself
+  // stands for position 0 -- it is primitive syntax, so it carries
+  // nothing -- which keeps every substitution at its real position
+  // (`` setTimeout`${f}` `` hands `f` to position 1, not to the invoked 0;
+  // task A-3a's re-audit).
+  const substitutions = ts.isTemplateExpression(node.template)
+    ? node.template.templateSpans.map((span) => span.expression)
+    : [];
+  return classifyCallee(node.tag, node, from, location, prepared, ctx, {
+    args: [node.template, ...substitutions],
+  });
 }
 
 /**
@@ -2344,15 +2838,12 @@ async function classifyDecorator(
       location,
     });
   }
-  return classifyCallee(
-    node.expression,
-    node,
-    from,
-    location,
-    prepared,
-    ctx,
-    {},
-  );
+  // Task A-3a: a decorator is handed the decorated class or member (and,
+  // for a standard decorator, a context object) -- values this site does
+  // not write, so `"forwarded"`.
+  return classifyCallee(node.expression, node, from, location, prepared, ctx, {
+    args: "forwarded",
+  });
 }
 
 /**
@@ -2386,6 +2877,9 @@ async function classifyImplicitSuper(
     prepared.functionNodeIdByLocation.get(
       locationKey(toSourceLocation(sourceFile, node.name ?? node)),
     ) ?? owner;
+  // Task A-3a: the implicit constructor passes its own `...args`, which
+  // each construction of the derived class supplies (RWF-060 accounts
+  // them at a resolved `new` site as well; see forwardedArgumentEdges).
   return classifyConstructee(
     base,
     classifyClosureWideningImplicitCallee(base, prepared),
@@ -2393,6 +2887,7 @@ async function classifyImplicitSuper(
     toSourceLocation(sourceFile, base),
     prepared,
     ctx,
+    "forwarded",
   );
 }
 
@@ -2576,7 +3071,57 @@ const INVOCATION_SITE_HANDLERS = {
       env.prepared,
       env.ctx,
     ),
+  escaping_assignment: (site, env) =>
+    fromEvaluatingOwner(site.node, env, (from) =>
+      classifyEscapingAssignment(site.node, from, env.prepared, env.ctx),
+    ),
 } as const satisfies { readonly [K in InvocationSiteKind]: SiteHandler<K> };
+
+/**
+ * Task A-3a, PRM-114: an assignment that stores a value into an ambient or
+ * builtin value (`invocation-sites.ts` decides which assignments are
+ * sites). The runtime, or a later call of the builtin, may invoke what is
+ * stored, and nothing proves it does: each attributable function the value
+ * carries gets a POSSIBLE edge from the owner that performs the
+ * assignment, and anything else an UNKNOWN one (ADR 0008 § 2's escape row,
+ * § 3). A builtin's own function stored there (ambient or from a builtin
+ * module) carries none of the program's code, but it changes what a later
+ * call trusted as the builtin does; if that is all the value holds, the
+ * site gets an unknown edge rather than a no-edge account no proof in ADR
+ * 0008 § 2's closed set names.
+ */
+async function classifyEscapingAssignment(
+  node: ts.BinaryExpression,
+  from: GraphNodeId,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<InvocationAccount> {
+  const location = toSourceLocation(prepared.index.sourceFile, node);
+  const edges: CallEdge[] = [];
+  for (const value of escapingValuesOf(node.right)) {
+    const target =
+      value.kind === "opaque"
+        ? undefined
+        : await escapeTargetOf(value, prepared, ctx);
+    if (target === "builtin") {
+      continue;
+    }
+    edges.push(
+      target === undefined
+        ? escapedValueEdge(from, location)
+        : {
+            from,
+            type: "callback",
+            resolution: { kind: "possible", target },
+            location,
+          },
+    );
+  }
+  const [first, ...rest] = edges;
+  return first
+    ? { kind: "edges", edges: [first, ...rest] }
+    : edgeAccount(escapedValueEdge(from, location));
+}
 
 function accountFor(
   site: InvocationSite,
@@ -3031,6 +3576,13 @@ export interface BuildCallGraphOptions {
   readonly onInvocationAccount?: (
     observation: InvocationAccountObservation,
   ) => void;
+  /**
+   * Task A-3a: a read-only observation of the files the walk actually
+   * walked, called once, after the walk. Absent by default. Used to check,
+   * over the corpora, A-2's producer obligation that a `possible` edge
+   * points into a walked file.
+   */
+  readonly onWalkedFiles?: (files: readonly string[]) => void;
 }
 
 /**
@@ -3162,6 +3714,7 @@ export async function buildCallGraph(
     },
     getProgram,
     onInvocationAccount: options.onInvocationAccount,
+    nodeKindOf: (id) => nodes.get(id)?.kind,
   };
 
   while (queue.length > 0) {
@@ -3182,6 +3735,31 @@ export async function buildCallGraph(
 
     await walkFile(prepared, ctx);
   }
+
+  // A-2's producer obligation 2 (REMEDIATION-PLAN § 5a, "A-2 additions"),
+  // ENFORCED rather than assumed: a `possible` edge must point at a node of
+  // a file the walk walked. Reachability reads "no outgoing edges" as
+  // "searched, calls nothing", so a `possible` edge into a body the walk
+  // never reached -- a resource limit stopped it after the file was
+  // discovered -- would make an unsearched region look complete. Such an
+  // edge is withdrawn to an unknown one, naming its target.
+  for (const [index, edge] of edges.entries()) {
+    if (edge.resolution.kind !== "possible") {
+      continue;
+    }
+    const target = nodes.get(edge.resolution.target);
+    if (!target || !walked.has(target.module)) {
+      edges[index] = {
+        ...edge,
+        resolution: {
+          kind: "unknown",
+          reason: "escaped_value",
+          potentialTargets: [edge.resolution.target],
+        },
+      };
+    }
+  }
+  options.onWalkedFiles?.([...walked]);
 
   return { nodes: [...nodes.values()], edges };
 }

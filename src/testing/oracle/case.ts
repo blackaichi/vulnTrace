@@ -208,7 +208,7 @@ export function oracleCaseProblems(kase: OracleCase): readonly string[] {
 async function runVariant(
   kase: Pick<
     OracleCase,
-    "loudFixture" | "provider" | "scanOptions" | "groundTruthCommand"
+    "id" | "loudFixture" | "provider" | "scanOptions" | "groundTruthCommand"
   >,
   variant: OracleVariant,
 ): Promise<OracleVariantResult> {
@@ -218,6 +218,12 @@ async function runVariant(
     // to suppress it.
     const loud = assertLoudFixture(dir, kase.loudFixture);
     const scan = await runOracleScan(dir, kase.provider(), kase.scanOptions);
+    // Task A-3a: A-2's producer obligation, on every graph a case builds.
+    if (scan.possibleEdgeProblems.length > 0) {
+      throw new Error(
+        `${String(kase.id)} (${variant.name}): ${scan.possibleEdgeProblems.join("; ")}`,
+      );
+    }
     const groundTruth = runGroundTruth(
       dir,
       variant.groundTruthCommand ?? kase.groundTruthCommand,

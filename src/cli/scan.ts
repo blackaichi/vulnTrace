@@ -151,6 +151,8 @@ export interface RunScanOptions {
   readonly onCallGraph?: (observed: {
     readonly graph: CallGraph;
     readonly truncated: boolean;
+    /** Task A-3a: the files the graph builder walked (not merely discovered). */
+    readonly walkedFiles: readonly string[];
   }) => void;
 }
 
@@ -519,6 +521,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
 
   let entrypointsResult;
   let graph;
+  let walkedFiles: readonly string[] = [];
   let resolver;
   let graphBuildMs = 0;
   try {
@@ -545,6 +548,11 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       // re-export and a finding's own `packageInstance` are decided by one
       // identity authority, never two.
       knownPackageRoots,
+      onWalkedFiles: options.onCallGraph
+        ? (files) => {
+            walkedFiles = files;
+          }
+        : undefined,
     });
     graphBuildMs = Date.now() - graphBuildStart;
   } catch (error) {
@@ -664,6 +672,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     options.onCallGraph({
       graph: structuredClone(graph),
       truncated: graphTruncated,
+      walkedFiles: [...walkedFiles],
     });
   }
 

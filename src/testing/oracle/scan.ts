@@ -7,6 +7,7 @@ import type { Coverage } from "../../domain/coverage.js";
 import { runScanCommand } from "../../cli/scan.js";
 import type { VulnerabilityProvider } from "../../domain/vulnerability.js";
 import type { VerdictObservation } from "../open-soundness-defect.js";
+import { possibleEdgeProblems } from "../possible-edge-obligation.js";
 
 export interface OracleScanOptions {
   readonly configPathOverride?: string;
@@ -34,6 +35,13 @@ export interface ScanObservation {
   readonly output: ScanOutput | undefined;
   readonly findings: readonly JsonFinding[];
   readonly unreportedCandidates: readonly UnreportedCandidate[];
+  /**
+   * Task A-3a: violations of A-2's producer obligation that a `possible`
+   * edge points into a walked file (`possible-edge-obligation.ts`), over
+   * the graph this scan built. `runOracleCase` requires it empty for every
+   * variant it runs.
+   */
+  readonly possibleEdgeProblems: readonly string[];
 }
 
 /**
@@ -51,6 +59,7 @@ export async function runOracleScan(
 ): Promise<ScanObservation> {
   const stdoutChunks: string[] = [];
   const stderrChunks: string[] = [];
+  let edgeProblems: readonly string[] = [];
   const exitCode = await runScanCommand({
     projectPathArg: projectDir,
     noCache: options?.noCache ?? true,
@@ -63,6 +72,9 @@ export async function runOracleScan(
     io: {
       stdout: (text) => stdoutChunks.push(text),
       stderr: (text) => stderrChunks.push(text),
+    },
+    onCallGraph: (observed) => {
+      edgeProblems = possibleEdgeProblems(observed);
     },
   });
   const stdout = stdoutChunks.join("");
@@ -84,6 +96,7 @@ export async function runOracleScan(
     output,
     findings: output?.findings ?? [],
     unreportedCandidates: output?.unreportedCandidates ?? [],
+    possibleEdgeProblems: edgeProblems,
   };
 }
 

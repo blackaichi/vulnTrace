@@ -84,6 +84,7 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
         specifier: "foo",
         exportedName: "vulnerable",
       },
+      unconsumedChain: [],
     });
   });
 
@@ -100,6 +101,7 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
         specifier: "foo",
         exportedName: "vulnerable",
       },
+      unconsumedChain: [],
     });
   });
 
@@ -114,6 +116,7 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
         specifier: "foo",
         exportedName: "vulnerable",
       },
+      unconsumedChain: [],
     });
   });
 
@@ -128,6 +131,7 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
         specifier: "foo",
         exportedName: "vulnerable",
       },
+      unconsumedChain: [],
     });
   });
 });
@@ -171,6 +175,24 @@ describe("bindCallee: additional binding shapes", () => {
     expect(result).toMatchObject({
       kind: "resolved",
       target: { exportedName: "vulnerable" },
+    });
+  });
+
+  it("reports the members the export did not consume (task A-3a)", async () => {
+    const named = await bindCallee(
+      findCallee('import { vulnerable } from "foo";\nvulnerable.a.b();\n'),
+      resolver,
+      "a.ts",
+    );
+    expect(named).toMatchObject({ unconsumedChain: ["a", "b"] });
+    const whole = await bindCallee(
+      findCallee('const foo = require("foo");\nfoo.vulnerable.call();\n', 1),
+      resolver,
+      "a.js",
+    );
+    expect(whole).toMatchObject({
+      target: { exportedName: "vulnerable" },
+      unconsumedChain: ["call"],
     });
   });
 });
@@ -224,7 +246,27 @@ describe("bindCallee: ambiguous and unresolved outcomes are explicit", () => {
       "a.js",
     );
 
-    expect(result).toEqual({ kind: "builtin", specifier: "fs" });
+    expect(result).toEqual({
+      kind: "builtin",
+      specifier: "fs",
+      exportPath: ["readFileSync"],
+    });
+  });
+
+  it("reports a builtin module's member path through a destructured binding and a nested chain (task A-3a)", async () => {
+    const builtinResolver = fakeResolver({}, {}, new Set(["fs"]));
+    const destructured = await bindCallee(
+      findCallee('const { readFile } = require("fs");\nreadFile("x");\n', 1),
+      builtinResolver,
+      "a.js",
+    );
+    expect(destructured).toMatchObject({ exportPath: ["readFile"] });
+    const nested = await bindCallee(
+      findCallee('const fs = require("fs");\nfs.promises.readFile("x");\n', 1),
+      builtinResolver,
+      "a.js",
+    );
+    expect(nested).toMatchObject({ exportPath: ["promises", "readFile"] });
   });
 
   it("returns not_an_import for a call to a locally-defined function", async () => {
