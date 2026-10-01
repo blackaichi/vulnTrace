@@ -155,7 +155,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-041 | the `unsupported_construct` uncertainty token (P1-B1 / P1-B2) | One undifferentiated token covered eight different frontend gaps, so P1-B had nothing to prioritise from | **Observability** — no coverage change, no verdict moved, no gap closed by it | **Fixed** (P1-B1 / P1-B2: the token is decomposed into measured subtypes) — see below |
 | RWF-048 | the binding-form grammar (`tests/binding-grammar/`) | A standing sweep of every binding form against every attribution mechanism: 264 cells, no class-A, B or C finding, 89 `honest-unknown` refusals in eight families | **Precision** — every disagreement is a refusal toward `UNKNOWN` | Open — the section is an instrument record and states no status; its eight refusal families are recorded, not resolved — see below |
 | RWF-049 | any CommonJS export written with a quoted or numeric key (`module.exports = { "1": f }`) | The export model records no export for a quoted or numeric object-literal key, while the member-reading path does | **Precision debt, not a soundness defect** — fails toward `unresolved_target` (the section's classification) | Open — the section's own heading is "Not fixed": recorded only — see below |
-| AUD-01 | `vuln-lib` (synthetic fixture) | A function-valued argument to an ambient builtin (setTimeout, new Promise, process.nextTick, Array.from, …) gets no call-graph edge | false NOT_AFFECTED — see below | Open |
+| AUD-01 | `vuln-lib` (synthetic fixture) | A function-valued argument to an ambient builtin (setTimeout, new Promise, process.nextTick, Array.from, …) gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | AUD-02 | `vuln-lib` (synthetic fixture) | A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge | false NOT_AFFECTED — see below | Open |
 | AUD-03 | `vuln-lib` (synthetic fixture) | `process.getBuiltinModule(spec)` loads a builtin while the module-load closure reports complete | false NOT_AFFECTED — see below | Open |
 | AUD-04 | `vuln-lib` (synthetic fixture) | `inspector.Session#post('Runtime.evaluate', {includeCommandLineAPI:true})` is an unmodeled eval surface | false NOT_AFFECTED — see below | Open |
@@ -171,7 +171,7 @@ A mismatch either way fails the generator, naming the ID.
 | AUD-14 | `vuln-lib` (synthetic fixture) | An OSV record's `withdrawn` field is not parsed; a withdrawn advisory is still analyzed | false AFFECTED — see below | Open |
 | AUD-15 | `vuln-lib` (synthetic fixture) | An UNKNOWN's reason text falsely claims a package "was never traversed" when the true cause is that no rule names it | false reason — see below | Open |
 | AUD-16 | `vuln-lib` (synthetic fixture) | Two README sentences and two HTML-report sentences describe cache/no-finding behavior that AUD-05/06/07/08/09 show is false | disclosure — see below | Open |
-| PRM-12 | `vuln-lib` (synthetic fixture) | A call/`new` whose callee resolves to a Node builtin, but which receives a function-valued argument, emits no edge | false NOT_AFFECTED — see below | Open |
+| PRM-12 | `vuln-lib` (synthetic fixture) | A call/`new` whose callee resolves to a Node builtin, but which receives a function-valued argument, emits no edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | PRM-13 | `vuln-lib` (synthetic fixture) | VT-213's inline-callback rescue displaces the unresolved edge for an otherwise-unattributable callee instead of adding to it | false NOT_AFFECTED — see below | Open |
 | PRM-14 | `vuln-lib` (synthetic fixture) | Loose equality (`==`/`!=`) is evaluated as if it were strict, pruning a branch real Node does not prune | false NOT_AFFECTED — see below | Open |
 | PRM-15 | `vuln-lib` (synthetic fixture) | A same-file `const require = ...` shadow is matched by identifier text before the lexical authority runs | false NOT_AFFECTED — see below | Open |
@@ -219,11 +219,11 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-111 | `vuln-lib` (synthetic fixture) | An empty `--cve` value (`--cve ""`) is accepted and silently returns zero findings rather than being rejected | silent drop — see below | Open |
 | PRM-112 | `vuln-lib` (synthetic fixture) | `instanceof` against a class defining a static `[Symbol.hasInstance]` invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
 | PRM-113 | `vuln-lib` (synthetic fixture) | `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
-| PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | Open |
 | RWF-050 | n/a — a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) has no register row of its own | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below | Open |
-| PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a), through the fail-closed default — see below |
 | PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | Open |
 | RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | **Fixed** (RWF-051-typecheck) — see below |
 | RWF-052 | n/a — the repository's own debt register | `docs/OPEN-DEBTS.md` D-14 still describes RWF-046's file-scope `require` collapse as present and open, although RWF-046 closed it | record — a register entry overstates an open defect — see below | Open |
@@ -234,9 +234,11 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-057 | `vuln-lib` (synthetic fixture) | A tagged template whose TAG is a loader capability (`` vm.runInThisContext`code` ``) compiles and runs its template text, but the module-load closure's scanner checked only a tagged template's substitutions, never its tag | false NOT_AFFECTED (family A) — see below | **Fixed** (A-1) — see below |
 | RWF-058 | `vuln-lib` (synthetic fixture) | A call written inside a member or parameter decorator's expression (`@make(arg()) m() {}`) runs at class definition, but is walked under the decorated member, so the graph records `m → make` and `m → arg` | fabricated edge (misattributed caller; no verdict moved) — see below | Open |
 | RWF-059 | `vuln-lib` (synthetic fixture) | A call or `new` in an instance field initializer runs when the class is CONSTRUCTED, but is attributed to the owner of the class DEFINITION; for a class never constructed that is a fabricated edge and a false AFFECTED | fabricated edge / false AFFECTED — see below | Open |
-| RWF-060 | `vuln-lib` (synthetic fixture) | A derived class with no constructor whose base is an ambient or builtin constructor (`class P extends Promise {}`, a `stream.Readable` subclass) forwards `new P(...)`'s arguments to the base, and a callback among them runs; nothing accounts for them | false NOT_AFFECTED — see below | Open |
+| RWF-060 | `vuln-lib` (synthetic fixture) | A derived class with no constructor whose base is an ambient or builtin constructor (`class P extends Promise {}`, a `stream.Readable` subclass) forwards `new P(...)`'s arguments to the base, and a callback among them runs; nothing accounts for them | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | RWF-061 | `vuln-lib` (synthetic fixture) | A `vm.Script` reached through a subclass (`class X extends vm.Script {}`) or a factory function (`function mk(c) { return new vm.Script(c); }`) runs its code through `.runInThisContext()`, but the module-load closure records nothing | false NOT_AFFECTED (family A) — see below | Open |
 | RWF-062 | `vuln-lib` (synthetic fixture) | With TypeScript constructor overloads, `new A()` resolves to the first overload SIGNATURE, a node with no body; the implementation's calls hang from a node nothing reaches | false NOT_AFFECTED — see below | Open |
+| RWF-063 | `vuln-lib` (synthetic fixture) | A builtin trusted by the builtin table (task A-3a) can be monkeypatched through a user binding the escape row does not follow -- a parameter, a container element -- so a later call of the builtin gets a no-edge proof while it runs the program's function | false NOT_AFFECTED — see below | Fixed in part (A-3a: the `const`-alias form); the parameter and container forms remain open |
+| RWF-064 | the H-0 builtin probe (`src/testing/oracle/builtin-probe.ts`) | The probe read the hooks that fired synchronously after the call, and each probe template fixed the builtin's other arguments, so a hook the builtin schedules for later, or fires only in another context, was never observed -- an admission test built on it could admit a position that runs user code | a test instrument could not enforce the guarantee it exists for (mechanical admission) — see below | Fixed in part (A-3a): deferred hooks, contexts and throws are observed; a hook only a STRUCTURED argument reaches is not — see below |
 
 ---
 
@@ -15972,6 +15974,34 @@ rule, because `in` is not an invocation-capable site and
 `new Proxy(target, handler)` passes the Decision record's admission test
 for the non-invoking allowlist (it runs no user code during the call).
 
+**Status update (task A-3a, 2026-10-01): Fixed.** ADR 0008 § 2's escape
+row, § 3's fail-closed default and § 4's documented invoking builtins
+are implemented (`docs/tasks/A-3a-escaped-values.md`). A call or `new`
+of a builtin proven to be one -- an ambient global no scope in the file
+declares (by binding, no longer by spelling), a builtin module's member
+through the binder's declaration authority, `require("<builtin>")` --
+is accounted by the builtin table (`src/code-intelligence/builtin-callables.ts`):
+a function it is handed gets a resolved edge at a documented invoking
+position (`setTimeout`, `setInterval`, `setImmediate`, `queueMicrotask`,
+`process.nextTick`, the `Promise` executor, `Reflect.apply`,
+`Reflect.construct`, `Array.from`'s mapper) and a possible edge
+elsewhere (`process.on`, the `JSON.parse` reviver, a property
+descriptor's `get`, an inline Proxy trap); anything else non-primitive
+it is handed gets an unknown edge unless its position is admitted to the
+non-invoking allowlist, which `new Proxy` and `Proxy.revocable` never
+are. A value stored on `globalThis` or another ambient builtin is an
+escape too (PRM-114). Every shape the original record and the A-0
+appendix list is reproduced against real Node in
+`tests/oracle/a3a-escaped-values.test.ts` and
+`tests/oracle/adr0008-coverage.test.ts`: failing on the base (26 of 28
+new cases, each a false `NOT_AFFECTED`), `AFFECTED` or `UNKNOWN` on the
+branch, never `NOT_AFFECTED`. A parameter named like a builtin (`JSON`)
+is no longer taken for it: that shape was itself a false `NOT_AFFECTED`
+through the spelling match (case `identity.parameter-named-JSON`).
+Removing the spelling match also unmasks, for a parameter named
+`setTimeout`, VT-213's fabricated resolved edge (PRM-13, appended
+there). What remains of the monkeypatching surface is RWF-063.
+
 ---
 
 ## AUD-02 — A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge
@@ -16212,6 +16242,19 @@ Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-16"`. No
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-12`) and § 4 (`builtin-callback`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task A-3a, 2026-10-01): Fixed.** A builtin module's
+member is identified through the binder's own declaration authority
+(`SymbolBindingBuiltin` now carries the member path) and accounted by the
+builtin table: `fs.readFile` is not a documented invoking builtin, so an
+attributable callback -- an import (`lib.parse`), a same-file function, a
+destructured `readFile`'s argument -- gets a POSSIBLE edge, and the
+finding is `UNKNOWN` with `possible_invocation`, never `NOT_AFFECTED`
+(`tests/oracle/a3a-escaped-values.test.ts`, `escaped.fs.readFile.*`,
+failing on the base). The two tests this record names changed as ADR
+0008 § 8 expected: a builtin handed only primitives stays edge-free, now
+with a `primitive_only_arguments` proof; an inline callback handed to
+`fs.readFile` gets a possible edge where VT-213 gave it a resolved one.
+
 ---
 
 ## PRM-13 — VT-213's inline-callback rescue displaces the unresolved edge for an otherwise-unattributable callee instead of adding to it
@@ -16228,6 +16271,33 @@ When a call's callee cannot be attributed but exactly one argument is an inline 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-13`) and § 4 (`inline-callback-displacement`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
 **Pinned test:** `call-graph.test.ts` VT-213 ("someUtterlyArbitraryMethodName") expects exactly this displacement as its recorded result; AGENTS.md § G forbids pinning a false premise as an expected result going forward.
+
+**Appended by task A-3a (2026-10-01): the same fabricated edge also
+yields a false `AFFECTED`.** VT-213's resolved edge to the one inline
+callback claims the unattributable callee calls it. When the callee does
+not:
+
+```js
+function run(setTimeout) { setTimeout(() => lib.parse("x")); }
+run(function never(f) {}); // AFFECTED; Node never calls parse
+```
+
+Measured against real Node (v22.11.0) with the oracle harness. The same
+program with the parameter named `cb` is a false `AFFECTED` on the base
+`51c980c` as well; with the name `setTimeout` the base answered
+`NOT_AFFECTED` only because VT-201 matched the NAME against the
+ambient-global list and gave the call no edge at all. Task A-3a made
+ambient identity lexical, which unmasks the VT-213 edge for that name
+too. Recorded as an open-soundness-defect record owned by this finding
+(`tests/oracle/a3a-escaped-values.cases.ts`,
+`identity.parameter-named-setTimeout`: expected `NOT_AFFECTED`,
+admissible `NOT_AFFECTED` or `UNKNOWN`), for task A-5. The same edge is
+unmasked, and recorded the same way, wherever A-3a refuses a builtin's
+identity and the callee becomes unattributable: a `setTimeout` replaced
+by a destructuring assignment
+(`audit.destructured-setTimeout-never-calls`) or by
+`globalThis.setTimeout = () => 0` in the same file
+(`reaudit.global-object-member-replaces-invoking-builtin`).
 
 ---
 
@@ -16686,6 +16756,14 @@ audit on base and branch), PRM-104 (a reassigned `function` declaration),
 PRM-16/17 (VT-210's higher-order parameter) and PRM-18 (VT-208's static
 receiver type). They are fixed once, for every site, by A-5 and A-6.
 
+**Status update (task A-3a, 2026-10-01).** The `Reflect.construct` case
+above is closed: `Reflect.construct` is a documented invoking builtin
+(ADR 0008 § 4) whose first argument it CONSTRUCTS, so a class passed to
+it gets a resolved edge to its constructor node, explicit or implicit,
+and `` class A { f = lib.parse`x`; } Reflect.construct(A, []); `` is
+`AFFECTED` (`tests/oracle/a3a-escaped-values.test.ts`,
+`constructed.Reflect.construct.*`, failing on the base).
+
 ---
 
 ## PRM-38 — Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge
@@ -17031,6 +17109,23 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-113`
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-114`) and § 4 (`p3-prepareStackTrace`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task A-3a, 2026-10-01): Fixed.** ADR 0008 § 2's escape
+row, assignment form: an assignment that stores a value which may carry
+the program's code into an ambient global value, a member of one, or a
+builtin module's value is an invocation site of its own
+(`escaping_assignment`, `src/code-intelligence/invocation-sites.ts`). An
+attributable function it stores gets a POSSIBLE edge from the owner that
+performs the assignment, anything else an unknown one, so the hook's
+body is searched and the finding is `UNKNOWN`
+(`tests/oracle/a3a-escaped-values.test.ts`,
+`assigned.Error.prepareStackTrace`, failing on the base). The same site
+covers a monkeypatched builtin (`Math.max = f; Math.max(1, 2)`), which is
+what keeps the builtin table's no-edge proofs sound against a direct
+write; the forms it does not see are RWF-063. A write to an undeclared
+name that is not an ambient builtin (`alias = impl`) or to the module's
+own `exports` is deliberately not a site: nothing but a call of that
+name, already an unknown callee, can reach what it stores.
+
 ---
 
 ## PRM-115 — TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge
@@ -17198,6 +17293,19 @@ the escape row does not reach it either. The case is closed only through
 the fail-closed default, because the Decision record's admission rule
 bars all three builtins from the non-invoking allowlist. See ADR 0008,
 "Amendment A-0".
+
+**Status update (task A-3a, 2026-10-01): Fixed, through the fail-closed
+default.** `console.log(obj)`, `util.inspect(obj)` and
+`util.format("%o", obj)` hand a builtin whose first position is not
+admitted (its probe fires `util.inspect.custom`) an object the graph
+cannot attribute, so the call gets an unknown `escaped_value` edge and
+the three records are deleted and assert `UNKNOWN`
+(`tests/oracle/adr0008-coverage.test.ts`). The closure holds only while
+none of the three is admitted, and that is now enforced MECHANICALLY:
+`tests/oracle/builtin-admission.test.ts`, run in CI by
+`npm run test:oracle`, fails for any admitted position whose probe fires
+a hook ADR 0008 does not account for, and asserts these three builtins'
+outcomes by name (a mutation admitting `console.log` by hand is caught).
 
 ---
 
@@ -17749,6 +17857,27 @@ would not reach them, and A-3 as specified would not close this.
 `UNPROVEN_NO_EDGE_LEDGER` names RWF-060 under both reasons, and task A-1
 adds the case to A-3's acceptance.
 
+**Status update (task A-3a, 2026-10-01): Fixed.** At a `new` site whose
+callee resolves to a class, the class's implicit-constructor chain is
+followed (through further derived classes with no constructor, local or
+imported, up to an explicit constructor or a base); when it ends at a
+builtin, the site's own arguments are accounted as the arguments of a
+construction of that builtin (`forwardedArgumentEdges`,
+`src/code-intelligence/call-graph.ts`): the `Promise` executor is a
+documented invoking position, so `new P(() => lib.parse("x"))` is
+`AFFECTED` (inline, named and two-level forms); a `Readable`'s `read`
+option is a possible edge, so that case is `UNKNOWN`
+(`tests/oracle/a3a-escaped-values.test.ts`, `forwarded.*`; the three
+`Promise` forms fail on the base). The implicit constructor's own
+construction of its builtin base receives its `...args` as values it
+cannot see, and gets an unknown `escaped_value` edge (the precision cost:
+constructing any subclass of a builtin whose positions are not admitted,
+`class MyError extends Error {}` included, withholds the negative proof
+until task A-4 can admit those positions). One limit, recorded: the chain
+is not followed through a re-export hop; such a construction keeps the
+implicit constructor's unknown edge, so it is `UNKNOWN`, never
+`NOT_AFFECTED`.
+
 ## RWF-061 — A `vm.Script` reached through a subclass or a factory runs code the module-load closure never records
 
 **Status:** Open
@@ -17809,4 +17938,151 @@ site in an instance field initializer to the class's first
 `ConstructorDeclaration` -- deliberately the same node `new` resolves to
 today, so that it is reached. The fix for this finding must change both
 together: to the constructor that has a body.
+
+## RWF-063 — A builtin trusted by the builtin table can be monkeypatched through a binding the escape row does not follow
+
+**Status:** Fixed in part (A-3a: the `const`-alias form); the parameter
+and container forms remain open
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a builtin object that reaches a user binding is
+assumed to still hold only Node's own members)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`, predating A-3a)
+**Fix lane:** A (backlog `BL-039`)
+
+**Discovered:** by task A-3a, measured with the oracle harness (Node
+v22.11.0) on the branch and on the base `51c980c`.
+
+Task A-3a's builtin table gives a call of a builtin Node supplies a
+no-edge proof when it is handed nothing the program wrote
+(`primitive_only_arguments`), trusting that the builtin is Node's own.
+The escape row keeps that trust sound against a DIRECT write
+(`Math.max = f`, an assignment into an ambient value, which gives `f` a
+possible edge), but a builtin object can reach a user binding first:
+
+```js
+const M = Math;                       // fixed by A-3a (a const alias)
+M.max = () => lib.parse("x");
+Math.max(1, 2);                       // Node calls parse
+
+function patch(m) { m.max = () => lib.parse("x"); }   // still open
+patch(Math);
+Math.max(1, 2);                       // Node calls parse; NOT_AFFECTED
+```
+
+Both forms answered `NOT_AFFECTED` on the base as well (the base gave
+every ambient call no edge, unproven). A-3a follows `const` aliases of an
+ambient value (`aliasesAmbientValue`, `escape-row.ts`); a builtin object
+passed as an argument, stored in a container or returned is not followed.
+A sound fix treats an ambient builtin OBJECT used as a value -- anything
+but the root of a member read or a callee -- as escaping, and withdraws
+the table's trust for that builtin wherever that value can flow; it is a
+value-flow question, recorded as backlog `BL-039`.
+
+**Appended by task A-3a after its independent audit (2026-10-01).** The
+audit found more forms, each measured against real Node and each a
+false `NOT_AFFECTED` on the base as well:
+
+- `const { Math: M } = globalThis; M.max = f; Math.max(1);` -- a builtin
+  reached by DESTRUCTURING the global object;
+- `globalThis.String = function () { return f; }; setTimeout(String(1), 0);`
+  -- the replacement is accounted (a possible edge to the outer
+  function), but `RETURNS_PRIMITIVE` treats `String(1)`'s result as a
+  primitive, so the function it returns is handed to `setTimeout` unseen.
+
+Fixed in the same task, after the audit: writes through a conditional
+alias of the global object (`const g = typeof globalThis !== "undefined"
+? globalThis : global; g.JSON.parse = f`, in another file), a
+destructuring assignment onto a builtin (`({ a: Math.max } = src)`), and
+-- not regressions, but the same identity question -- a builtin name
+replaced by a destructuring assignment, a `for…of` head, or read inside
+a `with` body (no ambient identity, so no proof). The builtin table's
+global roots are now exactly the names whose writes are escapes
+(`AMBIENT_GLOBAL_NAMES`, checked by a test): the first version also
+listed `URL`, `atob`, `TextEncoder` and seven more, which the base had
+left as unknown callees and which a polyfill in another file could
+replace unseen.
+
+**Appended after task A-3a's second independent audit (2026-10-01).** A
+correction first: the record above says its open forms "answered
+`NOT_AFFECTED` on the base as well". That was false for one callee form
+the first version of A-3a newly trusted, `require("<builtin>").member(...)`,
+which the base gave an unknown edge: a module patched through a
+parameter, a container or a returned value (`patch(require("path"))`)
+then made the call a false `NOT_AFFECTED` the base did not have. A-3a no
+longer identifies that form as the builtin; it stays an unknown callee
+(`reaudit.require-member-callee-patched-through-parameter`). Also fixed
+after this audit: a `const` alias of a builtin module binding
+(`const q = p; q.join = f`), a builtin's own function stored over another
+(`Array.isArray = setTimeout`, an escape now), and a same-file
+`globalThis.X = stub`, which removes `X`'s ambient identity in that file.
+Still open, and recorded here: the same stub in ANOTHER file
+(`globalThis.setTimeout = () => 0` in a required module) leaves the
+calling file's `setTimeout(cb)` trusted as the documented invoking
+builtin -- a resolved edge to `cb`, a false `AFFECTED` when the stub is
+written directly (the direct write is an escape, so nothing the stub
+runs is missed). A stub installed through a PARAMETER
+(`patch(globalThis)`) is this record's open parameter form, and can be a
+false `NOT_AFFECTED` (as on the base).
+
+**Appended after the third audit round (2026-10-01).** Two further holes,
+each a false `NOT_AFFECTED` on the base as well, fixed: a file that
+assigned a builtin's BARE name anywhere (`if (false) { Math = 0; }`) had
+its direct member writes (`Math.max = f`) no longer counted as escapes
+(the member branch asked the same question as ambient identity, which
+that bare write turns off; it now asks only "undeclared and one of
+`AMBIENT_GLOBAL_NAMES`", which over-approximates); and a builtin value
+handed to a builtin (`Object.assign(Array, { isArray: setTimeout })`) was
+treated as carrying nothing, so the call claimed a
+`primitive_only_arguments` proof -- it is now opaque.
+
+## RWF-064 — The H-0 builtin probe could not see a deferred hook, or a hook another context fires
+
+**Status:** Fixed in part (A-3a): see "What the probe still cannot see" below
+**Failure class:** a test instrument could not enforce the guarantee it
+exists for
+**Defect class:** B (the instrument assumed a builtin runs every hook
+before it returns, and in the one context the template gave it)
+**Proof family affected:** the non-invoking allowlist's admission (all
+families through it)
+**Severity:** High for admission; no admitted entry existed before A-3a
+**Fix lane:** A — task A-3a
+
+**Discovered:** by task A-3a, before building the admission test on the
+probe. `probeBuiltinArgKind` read the hooks that fired right after the
+call returned, so a hook the builtin schedules for later was never seen:
+
+```js
+Promise.resolve({ then() { mark("then"); } });
+// fired, read synchronously: []   read at process exit: ["then"]
+```
+
+and each probe template fixed the builtin's other arguments, so a hook
+that fires only in another context was never seen (`fs.readFileSync`
+fires `valueOf` on an object at its first position when its second
+argument is an options object or absent, and not when it is a string or
+a number -- measured, Node v22.11.0). A third limit was already recorded by the allowlist admission
+ruling (ADR 0008, 2026-09-27): a throw was reported as a fired hook.
+
+**Fixed:** the probe writes its report at process exit, reports a throw
+in `threw` and never in `fired`, and gains `probePosition` (one argument
+kind at one position, against each of four contexts for the other
+positions) and `probeRetention` (operations on the result, and on the
+argument compared with a run that never made the call). Self-tests in
+`tests/oracle/builtin-probe.test.ts`; the admission test that relies on
+them is `tests/oracle/builtin-admission.test.ts`.
+
+**What the probe still cannot see (task A-3a's independent audit).** Its
+argument kinds are single-feature objects, and its Proxy kinds forward to
+`{ probe: 1 }`, so it never builds an argument whose SHAPE selects a path
+inside the builtin. `fs.existsSync` treats an object with `href`,
+`protocol` and `pathname` as a URL and coerces `pathname` with `toString`
+(measured by the audit: a false `NOT_AFFECTED` through a
+`non_invoking_builtin` proof); `clearTimeout` / `clearInterval` unenroll
+an object with `_onTimeout`, writing onto it and coercing `_idleTimeout`.
+All three positions were withdrawn from the allowlist, and the table now
+admits only positions whose implementation rejects a non-string with a
+strict `typeof` check or inspects only the value itself
+(`builtin-callables.ts`). Closing this needs structured probe contexts,
+or a reading of each admitted implementation recorded with the entry.
 
