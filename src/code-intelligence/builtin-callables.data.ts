@@ -5,7 +5,8 @@
  * by `scripts/generate-builtin-callables.mjs` (do not edit by hand).
  * `builtin-callables.ts` owns what the table MEANS; this module is only
  * the data. `tests/oracle/builtin-admission.test.ts` checks that every
- * entry exists, as a function, in the real Node the suite runs on.
+ * entry exists, as a function, in the real Node the suite runs on, or
+ * is listed in `VERSION_DEPENDENT_BUILTIN_CALLABLES` there.
  *
  * Key forms: `global:<path>` for an ambient global (`global:setTimeout`,
  * `global:Array.isArray`, `global:process.nextTick`) and

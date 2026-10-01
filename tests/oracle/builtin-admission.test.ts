@@ -4,6 +4,7 @@ import {
   BUILTIN_BEHAVIOUR,
   NEVER_ADMITTED,
   RETURNS_PRIMITIVE,
+  VERSION_DEPENDENT_BUILTIN_CALLABLES,
   builtinBehaviour,
   isAdmittedPosition,
   isKnownBuiltinCallable,
@@ -63,7 +64,30 @@ describe("the builtin table", () => {
     expect(uncovered).toEqual([]);
   });
 
-  it("every known builtin callable exists, as a function, in the Node running this suite", () => {
+  it("no key that carries authority is version-dependent", () => {
+    const authority = [
+      ...Object.keys(BUILTIN_BEHAVIOUR).map((behaviourKey) =>
+        behaviourKey.slice(behaviourKey.indexOf(" ") + 1),
+      ),
+      ...RETURNS_PRIMITIVE,
+      ...[...NEVER_ADMITTED].map((behaviourKey) =>
+        behaviourKey.slice(behaviourKey.indexOf(" ") + 1),
+      ),
+    ];
+    expect(
+      authority.filter((key) => key in VERSION_DEPENDENT_BUILTIN_CALLABLES),
+    ).toEqual([]);
+  });
+
+  it("every version-dependent key is a known builtin callable", () => {
+    expect(
+      Object.keys(VERSION_DEPENDENT_BUILTIN_CALLABLES).filter(
+        (key) => !isKnownBuiltinCallable(key),
+      ),
+    ).toEqual([]);
+  });
+
+  it("every known builtin callable exists, as a function, in the Node running this suite, or is a recorded version-dependent key", () => {
     const script = [
       `const keys = ${JSON.stringify(KNOWN_BUILTIN_CALLABLE_KEYS)};`,
       `const missing = [];`,
@@ -77,7 +101,11 @@ describe("the builtin table", () => {
       `console.log(JSON.stringify(missing));`,
     ].join("\n");
     const out = execFileSync("node", ["-e", script], { encoding: "utf-8" });
-    expect(JSON.parse(out.trim())).toEqual([]);
+    const missing = JSON.parse(out.trim()) as string[];
+    expect(
+      missing.filter((key) => !(key in VERSION_DEPENDENT_BUILTIN_CALLABLES)),
+      `missing from Node ${process.version}; record them in VERSION_DEPENDENT_BUILTIN_CALLABLES only if no authority depends on them`,
+    ).toEqual([]);
   });
 
   it("every behaviour entry names a known builtin callable", () => {

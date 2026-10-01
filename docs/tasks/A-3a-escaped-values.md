@@ -11,7 +11,8 @@
   - `6bdb2e6` test(A-3a): real-Node reproductions — escaped values, invoking builtins, hook assignments, RWF-060
   - `b0b8f31` test(A-3a): mechanical admission — the builtin probe, the builtin table, the admission test
   - `3de78b0` fix(A-3a): escape row, builtin accounts, hook assignments, RWF-060, Reflect.construct
-  - (this commit) docs(A-3a): records — findings, debts, plan § 5a, backlog, progress, scorecard
+  - `bfad4e1` docs(A-3a): records — findings, debts, plan § 5a, backlog, progress, scorecard
+  - (this commit) test(A-3a): record the builtin table's version-dependent keys (CI on Node 20 and 26)
 - **Superseded by**: —
 
 ## Project context
@@ -354,6 +355,23 @@ Appended during the task; the text above is unchanged.
    `.audit.test.ts`); what removed the error was capping the probes at
    four concurrent processes (clean 3 runs of 3). Recorded on backlog
    BL-033.
+9. **The builtin table across Node versions** (after the pull request
+   was opened). The table is enumerated from one Node (v22.11.0), and the
+   admission test asserted that every key exists in the Node running it.
+   That premise was false for the supported range: PR #80's first CI run
+   failed on both matrix Nodes, with 12 keys absent in Node 20 (for
+   example `Array.fromAsync`, `fs.glob`) and 23 absent in Node 26 (for
+   example the removed `util.is*`, `timers.enroll`). Every per-position
+   admission test passed on both. Membership grants no authority by
+   itself, so the keys stay. They are recorded with what was measured in
+   `VERSION_DEPENDENT_BUILTIN_CALLABLES` (`builtin-callables.ts`), and
+   the test now requires that every missing key is recorded there, that
+   no key with a behaviour entry, a primitive-return entry or a
+   never-admitted entry is recorded there (mutation: recording
+   `Array.isArray` is caught), and that every recorded key is in the
+   table. The commits were already pushed, so this is a separate commit
+   rather than folded into the admission commit (AGENTS.md § H allows no
+   uninstructed force-push).
 
 ## Outcome (2026-10-01)
 
