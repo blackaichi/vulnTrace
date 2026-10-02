@@ -689,6 +689,8 @@ export function createProofWorkspace(): {
       resolver,
       maxFiles: 5000,
       knownPackageRoots,
+      // As scan.ts passes it (task A-3b): what a JSX site compiles to.
+      jsx: tsProject.rawCompilerOptions,
     });
     const graph = await buildCallGraph({
       entryFiles: entrypoints.map((entry) => entry.filePath),

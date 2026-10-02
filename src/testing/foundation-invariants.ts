@@ -405,8 +405,9 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "are admitted is decided MECHANICALLY by " +
       "`tests/oracle/builtin-admission.test.ts`, run in CI by " +
       "`npm run test:oracle` (it spawns real Node, so it is not a " +
-      "Foundation-gate owner). Pending kinds (JSX, protocol members, " +
-      "accessors) are open defects of A-3b/A-4, named in the census.",
+      "Foundation-gate owner). JSX elements are sites since task A-3b; " +
+      "the pending kinds left (protocol members, accessors) are open " +
+      "defects of A-4, named in the census.",
   },
   {
     id: "possible-edge-into-walked-file",

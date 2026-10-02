@@ -9,6 +9,14 @@ import {
   resolveSingleAssignmentValue,
 } from "./local-aliases.js";
 import { invocationSiteOf } from "./invocation-sites.js";
+import {
+  isJsxSite,
+  jsxHandedExpressions,
+  jsxRuntimeOf,
+  jsxSiteMayLoad,
+  type JsxSettings,
+  type JsxSite,
+} from "./jsx-runtime.js";
 import type { ModuleModel } from "./module-model.js";
 import { toSourceLocation, type SourceIndex } from "./source-index.js";
 
@@ -40,6 +48,12 @@ import { toSourceLocation, type SourceIndex } from "./source-index.js";
 export interface LoaderClassificationContext {
   readonly index: SourceIndex;
   readonly model: ModuleModel;
+  /**
+   * Task A-3b: the project's JSX compiler options, which decide whether a
+   * JSX site's compiled form loads a module (`jsx-runtime.ts`). Absent
+   * means unknown, and every JSX site is then treated as one that may.
+   */
+  readonly jsx?: JsxSettings;
 }
 
 /** One closure-widening construct found in a source file, with where to look. */
@@ -1767,6 +1781,34 @@ export function classifyClosureWideningTaggedTemplate(
 }
 
 /**
+ * Task A-3b (RWF-066, PRM-116): a JSX element or fragment is a call to its
+ * factory, compiled from syntax that spells no call -- and, under the
+ * automatic runtime, a `require("<jsxImportSource>/jsx-runtime")` that no
+ * source line spells either. Closure-widening when the compiled form may
+ * load a module (`jsxSiteMayLoad`: the automatic or an undetermined
+ * runtime, or a classic factory rooted in a loader-reaching name), or when
+ * a loader capability is handed to the factory as a tag, attribute or
+ * child (as for a call's arguments). `CallGraph` uses it for the site's
+ * edge and {@link findClosureWideningConstructs} records it, so the two
+ * layers cannot disagree about a JSX site any more than about a call.
+ */
+export function classifyClosureWideningJsx(
+  node: JsxSite,
+  context: LoaderClassificationContext,
+): DynamicCallReason | undefined {
+  if (
+    jsxSiteMayLoad(node, jsxRuntimeOf(context.index.sourceFile, context.jsx))
+  ) {
+    return "jsx_runtime_load";
+  }
+  return jsxHandedExpressions(node).some((handed) =>
+    isEscapingCapabilityUse(handed, context),
+  )
+    ? "loader_capability_escape"
+    : undefined;
+}
+
+/**
  * `<ModuleCtor>.<member>` names that ARE one of the module system's own
  * mutable registries. Node's CJS loader aliases each of these under a
  * second name on `require` as well (`Module._extensions ===
@@ -3132,6 +3174,12 @@ export function findClosureWideningConstructs(
         if (isEscapingCapabilityUse(substitution, context)) {
           record("loader_capability_escape", substitution);
         }
+      }
+    } else if (isJsxSite(node)) {
+      // Task A-3b: see classifyClosureWideningJsx.
+      const reason = classifyClosureWideningJsx(node, context);
+      if (reason !== undefined) {
+        record(reason, node);
       }
     } else if (ts.isDecorator(node) && invocationSiteOf(node) !== undefined) {
       // Task A-1: a decorator the compiled program calls (the same

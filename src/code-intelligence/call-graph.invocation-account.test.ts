@@ -450,10 +450,6 @@ describe("a tagged template or decorator is accounted from the owner that evalua
 const PRODUCERS: Readonly<
   Record<UnprovenNoEdgeReason, { source: string; site: string }>
 > = {
-  module_scope_callee: {
-    source: `exports.f = function () {};\nexports.f();\n`,
-    site: "call",
-  },
   static_require_by_text: {
     source: `require("./other.js");\n`,
     site: "call",

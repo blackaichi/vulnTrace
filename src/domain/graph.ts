@@ -91,6 +91,36 @@ export type DynamicCallReason =
    * already in scope, in a module already loaded.
    */
   | "escaped_value"
+  /**
+   * Task A-3b (AUD-02, ADR 0008 § 2's own-export row): a module calls (or
+   * constructs) its own export through the CommonJS module-scope bindings,
+   * `exports.x()`, `module.exports.x()`, `exports["x"]()`. Which function
+   * the export holds at that moment is the export's complete write set
+   * (lane E, ADR 0009): today's attribution sees neither in-module write
+   * order nor the `exports` alias going stale after `module.exports = …`,
+   * so it is no authority for a resolved edge yet (backlog BL-042).
+   * `unmodeled_construct`, non-widening: the value is the module's own.
+   */
+  | "own_export_call"
+  /**
+   * Task A-3b (PRM-116, ADR 0008 § 2's JSX row): a JSX element or
+   * fragment, compiled for the classic runtime, calls its factory
+   * (`React.createElement`, a `jsxFactory`, an `@jsx` pragma), a binding
+   * in scope the graph does not yet resolve (backlog BL-041).
+   * `unmodeled_construct`, non-widening: the factory is a value already in
+   * scope, in a module already loaded.
+   */
+  | "jsx_factory_call"
+  /**
+   * Task A-3b (PRM-116, RWF-066): a JSX element or fragment whose compiled
+   * form may LOAD a module the graph does not follow: the automatic
+   * runtime's implicit `require("<jsxImportSource>/jsx-runtime")`, a
+   * runtime this analyzer cannot determine (`jsx: preserve`, no project),
+   * or a classic factory rooted in the module's own loader (`require`,
+   * `module`). Widening, `capability_escape`; the module-load closure
+   * records the same site (`loader-constructs.ts`).
+   */
+  | "jsx_runtime_load"
   | "declaration_only_resolution"
   | "aliased_require"
   | "create_require"
@@ -314,6 +344,7 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "child_process_execution":
     case "loader_hook_mutation":
     case "loader_capability_escape":
+    case "jsx_runtime_load":
       return true;
     // P1-B1: every `unsupported_*` subtype is non-widening for exactly the
     // reason the undifferentiated token was -- each one names a value that
@@ -334,6 +365,8 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "unsupported_computed_callee":
     case "dynamic_member_access":
     case "unresolved_target":
+    case "own_export_call":
+    case "jsx_factory_call":
     case "escaped_value": {
       // Task A-3a, `escaped_value`: the escaped value is already in scope,
       // in a module the graph already loaded; a builtin running it cannot
@@ -489,14 +522,13 @@ export type NoEdgeProof =
  * task ({@link UNPROVEN_NO_EDGE_LEDGER}). ADR 0008's end state is that
  * this type is empty.
  *
- * - `module_scope_callee` (VT-201, narrowed by task A-3a): the callee is
- *   rooted in one of the CommonJS module-scope bindings `module`,
- *   `exports`, `require`, `__dirname`, `__filename`, and no enclosing scope
- *   declares it. A module calling its own export through `exports.x()` is
- *   invisible (AUD-02). Until A-3a this reason covered every ambient
- *   global by its spelling; A-3a accounts for the others (escaped values,
- *   the builtin table and its proofs), and removed `builtin_module_callee`
- *   (VT-305) the same way.
+ * VT-201's exemption of ambient globals is gone: task A-3a accounted for
+ * the ambient and builtin callees (removing `builtin_module_callee`, VT-305)
+ * and narrowed the rest to `module_scope_callee`, the CommonJS module-scope
+ * roots, which task A-3b removed (AUD-02: an own-export call is an
+ * `own_export_call` unknown edge; any other call through `module` or
+ * `require` a `loader_capability_escape` one).
+ *
  * - `static_require_by_text` (P1-B3b): `require("x")` recognised by its
  *   spelling, not by proving `require` is the ambient one; a local
  *   `function require` is never seen. `AmbientStaticRequire` needs that
@@ -508,7 +540,7 @@ export type NoEdgeProof =
  *   are separated.
  */
 export type UnprovenNoEdgeReason =
-  "module_scope_callee" | "static_require_by_text" | "constant_folded_branch";
+  "static_require_by_text" | "constant_folded_branch";
 
 /**
  * Who owns each {@link UnprovenNoEdgeReason}: the open findings it is the
@@ -521,13 +553,11 @@ export const UNPROVEN_NO_EDGE_LEDGER: Readonly<
   Record<
     UnprovenNoEdgeReason,
     {
-      readonly closedBy: "A-3b" | "A-5";
+      readonly closedBy: "A-5";
       readonly findings: readonly [string, ...string[]];
     }
   >
 > = {
-  // `exports.x()` / `module.exports.x()`: a module calling its own export.
-  module_scope_callee: { closedBy: "A-3b", findings: ["AUD-02"] },
   static_require_by_text: { closedBy: "A-5", findings: ["PRM-15"] },
   constant_folded_branch: { closedBy: "A-5", findings: ["PRM-14"] },
 };

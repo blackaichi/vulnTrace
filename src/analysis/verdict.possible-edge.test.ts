@@ -435,3 +435,47 @@ describe("A-3a's emitted possible edges reach buildFinding as possible_invocatio
     },
   );
 });
+
+/**
+ * Task A-3b, REMEDIATION-PLAN § 5a ("A-2 additions"): the `jsx` site kind
+ * emits a possible edge to each attributable function a JSX element hands
+ * its factory (PRM-116), through the production graph builder and
+ * `buildFinding`, with no edge injected. The site also carries its
+ * factory's own unknown edge, so the region is UNKNOWN either way; the
+ * function reached only through the possible edge is reported as
+ * `possible_invocation`.
+ */
+describe("A-3b's emitted possible edges reach buildFinding as possible_invocation", () => {
+  it.each([
+    ["a JSX element's component", "const el = <CallsVulnerable />;\n"],
+    [
+      "a JSX attribute's function",
+      "const el = <div onClick={callsVulnerable} />;\n",
+    ],
+    ["a JSX fragment's child function", "const el = <>{callsVulnerable}</>;\n"],
+  ])("%s", async (_name, body) => {
+    const proof = await workspace.materialize({
+      ...FAMILY_C_PROJECT,
+      files: {
+        ...INSTALLED_LIB,
+        "src/index.jsx":
+          'const { safe, vulnerable } = require("vuln-lib");\n' +
+          "function main(){ return safe(1); }\n" +
+          "function callsVulnerable(){ return vulnerable(1); }\n" +
+          "function CallsVulnerable(){ return vulnerable(1); }\n" +
+          body +
+          "module.exports = { main };\n",
+      },
+      entries: ["src/index.jsx"],
+    });
+    expect(
+      proof.inputs.graph.edges.some((e) => e.resolution.kind === "possible"),
+      "the production graph emits the possible edge",
+    ).toBe(true);
+    const outcome = await runProof(proof.inputs);
+    expect(outcome.verdict, describeOutcome(outcome)).toBe("UNKNOWN");
+    expect(reasonsOf(outcome)).toContain(
+      "value_uncertainty/possible_invocation",
+    );
+  });
+});

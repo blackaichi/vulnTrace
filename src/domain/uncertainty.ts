@@ -130,6 +130,9 @@ export const UNCERTAINTY_REASONS = [
   "unsupported_computed_callee",
   // --- An escaped value the graph cannot attribute (ADR 0008 § 3, task A-3a) ---
   "escaped_value",
+  // --- An own-export call and a JSX factory call (ADR 0008 § 2, task A-3b) ---
+  "own_export_call",
+  "jsx_factory_call",
   "declaration_only_resolution",
   "aliased_require",
   "create_require",
@@ -142,6 +145,8 @@ export const UNCERTAINTY_REASONS = [
   "child_process_execution",
   "loader_hook_mutation",
   "loader_capability_escape",
+  // --- A JSX site that may load a module (task A-3b, RWF-066) ---
+  "jsx_runtime_load",
 
   // --- Reachability over `possible` edges (ADR 0008 § 3, task A-2) ---
   "possible_invocation",
@@ -243,6 +248,13 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // an object whose `[util.inspect.custom]` it runs (PRM-117). The builtin
   // is modeled; what it is handed is not.
   escaped_value: "unmodeled_construct",
+  // Task A-3b, ADR 0008 § 2's own-export row: "the own export's node, or
+  // unknown". The call is modeled; which function the export holds when it
+  // runs is the export's complete write set, which lane E builds (ADR 0009).
+  own_export_call: "unmodeled_construct",
+  // Task A-3b, ADR 0008 § 2's JSX row: the classic factory is a value in
+  // scope that the graph does not resolve yet (backlog BL-041).
+  jsx_factory_call: "unmodeled_construct",
   // Both workspace shapes are genuine, closeable frontend gaps: a `pkg-*`
   // or brace pattern is documented npm workspace syntax this analyzer
   // declines to interpret, and a `pnpm-workspace.yaml` layout is a file it
@@ -292,6 +304,10 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   child_process_execution: "capability_escape",
   loader_hook_mutation: "capability_escape",
   loader_capability_escape: "capability_escape",
+  // Task A-3b, RWF-066: the compiled JSX site may load a module no source
+  // line spells (the automatic runtime's `jsx-runtime`), which graph
+  // construction does not discover.
+  jsx_runtime_load: "capability_escape",
   // The VT-300 guard's own blocker: a widening construct is reachable from
   // an entrypoint, so this instance's absence from the call graph stopped
   // being evidence. The blocker IS the escape, stated at the verdict layer.
