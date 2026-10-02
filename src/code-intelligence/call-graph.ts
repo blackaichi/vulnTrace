@@ -38,8 +38,14 @@ import {
   invocationSiteOf,
 } from "./invocation-sites.js";
 import {
+  jsxHandedExpressions,
+  type JsxSettings,
+  type JsxSite,
+} from "./jsx-runtime.js";
+import {
   classifyClosureWideningCall,
   classifyClosureWideningImplicitCallee,
+  classifyClosureWideningJsx,
   classifyClosureWideningTaggedTemplate,
   isStaticRequireCall,
 } from "./loader-constructs.js";
@@ -1587,6 +1593,12 @@ interface WalkContext {
    * calls anything but one).
    */
   readonly nodeKindOf: (id: GraphNodeId) => GraphNodeKind | undefined;
+  /**
+   * Task A-3b: the project's JSX compiler options, which decide what a JSX
+   * site compiles to (`jsx-runtime.ts`); `undefined` without a project,
+   * which makes every JSX runtime undetermined.
+   */
+  readonly jsx: JsxSettings | undefined;
 }
 
 /**
@@ -1679,6 +1691,66 @@ function builtinCalleeOf(
   // form turned those base UNKNOWNs into false NOT_AFFECTEDs (task A-3a's
   // re-audit). It stays an unknown callee.
   return undefined;
+}
+
+/**
+ * Task A-3b (AUD-02; ADR 0008 § 2's own-export row). The reason a call or
+ * `new` whose callee is rooted in an undeclared CommonJS module-scope
+ * binding gets an UNKNOWN edge -- never no edge, which is what
+ * `module_scope_callee` gave it (VT-201) and family C read as "calls
+ * nothing" -- or `undefined` when the callee is not rooted in one.
+ *
+ * - `exports…` / `module.exports…`: the module calling its own export,
+ *   `own_export_call`. The export model attributes the export's final
+ *   value, but not in-module write order (`exports.x = a; exports.x();
+ *   exports.x = b`) nor the `exports` alias going stale after
+ *   `module.exports = …`, so it is no authority for a resolved edge until
+ *   lane E's write set (ADR 0009; backlog BL-042).
+ * - any other member of `module` or `require` (`require.resolve`,
+ *   `module.parent.require`, `module.children[0].require`): the module's
+ *   own loader API. The loader classifier
+ *   (`classifyClosureWideningCall`) answers the shapes it knows before
+ *   this point; what reaches here is a use of the loader it did not
+ *   classify, `loader_capability_escape` -- closure-widening, so families
+ *   B and C fail closed. Family A's closure is that classifier's own scan,
+ *   which this edge cannot reach (RWF-065, backlog BL-040).
+ * - `__dirname` / `__filename`: a string the module was given; the
+ *   receiver-shape subtype every other unattributed member call gets.
+ *
+ * The chain is walked through computed members too, so `exports[k]()` and
+ * `module.children[0].require()` are not mistaken for anything else.
+ */
+function moduleScopeCalleeReason(
+  callee: ts.Expression,
+): DynamicCallReason | undefined {
+  const path: (string | undefined)[] = [];
+  let current = skipOuterExpressions(callee);
+  while (
+    ts.isPropertyAccessExpression(current) ||
+    ts.isElementAccessExpression(current)
+  ) {
+    path.unshift(
+      ts.isPropertyAccessExpression(current)
+        ? current.name.text
+        : ts.isStringLiteralLike(current.argumentExpression)
+          ? current.argumentExpression.text
+          : undefined,
+    );
+    current = skipOuterExpressions(current.expression);
+  }
+  if (!ts.isIdentifier(current) || !isModuleScopeRoot(current)) {
+    return undefined;
+  }
+  if (
+    current.text === "exports" ||
+    (current.text === "module" && path[0] === "exports")
+  ) {
+    return "own_export_call";
+  }
+  if (current.text === "module" || current.text === "require") {
+    return "loader_capability_escape";
+  }
+  return classifyUnsupportedConstruct(callee);
 }
 
 /**
@@ -2100,9 +2172,10 @@ function unprovenNoEdge(reason: UnprovenNoEdgeReason): InvocationAccount {
  * {@link InvocationAccount} (see docs/SDD.md § 18, § 3.1's VT-201
  * completeness invariant, ADR 0008 invariant A1). Accounted with no edge
  * only with a no-edge proof for a call of a known builtin (task A-3a,
- * {@link builtinAccount}), or, unproven, for a static `require("x")` and a
- * callee rooted in a CommonJS module-scope binding -- never merely because
- * resolution failed, and never silently. Every other visited call, including one bound to a local
+ * {@link builtinAccount}), or, unproven, for a static `require("x")`
+ * (task A-5) -- never merely because resolution failed, and never
+ * silently. A callee rooted in a CommonJS module-scope binding gets an
+ * unknown edge since task A-3b ({@link moduleScopeCalleeReason}). Every other visited call, including one bound to a local
  * parameter/variable this binder cannot trace (a function value flowing
  * through an argument, a method call on a locally-constructed instance),
  * still produces an explicit `unknown(unsupported_construct)` edge rather
@@ -2341,12 +2414,21 @@ async function classifyCallee(
   // builtin is handed can be the program's own code. Since task A-3a a
   // callee PROVEN to be a builtin is accounted by the builtin table and
   // the escape row ({@link builtinAccount}); a member of a builtin value
-  // Node does not supply is the program's own, an unknown callee. Only
-  // the CommonJS module-scope roots keep an unproven account (AUD-02,
-  // task A-3b).
-  const { root } = memberChainOf(callee);
-  if (ts.isIdentifier(root) && isModuleScopeRoot(root)) {
-    return unprovenNoEdge("module_scope_callee");
+  // Node does not supply is the program's own, an unknown callee. A callee
+  // rooted in a CommonJS module-scope binding is the module's own (task
+  // A-3b, {@link moduleScopeCalleeReason}).
+  const moduleScope = moduleScopeCalleeReason(callee);
+  if (moduleScope) {
+    return edgeAccount({
+      from,
+      type: ts.isIdentifier(skipOuterExpressions(callee)) ? "direct" : "method",
+      resolution: {
+        kind: "unknown",
+        reason: moduleScope,
+        potentialTargets: [],
+      },
+      location,
+    });
   }
   const builtin = builtinCalleeOf(callee, binding);
   if (builtin && isKnownBuiltinCallable(builtin.key)) {
@@ -2709,12 +2791,22 @@ async function classifyConstructee(
     );
   }
 
-  // Task A-3a: see classifyCallee's identical branch. A builtin
-  // constructor (`new Promise(executor)`, `new Map(entries)`, an implicit
-  // `super(...args)` into one) is accounted by the builtin table.
-  const { root } = memberChainOf(callee);
-  if (ts.isIdentifier(root) && isModuleScopeRoot(root)) {
-    return unprovenNoEdge("module_scope_callee");
+  // Tasks A-3a and A-3b: see classifyCallee's identical branches. A
+  // builtin constructor (`new Promise(executor)`, `new Map(entries)`, an
+  // implicit `super(...args)` into one) is accounted by the builtin table;
+  // `new exports.Parser()` is an own-export construction.
+  const moduleScope = moduleScopeCalleeReason(callee);
+  if (moduleScope) {
+    return edgeAccount({
+      from,
+      type: "constructor",
+      resolution: {
+        kind: "unknown",
+        reason: moduleScope,
+        potentialTargets: [],
+      },
+      location,
+    });
   }
   const builtin = builtinCalleeOf(callee, binding);
   if (builtin && isKnownBuiltinCallable(builtin.key)) {
@@ -3075,6 +3167,10 @@ const INVOCATION_SITE_HANDLERS = {
     fromEvaluatingOwner(site.node, env, (from) =>
       classifyEscapingAssignment(site.node, from, env.prepared, env.ctx),
     ),
+  jsx: (site, env) =>
+    fromEvaluatingOwner(site.node, env, (from) =>
+      classifyJsx(site.node, from, env.prepared, env.ctx),
+    ),
 } as const satisfies { readonly [K in InvocationSiteKind]: SiteHandler<K> };
 
 /**
@@ -3121,6 +3217,56 @@ async function classifyEscapingAssignment(
   return first
     ? { kind: "edges", edges: [first, ...rest] }
     : edgeAccount(escapedValueEdge(from, location));
+}
+
+/**
+ * Task A-3b, PRM-116 (ADR 0008 § 2's JSX row, § 3). A JSX element or
+ * fragment calls its factory: the classic runtime's `factory(tag, props,
+ * ...children)`, or the automatic runtime's `jsx(tag, props)` from a
+ * `jsx-runtime` module the compiled file requires (`jsx-runtime.ts`). The
+ * graph does not resolve the factory yet (backlog BL-041), so the site
+ * gets its UNKNOWN edge -- closure-widening when the module-load closure
+ * would record the site too (`classifyClosureWideningJsx`: the compiled
+ * form may load a module, RWF-066, or a loader capability is handed to the
+ * factory), `jsx_factory_call` otherwise -- and, as at any unknown
+ * callee, a POSSIBLE edge to every attributable function the site hands
+ * the factory: the component
+ * ("rendering is not guaranteed"), and each function in an attribute or a
+ * child, which the factory or the renderer may call.
+ *
+ * Resolving the factory will need more than its binding: VT-210 counts a
+ * function's call sites by its call expressions, and a function used as a
+ * JSX factory is called at sites that spell no call (BL-041).
+ */
+async function classifyJsx(
+  node: JsxSite,
+  from: GraphNodeId,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<InvocationAccount> {
+  const loaderReason = classifyClosureWideningJsx(node, {
+    index: prepared.index,
+    model: prepared.model,
+    jsx: ctx.jsx,
+  });
+  return withEscapesAtUnknownCallee(
+    edgeAccount({
+      from,
+      type: loaderReason
+        ? (LOADER_EDGE_TYPE[loaderReason] ?? "direct")
+        : "direct",
+      resolution: {
+        kind: "unknown",
+        reason: loaderReason ?? "jsx_factory_call",
+        potentialTargets: [],
+      },
+      location: toSourceLocation(prepared.index.sourceFile, node),
+    }),
+    jsxHandedExpressions(node),
+    from,
+    prepared,
+    ctx,
+  );
 }
 
 function accountFor(
@@ -3715,6 +3861,7 @@ export async function buildCallGraph(
     getProgram,
     onInvocationAccount: options.onInvocationAccount,
     nodeKindOf: (id) => nodes.get(id)?.kind,
+    jsx: options.project?.rawCompilerOptions,
   };
 
   while (queue.length > 0) {

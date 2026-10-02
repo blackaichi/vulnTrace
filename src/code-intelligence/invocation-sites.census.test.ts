@@ -94,7 +94,7 @@ describe("the syntax-kind census", () => {
  * source file would be a census claim with no handler behind it.
  */
 const SITE_EXAMPLES: Readonly<
-  Record<string, { source: string; site: InvocationSiteKind }>
+  Record<string, { source: string; site: InvocationSiteKind; tsx?: true }>
 > = {
   CallExpression: { source: "f();", site: "call" },
   NewExpression: { source: "new C();", site: "construct" },
@@ -112,11 +112,26 @@ const SITE_EXAMPLES: Readonly<
     source: "Error.prepareStackTrace = () => 1;",
     site: "escaping_assignment",
   },
+  JsxOpeningElement: {
+    source: "const e = <App>{child}</App>;",
+    site: "jsx",
+    tsx: true,
+  },
+  JsxSelfClosingElement: {
+    source: "const e = <div />;",
+    site: "jsx",
+    tsx: true,
+  },
+  JsxOpeningFragment: { source: "const e = <>{a}</>;", site: "jsx", tsx: true },
 };
 
-function nodesOfKind(source: string, kind: ts.SyntaxKind): ts.Node[] {
+function nodesOfKind(
+  source: string,
+  kind: ts.SyntaxKind,
+  tsx = false,
+): ts.Node[] {
   const sourceFile = ts.createSourceFile(
-    "example.ts",
+    tsx ? "example.tsx" : "example.ts",
     source,
     ts.ScriptTarget.Latest,
     true,
@@ -146,7 +161,7 @@ describe("invocationSiteOf agrees with the census", () => {
     (name, example) => {
       const kind = ts.SyntaxKind[name as keyof typeof ts.SyntaxKind];
       const entry = SYNTAX_KIND_CENSUS[name as keyof typeof SYNTAX_KIND_CENSUS];
-      const nodes = nodesOfKind(example.source, kind);
+      const nodes = nodesOfKind(example.source, kind, example.tsx);
       expect(nodes.length).toBeGreaterThan(0);
       for (const node of nodes) {
         expect(entry.role === "site" && entry.site).toBe(example.site);

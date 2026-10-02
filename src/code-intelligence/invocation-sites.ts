@@ -1,6 +1,7 @@
 import { isBuiltin } from "node:module";
 import ts from "typescript";
 import { escapingAssignmentOf, type EscapeRoot } from "./escape-row.js";
+import { isJsxSite, type JsxSite } from "./jsx-runtime.js";
 import { classHasOwnConstructor } from "./source-index.js";
 
 /**
@@ -24,14 +25,15 @@ import { classHasOwnConstructor } from "./source-index.js";
  *   PRM-19).
  */
 
-/** The site kinds A-1 accounts for, and `escaping_assignment` (task A-3a). Later lane-A tasks add theirs. */
+/** The site kinds A-1 accounts for, `escaping_assignment` (task A-3a) and `jsx` (task A-3b). Later lane-A tasks add theirs. */
 export type InvocationSiteKind =
   | "call"
   | "construct"
   | "tagged_template"
   | "decorator"
   | "implicit_super"
-  | "escaping_assignment";
+  | "escaping_assignment"
+  | "jsx";
 
 export type ClassLike = ts.ClassDeclaration | ts.ClassExpression;
 
@@ -73,6 +75,17 @@ export type InvocationSite =
       readonly kind: "escaping_assignment";
       readonly node: ts.BinaryExpression;
       readonly root: EscapeRoot;
+    }
+  | {
+      /**
+       * Task A-3b, ADR 0008 § 2's JSX row (PRM-116): a JSX element or
+       * fragment is a call to the configured factory, which may render the
+       * component and run the functions handed to it -- and, under the
+       * automatic runtime, a load of `jsx-runtime` (RWF-066;
+       * `jsx-runtime.ts`).
+       */
+      readonly kind: "jsx";
+      readonly node: JsxSite;
     };
 
 /**
@@ -102,6 +115,9 @@ export function invocationSiteOf(node: ts.Node): InvocationSite | undefined {
   if (ts.isBinaryExpression(node)) {
     const root = escapingAssignmentOf(node, isBuiltin);
     return root ? { kind: "escaping_assignment", node, root } : undefined;
+  }
+  if (isJsxSite(node)) {
+    return { kind: "jsx", node };
   }
   return undefined;
 }
@@ -264,7 +280,7 @@ export type CensusEntry =
     }
   | {
       readonly role: "pending";
-      readonly tasks: readonly ("A-3b" | "A-4")[];
+      readonly tasks: readonly "A-4"[];
       readonly findings: readonly string[];
       readonly what: string;
     }
@@ -310,12 +326,14 @@ const ACCESSOR_DEFINITION: CensusEntry = {
   findings: ["PRM-118"],
   what: "an accessor body is its own owner, invoked implicitly by a property read or write: ADR 0008 Amendment A-0 part B",
 };
-const JSX_ELEMENT: CensusEntry = {
-  role: "pending",
-  tasks: ["A-3b"],
-  findings: ["PRM-116"],
-  what: "a JSX element is a call to the configured factory, which may render the component: ADR 0008 § 2's JSX row",
-};
+/**
+ * Task A-3b (PRM-116, RWF-066): a JSX element or fragment is a call to the
+ * configured factory -- every one, an intrinsic `<div />` too, since the
+ * factory runs whatever the tag -- and, under the automatic runtime, a
+ * load of `jsx-runtime`. ADR 0008 § 2 names the component's possible edge;
+ * the factory's own call is what PRM-116 reproduces.
+ */
+const JSX_SITE: CensusEntry = { role: "site", site: "jsx" };
 
 /**
  * Every node kind outside the four lexical families below, by name. The
@@ -342,16 +360,11 @@ export const SYNTAX_KIND_CENSUS = {
     site: "implicit_super",
     when: "a derived class with no constructor of its own: its implicit constructor runs the base constructor",
   },
+  JsxOpeningElement: JSX_SITE,
+  JsxSelfClosingElement: JSX_SITE,
+  JsxOpeningFragment: JSX_SITE,
 
   // -- pending: invocation-capable, not yet accounted -----------------------
-  JsxOpeningElement: JSX_ELEMENT,
-  JsxSelfClosingElement: JSX_ELEMENT,
-  JsxOpeningFragment: {
-    role: "pending",
-    tasks: ["A-3b"],
-    findings: ["PRM-116"],
-    what: "a fragment is a call to the configured factory too; ADR 0008 § 2 names only non-intrinsic element tags, so A-3b decides its account",
-  },
   BinaryExpression: {
     role: "site",
     site: "escaping_assignment",

@@ -1,3 +1,4 @@
+import type { JsxSettings } from "../code-intelligence/jsx-runtime.js";
 import { findClosureWideningConstructs } from "../code-intelligence/loader-constructs.js";
 import { buildModuleModel } from "../code-intelligence/module-model.js";
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
@@ -171,6 +172,13 @@ export interface BuildModuleLoadClosureOptions {
    */
   readonly knownPackageRoots?: KnownPackageRoots;
   /**
+   * Task A-3b: the project's JSX compiler options, which decide whether a
+   * JSX site loads a module no source line spells (the automatic runtime's
+   * `jsx-runtime`, RWF-066; `jsx-runtime.ts`). Absent, every JSX site is
+   * treated as one that may, and the closure is incomplete wherever one is.
+   */
+  readonly jsx?: JsxSettings;
+  /**
    * This scan's module-identity memo (Foundation F5).
    *
    * Performance only. The closure identifies EVERY loaded file to
@@ -293,6 +301,7 @@ export async function buildModuleLoadClosure(
     for (const construct of findClosureWideningConstructs({
       index: sourceIndex,
       model,
+      jsx: options.jsx,
     })) {
       incompleteness.push({
         reason: construct.reason,

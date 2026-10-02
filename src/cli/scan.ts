@@ -523,9 +523,10 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   let graph;
   let walkedFiles: readonly string[] = [];
   let resolver;
+  let tsProject;
   let graphBuildMs = 0;
   try {
-    const tsProject = loadTsProject(projectRoot);
+    tsProject = loadTsProject(projectRoot);
     resolver = createTimingResolver(
       createModuleResolver(tsProject),
       resolutionTiming,
@@ -614,6 +615,10 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       maxFiles: config.analysis.limits.maxFiles,
       knownPackageRoots,
       moduleIdentityCache,
+      // Task A-3b: what a JSX site compiles to, so the closure records one
+      // that loads `jsx-runtime` (RWF-066) -- the same settings the call
+      // graph reads.
+      jsx: tsProject.rawCompilerOptions,
     });
   } catch (error) {
     // A closure failure disables the absence proof; it never fails the
