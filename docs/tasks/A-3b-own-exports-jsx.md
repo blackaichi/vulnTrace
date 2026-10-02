@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: A-3b
 - **Branch**: a-3b-own-exports-jsx
 - **Base SHA**: 32dcbf92cab7cef1fad36bedd3c61599de797381
-- **Commits**: <!-- filled in by the last commit (READY_FOR_REVIEW) -->
+- **Commits**:
+  - `3fb314e` docs(tasks): A-3b task file — own-export calls, JSX
+  - `33a5d11` test(A-3b): real-Node reproductions — own-export calls, JSX, the automatic runtime's load
+  - `f071d96` fix(A-3b): own-export calls and module-scope callees, JSX sites, the JSX runtime's load
+  - (this commit) docs(A-3b): records — findings, debts, plan § 5a, contract, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -233,3 +237,66 @@ differential limited to RWB-08's `debug` and RWB-10's `require.resolve`
 
 In the format of `AGENTS.md` § J. Also report: the three decisions and
 what each leaves to its follow-up row; RWF-065 and RWF-066.
+
+## Corrections (2026-10-02)
+
+Appended during the task; the text above is unchanged.
+
+1. **"Expected: a graph differential limited to RWB-08's `debug` and
+   RWB-10's `require.resolve`".** False. The measured graph, proof and
+   verdict differentials are all zero over the 139 corpus cases: `debug`
+   reassigns `exports` (`exports = module.exports = …`), so `exports` is
+   not the undeclared module-scope binding there and its own-export
+   calls already had unknown edges on the base; handlebars'
+   `precompiler.js` is never loaded. No corpus site reached
+   `module_scope_callee`, and no corpus file contains JSX.
+2. **"What to do" 4: the classic runtime's factory "rooted outside the
+   module-scope bindings".** Replaced after the independent audit: a
+   spelling test under-approximates every alias of the loader. A classic
+   site is non-widening only when every declaration of its factory's root
+   in the file is a top-level, non-`declare` function or class
+   declaration, or a value import from a non-builtin module, and nothing
+   writes the name (any assignment form, destructuring and TypeScript-
+   wrapped targets included); otherwise it is `jsx_runtime_load`.
+3. **"What to do" 4: the runtime.** Also reads the project's
+   `jsxImportSource` (it alone selects the automatic runtime),
+   `reactNamespace` (the default classic factories), the LAST of
+   repeated `@jsxRuntime` / `@jsxImportSource` pragmas, refuses a repeated
+   `@jsx` / `@jsxFrag`, and treats a JavaScript file without `allowJs` as
+   undetermined. Each rule is checked against TypeScript 5.9.3's emit.
+4. **A capability handed to a classic factory** (`<X load={require} />`)
+   gives the site `loader_capability_escape`, as for a call's arguments
+   (`classifyClosureWideningJsx`); not in "What to do".
+5. **Additions to records**: RWF-067 and `BL-043` (found by the audit),
+   `BL-044` (the audit's unmeasured `importHelpers` / `tslib` risk); the
+   stale statements in `docs/SOUNDNESS-CONTRACT.md`,
+   `src/testing/foundation-invariants.ts` and `classifyCall`'s comment.
+
+## Outcome (2026-10-02)
+
+**Acceptance criteria**: all **yes**.
+
+- Reproductions (`tests/oracle/a3b-own-exports-jsx.test.ts`): 20 cases
+  plus 2 open-soundness-defect records. The first 13 fail on the base
+  (each a false `NOT_AFFECTED`, real Node calling the target); the 7
+  added from the audit fail on the version they were found on; all are
+  `UNKNOWN` on the branch. RWF-065 and RWF-067 are records with the
+  correct verdict standing.
+- `module_scope_callee` deleted; the ledger names only A-5's two
+  reasons. The census lists the three JSX kinds as sites; no pending
+  entry names A-3b.
+- A-2 obligations: the walked-file check runs on every oracle case; three
+  production-`buildFinding` reproductions for the `jsx` site kind
+  (`src/analysis/verdict.possible-edge.test.ts`).
+- Three `DynamicCallReason` subtypes, no new category, both schema enums.
+- Mutations: 18, each caught by a named test (the report lists them).
+- Differentials (139 cases): graph 0, proof 0, verdict 0, explained in
+  Corrections 1.
+- Validation: the six known failures (OPEN-DEBTS D-09), unchanged.
+- Independent audit: `BLOCKED` four times (all findings in scope, fixed
+  and reproduced), then `CERTIFIED`.
+
+**Discovered**: RWF-065 (`BL-040`, P1), RWF-066 (fixed), RWF-067
+(`BL-043`, P1), `BL-041`, `BL-042` (precision), `BL-044` (P1, reproduce
+first).
+

@@ -156,7 +156,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-048 | the binding-form grammar (`tests/binding-grammar/`) | A standing sweep of every binding form against every attribution mechanism: 264 cells, no class-A, B or C finding, 89 `honest-unknown` refusals in eight families | **Precision** — every disagreement is a refusal toward `UNKNOWN` | Open — the section is an instrument record and states no status; its eight refusal families are recorded, not resolved — see below |
 | RWF-049 | any CommonJS export written with a quoted or numeric key (`module.exports = { "1": f }`) | The export model records no export for a quoted or numeric object-literal key, while the member-reading path does | **Precision debt, not a soundness defect** — fails toward `unresolved_target` (the section's classification) | Open — the section's own heading is "Not fixed": recorded only — see below |
 | AUD-01 | `vuln-lib` (synthetic fixture) | A function-valued argument to an ambient builtin (setTimeout, new Promise, process.nextTick, Array.from, …) gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
-| AUD-02 | `vuln-lib` (synthetic fixture) | A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge | false NOT_AFFECTED — see below | Open |
+| AUD-02 | `vuln-lib` (synthetic fixture) | A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3b), through the fail-closed default — see below |
 | AUD-03 | `vuln-lib` (synthetic fixture) | `process.getBuiltinModule(spec)` loads a builtin while the module-load closure reports complete | false NOT_AFFECTED — see below | Open |
 | AUD-04 | `vuln-lib` (synthetic fixture) | `inspector.Session#post('Runtime.evaluate', {includeCommandLineAPI:true})` is an unmodeled eval surface | false NOT_AFFECTED — see below | Open |
 | AUD-05 | `vuln-lib` (synthetic fixture), prerelease version | `semver.coerce` strips prereleases, dropping a vulnerable installed prerelease and falsely flagging an unaffected one | silent drop (recorded as a false "not applicable"); also false AFFECTED in the reverse direction — see below | Open |
@@ -221,7 +221,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-113 | `vuln-lib` (synthetic fixture) | `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
 | PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
-| PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | Open |
+| PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-3b), through the fail-closed default — see below |
 | RWF-050 | n/a — a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) has no register row of its own | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below | Open |
 | PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a), through the fail-closed default — see below |
 | PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | Open |
@@ -239,6 +239,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-062 | `vuln-lib` (synthetic fixture) | With TypeScript constructor overloads, `new A()` resolves to the first overload SIGNATURE, a node with no body; the implementation's calls hang from a node nothing reaches | false NOT_AFFECTED — see below | Open |
 | RWF-063 | `vuln-lib` (synthetic fixture) | A builtin trusted by the builtin table (task A-3a) can be monkeypatched through a user binding the escape row does not follow -- a parameter, a container element -- so a later call of the builtin gets a no-edge proof while it runs the program's function | false NOT_AFFECTED — see below | Fixed in part (A-3a: the `const`-alias form); the parameter and container forms remain open |
 | RWF-064 | the H-0 builtin probe (`src/testing/oracle/builtin-probe.ts`) | The probe read the hooks that fired synchronously after the call, and each probe template fixed the builtin's other arguments, so a hook the builtin schedules for later, or fires only in another context, was never observed -- an admission test built on it could admit a position that runs user code | a test instrument could not enforce the guarantee it exists for (mechanical admission) — see below | Fixed in part (A-3a): deferred hooks, contexts and throws are observed; a hook only a STRUCTURED argument reaches is not — see below |
+| RWF-065 | `vuln-lib` (synthetic fixture) | A module loaded through the module's own loader API in a shape the loader classifier does not recognise -- `module.parent.require("pkg")`, `module.children[i].require("pkg")` -- is invisible to the module-load closure | false NOT_AFFECTED (family A) — see below | Open (families B and C fail closed since A-3b; family A: backlog `BL-040`) |
+| RWF-066 | `vuln-lib` (synthetic fixture) | Under TypeScript's automatic JSX runtime (`jsx: react-jsx`, or an `@jsxImportSource` pragma), a JSX element compiles to `require("<importSource>/jsx-runtime")`, which no source line spells, so the module-load closure never sees the load | false NOT_AFFECTED (family A) — see below | **Fixed** (A-3b), through the fail-closed default — see below |
+| RWF-067 | `vuln-lib` (synthetic fixture) | A loader capability that escapes through a for-of destructuring assignment (`for ({ _load: h } of [require("module")])`) rebinds a name to `Module._load` unseen by the loader classifier, so the load it then performs is invisible to the module-load closure | false NOT_AFFECTED (family A) — see below | Open (backlog `BL-043`) |
 
 ---
 
@@ -16017,6 +16020,27 @@ The same early return that drops AUD-01's callback edges also fires when a modul
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-02"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task A-3b, 2026-10-02): Fixed, through the fail-closed
+default.** A call or `new` rooted in an undeclared CommonJS module-scope
+binding no longer gets the unproven no-edge account
+`module_scope_callee`, which task A-3b deleted
+(`docs/tasks/A-3b-own-exports-jsx.md`). `exports…` and `module.exports…`
+get an unknown `own_export_call` edge (non-widening,
+`unmodeled_construct`); any other member of `module` or `require` an
+unknown `loader_capability_escape` edge; `__dirname` / `__filename` the
+receiver-shape subtype. A function handed to such a call gets a possible
+edge, as at any unknown callee. ADR 0008 § 2's row allows "the own
+export's node, or unknown"; a resolved edge was NOT given, by the project
+owner's decision of 2026-10-02: the export model's attribution does not
+see in-module write order (`exports.x = a; exports.x(); exports.x = b`)
+or the `exports` alias going stale after `module.exports = …`, so it is
+no authority for one until lane E's write set (backlog `BL-042`). The
+three spellings the audit names, `new exports.X()` and an application
+module calling its own export are reproduced against real Node in
+`tests/oracle/a3b-own-exports-jsx.test.ts`: each a false `NOT_AFFECTED`
+on the base, `UNKNOWN` on the branch. While reproducing them, task A-3b
+found that the same branch hid a loader gap: RWF-065.
+
 ---
 
 ## AUD-03 — `process.getBuiltinModule(spec)` loads a builtin while the module-load closure reports complete
@@ -17217,6 +17241,29 @@ receiver type). They are fixed once, for every site, by A-5 and A-6.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-116`) and § 4 (`p3-tsx-jsx-factory`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task A-3b, 2026-10-02): Fixed, through the fail-closed
+default.** A JSX element or fragment is an invocation site of its own
+kind, `jsx` (`src/code-intelligence/invocation-sites.ts`; the census no
+longer lists the three JSX node kinds as pending). Its account is the
+factory's unknown edge -- `jsx_factory_call` (non-widening) for the
+classic runtime with a factory in scope, `jsx_runtime_load`
+(closure-widening) when the compiled form may load a module (RWF-066) --
+plus a possible edge to an attributable component and to every
+attributable function in its attributes and children ("rendering is not
+guaranteed", ADR 0008 § 2). The runtime is decided as TypeScript decides
+it, pragmas first (`src/code-intelligence/jsx-runtime.ts`, checked
+against TypeScript's own emit). The factory is not resolved, by the
+project owner's decision of 2026-10-02 (backlog `BL-041`): resolving it
+also needs VT-210 to count a JSX element as a call site of the function
+it names, which it does not. Reproduced against real Node in
+`tests/oracle/a3b-own-exports-jsx.test.ts` (the audit's
+`p3-tsx-jsx-factory`, a factory calling the target itself, an attribute
+and a child callback, a fragment, an `@jsx` pragma): each a false
+`NOT_AFFECTED` on the base, `UNKNOWN` on the branch. Cost, not measured
+on a corpus (none contains JSX): every reachable JSX element blocks
+families B and C, and under the automatic runtime family A too, until
+`BL-041`.
+
 ---
 
 ## RWF-050 — RWF-026's inherited MAY-execute conditional/logical abrupt-operand gap, given a register row
@@ -18085,4 +18132,196 @@ admits only positions whose implementation rejects a non-string with a
 strict `typeof` check or inspects only the value itself
 (`builtin-callables.ts`). Closing this needs structured probe contexts,
 or a reading of each admitted implementation recorded with the entry.
+
+---
+
+## RWF-065 — A module loaded through `module.parent.require` is invisible to the module-load closure
+
+**Status:** Open (families B and C fail closed since task A-3b; family A
+open, backlog `BL-040`)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B (the loader classifier assumes the module's own
+loader API is reached only through the shapes it names)
+**Proof family affected:** A (and, before task A-3b, B and C)
+**Severity:** High — P1 (a false `NOT_AFFECTED`, predating A-3b)
+**Fix lane:** C (backlog `BL-040`)
+
+**Discovered:** by task A-3b, while measuring which calls reached the
+unproven `module_scope_callee` account it removes (oracle harness, Node
+v22.11.0, base `32dcbf9`).
+
+```js
+// src/index.js
+require("./a.js");
+// src/a.js
+module.parent.require("vuln-lib").parse("x");   // Node calls parse
+```
+
+The module-load closure is built from the loader classifier's own
+whole-file scan (`findClosureWideningConstructs`,
+`src/code-intelligence/loader-constructs.ts`), which recognises
+`module.require`, `require.main.require`, `module.constructor._load` and
+the other shapes it names, but not a `require` reached through
+`module.parent` or `module.children[i]`. The closure therefore never
+contains `vuln-lib`, and family A certifies it absent: `NOT_AFFECTED`. On
+the base the call graph gave the same call the unproven
+`module_scope_callee` account (no edge), and `module.children[0].require`
+a non-widening `unsupported_indexed_receiver` edge, so families B and C
+were open to the same load.
+
+**Task A-3b's part.** Every call through a member of the module's own
+`module` or `require` that the loader classifier did not classify now
+gets an unknown `loader_capability_escape` edge, closure-widening, so
+VT-300 withdraws family B and the unknown edge withdraws family C. It
+cannot reach family A, whose closure the call graph does not build. The
+case is pinned as an open-soundness-defect record, with its correct
+verdict (`UNKNOWN`) standing: `module-scope.parent-require` in
+`tests/oracle/a3b-own-exports-jsx.test.ts`.
+
+**What closes it.** The loader classifier treats a member call on the
+module's own `module` / `require` objects that it cannot prove harmless
+as closure-widening (or names `module.parent`, `module.children[i]` and
+any other path to a `Module` instance as a loader capability), with
+real-Node reproductions for each path. Lane C, near C-4 (the loader
+builtin table).
+
+---
+
+## RWF-066 — The automatic JSX runtime's implicit `require` is invisible to the module-load closure
+
+**Status:** Fixed (task A-3b), through the fail-closed default
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B (the analyzer assumes a module is loaded only by
+syntax that names it)
+**Proof family affected:** A
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A — task A-3b
+
+**Discovered:** by task A-3b, reproducing PRM-116 (oracle harness, Node
+v22.11.0, base `32dcbf9`).
+
+With TypeScript's automatic JSX runtime -- `jsx: react-jsx` or
+`react-jsxdev`, or a file whose `@jsxImportSource` (or
+`@jsxRuntime automatic`) pragma switches a classic project to it -- the
+compiled file starts with `require("<importSource>/jsx-runtime")`, which
+no source line spells:
+
+```tsx
+// tsconfig: { "jsx": "react-jsx", "jsxImportSource": "vuln-lib" }
+const el = <div />;          // compiled: require("vuln-lib/jsx-runtime").jsx("div", {})
+```
+
+The module-load closure records only loads the source spells, so
+`vuln-lib` was absent from it, and family A certified `NOT_AFFECTED` while
+Node ran `vuln-lib/jsx-runtime.js`, which called the target. Measured
+with TypeScript 5.9.3's emit: the pragma alone switches a `jsx: react`
+project to the automatic runtime.
+
+**Fixed:** the closure's whole-file scan records `jsx_runtime_load`
+(closure-widening, `capability_escape`) at every JSX site whose compiled
+form may load a module: the automatic runtime, a runtime this analyzer
+cannot determine (`jsx: preserve`, `react-native`, no `jsx` option, no
+project), or a classic factory rooted in a loader-reaching name
+(`src/code-intelligence/jsx-runtime.ts`, `jsxSiteMayLoad`). The call
+graph gives the same site the same reason, so families B and C fail
+closed too. The scan reads the project's JSX options, threaded from
+`scan.ts`; without them every JSX site is recorded. Reproduced in
+`tests/oracle/a3b-own-exports-jsx.test.ts` (`jsx-runtime.*`), each a false
+`NOT_AFFECTED` on the base and `UNKNOWN` on the branch.
+
+**Appended after task A-3b's independent audit (2026-10-02).** The first
+version of the fix decided the runtime and the classic factory less
+faithfully than stated above, and the audit reproduced three more
+family-A false `NOT_AFFECTED`s against real Node, each fixed in the same
+task and reproduced in `tests/oracle/a3b-own-exports-jsx.test.ts`
+(`jsx-runtime.import-source-option-classic`,
+`jsx-runtime.repeated-pragma-last-wins`,
+`jsx-runtime.classic-factory-require-alias`), each failing on the
+pre-audit version:
+
+- the project option `jsxImportSource` alone switches a `jsx: react`
+  project to the automatic runtime (TypeScript's
+  `getJSXImplicitImportBase`); the first version read only the pragma;
+- of repeated `@jsxRuntime` / `@jsxImportSource` pragmas TypeScript reads
+  the LAST; the first version read the first. A repeated `@jsx` /
+  `@jsxFrag` pragma now makes the runtime undetermined;
+- a classic factory was judged by its root's SPELLING, so an alias of the
+  loader under another name (`const r = require` with `jsxFactory: "r"`:
+  `<vuln-lib />` compiles to `r("vuln-lib", null)`) passed. A classic site
+  is now non-widening only when every declaration of the factory's root
+  name in the file is a function or class declaration or a value import
+  from a non-builtin module, and nothing assigns it.
+
+Two further audit rounds tightened that last rule, each reproduced as a
+family-A false `NOT_AFFECTED` against real Node and fixed:
+round 2, a destructuring-assignment write to the factory's name
+(`for ({ _load: h } of [M]) {}`) was read as a use, and a nested or
+`declare` function declaration counted as binding the name (oracle case
+`jsx-runtime.classic-factory-destructuring-write`); round 3, a write
+through a TypeScript-erased target wrapper (`h!`, `h as T`,
+`h satisfies T`, `<T>h`) was read as a use (oracle cases
+`jsx-runtime.classic-factory-non-null-write`,
+`jsx-runtime.classic-factory-as-for-of-head-write`). Only top-level,
+non-ambient declarations count, and every object-literal value position,
+spread and wrapped target is a write. Round 2 also found RWF-067, the
+same destructured capability reaching the loader classifier with no JSX
+at all (lane C).
+A fourth round found the default classic factory taken as
+`React.createElement` when the project's `reactNamespace` option renames
+it (`foo.createElement`), so the rule inspected the wrong name (oracle
+case `jsx-runtime.classic-factory-react-namespace`); fixed. Not measured
+by the audit: an ES-module build whose `package.json` `imports` map
+points at a builtin.
+
+**Residual (not modeled).** The project's root `tsconfig.json` is taken as
+the compiler of record for every file. A build that compiles the JSX with
+another tool or settings (Babel, esbuild, a nested tsconfig) is outside
+the model, as for module resolution (C-1); a classic root setting with an
+automatic real build could reopen family A. Recorded on backlog `BL-041`.
+
+**Precision cost and what recovers it.** A project using the automatic
+runtime loses family A for every advisory while any JSX file is in the
+closure. Adding the implicit `jsx-runtime` import to the module model
+(and resolving the factory through it) recovers it: backlog `BL-041`.
+
+---
+
+## RWF-067 — A loader capability escaping through a for-of destructuring assignment is invisible to the module-load closure
+
+**Status:** Open (backlog `BL-043`)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a binding written by a destructuring pattern is
+assumed to keep its declared value)
+**Proof family affected:** A
+**Severity:** High — P1 (a false `NOT_AFFECTED`, predating A-3b)
+**Fix lane:** C (backlog `BL-043`)
+
+**Discovered:** by task A-3b's independent audit (second round), measured
+with the oracle harness (Node v22.11.0).
+
+```js
+const M = require("module");
+const path = require("path");
+function h() {}
+for ({ _load: h } of [M]) {}            // h is now Module._load
+const m = h("vuln-lib", { paths: [path.join(__dirname, "..", "node_modules")] });
+m.parse("x");                            // Node calls parse
+```
+
+The loader classifier neither records `[M]` (a builtin loader capability
+in an array literal that a for-of destructuring reads) as a capability
+escape nor follows the write into `h`, so `h(...)` is an ordinary call of
+the local function and the module-load closure stays complete: family A
+answers `NOT_AFFECTED`. The same gap reached JSX through a classic
+factory named `h` (fixed in task A-3b, which now counts any appearance of
+the factory's name in an object-literal value position as a write, and
+widens). The spelled form is recorded as an open-soundness-defect case,
+`module-scope.for-of-destructured-module-load` in
+`tests/oracle/a3b-own-exports-jsx.test.ts`, with its correct verdict
+(`UNKNOWN`) standing.
+
+**What closes it.** The loader classifier's value-flow positions include
+an array or object literal that a destructuring assignment or a for-of
+head reads (and the binding it writes), so a loader capability flowing
+there is a capability escape. Lane C, with RWF-065 (backlog `BL-040`).
 

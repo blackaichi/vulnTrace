@@ -807,6 +807,33 @@ precision cost before A-4 is measured in its
 report: one validation case, `RWB-07`, `NOT_AFFECTED` → `UNKNOWN` (D-09).
 This entry still stands.
 
+**Progress, added by task `A-3b` (2026-10-02).** Task A-3b
+(`docs/tasks/A-3b-own-exports-jsx.md`, the second half of `A-3`) fixed
+`AUD-02` (a module calling its own export) and `PRM-116` (a JSX element
+calling its factory), both through the fail-closed default by the
+project owner's decisions of 2026-10-02: an own-export call gets an
+unknown `own_export_call` edge until lane E's write set can resolve it
+(backlog `BL-042`), and a JSX site its factory's unknown edge plus
+possible edges to the component and the functions it hands over, the
+factory unresolved (backlog `BL-041`). The last unproven no-edge reason
+on the builtin side, `module_scope_callee`, is gone;
+`UNPROVEN_NO_EDGE_LEDGER` names only task A-5's two. It found and fixed
+`RWF-066` (the automatic JSX runtime's implicit `require` of
+`jsx-runtime`, a family-A false `NOT_AFFECTED`), and found `RWF-065`
+(`module.parent.require`, a family-A false `NOT_AFFECTED` predating it;
+families B and C now fail closed, family A is backlog `BL-040`). Its
+independent audit blocked four times, each time on a JSX-runtime or
+classic-factory rule that let family A certify a module load away (all
+fixed in the task), and found `RWF-067` (a loader capability escaping
+through a for-of destructuring assignment, family A, predating it;
+backlog `BL-043`). 20 real-Node reproductions, each a false
+`NOT_AFFECTED` on the base or on the version the audit found it on. The corpora measure none of
+it: the graph, proof and verdict differentials are zero over all 139
+cases, because no corpus file contains JSX and no corpus site reached
+`module_scope_callee` (`debug`, the one corpus package calling its own
+exports, reassigns `exports`, so its calls already had unknown edges).
+This entry still stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

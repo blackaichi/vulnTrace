@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-01, by `A-3a`.
+**Last updated:** 2026-10-02, by `A-3b`.
 
 ## Objective
 
@@ -43,8 +43,15 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   (`src/code-intelligence/builtin-callables.ts`) whose non-invoking
   positions are admitted mechanically by a real-Node test run in CI
   (`tests/oracle/builtin-admission.test.ts`); assignments into builtin
-  values are escapes. Fixed AUD-01, PRM-12, PRM-114, PRM-117, RWF-060. What
-  binds A-3b and A-4 next: REMEDIATION-PLAN § 5a, "A-3a additions".
+  values are escapes. Fixed AUD-01, PRM-12, PRM-114, PRM-117, RWF-060.
+  `A-3b` (the second half) removed the last unproven builtin-side no-edge
+  account (`module_scope_callee`): an own-export call gets an unknown
+  edge, and a JSX element is a site (`jsx`) with its factory's unknown
+  edge and possible edges to what it hands the factory -- both fail
+  closed, by the project owner's decisions of 2026-10-02 (precision:
+  backlog `BL-041`, `BL-042`). Fixed AUD-02, PRM-116, RWF-066. What binds
+  A-4, A-5, E and C next: REMEDIATION-PLAN § 5a, "A-3a additions" and
+  "A-3b additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -75,24 +82,28 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`A-3a` — escaped function values; invoking and non-invoking builtins with
-mechanical admission; global hook assignments
-([task file](tasks/A-3a-escaped-values.md)): `READY_FOR_REVIEW`, its pull
-request awaiting the project owner. `A-2` merged as PR #79.
+`A-3b` — own-export calls; JSX
+([task file](tasks/A-3b-own-exports-jsx.md)): `READY_FOR_REVIEW`, its pull
+request awaiting the project owner. `A-3a` merged as PR #80.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-3a`:
-`A-3b` (own-export calls, JSX). A-4 (protocol members, accessors) is the
-task that recovers A-3a's precision cost: it must re-admit the builtin
-positions that fire only protocol hooks (`JSON.parse`, `String`, `Math`,
-`new Error`, …; RWB-07), REMEDIATION-PLAN § 5a "A-3a additions" — a
-change of order (A-4 before A-3b) is worth the project owner's
-consideration.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-3b`:
+`A-4` (protocol members, accessors), the task that recovers A-3a's
+precision cost: it must re-admit the builtin positions that fire only
+protocol hooks (`JSON.parse`, `String`, `Math`, `new Error`, …; RWB-07),
+REMEDIATION-PLAN § 5a "A-3a additions".
 
 ## Recently discovered
 
-From `A-3a`: `BL-039` (**P1**, RWF-063: a builtin object monkeypatched
+From `A-3b`: `BL-040` (**P1**, RWF-065: `module.parent.require` loads a
+module the loader classifier misses, a family-A false `NOT_AFFECTED`;
+families B and C fail closed since A-3b), RWF-066 (fixed by A-3b: the
+automatic JSX runtime's implicit `require`), `BL-041` and `BL-042`
+(precision: resolve the JSX factory; resolve own-export calls through
+the write set), `BL-043` (**P1**, RWF-067: a loader capability escaping
+through a for-of destructuring assignment, family A), `BL-044` (**P1**,
+reproduce first: `importHelpers` loads `tslib` unseen). From `A-3a`: `BL-039` (**P1**, RWF-063: a builtin object monkeypatched
 through a parameter, container or destructuring of the global object
 keeps the table's no-edge proof), RWF-064 (the builtin probe; fixed in
 part), and PRM-13's false-`AFFECTED` direction (VT-213, task A-5). From
