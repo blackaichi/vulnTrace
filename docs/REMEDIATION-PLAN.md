@@ -644,6 +644,45 @@ configuration was not changed.
       `__dirname`, `__filename`) is removed or its remainder is named in
       `UNPROVEN_NO_EDGE_LEDGER` with the findings it carries.
 
+#### A-3b additions to lane-A acceptance
+
+Added by task A-3b (2026-10-02). The criteria above are unchanged; this
+records what A-3b's outcome, and the project owner's three decisions of
+2026-10-02 it rests on, bind on the tasks after it.
+
+**Outcome.** `module_scope_callee` is removed, not narrowed: a call or
+`new` rooted in an undeclared CommonJS module-scope binding gets an
+unknown edge (`own_export_call` for `exports…` / `module.exports…`,
+`loader_capability_escape` for any other member of `module` or
+`require`). A JSX element or fragment is the invocation site `jsx`: its
+factory's unknown edge (`jsx_factory_call`, or the closure-widening
+`jsx_runtime_load` when its compiled form may load a module, which the
+module-load closure records too, RWF-066), plus possible edges to the
+component and to every function it hands the factory. ADR 0008 § 2's
+own-export row allows "the own export's node, or unknown", and its JSX
+row names only the component; both are taken at their fail-closed
+reading.
+
+**What it binds.**
+
+- **A-5** (VT-210): a function used as a JSX factory is called at sites
+  that spell no call, so VT-210's premise that it sees every call site
+  of a function fails for it. Harmless while every JSX site carries an
+  unknown edge; any task that resolves the factory (backlog `BL-041`)
+  must first make VT-210 count or refuse such a function.
+- **E-1 / E-2**: own-export calls are left unknown for want of the
+  export's complete write set; backlog `BL-042` resolves them once it
+  exists, and must respect in-module write order and the `exports` alias
+  going stale after `module.exports = …`.
+- **C-4** (or backlog `BL-040`): `module.parent.require` and
+  `module.children[i].require` load modules the loader classifier does
+  not see (RWF-065); the call graph fails closed on them, the module-load
+  closure does not yet.
+- **C-3** (or backlog `BL-043`): a loader capability escaping through a
+  for-of destructuring assignment is invisible to the closure (RWF-067,
+  found by A-3b's independent audit); A-3b's classic-JSX-factory rule
+  widens on any such write, the spelled call does not yet.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

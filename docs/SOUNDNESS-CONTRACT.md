@@ -56,7 +56,9 @@ reported as `value_uncertainty` / `possible_invocation`. Owners:
 `src/analysis/reachability.affected-path.test.ts` and
 `src/analysis/verdict.possible-edge.test.ts`. Task A-3a is the first
 producer: a function value escaping into code the graph does not model,
-ADR 0008 § 2's escape row; A-3b and A-4 add theirs.)*
+ADR 0008 § 2's escape row; task A-3b adds the JSX row (the component,
+and every function an element hands its factory) and an own-export
+call's escaping arguments; A-4 adds its own.)*
 
 ### `NOT_AFFECTED`
 
@@ -241,7 +243,10 @@ the lane-A task that closes it: the census's `pending` kinds — JSX
 elements, protocol-named members, accessors, hook assignments (A-3, A-4) —
 which get no account at all, and the no-edge accounts the graph gives
 **without** a proof (`UNPROVEN_NO_EDGE_LEDGER`, `src/domain/graph.ts`;
-A-3, A-5). While either remains, family C's completeness is relative to
+A-3, A-5). *(Status, task A-3b, 2026-10-02: hook assignments (A-3a) and
+JSX elements (A-3b) are sites now; the pending kinds left are protocol
+members and accessors (A-4), and the unproven no-edge accounts left are
+A-5's two, `static_require_by_text` and `constant_folded_branch`.)* While either remains, family C's completeness is relative to
 them — which is what the implementation-status note at the top of this
 file says.
 
