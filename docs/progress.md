@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-04, by `A-4`.
+**Last updated:** 2026-10-05, by `A-5a`.
 
 ## Objective
 
@@ -57,8 +57,17 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   B), by the project owner's decisions of 2026-10-04; the census has no
   pending kind left. It re-admitted the builtin positions that fire only
   protocol hooks, restoring RWB-07. Fixed PRM-38, PRM-112, PRM-113,
-  PRM-118, RWF-068. What binds A-5, A-7, E and C next: REMEDIATION-PLAN
-  § 5a, "A-3a additions", "A-3b additions" and "A-4 additions".
+  PRM-118, RWF-068. `A-5a` (the first half of `A-5`, split by the project
+  owner) applied resolution authority on the call-graph side: VT-213's
+  callback edge is gone, `==` folds only same-type literals, `require` is
+  ambient only when proven lexically in a proven CommonJS module, VT-210
+  refuses escaping functions and written parameters, a reassigned
+  `function` declaration is unresolved; every no-edge account carries a
+  proof (`UNPROVEN_NO_EDGE_LEDGER` deleted). ADR 0008 § 4's receiver-bound
+  invoking builtins resolve on a proven receiver (the owner's decision).
+  Fixed PRM-13, 14, 15, 16, 17, 104, RWF-071, RWF-072, RWF-073. What binds
+  A-5b, A-6, A-7, E and C next: REMEDIATION-PLAN § 5a, "A-3a additions"
+  through "A-5 split, and A-5a additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -89,22 +98,25 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`A-4` — protocol members; accessor bodies as their own owners
-([task file](tasks/A-4-protocol-members.md)): `READY_FOR_REVIEW`, its pull
-request awaiting the project owner. `A-3b` merged as PR #81.
+`A-5a` — resolution authority, call-graph side: VT-213, strict folding,
+lexical `require`, VT-210, `function` declaration stability
+([task file](tasks/A-5a-resolution-authority.md)): `READY_FOR_REVIEW`, its
+pull request awaiting the project owner. `A-4` merged as PR #82.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-4`:
-`A-5` (resolution authority, call-graph side: VT-213, VT-210, VT-208,
-strict folding, lexical `require`, `function` declaration stability),
-which removes the last two unproven no-edge reasons. The P1 loader gaps
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-5a`:
+`A-5b` (VT-208 receivers with a whole-graph member-write check, the
+project owner's decision of 2026-10-04; its measured shapes are in
+REMEDIATION-PLAN § 5a, "A-5 split"), then `A-6`. The P1 loader gaps
 `BL-040` and `BL-043` (live family-A false `NOT_AFFECTED`s) are
-candidates to reorder ahead of it.
+candidates to reorder ahead of them.
 
 ## Recently discovered
 
-From `A-4`: RWF-068 (fixed by A-4: the iterator's own methods),
+From `A-5a`: RWF-071, RWF-072, RWF-073 (each a false `NOT_AFFECTED`,
+fixed by A-5a), and `BL-047` (P2: ADR 0008 § 2's A2 structural gates,
+assigned to no task by § 8). From `A-4`: RWF-068 (fixed by A-4: the iterator's own methods),
 `BL-046` (**P1**, RWF-070: `await` constructs a promise's `constructor` /
 `Symbol.species`, a family-C false `NOT_AFFECTED` outside the protocol
 list; needs the project owner's decision) and `BL-045` (P2, RWF-069: the
@@ -121,7 +133,7 @@ through a for-of destructuring assignment, family A), `BL-044` (**P1**,
 reproduce first: `importHelpers` loads `tslib` unseen). From `A-3a`: `BL-039` (**P1**, RWF-063: a builtin object monkeypatched
 through a parameter, container or destructuring of the global object
 keeps the table's no-edge proof), RWF-064 (the builtin probe; fixed in
-part), and PRM-13's false-`AFFECTED` direction (VT-213, task A-5). From
+part), and PRM-13's false-`AFFECTED` direction (VT-213; fixed by A-5a). From
 `A-2`: none. From `A-1`: `BL-037` (**P1**, RWF-061: a `vm.Script` reached through a
 subclass or factory is a family-A false `NOT_AFFECTED`), `BL-038` (**P1**,
 RWF-062: `new A()` resolves to a constructor overload signature), RWF-060 (**P1**,

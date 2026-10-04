@@ -172,11 +172,11 @@ A mismatch either way fails the generator, naming the ID.
 | AUD-15 | `vuln-lib` (synthetic fixture) | An UNKNOWN's reason text falsely claims a package "was never traversed" when the true cause is that no rule names it | false reason — see below | Open |
 | AUD-16 | `vuln-lib` (synthetic fixture) | Two README sentences and two HTML-report sentences describe cache/no-finding behavior that AUD-05/06/07/08/09 show is false | disclosure — see below | Open |
 | PRM-12 | `vuln-lib` (synthetic fixture) | A call/`new` whose callee resolves to a Node builtin, but which receives a function-valued argument, emits no edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
-| PRM-13 | `vuln-lib` (synthetic fixture) | VT-213's inline-callback rescue displaces the unresolved edge for an otherwise-unattributable callee instead of adding to it | false NOT_AFFECTED — see below | Open |
-| PRM-14 | `vuln-lib` (synthetic fixture) | Loose equality (`==`/`!=`) is evaluated as if it were strict, pruning a branch real Node does not prune | false NOT_AFFECTED — see below | Open |
-| PRM-15 | `vuln-lib` (synthetic fixture) | A same-file `const require = ...` shadow is matched by identifier text before the lexical authority runs | false NOT_AFFECTED — see below | Open |
-| PRM-16 | `vuln-lib` (synthetic fixture) | A same-file caller is treated as the unique call site of an exported higher-order parameter, even with cross-file callers | false NOT_AFFECTED — see below | Open |
-| PRM-17 | `vuln-lib` (synthetic fixture) | A higher-order parameter's reassignment inside the function body is never checked before its call sites are treated as authoritative | false NOT_AFFECTED — see below | Open |
+| PRM-13 | `vuln-lib` (synthetic fixture) | VT-213's inline-callback rescue displaces the unresolved edge for an otherwise-unattributable callee instead of adding to it | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
+| PRM-14 | `vuln-lib` (synthetic fixture) | Loose equality (`==`/`!=`) is evaluated as if it were strict, pruning a branch real Node does not prune | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
+| PRM-15 | `vuln-lib` (synthetic fixture) | A same-file `const require = ...` shadow is matched by identifier text before the lexical authority runs | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
+| PRM-16 | `vuln-lib` (synthetic fixture) | A same-file caller is treated as the unique call site of an exported higher-order parameter, even with cross-file callers | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
+| PRM-17 | `vuln-lib` (synthetic fixture) | A higher-order parameter's reassignment inside the function body is never checked before its call sites are treated as authoritative | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | PRM-18 | `vuln-lib` (synthetic fixture) | The TypeScript checker's static apparent type of a receiver is used as the runtime receiver, even when reassigned | false NOT_AFFECTED — see below | Open |
 | PRM-19 | `vuln-lib` (synthetic fixture) | A derived class's synthesized implicit default constructor gets no edge to the resolved base constructor | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-20 | `vuln-lib` (synthetic fixture) | `bindCallee` resolves a trailing method chain (`x.y()`) to the receiver `x` itself, discarding which method was called | false NOT_AFFECTED — see below | Open |
@@ -209,7 +209,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-101 | `vuln-lib` (synthetic fixture) | Site B hands a phantom target to reachability with no closure corroboration, certifying export-*-only code unreachable although its top level runs | false NOT_AFFECTED — see below | Open |
 | PRM-102 | `vuln-lib-fork` (synthetic fixture, manifest name mismatch) | Site A/B selection is keyed by advisory package NAME, not by exact `PackageInstance` | false NOT_AFFECTED (realistic for a lock entry whose manifest name differs from the queried name) — see below | Open |
 | PRM-103 | `vuln-lib` (synthetic fixture) | A cyclic `require` observes an intermediate `module.exports` value mid-cycle, but last-write-wins attribution only considers the final write | false NOT_AFFECTED — see below | Open |
-| PRM-104 | `vuln-lib` (synthetic fixture) | A `FunctionDeclaration` binding used as an export has no reassignment check, unlike the class/function-expression branches next to it | false NOT_AFFECTED — see below | Open |
+| PRM-104 | `vuln-lib` (synthetic fixture) | A `FunctionDeclaration` binding used as an export has no reassignment check, unlike the class/function-expression branches next to it | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | PRM-105 | `vuln-lib` (synthetic fixture) | Member access and call results are treated as opaque in the escape sweep, hiding a capability reached through `[x][0]`, `.at(0)`, a computed key or `Reflect.get` | false NOT_AFFECTED — see below | Open |
 | PRM-106 | `vuln-lib` (synthetic fixture) | `require.bind(...)` is deliberately excluded from the capability-receiver check | false NOT_AFFECTED — see below | Open |
 | PRM-107 | `vuln-lib` (synthetic fixture), nested + top instance | `module.paths` is recognized only through a small, fully-enumerated set of literal method-name calls | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below | Open |
@@ -245,6 +245,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-068 | `vuln-lib` (synthetic fixture) | Every consumer of an iterator calls the `next` / `return` / `throw` methods of the object `[Symbol.iterator]()` returns, and ADR 0008 § 2's closed protocol list does not name them | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | RWF-069 | `vuln-lib` (synthetic fixture) | Admitted non-invoking builtin positions (`path.*`; a candidate `EventEmitter` position) run a `util.inspect.custom` method through an argument-type error message that inspects a structured null-prototype value, which the builtin probe never builds | admission rule violated; false NOT_AFFECTED until task A-4 — see below | Open (backlog `BL-045`); no live false `NOT_AFFECTED` since A-4 — see below |
 | RWF-070 | `vuln-lib` (synthetic fixture) | `await` reaches a promise's `constructor` and `Symbol.species` and constructs the class they name (SpeciesConstructor) with no call in the program; neither key is in ADR 0008 § 2's protocol list | false NOT_AFFECTED — see below | Open (backlog `BL-046`) |
+| RWF-071 | `vuln-lib` (synthetic fixture) | VT-210 reads the argument written at a higher-order parameter's position with no check for a spread argument at or before it, so the parameter is attributed to an expression that does not land there | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
+| RWF-072 | `vuln-lib` (synthetic fixture) | The member-write scanner (`isMemberAssignedWithin`) misses a member written as a destructuring or `for…of` target, or through a value-free wrapper, so an object-literal member is resolved to a value it no longer holds | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
+| RWF-073 | `vuln-lib` (synthetic fixture) | VT-210 counts a TypeScript `this` parameter, which is erased, as an argument position, so every later parameter is attributed to the argument one place to its right | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 
 ---
 
@@ -15815,6 +15818,25 @@ RWF-006, RWF-001, Block C, VT-210's implementation and
 
 ---
 
+#### 4g. `vt210-exported-probe` — appended by task A-5a (2026-10-05)
+
+Five cells that agreed on the base now refuse, all through VT-210:
+
+- `identifier`, `let-binding` and `var-binding` × `higher-order-parameter`;
+- `parameter-binding` × `direct-call` and `esm-import`.
+
+Each cell exports the function whose parameter VT-210 resolves: the
+sweep's driver appends `module.exports = { probe }` or
+`export { invoke }`, so that the entry reaches the probe. Since task
+A-5a (PRM-16), VT-210 refuses an exported function, because an importer
+may call it with any argument and the file's own call sites are not all
+of them. The refusal is sound (honest `UNKNOWN`, `unsupported_callee_binding`).
+The precision it costs is the instrument's, not the shapes': the same
+programs without the export resolve, as the A-5a unit tests show
+(`call-graph.resolution-authority.test.ts`, the VT-210 controls).
+Recorded in `tests/binding-grammar/disagreements.ts` as
+`vt210-exported-probe`; the cells' expectations are unchanged.
+
 ## RWF-049 — A CommonJS export written with a quoted or numeric key is not an export
 
 **Discovered:** by the binding-form grammar sweep's own numeric-liveness
@@ -16326,6 +16348,67 @@ by a destructuring assignment
 `globalThis.setTimeout = () => 0` in the same file
 (`reaudit.global-object-member-replaces-invoking-builtin`).
 
+
+**Status update (task A-5a, 2026-10-04): Fixed.** VT-213's inline-callback
+fallback (`resolveInlineCallbackArgument`) is deleted. An unattributable
+callee keeps its unknown edge, and the one inline callback it is handed
+gets the escape row's `possible` edge (`withEscapesAtUnknownCallee`, ADR
+0008 § 2): its body is searched, never part of an `AFFECTED` path. The
+pinned test (`call-graph.test.ts`, "someUtterlyArbitraryMethodName") now
+asserts the callee's unknown edge it omitted. The three
+open-soundness-defect records this finding owned in
+`tests/oracle/a3a-escaped-values.cases.ts`
+(`identity.parameter-named-setTimeout`,
+`audit.destructured-setTimeout-never-calls`,
+`reaudit.global-object-member-replaces-invoking-builtin`) are deleted and
+assert `UNKNOWN`. That is the sound verdict for an unattributable callee:
+the graph cannot show it never calls its argument. Reproduced against real
+Node in `tests/oracle/a5a-resolution-authority.test.ts` (`vt213.*`): two
+false `NOT_AFFECTED` and one fabricated `AFFECTED` on the base, all three
+`UNKNOWN` on the branch.
+
+**The receiver-bound builtins VT-213 stood in for.** Deleting VT-213 alone
+turned ADV2-018 (`[1, 2, 3].map(() => dangerousOp())`) and ADV2-024
+(`Promise.resolve().then(() => dangerousOp())`) from `AFFECTED` into
+`UNKNOWN`. ADR 0008 § 5 had measured "0 adversarial" for this change, but
+its prototype kept the resolved callback edge and only added the callee's
+unknown edge (§ 8 says the pinned test "still passed under the
+prototype"). That kept edge is itself fabricated.
+
+By the project owner's decision of 2026-10-04, ADR 0008 § 4's
+receiver-bound documented invoking builtins (`receiverBoundBuiltinOf`)
+now give a resolved edge, but only on a proven receiver:
+
+- an array literal with a first element, calling an iteration method
+  (`reduce` / `reduceRight` with two elements or an initial value);
+- `Promise.resolve()` of a value that carries no function, calling
+  `then` / `finally`;
+- `Promise.reject(…)`, calling `catch`, `then`'s second argument or
+  `finally`.
+
+Each is refused when the file writes that member. Both adversarial cases
+are `AFFECTED` again.
+
+On the base VT-213 also fabricated `AFFECTED` for a callback real Node
+never runs. Each of these is `UNKNOWN` on the branch (`receiver.*`):
+
+- an empty array;
+- a hole;
+- `reduce` on one element;
+- an in-file `Array.prototype.map` patch;
+- `Promise.resolve().catch`;
+- a never-settling thenable.
+
+These builtins share RWF-063's open case (a builtin monkeypatched through
+a parameter or a container, backlog `BL-039`) with the global builtins.
+They also share a precision limit with them, which the re-audit
+measured. When another file replaces the method with one that never calls
+its callback (`Array.prototype.forEach = function () {};`), the stored
+function gets its own edge, so no negative is hidden. The resolved edge
+to the callback stays, though, which makes the verdict a false `AFFECTED`.
+Execution order is not modelled either: a callback queued just before
+`process.exit()` is still `AFFECTED`, as it is for the timers.
+
 ---
 
 ## PRM-14 — Loose equality (`==`/`!=`) is evaluated as if it were strict, pruning a branch real Node does not prune
@@ -16340,6 +16423,20 @@ by a destructuring assignment
 `evaluateConstantBoolean` folds `1 == "1"` the same as `1 === 1`, pruning the branch containing `lib.parse("x")` as dead code, although loose equality across types makes the branch live. Family C certifies the call unreachable; Node executes it.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-14`) and § 4 (`loose-equality`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task A-5a, 2026-10-04): Fixed.** `evaluateConstantBoolean`
+folds `==` and `!=` only for two literals of the same type, where loose
+equality is strict equality; strict (in)equality is folded as before. A
+pruned branch's sites now carry the no-edge proof `provably_dead_branch`
+(ADR 0008 § 2's `ProvablyDeadBranch`), which replaces the unproven
+`constant_folded_branch` account. Reproduced against real Node in
+`tests/oracle/a5a-resolution-authority.test.ts` (`fold.*`): `1 == "1"`,
+`1 != "1"` and `0 == ""` were false `NOT_AFFECTED` on the base and are
+`AFFECTED` on the branch. `1 === 2` and `"a" == "b"` stay pruned
+(`NOT_AFFECTED`, precision guards). Measured on the way: `literalValue`
+reads TypeScript's normalized numeric text (`010` → `8`, `1_000` →
+`1000`), so strict folding of numbers is exact.
 
 ---
 
@@ -16356,6 +16453,62 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-14`)
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-15`) and § 4 (`local-require-shadow`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task A-5a, 2026-10-04): Fixed, on both sides.** A static
+`require("x")` gets no edge only with the no-edge proof
+`ambient_static_require` (ADR 0008 § 2's `AmbientStaticRequire`). It holds
+only when five things are true:
+
+- the file is a CommonJS module that never reads the wrapper's
+  `arguments` (`isProvenCommonJsModuleScope`). Two variants came from
+  task A-5a's independent audit, each a false `NOT_AFFECTED` on the base:
+  - in an ES module, a bare `require` is a global lookup another module
+    may set. An ES module is a `.mjs` file; a file with ESM syntax,
+    including the two inputs Node's syntax detection also keys on, a
+    top-level `await` and a top-level `let` / `const` / `class` that
+    redeclares a wrapper parameter (the second and third audit rounds);
+    or a `package.json` with `"type": "module"`;
+  - in sloppy CommonJS, `arguments[1] = f` rebinds the wrapper's
+    `require`.
+- no enclosing scope declares `require` in any form;
+- the file has no TypeScript `enum` or `namespace` of that name;
+- the file writes no bare `require` in any assignment form, wrappers
+  such as `(require) = f` and `require! = f` included;
+- the call is not in a `with` body.
+
+The check is `isAmbientStaticRequireCall` in `named-bindings.ts`. Any
+other `require(...)` is an ordinary callee: a local `function require` or
+`const require` resolves to it, and a parameter named `require` gets an
+unknown edge.
+
+**Measured, the binding side.** This task also found the same spelling
+test in the import extraction (`source-index.ts`,
+`extractRequireBindings`) and in `named-bindings.ts`'s
+`requireCallInitializer`. So `const m = require("./util.js")` through a
+local `require` that returns `lib` bound `m` to `util.js`'s exports, and
+`m.parse()` resolved to the wrong module's function (a false
+`NOT_AFFECTED`). Both now bind a name only through the ambient `require`.
+The specifier is still recorded as a load, because dropping a load could
+let family A certify a loaded package as never loaded.
+
+The loader classifier (`loader-constructs.ts`) still recognises
+`require` by spelling. That errs only toward an extra load or widening
+edge, and is left as is.
+
+Reproduced against real Node in
+`tests/oracle/a5a-resolution-authority.test.ts` (`require.*` and the
+audit's four `audit.*` cases), eight false `NOT_AFFECTED` on the base:
+
+- the local function shadow and the local `const` shadow are `AFFECTED`;
+- the parameter shadow, the shadowed binding, the `arguments` rebinding,
+  the ES-module global `require`, the top-level-`await` file and the
+  wrapper-redeclaring file are `UNKNOWN`.
+
+A TypeScript file with ESM syntax compiled to CommonJS also loses the
+proof, a precision cost.
+
+The unproven `static_require_by_text` account is deleted.
+
 ---
 
 ## PRM-16 — A same-file caller is treated as the unique call site of an exported higher-order parameter, even with cross-file callers
@@ -16371,6 +16524,32 @@ VT-210's higher-order resolution accepts a same-file call site as authoritative 
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-16`) and § 4 (`higher-order-cross-file-callers`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task A-5a, 2026-10-04): Fixed.** VT-210 now refuses
+unless the call sites it reads are all the call sites. Three conditions
+refuse:
+
+- the function carries an `export` modifier;
+- any identifier in a value position in the file that may denote the
+  function (every one spelled like it, except those the lexical model
+  binds to a different declaration) is not the callee of one of its
+  counted call sites. That covers an export by name, an alias, `.call` /
+  `.apply`, `new`, a tag, a decorator and a reassignment;
+- the file contains a JSX site. A JSX element calls its factory with no
+  identifier at the site, which is REMEDIATION-PLAN § 5a's "A-3b
+  additions" constraint on A-5.
+
+Reproduced against real Node in
+`tests/oracle/a5a-resolution-authority.test.ts`:
+
+- `vt210.exported-commonjs` and `vt210.exported-esm` were false
+  `NOT_AFFECTED` on the base and are `UNKNOWN` on the branch;
+- the alias and `.call` shapes were already `UNKNOWN` on the base and are
+  kept as guards.
+
+Every refusal is also a named unit test
+(`call-graph.resolution-authority.test.ts`).
+
 ---
 
 ## PRM-17 — A higher-order parameter's reassignment inside the function body is never checked before its call sites are treated as authoritative
@@ -16385,6 +16564,27 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-16`)
 VT-210's invariant requires every call site to be accounted for, but does not check whether the parameter itself is reassigned inside the function (`fn = fn || lib.parse; return fn("x")`). The reassignment collapses to the call-site value and misses the reassigned one. The same mechanism resurfaces later through the `arguments[0]` alias (round 2, KNOWN PRM-17).
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-17`) and § 4 (`higher-order-reassigned-parameter`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task A-5a, 2026-10-04): Fixed.** VT-210 refuses a
+parameter whose name is written anywhere in its function, in any
+assignment form, including in a nested closure. That includes writes
+through a value-free wrapper (`(fn) = f`, `[(fn)] = [f]`, `fn! = f`,
+`(fn as any) = f`), which the name scanner (`buildAssignedNames`)
+missed until task A-5a's independent audit. It also refuses a function
+that mentions `arguments` or `eval` or holds a `with` statement. A sloppy-mode
+`arguments[0] = v` writes the parameter it aliases without an assignment
+to its name, and a direct `eval` or a `with` body can write any name.
+
+Reproduced against real Node in
+`tests/oracle/a5a-resolution-authority.test.ts` (`vt210.reassigned-*`,
+`vt210.arguments-alias`, `audit.parenthesized-*-parameter-write`): six
+false `NOT_AFFECTED` on the base, `UNKNOWN` on the branch. The closure
+write was already `UNKNOWN` on the base and is kept as a guard.
+
+The same work found RWF-071 (a spread argument before the parameter's
+position) and RWF-073 (a TypeScript `this` parameter shifting the
+position).
 
 ---
 
@@ -17032,6 +17232,26 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-103`
 `named-bindings.ts` reasons that "a function declaration needs no order check: hoisting is complete" and returns the declaration binding with no `isAssignedWithin` check. `function run(x){...} run = lib.parse; run("x");` (and the same through a deferred `setup()` call) both attribute `run` to its original declaration and certify the real, reassigned `lib.parse` target unreachable.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-104`) and § 4 (`r2-function-declaration-reassigned`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task A-5a, 2026-10-04): Fixed.** `resolveFrom`'s
+`function`-declaration branch now applies the stability rule the class
+and function-expression branches already apply. A declaration whose name
+is assigned anywhere in its owning scope is `reassigned`, including
+through a value-free wrapper such as `(run) = f` (task A-5a's independent
+audit). Every consumer of the lexical model then refuses it: the call
+graph's direct call, VT-210's argument, the export and escape
+attributions.
+
+Reproduced against real Node in
+`tests/oracle/a5a-resolution-authority.test.ts`
+(`function-declaration.*`):
+
+- the direct write, the deferred `setup()` write and the parenthesized
+  write (`audit.parenthesized-function-declaration-write`) were false
+  `NOT_AFFECTED` on the base and are `UNKNOWN` on the branch;
+- the exported-and-reassigned shape was already `UNKNOWN` on the base and
+  is kept as a guard.
 
 ---
 
@@ -18539,3 +18759,102 @@ an open-soundness-defect case, `species.promise-constructor-store` in
 `Symbol.species` to the protocol list, with the class value's constructor
 as the possible edge's target -- an amendment of the list the project
 owner decides, as for RWF-068.
+
+## RWF-071 — VT-210 reads the argument written at a parameter's position, ignoring a spread before it
+
+**Status:** Fixed (task A-5a)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a parameter's value, decided at run time by the
+spread's contents, collapsed to the one expression written at its
+position)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A — task A-5a
+
+**Discovered:** by task A-5a, reading VT-210 (`resolveHigherOrderCallTarget`)
+for PRM-16 and PRM-17, and reproduced against real Node (oracle harness,
+Node v22.11.0, base `3d87189`).
+
+VT-210 takes `site.arguments[paramIndex]` as the value a call site passes
+for the parameter. A spread argument at or before that position moves
+every argument after it:
+
+```js
+function helper(x) { return lib.safe(x); }
+function each(x, fn) { return fn(x); }
+each(...["x", lib.parse], helper);   // fn is lib.parse; Node calls parse
+```
+
+The graph attributed `fn` to `helper`, the expression written second, with
+a resolved edge, and family C answered `NOT_AFFECTED`.
+
+**Fixed:** VT-210 refuses a call site with a spread at or before the
+parameter's position; a spread after it does not move it and still
+resolves. Reproduced in `tests/oracle/a5a-resolution-authority.test.ts`
+(`vt210.spread-before-position`): a false `NOT_AFFECTED` on the base,
+`UNKNOWN` on the branch. Named unit tests:
+`call-graph.resolution-authority.test.ts` (a spread before, a spread at,
+and the control after).
+
+## RWF-072 — The member-write scanner misses a member written as a destructuring or `for…of` target
+
+**Status:** Fixed (task A-5a)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a member that may hold several values, read as the
+one the object literal wrote)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A — task A-5a
+
+**Discovered:** by task A-5a, fixing the name scanner's blind spot that its
+independent audit found (finding 1) and checking the member scanner next
+to it (oracle harness, Node v22.11.0, base `3d87189`).
+
+`isMemberAssignedWithin` (`named-bindings.ts`, `buildAssignedMembers`)
+decides whether an object-literal member is stable before VT-214 resolves
+`o.run()` to the value the literal wrote. It saw `o.m = v`, `o["m"] = v`,
+updates and `delete`. It did not see a member as a destructuring
+assignment target, as a `for…of` / `for…in` head, or behind a value-free
+wrapper:
+
+```js
+function helper(x) { return lib.safe(x); }
+const o = { run: helper };
+[o.run] = [lib.parse];        // or: for (o.run of [lib.parse]) {}
+o.run("x");                   // Node calls parse; the graph resolved helper
+```
+
+**Fixed:** the scanner peels wrappers and walks destructuring and
+`for…of` / `for…in` targets the way the name scanner does. Reproduced in
+`tests/oracle/a5a-resolution-authority.test.ts` (`member-write.*`): two
+false `NOT_AFFECTED` on the base, `UNKNOWN` on the branch. The same
+scanner guards A-5a's receiver-bound builtins (a destructured
+`Array.prototype.map` write refuses them; a named unit test).
+
+## RWF-073 — VT-210 counts a TypeScript `this` parameter as an argument position
+
+**Status:** Fixed (task A-5a)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a parameter attributed to the wrong call-site
+argument)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A — task A-5a
+
+**Discovered:** by task A-5a's independent audit (oracle harness, Node
+v22.11.0 with `--experimental-strip-types`, base `3d87189`).
+
+`resolveHigherOrderCallTarget` took the parameter's index in
+`enclosing.parameters`, which includes the `this` pseudo-parameter
+TypeScript erases:
+
+```ts
+function each(this: void, fn: any, x: any) { return fn(x); }
+each(lib.parse, helper);   // fn is lib.parse; the graph read helper
+```
+
+**Fixed:** the index is taken over the runtime parameters, without a
+`this` parameter. Named unit test: `call-graph.resolution-authority.test.ts`
+("VT-210 skips a TypeScript `this` parameter"). The oracle harness runs
+plain Node, so this TypeScript shape has no oracle case here; the audit's
+reproduction ran it with type stripping.
