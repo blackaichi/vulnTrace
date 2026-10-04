@@ -174,12 +174,13 @@ node scripts/check-docs.mjs
 
 - `npm run test:validation` is fully offline since task `D-03` (it
   replays a recorded snapshot of real OSV answers, OPEN-DEBTS D-03,
-  CLOSED) but is still not run in CI: six of its cases are deliberately
+  CLOSED) but is still not run in CI: five of its cases are deliberately
   kept failing (OPEN-DEBTS D-09) and the suite exits non-zero by design.
   Run it locally for any task that can move a verdict. The documented
-  baseline is exactly six known failures, `RWB-03`, `RWB-05`, `RWB-07` (since task A-3a), `RWB-09b`,
-  `VAL-002` and `VAL-003` (OPEN-DEBTS D-09), compared case by case and
-  verdict by verdict. Any change to that set is explained.
+  baseline is exactly five known failures, `RWB-03`, `RWB-05`, `RWB-09b`,
+  `VAL-002` and `VAL-003` (OPEN-DEBTS D-09; `RWB-07` was one from task
+  A-3a to task A-4), compared case by case and verdict by verdict. Any
+  change to that set is explained.
 - `npm test` is also fully offline since `D-03`.
 - For an analyzer change, report the graph, proof and verdict
   differentials separately, with the shared tool (task `BL-029`):

@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-02, by `A-3b`.
+**Last updated:** 2026-10-04, by `A-4`.
 
 ## Objective
 
@@ -49,9 +49,16 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   edge, and a JSX element is a site (`jsx`) with its factory's unknown
   edge and possible edges to what it hands the factory -- both fail
   closed, by the project owner's decisions of 2026-10-02 (precision:
-  backlog `BL-041`, `BL-042`). Fixed AUD-02, PRM-116, RWF-066. What binds
-  A-4, A-5, E and C next: REMEDIATION-PLAN § 5a, "A-3a additions" and
-  "A-3b additions".
+  backlog `BL-041`, `BL-042`). Fixed AUD-02, PRM-116, RWF-066. `A-4`
+  accounted ADR 0008 § 2's protocol members (a definition the runtime may
+  invoke implicitly: a possible edge from the owner that evaluates it;
+  the iterator's `next` / `return` / `throw` added, RWF-068) and made every
+  accessor its own node, reached by a possible edge (Amendment A-0 part
+  B), by the project owner's decisions of 2026-10-04; the census has no
+  pending kind left. It re-admitted the builtin positions that fire only
+  protocol hooks, restoring RWB-07. Fixed PRM-38, PRM-112, PRM-113,
+  PRM-118, RWF-068. What binds A-5, A-7, E and C next: REMEDIATION-PLAN
+  § 5a, "A-3a additions", "A-3b additions" and "A-4 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -65,7 +72,7 @@ dropped finding. The README says this (`README.md:80-88`, since
 `tests/validation/FINDINGS.md` RWF-053 — an earlier version of this line
 said the notice did not exist, which was false).
 `npm run test:validation` is hermetic since `D-03` (replays a recorded
-OSV snapshot) but is still not run in CI: six of its cases are
+OSV snapshot) but is still not run in CI: five of its cases are
 deliberately kept failing (OPEN-DEBTS D-09) and the suite exits non-zero
 by design regardless of network access (backlog `BL-030`).
 
@@ -82,21 +89,29 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`A-3b` — own-export calls; JSX
-([task file](tasks/A-3b-own-exports-jsx.md)): `READY_FOR_REVIEW`, its pull
-request awaiting the project owner. `A-3a` merged as PR #80.
+`A-4` — protocol members; accessor bodies as their own owners
+([task file](tasks/A-4-protocol-members.md)): `READY_FOR_REVIEW`, its pull
+request awaiting the project owner. `A-3b` merged as PR #81.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-3b`:
-`A-4` (protocol members, accessors), the task that recovers A-3a's
-precision cost: it must re-admit the builtin positions that fire only
-protocol hooks (`JSON.parse`, `String`, `Math`, `new Error`, …; RWB-07),
-REMEDIATION-PLAN § 5a "A-3a additions".
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-4`:
+`A-5` (resolution authority, call-graph side: VT-213, VT-210, VT-208,
+strict folding, lexical `require`, `function` declaration stability),
+which removes the last two unproven no-edge reasons. The P1 loader gaps
+`BL-040` and `BL-043` (live family-A false `NOT_AFFECTED`s) are
+candidates to reorder ahead of it.
 
 ## Recently discovered
 
-From `A-3b`: `BL-040` (**P1**, RWF-065: `module.parent.require` loads a
+From `A-4`: RWF-068 (fixed by A-4: the iterator's own methods),
+`BL-046` (**P1**, RWF-070: `await` constructs a promise's `constructor` /
+`Symbol.species`, a family-C false `NOT_AFFECTED` outside the protocol
+list; needs the project owner's decision) and `BL-045` (P2, RWF-069: the
+`path.*` admissions run `util.inspect.custom` through a structured
+argument the probe cannot build; no live false `NOT_AFFECTED` since A-4).
+From
+`A-3b`: `BL-040` (**P1**, RWF-065: `module.parent.require` loads a
 module the loader classifier misses, a family-A false `NOT_AFFECTED`;
 families B and C fail closed since A-3b), RWF-066 (fixed by A-3b: the
 automatic JSX runtime's implicit `require`), `BL-041` and `BL-042`

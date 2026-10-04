@@ -683,6 +683,59 @@ reading.
   found by A-3b's independent audit); A-3b's classic-JSX-factory rule
   widens on any such write, the spelled call does not yet.
 
+#### A-4 additions to lane-A acceptance
+
+Added by task A-4 (2026-10-04). The criteria above are unchanged; this
+records A-4's outcome, the project owner's two decisions of 2026-10-04
+(ADR 0008, "Decision record — iterator methods and unreadable keys"), and
+what they bind on the tasks after it.
+
+**Outcome.** A definition under a key that may be a protocol member's is
+the invocation site `protocol_member`, accounted from the owner that
+evaluates it: a possible edge to a method, to each attributable function
+a property, field or store hands over, and an unknown `protocol_value`
+edge for a value it cannot attribute. A key is a protocol key unless
+proven otherwise; ADR 0008 § 2's list gains the iterator's `next`,
+`return` and `throw` (RWF-068). Every getter and setter with a body is
+its own node (kind `accessor`), reached from its definer by a possible
+edge (the site `accessor`); its body, parameters and any class defined in
+them are walked under it. The census has no `pending` kind left. The
+positions A-3a could not admit because a protocol hook fires there are
+admitted where the mechanical admission test now passes (the task file's
+Outcome lists them).
+
+**What it binds.**
+
+- **A-5** (VT-208): `resolveInstanceMethod` keeps only `MethodDeclaration`s
+  of the checker's property. A getter is never what `o.x()` calls -- the
+  call invokes what the getter returns -- so a change that admits an
+  accessor declaration there must resolve to the returned value, never to
+  the accessor's node (which is kept out of every function lookup,
+  `accessorNodeIdByLocation`).
+- **A-7**: the correct `AFFECTED` results A-4 turned into `UNKNOWN` are
+  `S2.literal.*` in `tests/oracle/adr0008-coverage.test.ts` (an own
+  enumerable object-literal getter read by `JSON.stringify`,
+  `Object.assign`, spread, `Object.entries`) and, outside A-7's reader
+  builtins, a getter read directly (`o.v`;
+  `accessor.literal-getter.read` in `tests/oracle/a4-protocol-members.test.ts`),
+  which needs a resolved edge for a property read of a known accessor. No
+  corpus case moved.
+- **RWF-002 / E**: an `o[k] = v` with an unreadable key and an
+  unattributable value is an unknown `protocol_value` edge; a
+  target-relevance rule must treat it like any escaped value (ADR 0008
+  § 7), and lane E's write set may later prove such a key.
+- **BL-036** (RWF-059): a protocol value in an instance field is
+  accounted from the constructor; calls in an instance field initializer
+  keep the class-definition owner, as before.
+- **BL-046** (RWF-070): `constructor` and `Symbol.species` are outside the
+  list and reached by `await` (SpeciesConstructor); amending the list is
+  the project owner's decision.
+- **BL-045** (RWF-069): the builtin probe's single-feature argument kinds
+  cannot show a hook only a structured argument reaches (a null-prototype
+  value inspected by an argument-type error message); every admission
+  also rests on reading the implementation. A-3a's `path.*` admissions
+  contradict rule (a) this way.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None
