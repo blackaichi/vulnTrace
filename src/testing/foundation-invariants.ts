@@ -377,11 +377,11 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "Every site of the kinds the census marks `site` (calls, `new`, " +
       "tagged templates, decorators, implicit `super`, assignments into " +
       "an ambient or builtin value) in a walked file yields an account: " +
-      "edges, a no-edge account backed by a proof from ADR 0008 § 2's " +
-      "closed set, or an unproven no-edge account. Every ts.SyntaxKind " +
-      "is classified, and every invocation-capable kind that is not yet " +
-      "accounted (`pending`), like every no-edge account given without a " +
-      "proof, names the open findings and lane-A task that own it.",
+      "edges, or a no-edge account backed by a proof from ADR 0008 § 2's " +
+      "closed set -- there is no third outcome. Every ts.SyntaxKind is " +
+      "classified, and every invocation-capable kind that is not yet " +
+      "accounted (`pending`) names the open findings and lane-A task " +
+      "that own it.",
     foundation: "ADR-0008",
     owners: [
       "src/code-intelligence/invocation-sites.census.test.ts",
@@ -395,8 +395,11 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "the walk -- every site of every file walked over the three corpora " +
       "has an account, pruned branches included; the account test owns " +
       "what the three A-1 sites (tagged templates, decorators, implicit " +
-      "`super`) are accounted as, and the unproven no-edge ledger: one " +
-      "producing program per reason, every named finding still open. " +
+      "`super`) are accounted as. Until task A-5a it also owned the " +
+      "unproven no-edge ledger; A-5a proved its last two reasons " +
+      "(`ambient_static_require`, PRM-15; `provably_dead_branch`, PRM-14), " +
+      "each owned by the account test with a named test per refusal, and " +
+      "deleted the unproven variant. " +
       "Task A-3a added the two builtin no-edge proofs " +
       "(`primitive_only_arguments`, `non_invoking_builtin`), owned by the " +
       "escape-row test with a named test for each rule a mutation could " +

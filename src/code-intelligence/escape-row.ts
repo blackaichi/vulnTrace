@@ -5,6 +5,15 @@ import {
 } from "./builtin-callables.js";
 import { resolveNamedBinding } from "./named-bindings.js";
 import { importSpecifierOf } from "./symbol-binder.js";
+import {
+  GLOBAL_OBJECT_NAMES,
+  assignedNames,
+  declaredOrAssignedNames,
+  insideWith,
+  skipOuterExpressions,
+} from "./ambient-names.js";
+
+export { assignedNames, skipOuterExpressions } from "./ambient-names.js";
 
 /**
  * ADR 0008 § 2's ESCAPE ROW, the syntax half (task A-3a).
@@ -136,149 +145,6 @@ export const AMBIENT_GLOBAL_NAMES: ReadonlySet<string> = new Set([
   "global",
 ]);
 
-/** Names that denote the global object itself: `globalThis.setTimeout` is `setTimeout`. */
-const GLOBAL_OBJECT_NAMES: ReadonlySet<string> = new Set([
-  "globalThis",
-  "global",
-]);
-
-/** Every name the file declares, in any form, or assigns to as a bare name. */
-const fileNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
-
-function declaredOrAssignedNames(
-  sourceFile: ts.SourceFile,
-): ReadonlySet<string> {
-  const cached = fileNamesCache.get(sourceFile);
-  if (cached) {
-    return cached;
-  }
-  const names = new Set<string>(assignedNames(sourceFile));
-  const visit = (node: ts.Node): void => {
-    const name = (node as ts.NamedDeclaration).name;
-    if (
-      name !== undefined &&
-      ts.isIdentifier(name) &&
-      (ts.isVariableDeclaration(node) ||
-        ts.isFunctionDeclaration(node) ||
-        ts.isFunctionExpression(node) ||
-        ts.isClassDeclaration(node) ||
-        ts.isClassExpression(node) ||
-        ts.isParameter(node) ||
-        ts.isBindingElement(node) ||
-        ts.isEnumDeclaration(node) ||
-        ts.isModuleDeclaration(node) ||
-        ts.isImportEqualsDeclaration(node) ||
-        ts.isImportClause(node) ||
-        ts.isImportSpecifier(node) ||
-        ts.isNamespaceImport(node))
-    ) {
-      names.add(name.text);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  fileNamesCache.set(sourceFile, names);
-  return names;
-}
-
-const assignedNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
-
-/**
- * Every bare name the file WRITES, in any assignment form: `x = v` and the
- * compound and logical assignments, a destructuring-assignment target
- * (`({ x } = v)`, `({ a: x } = v)`, `[x] = v`, rest elements), a
- * `for (x of …)` / `for (x in …)` head, and `++x` / `x--`. Task A-3a's
- * independent audit found the first version saw only `x = v`, so
- * `({ URL } = …)` and `for (URL of …)` replaced a global unseen.
- */
-export function assignedNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
-  const cached = assignedNamesCache.get(sourceFile);
-  if (cached) {
-    return cached;
-  }
-  const names = new Set<string>();
-  const target = (raw: ts.Node): void => {
-    const node = ts.isParenthesizedExpression(raw)
-      ? skipOuterExpressions(raw)
-      : raw;
-    if (ts.isIdentifier(node)) {
-      names.add(node.text);
-    } else if (
-      (ts.isPropertyAccessExpression(node) ||
-        ts.isElementAccessExpression(node)) &&
-      ts.isIdentifier(skipOuterExpressions(node.expression)) &&
-      GLOBAL_OBJECT_NAMES.has(
-        (skipOuterExpressions(node.expression) as ts.Identifier).text,
-      )
-    ) {
-      // `globalThis.setTimeout = stub` replaces the global binding exactly
-      // as `setTimeout = stub` does (task A-3a's re-audit).
-      const name = ts.isPropertyAccessExpression(node)
-        ? node.name.text
-        : ts.isStringLiteralLike(node.argumentExpression)
-          ? node.argumentExpression.text
-          : undefined;
-      if (name !== undefined) {
-        names.add(name);
-      }
-    } else if (ts.isObjectLiteralExpression(node)) {
-      for (const property of node.properties) {
-        if (ts.isShorthandPropertyAssignment(property)) {
-          names.add(property.name.text);
-        } else if (ts.isPropertyAssignment(property)) {
-          target(property.initializer);
-        } else if (ts.isSpreadAssignment(property)) {
-          target(property.expression);
-        }
-      }
-    } else if (ts.isArrayLiteralExpression(node)) {
-      for (const element of node.elements) {
-        target(ts.isSpreadElement(element) ? element.expression : element);
-      }
-    } else if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
-    ) {
-      // A default in a destructuring target: `({ x = 1 } = v)`, `[x = 1] = v`.
-      target(node.left);
-    }
-  };
-  const visit = (node: ts.Node): void => {
-    if (
-      ts.isBinaryExpression(node) &&
-      node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
-      node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
-    ) {
-      target(node.left);
-    } else if (
-      (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
-      !ts.isVariableDeclarationList(node.initializer)
-    ) {
-      target(node.initializer);
-    } else if (
-      (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
-      (node.operator === ts.SyntaxKind.PlusPlusToken ||
-        node.operator === ts.SyntaxKind.MinusMinusToken)
-    ) {
-      target(node.operand);
-    }
-    ts.forEachChild(node, visit);
-  };
-  visit(sourceFile);
-  assignedNamesCache.set(sourceFile, names);
-  return names;
-}
-
-/** Whether `node` is inside the body of a `with` statement, where any name may be a property of its object. */
-function insideWith(node: ts.Node): boolean {
-  for (let current = node.parent; current; current = current.parent) {
-    if (ts.isWithStatement(current) && current.statement !== node) {
-      return true;
-    }
-  }
-  return false;
-}
-
 /**
  * Whether `id` denotes the ambient global it is spelled like: no enclosing
  * scope declares it (`resolveNamedBinding`'s lexical model), no
@@ -365,21 +231,6 @@ export function ambientGlobalKeyOf(expr: ts.Expression): string | undefined {
     full.shift();
   }
   return `global:${full.join(".")}`;
-}
-
-/** Parentheses, type assertions, `!` and `satisfies`, which change no value. */
-export function skipOuterExpressions(expr: ts.Expression): ts.Expression {
-  let current = expr;
-  while (
-    ts.isParenthesizedExpression(current) ||
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isNonNullExpression(current) ||
-    ts.isSatisfiesExpression(current)
-  ) {
-    current = current.expression;
-  }
-  return current;
 }
 
 // ---------------------------------------------------------------------------

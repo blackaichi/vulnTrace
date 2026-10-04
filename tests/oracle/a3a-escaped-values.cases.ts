@@ -402,27 +402,19 @@ export const IDENTITY: readonly A3aCase[] = [
     finding: "AUD-01",
     mechanism:
       "identity control: a parameter named setTimeout that never runs its argument is not the documented invoking builtin",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    realNodeCalls: false,
     source:
       `function run(setTimeout) { setTimeout(() => lib.parse("x")); }\n` +
       `run(function never(f) {});\n`,
     negative: `function run(setTimeout) { setTimeout(() => lib.parse("x")); }\n`,
-    // Not the documented invoking builtin (the identity A-3a proves), but
-    // VT-213 still gives the inline arrow a RESOLVED edge, because the
-    // parameter callee is otherwise unattributable: a fabricated edge,
-    // PRM-13's mechanism (task A-5). Before A-3a VT-201's spelling
-    // exemption hid it for this one name; the same program with the
-    // parameter named `cb` takes the same VT-213 path on the base.
-    openDefect: {
-      rwf: "PRM-13",
-      observed: {
-        verdict: "AFFECTED",
-        proofFamily: "-",
-        target: "vuln-lib#parse",
-        reachableSubgraphComplete: false,
-        unknownEdges: 0,
-      },
-    },
+    // Not the documented invoking builtin (the identity A-3a proves). Until
+    // task A-5a VT-213 gave the inline arrow a RESOLVED edge, because the
+    // parameter callee is otherwise unattributable: a fabricated AFFECTED,
+    // PRM-13's mechanism, recorded here as an open-soundness-defect
+    // record. A-5a deleted VT-213: the callee keeps its unknown edge and
+    // the arrow gets a possible one, so the sound answer is UNKNOWN (the
+    // graph cannot show that `never` never calls its argument).
   },
 ];
 
@@ -617,24 +609,16 @@ export const AUDITED: readonly A3aCase[] = [
     finding: "AUD-01",
     mechanism:
       "a destructuring assignment replaces setTimeout with a function that never calls its argument",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    realNodeCalls: false,
     source:
       `({ setTimeout } = { setTimeout: () => {} });\n` +
       `setTimeout(() => lib.parse("x"), 0);\n`,
     negative: `({ setTimeout } = { setTimeout: () => {} });\n`,
-    // No longer the documented invoking builtin; but the callee is now
-    // unattributable, and VT-213 gives the one inline callback a RESOLVED
-    // edge: PRM-13's fabricated edge, as for a parameter named setTimeout.
-    openDefect: {
-      rwf: "PRM-13",
-      observed: {
-        verdict: "AFFECTED",
-        proofFamily: "-",
-        target: "vuln-lib#parse",
-        reachableSubgraphComplete: false,
-        unknownEdges: 0,
-      },
-    },
+    // No longer the documented invoking builtin; the callee is
+    // unattributable. Until task A-5a VT-213 gave the one inline callback a
+    // RESOLVED edge (PRM-13's fabricated AFFECTED, recorded here as an
+    // open-soundness-defect record); now the callee's unknown edge stands.
   },
 ];
 
@@ -719,23 +703,16 @@ export const REAUDITED: readonly A3aCase[] = [
     finding: "AUD-01",
     mechanism:
       "globalThis.setTimeout = stub in the same file: setTimeout is no longer the documented invoking builtin",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    realNodeCalls: false,
     source:
       `globalThis.setTimeout = () => 0;\n` +
       `setTimeout(() => lib.parse("x"), 0);\n`,
     negative: `globalThis.setTimeout = () => 0;\n`,
-    // No longer the builtin; but the callee is then unattributable and
-    // VT-213 gives the one inline callback a RESOLVED edge (PRM-13).
-    openDefect: {
-      rwf: "PRM-13",
-      observed: {
-        verdict: "AFFECTED",
-        proofFamily: "-",
-        target: "vuln-lib#parse",
-        reachableSubgraphComplete: false,
-        unknownEdges: 0,
-      },
-    },
+    // No longer the builtin; the callee is then unattributable. Until task
+    // A-5a VT-213 gave the one inline callback a RESOLVED edge (PRM-13,
+    // recorded here as an open-soundness-defect record); now the callee's
+    // unknown edge stands.
   },
 ];
 

@@ -287,6 +287,20 @@ export const DISAGREEMENT_GROUPS: readonly DisagreementGroup[] = [
       "construct-aware; the higher-order path is never consulted for a `new` " +
       "expression. Sound; the missing direction is unstated.",
   },
+  {
+    id: "vt210-exported-probe",
+    class: "honest-unknown",
+    documented: true,
+    owner: "VT-210 / ADR 0008 A2 (task A-5a, PRM-16)",
+    findings: "RWF-048 § 4g",
+    why:
+      "The sweep's driver exports the probe (`module.exports = { probe }` / " +
+      "`export { invoke }`) so the entry reaches it, and since task A-5a " +
+      "VT-210 refuses an exported function: an importer may call it with " +
+      "any argument, so the file's own call sites are not all of them " +
+      "(PRM-16). Sound. The precision cost is the instrument's: the same " +
+      "programs without the export resolve (A-5a's unit-test controls).",
+  },
 ];
 
 export const KNOWN_DISAGREEMENTS: readonly KnownDisagreement[] = [
@@ -833,4 +847,22 @@ export const KNOWN_DISAGREEMENTS: readonly KnownDisagreement[] = [
     group: "vt210-no-construct",
     observed: { kind: "unknown", reason: "unsupported_callee_binding" },
   },
+  // -- vt210-exported-probe (task A-5a) ----------------------------
+  ...(
+    [
+      ["identifier", "higher-order-parameter"],
+      ["let-binding", "higher-order-parameter"],
+      ["var-binding", "higher-order-parameter"],
+      ["parameter-binding", "direct-call"],
+      ["parameter-binding", "esm-import"],
+    ] as const
+  ).map(([form, mechanism]) => ({
+    form,
+    mechanism,
+    group: "vt210-exported-probe",
+    observed: {
+      kind: "unknown" as const,
+      reason: "unsupported_callee_binding",
+    },
+  })),
 ];

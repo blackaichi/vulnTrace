@@ -666,6 +666,11 @@ export const LOADER_GAP_AUDITED: readonly A3bCase[] = [
       app: `const M = require("module");\nconst path = require("path");\nfunction h() {}\nfor ({ _load: h } of [M]) {}\nconst dir = path.join(__dirname, "..");\n`,
     },
     expected: "UNKNOWN",
+    // Re-measured by task A-5a: `h` is a function declaration the for-of
+    // head rebinds, so the call `h(...)` no longer resolves to the stale
+    // `function h` (PRM-104) and carries an unknown edge -- 2 unknown edges
+    // instead of 1. The verdict is unchanged: family A's module-load
+    // closure still misses the load (RWF-067, backlog BL-043).
     openDefect: {
       rwf: "RWF-067",
       observed: {
@@ -673,7 +678,7 @@ export const LOADER_GAP_AUDITED: readonly A3bCase[] = [
         proofFamily: "A",
         target: "vuln-lib#parse",
         reachableSubgraphComplete: false,
-        unknownEdges: 1,
+        unknownEdges: 2,
       },
     },
   },

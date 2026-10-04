@@ -2,16 +2,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  UNPROVEN_NO_EDGE_LEDGER,
-  type CallEdge,
-  type CallGraph,
-  type UnprovenNoEdgeReason,
-} from "../domain/graph.js";
-import {
-  loadDefectRegisters,
-  rwfReferenceProblems,
-} from "../testing/open-soundness-defect.js";
+import type { CallEdge, CallGraph, NoEdgeProof } from "../domain/graph.js";
 import {
   buildCallGraph,
   type InvocationAccountObservation,
@@ -23,8 +14,9 @@ import { loadTsProject } from "./ts-project.js";
  * Task A-1: the invocation accounts ADR 0008 § 8 assigns to A-1 --
  * tagged templates (PRM-37), decorators (PRM-115), implicit `super`
  * (PRM-19) -- at the graph level, where the edge's `from` and target are
- * visible; and the ledger of unproven no-edge accounts, each produced by
- * a named program and each owned by an open finding.
+ * visible; and (task A-5a) the owner tests of the two no-edge proofs that
+ * replaced the last unproven no-edge accounts: `ambient_static_require`
+ * (PRM-15) and `provably_dead_branch` (PRM-14).
  *
  * The end-to-end, real-Node versions of the same shapes are in
  * `tests/oracle/a1-invocation-sites.test.ts`.
@@ -94,11 +86,11 @@ function unknownReasons(graph: CallGraph, from: string): string[] {
   );
 }
 
-function unprovenReasons(built: Built, siteKind: string): string[] {
+function noEdgeProofs(built: Built, siteKind: string): NoEdgeProof["kind"][] {
   return built.observations
     .filter((o) => o.site.kind === siteKind)
     .flatMap((o) =>
-      o.account.kind === "unproven_no_edge" ? [o.account.reason] : [],
+      o.account.kind === "no_edge" ? [o.account.proof.kind] : [],
     );
 }
 
@@ -144,7 +136,7 @@ describe("a tagged template is a call to its tag (PRM-37)", () => {
     ]);
   });
 
-  it("does not extend VT-213's inline-callback fallback to a tag (PRM-13)", async () => {
+  it("gives a tag's one inline callback no resolved callback edge (PRM-13; VT-213's fallback is deleted)", async () => {
     const built = await build({
       "index.js": `function helper() { return 1; }\nconst tags = [];\ntags[0]\`\${() => helper()}\`;\n`,
     });
@@ -226,7 +218,7 @@ describe("a derived class's implicit constructor constructs its base (PRM-19)", 
     });
     const myError = nodeNamed(built.graph, "MyError", "constructor");
     expect(unknownReasons(built.graph, myError)).toEqual(["escaped_value"]);
-    expect(unprovenReasons(built, "implicit_super")).toEqual([]);
+    expect(noEdgeProofs(built, "implicit_super")).toEqual([]);
   });
 
   it("gives a base class, and a class with its own constructor, no implicit-super account", async () => {
@@ -437,58 +429,137 @@ describe("a tagged template or decorator is accounted from the owner that evalua
 });
 
 // ---------------------------------------------------------------------------
-// The unproven no-edge ledger
+// Task A-5a: the last two no-edge proofs (ADR 0008 § 2)
 // ---------------------------------------------------------------------------
 
-/**
- * One program per {@link UnprovenNoEdgeReason} that produces it: the owner
- * test ADR 0008 § 2 requires of every no-edge account. When a lane-A task
- * removes a reason, the type forces this table to lose its row.
- */
-const PRODUCERS: Readonly<
-  Record<UnprovenNoEdgeReason, { source: string; site: string }>
-> = {
-  static_require_by_text: {
-    source: `require("./other.js");\n`,
-    site: "call",
-  },
-  constant_folded_branch: {
-    source: `function f() {}\nif (false) { f(); }\n`,
-    site: "call",
-  },
-};
+describe("a static require of the ambient require is AmbientStaticRequire (PRM-15)", () => {
+  it('gives a module-scope require("x") the proof, with its specifier', async () => {
+    const built = await build({
+      "index.js": `require("./other.js");\n`,
+      "other.js": `module.exports = {};\n`,
+    });
+    expect(
+      built.observations.flatMap((o) =>
+        o.account.kind === "no_edge" ? [o.account.proof] : [],
+      ),
+    ).toEqual([{ kind: "ambient_static_require", specifier: "./other.js" }]);
+    expect(edgesFrom(built.graph, moduleNode(built))).toEqual([]);
+  });
 
-describe("every unproven no-edge account is a named, owned, open defect", () => {
-  it.each(Object.entries(PRODUCERS))(
-    "%s is produced by its program",
-    async (reason, producer) => {
+  it("keeps the proof for a require in a function when only an unrelated scope declares require", async () => {
+    const built = await build({
+      "index.js": `function a() { function require(n) { return n; } return require; }\nfunction b() { return require("./other.js"); }\nb();\n`,
+      "other.js": `module.exports = {};\n`,
+    });
+    expect(noEdgeProofs(built, "call")).toEqual(["ambient_static_require"]);
+  });
+
+  it.each([
+    [
+      "a function-local function require",
+      `function main() { function require(n) { return n; } return require("./other.js"); }\nmain();\n`,
+      "resolved require",
+    ],
+    [
+      "a block-scoped const require",
+      `function main() { const require = (n) => n; return require("./other.js"); }\nmain();\n`,
+      "resolved require",
+    ],
+    [
+      "a parameter named require",
+      `function main(require) { return require("./other.js"); }\nmain((n) => n);\n`,
+      "unknown",
+    ],
+  ])(
+    "refuses the proof under %s: the call is an ordinary callee",
+    async (_label, source, expected) => {
       const built = await build({
-        "index.js": producer.source,
+        "index.js": source,
         "other.js": `module.exports = {};\n`,
       });
-      expect(unprovenReasons(built, producer.site)).toContain(reason);
+      expect(noEdgeProofs(built, "call")).toEqual([]);
+      const main = nodeNamed(built.graph, "main");
+      const accounts = edgesFrom(built.graph, main).map((e) =>
+        e.resolution.kind === "resolved"
+          ? `resolved ${built.graph.nodes.find((n) => n.id === (e.resolution as { target: string }).target)?.name}`
+          : e.resolution.kind,
+      );
+      expect(accounts[0]).toBe(expected);
     },
   );
 
-  it("names, for each reason, findings that are still OPEN in FINDINGS.md", () => {
-    const { findings } = loadDefectRegisters();
-    const problems = Object.entries(UNPROVEN_NO_EDGE_LEDGER).flatMap(
-      ([reason, owner]) =>
-        owner.findings.flatMap((id) =>
-          rwfReferenceProblems(id, findings).map((p) => `${reason}: ${p}`),
-        ),
-    );
-    expect(problems).toEqual([]);
-  });
+  it.each([
+    ["a bare-name write", `require = (n) => n;\nrequire("./other.js");\n`],
+    [
+      "a destructuring write",
+      `({ require } = { require: (n) => n });\nrequire("./other.js");\n`,
+    ],
+    [
+      "a with body",
+      `with ({ require: (n) => n }) { require("./other.js"); }\n`,
+    ],
+  ])(
+    "refuses the proof under %s anywhere in the file",
+    async (_label, source) => {
+      const built = await build({
+        "index.js": source,
+        "other.js": `module.exports = {};\n`,
+      });
+      expect(noEdgeProofs(built, "call")).toEqual([]);
+    },
+  );
 
-  it("a pruned branch keeps the graph unchanged: its sites are accounted, and add no edge", async () => {
+  it("refuses the proof under a TypeScript namespace named require", async () => {
+    const built = await build(
+      {
+        "index.ts": `namespace require { export const x = 1; }\nrequire("./other.js");\n`,
+        "other.js": `module.exports = {};\n`,
+      },
+      "index.ts",
+    );
+    expect(noEdgeProofs(built, "call")).toEqual([]);
+  });
+});
+
+describe("a branch is pruned only by a fold that is a proof: ProvablyDeadBranch (PRM-14)", () => {
+  it("accounts a pruned branch's sites with the proof and adds no edge for them", async () => {
     const built = await build({
       "index.js": `function f() {}\nfunction g() {}\nif (false) { f(); } else { g(); }\n`,
     });
-    const from = moduleNode(built);
-    expect(resolvedTargets(built.graph, from)).toEqual([
+    expect(resolvedTargets(built.graph, moduleNode(built))).toEqual([
       nodeNamed(built.graph, "g"),
     ]);
-    expect(unprovenReasons(built, "call")).toEqual(["constant_folded_branch"]);
+    expect(noEdgeProofs(built, "call")).toEqual(["provably_dead_branch"]);
   });
+
+  it.each([
+    ["1 === 2", "strict, two numbers"],
+    ['1 === "1"', "strict, across types"],
+    ['"a" == "b"', "loose, two strings"],
+    ["1 != 1", "loose, two numbers"],
+  ])("prunes under %s (%s)", async (condition) => {
+    const built = await build({
+      "index.js": `function f() {}\nif (${condition}) { f(); }\n`,
+    });
+    expect(resolvedTargets(built.graph, moduleNode(built))).toEqual([]);
+    expect(noEdgeProofs(built, "call")).toEqual(["provably_dead_branch"]);
+  });
+
+  it.each([
+    ['1 == "1"', "true by conversion"],
+    ['0 == ""', "true by conversion"],
+    ['1 != "1"', "false by conversion"],
+    ['"1" == 1', "true by conversion"],
+  ])(
+    "visits both branches under the loose cross-type %s (%s)",
+    async (condition) => {
+      const built = await build({
+        "index.js": `function f() {}\nfunction g() {}\nif (${condition}) { f(); } else { g(); }\n`,
+      });
+      expect(resolvedTargets(built.graph, moduleNode(built)).sort()).toEqual(
+        [nodeNamed(built.graph, "f"), nodeNamed(built.graph, "g")].sort(),
+      );
+      expect(noEdgeProofs(built, "call")).toEqual([]);
+    },
+  );
 });

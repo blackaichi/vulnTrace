@@ -184,17 +184,42 @@ describe("RWF-025 fixture: an unrelated computed-key assignment target no longer
     // completes normally even in fast mode, so refusing the cutoff there
     // is correct, not conservative. Narrowing WHICH identifiers a target
     // contributes must not drop the genuine one.
-    const { finding } = await scan({
+    //
+    // Task A-5a (PRM-104) changed this answer from NOT_AFFECTED to
+    // UNKNOWN, as ADR 0008 § 8 anticipated ("re-check against the
+    // `function`-declaration stability rule"). The NOT_AFFECTED proof
+    // rested on a RESOLVED edge from the module body's `bail()` to the
+    // `function bail` declaration, which the destructuring assignment
+    // has replaced: real Node calls `replacement`, so that edge was
+    // fabricated. A reassigned function declaration is now `reassigned`,
+    // `bail()` carries an honest unknown edge, and family C is withheld
+    // for the module body. The export is still never AFFECTED -- the
+    // false-AFFECTED property this control guards -- and the genuine mark
+    // is not lost: no cutoff is claimed from `bail`.
+    const { finding, graph } = await scan({
       module: "fixture-lib/rebound",
       export: "default",
       entrypoint: REBOUND_ENTRYPOINT,
     });
 
-    expect(finding?.verdict).toBe("NOT_AFFECTED");
-    expect(finding?.evidence?.confirmedUnreachableTarget).toMatchObject({
-      reachableSubgraphComplete: true,
-      target: { module: "fixture-lib/rebound", export: "default" },
-    });
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
+    const reboundModule = graph.nodes.find(
+      (n) =>
+        n.kind === "module" &&
+        n.module.endsWith(path.join("fixture-lib", "rebound.js")),
+    );
+    const bailIds = new Set(
+      graph.nodes.filter((n) => n.name === "bail").map((n) => n.id),
+    );
+    expect(
+      graph.edges.some(
+        (e) =>
+          e.from === reboundModule?.id &&
+          e.resolution.kind === "resolved" &&
+          bailIds.has(e.resolution.target),
+      ),
+    ).toBe(false);
   });
 
   it("never substitutes a different PackageInstance for the ambiguous export", async () => {

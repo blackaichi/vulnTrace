@@ -7,14 +7,15 @@ import type {
   GraphNodeId,
   GraphNodeKind,
   InvocationAccount,
-  UnprovenNoEdgeReason,
 } from "../domain/graph.js";
+import { isAmbientStaticRequireCall } from "./named-bindings.js";
 import {
   NEVER_ADMITTED,
   behaviourKey,
   builtinBehaviour,
   isAdmittedPosition,
   isKnownBuiltinCallable,
+  type BuiltinBehaviour,
   type BuiltinCallForm,
 } from "./builtin-callables.js";
 import {
@@ -39,6 +40,7 @@ import {
 } from "./invocation-sites.js";
 import { protocolKeyOf, type ProtocolDefinition } from "./protocol-members.js";
 import {
+  isJsxSite,
   jsxHandedExpressions,
   type JsxSettings,
   type JsxSite,
@@ -48,12 +50,13 @@ import {
   classifyClosureWideningImplicitCallee,
   classifyClosureWideningJsx,
   classifyClosureWideningTaggedTemplate,
-  isStaticRequireCall,
 } from "./loader-constructs.js";
 import { classifyUnsupportedConstruct } from "./unsupported-construct.js";
 import { isConstDeclaration } from "./local-aliases.js";
 import {
+  bindsToOtherDeclaration,
   isMemberAssignedWithin,
+  isNameAssignedWithin,
   resolveDestructuredBindingElement,
   resolveNamedBinding,
   resolveParameterDeclaration,
@@ -617,8 +620,30 @@ async function resolveHigherOrderCallTarget(
   if (ts.findAncestor(call, isFunctionLike) !== enclosing) {
     return undefined;
   }
-  const paramIndex = enclosing.parameters.indexOf(parameter);
+  // A TypeScript `this` parameter (`function f(this: T, fn)`) is erased:
+  // it occupies no argument position, so the positions after it shift by
+  // one (task A-5a's independent audit).
+  const runtimeParameters = enclosing.parameters.filter(
+    (p) => !(ts.isIdentifier(p.name) && p.name.text === "this"),
+  );
+  const paramIndex = runtimeParameters.indexOf(parameter);
   if (paramIndex === -1) {
+    return undefined;
+  }
+
+  // (1b) THE PARAMETER HOLDS ONLY WHAT A CALL SITE PASSED (task A-5a,
+  // PRM-17; ADR 0008 A2: "a higher-order parameter whose every call site
+  // is accounted for"). A write to its name anywhere in the function --
+  // `fn = fn || other`, `[fn] = …`, a closure the body runs -- makes it
+  // hold something no call site passed. So does a sloppy-mode
+  // `arguments[0] = other`, which writes the parameter it aliases with no
+  // assignment to the name, and a direct `eval` or a `with` body, which can
+  // write any name. Each refuses.
+  if (
+    !ts.isIdentifier(parameter.name) ||
+    isNameAssignedWithin(enclosing, parameter.name.text) ||
+    mayRebindLocalsDynamically(enclosing)
+  ) {
     return undefined;
   }
 
@@ -626,6 +651,27 @@ async function resolveHigherOrderCallTarget(
   // the enclosing function's NAME. A same-named function in an unrelated
   // scope is a different function and its arguments say nothing here.
   const callSites = callSitesOfDeclaration(enclosing, prepared);
+
+  // (2b) THOSE CALL SITES ARE ALL OF THEM (task A-5a, PRM-16). The index
+  // above sees only calls written `name(...)` in THIS file. The function is
+  // also called wherever it escapes to: an importer (an `export` modifier,
+  // `module.exports = { each }`, `export { each }`), an alias
+  // (`const g = each`), `.call` / `.apply`, `new`, a tag, a decorator. So
+  // every identifier spelled like the function, in a value position
+  // anywhere in the file, must be the callee of one of the counted sites;
+  // one that is not refuses. A JSX element calls its factory with no
+  // identifier at the site at all (REMEDIATION-PLAN § 5a, "A-3b
+  // additions"), so a file with any JSX site refuses too.
+  if (
+    hasExportModifier(enclosing) ||
+    valueReferenceCount(
+      enclosing as ts.FunctionDeclaration & { readonly name: ts.Identifier },
+      prepared.index.sourceFile,
+    ) !== callSites.length ||
+    containsJsxSite(prepared.index.sourceFile)
+  ) {
+    return undefined;
+  }
 
   // (3) WHAT THE PARAMETER HOLDS -- and it must be ONE thing.
   //
@@ -657,6 +703,17 @@ async function resolveHigherOrderCallTarget(
   // callable.
   let unique: GraphNodeId | undefined;
   for (const site of callSites) {
+    // A spread at or before the parameter's position decides which value
+    // lands there at run time: in `each(...xs, helper)` the parameter at
+    // position 1 is `xs[1]` (or `helper`, or nothing), never knowably the
+    // expression written second (task A-5a, RWF-071).
+    if (
+      site.arguments
+        .slice(0, paramIndex + 1)
+        .some((argument) => ts.isSpreadElement(argument))
+    ) {
+      return undefined;
+    }
     const arg = site.arguments[paramIndex];
 
     // No argument at this position means the parameter is `undefined` on
@@ -695,8 +752,7 @@ async function resolveHigherOrderCallTarget(
     }
 
     // An inline function, a call result, a member expression: all real
-    // candidate values this path does not model. VT-213 owns inline
-    // callbacks at the site that passes them; what must not happen is
+    // candidate values this path does not model. What must not happen is
     // claiming a DIFFERENT site's identifier is the single answer while
     // this one exists.
     if (!ts.isIdentifier(arg)) {
@@ -801,6 +857,186 @@ let higherOrderCallSiteIndexBuilds = 0;
  */
 export function higherOrderCallSiteIndexBuildCount(): number {
   return higherOrderCallSiteIndexBuilds;
+}
+
+/**
+ * Whether `fn`'s body may write one of its parameters without an
+ * assignment to the parameter's NAME (task A-5a, PRM-17): it mentions
+ * `arguments` (a sloppy-mode `arguments[0] = v` writes the parameter it
+ * aliases) or `eval` (a direct `eval` runs code in this scope), or holds a
+ * `with` statement (any name in its body may be a property of its
+ * object). Over-approximate: a mention in a nested function, which has its
+ * own `arguments`, refuses as well.
+ */
+function mayRebindLocalsDynamically(fn: ts.FunctionLikeDeclaration): boolean {
+  let found = false;
+  const visit = (node: ts.Node): void => {
+    if (found) {
+      return;
+    }
+    if (
+      ts.isWithStatement(node) ||
+      (ts.isIdentifier(node) &&
+        (node.text === "arguments" || node.text === "eval") &&
+        isValueReferenceName(node))
+    ) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(fn, visit);
+  return found;
+}
+
+/** Whether a declaration carries `export` (or `export default`). */
+function hasExportModifier(node: ts.FunctionDeclaration): boolean {
+  return (
+    node.modifiers?.some(
+      (modifier) =>
+        modifier.kind === ts.SyntaxKind.ExportKeyword ||
+        modifier.kind === ts.SyntaxKind.DefaultKeyword,
+    ) ?? false
+  );
+}
+
+/**
+ * Whether `id` sits where it READS or WRITES a binding by its name -- a
+ * value position -- rather than where its text is a property name, a key,
+ * a label, an exported alias, or the name a declaration introduces.
+ *
+ * Exclusions only, each one a position the language never resolves as a
+ * binding: anything not listed counts. A shorthand property (`{ each }`)
+ * and an export specifier without an alias (`export { each }`) DO read the
+ * binding and are counted. Over-counting refuses a resolution; missing a
+ * reference would let an escaped function's other callers go unseen.
+ */
+function isValueReferenceName(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (
+    (ts.isPropertyAccessExpression(parent) && parent.name === id) ||
+    (ts.isQualifiedName(parent) && parent.right === id) ||
+    (ts.isMetaProperty(parent) && parent.name === id) ||
+    (ts.isBindingElement(parent) && parent.propertyName === id) ||
+    (ts.isImportSpecifier(parent) && parent.propertyName === id) ||
+    (ts.isExportSpecifier(parent) &&
+      parent.propertyName !== undefined &&
+      parent.name === id) ||
+    ((ts.isLabeledStatement(parent) ||
+      ts.isBreakStatement(parent) ||
+      ts.isContinueStatement(parent)) &&
+      parent.label === id)
+  ) {
+    return false;
+  }
+  if (
+    (ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isEnumMember(parent) ||
+      ts.isJsxAttribute(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isImportClause(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isNamespaceImport(parent) ||
+      ts.isImportEqualsDeclaration(parent) ||
+      ts.isEnumDeclaration(parent) ||
+      ts.isModuleDeclaration(parent) ||
+      ts.isTypeAliasDeclaration(parent) ||
+      ts.isInterfaceDeclaration(parent) ||
+      ts.isTypeParameterDeclaration(parent)) &&
+    parent.name === id
+  ) {
+    return false;
+  }
+  return true;
+}
+
+const valueReferencesByFile = new WeakMap<
+  ts.SourceFile,
+  ReadonlyMap<string, readonly ts.Identifier[]>
+>();
+
+/**
+ * How many identifiers in a value position anywhere in the file
+ * ({@link isValueReferenceName}) may denote `declaration`: every one
+ * spelled like it, except those the lexical model proves bind to a
+ * DIFFERENT declaration (a same-named function in a sibling scope, an
+ * inner variable that shadows it). An ambiguous lookup counts. The
+ * identifiers are collected by one walk per file, memoized, like the
+ * call-site index the count is compared with.
+ */
+function valueReferenceCount(
+  declaration: ts.FunctionDeclaration & { readonly name: ts.Identifier },
+  sourceFile: ts.SourceFile,
+): number {
+  let references = valueReferencesByFile.get(sourceFile);
+  if (!references) {
+    const built = new Map<string, ts.Identifier[]>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node) && isValueReferenceName(node)) {
+        const existing = built.get(node.text);
+        if (existing) {
+          existing.push(node);
+        } else {
+          built.set(node.text, [node]);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    references = built;
+    valueReferencesByFile.set(sourceFile, references);
+  }
+  const memoized = valueReferenceCountByDeclaration.get(declaration);
+  if (memoized !== undefined) {
+    return memoized;
+  }
+  const count = (references.get(declaration.name.text) ?? []).filter(
+    (reference) => !bindsToOtherDeclaration(reference, declaration),
+  ).length;
+  valueReferenceCountByDeclaration.set(declaration, count);
+  return count;
+}
+
+/** One count per declaration: every VT-210 query on the same function reuses it. */
+const valueReferenceCountByDeclaration = new WeakMap<
+  ts.FunctionDeclaration,
+  number
+>();
+
+const jsxSiteByFile = new WeakMap<ts.SourceFile, boolean>();
+
+/** Whether the file holds any JSX element or fragment (`jsx-runtime.ts`'s {@link isJsxSite}). */
+function containsJsxSite(sourceFile: ts.SourceFile): boolean {
+  let found = jsxSiteByFile.get(sourceFile);
+  if (found === undefined) {
+    let seen = false;
+    const visit = (node: ts.Node): void => {
+      if (seen) {
+        return;
+      }
+      if (isJsxSite(node)) {
+        seen = true;
+        return;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    found = seen;
+    jsxSiteByFile.set(sourceFile, found);
+  }
+  return found;
 }
 
 /**
@@ -1355,51 +1591,6 @@ async function resolveNamedReceiverBinding(
   return undefined;
 }
 
-/**
- * Resolves a call to the exactly-one inline function-expression/arrow
- * argument it passes, when nothing else already accounted for this call
- * (VT-213, SDD-v0.2.md § 7.1). Handles the extremely common built-in
- * higher-order pattern `arr.map(() => vulnerable())`,
- * `promise.then(() => vulnerable())`, etc. -- without special-casing any
- * specific method name (`.map`/`.then`/`.forEach`/...): any call whose
- * callee this graph cannot otherwise attribute, and which passes exactly
- * one inline function/arrow expression as an argument, is treated as
- * invoking that argument, since that argument is unambiguously the only
- * function value being handed to this call.
- *
- * Before this, `walkFile`'s own `forEachChild` traversal already visited
- * the inline callback's body as its own function scope (`source-index.ts`
- * already indexes it as a `"callback"`-kind function) and recorded any
- * calls made from *within* it correctly -- but nothing connected the call
- * *site* to that callback's own node, so it was reachable only as a graph
- * component disconnected from its actual caller.
- *
- * Deliberately narrow, matching VT-210's own scope (SDD-v0.2.md § 16):
- * exactly one inline function/arrow argument, never a named reference
- * (`arr.map(vulnerable)` -- that's local-alias/value-flow territory, a
- * different problem, see VT-210/VT-214) and never when more than one
- * inline callback argument is present (e.g.
- * `promise.then(onFulfilled, onRejected)`) -- picking one over the other
- * without more information would be a guess, not a resolution.
- */
-function resolveInlineCallbackArgument(
-  call: ts.CallExpression,
-  prepared: FileGraphData,
-): GraphNodeId | undefined {
-  const inlineCallbacks = call.arguments.filter(
-    (arg) => ts.isFunctionExpression(arg) || ts.isArrowFunction(arg),
-  );
-  if (inlineCallbacks.length !== 1) {
-    return undefined;
-  }
-  const [callback] = inlineCallbacks;
-  if (!callback) {
-    return undefined;
-  }
-  const location = toSourceLocation(prepared.index.sourceFile, callback);
-  return prepared.functionNodeIdByLocation.get(locationKey(location));
-}
-
 /** A numeric or string literal's own value, or `undefined` for anything else -- including a negated numeric literal (`-1`). */
 function literalValue(expr: ts.Expression): string | number | undefined {
   if (ts.isNumericLiteral(expr)) {
@@ -1429,6 +1620,14 @@ function literalValue(expr: ts.Expression): string | number | undefined {
  * overwhelming majority of real code) correctly returns `undefined`,
  * leaving it exactly as conservative as before this task: both branches
  * still count as reachable.
+ *
+ * EVERY FOLD IS A PROOF (ADR 0008 § 2, `ProvablyDeadBranch`; task A-5a),
+ * because the branch it rejects gets no edge at all. Strict (in)equality
+ * of two literals is decided exactly by comparing their values. LOOSE
+ * (in)equality is folded only for two literals of the SAME type, where it
+ * is strict equality; across types it converts its operands (`1 == "1"`
+ * and `0 == ""` are true), and folding it as strict pruned a branch real
+ * Node runs (PRM-14).
  */
 function evaluateConstantBoolean(expr: ts.Expression): boolean | undefined {
   if (ts.isParenthesizedExpression(expr)) {
@@ -1449,6 +1648,9 @@ function evaluateConstantBoolean(expr: ts.Expression): boolean | undefined {
   }
   if (ts.isBinaryExpression(expr)) {
     const op = expr.operatorToken.kind;
+    const isLoose =
+      op === ts.SyntaxKind.EqualsEqualsToken ||
+      op === ts.SyntaxKind.ExclamationEqualsToken;
     const isEquality =
       op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
       op === ts.SyntaxKind.EqualsEqualsToken;
@@ -1459,6 +1661,9 @@ function evaluateConstantBoolean(expr: ts.Expression): boolean | undefined {
       const left = literalValue(expr.left);
       const right = literalValue(expr.right);
       if (left === undefined || right === undefined) {
+        return undefined;
+      }
+      if (isLoose && typeof left !== typeof right) {
         return undefined;
       }
       return isEquality ? left === right : left !== right;
@@ -1719,6 +1924,135 @@ function builtinCalleeOf(
   return undefined;
 }
 
+/** The array iteration methods that call their first argument on the first element of a non-empty array. */
+const ARRAY_CALLBACK_METHODS: ReadonlySet<string> = new Set([
+  "forEach",
+  "map",
+  "filter",
+  "some",
+  "every",
+  "find",
+  "findIndex",
+  "findLast",
+  "findLastIndex",
+  "flatMap",
+]);
+
+/**
+ * ADR 0008 § 4's RECEIVER-BOUND documented invoking builtins (task A-5a,
+ * by the project owner's decision of 2026-10-04): "the `Promise` ...
+ * `then`/`catch`/`finally` callbacks ... and the array iteration methods"
+ * get a RESOLVED edge to an attributable callback -- but only where the
+ * receiver is PROVEN to be the builtin value the method is guaranteed to
+ * call the callback on. The builtin table (`builtin-callables.ts`) cannot
+ * prove a receiver; this does, for two shapes and nothing else:
+ *
+ * - an ARRAY LITERAL with at least one element, none a hole or a spread
+ *   (so it has a first element), calling one of
+ *   {@link ARRAY_CALLBACK_METHODS} -- or `reduce` / `reduceRight` with two
+ *   elements, or with an initial value (otherwise one element is returned
+ *   without a call);
+ * - `Promise.resolve()` / `Promise.resolve(v)` through the ambient
+ *   `Promise`, where `v` provably carries no function value -- so it is no
+ *   thenable of its own (fulfilled: `then`'s first argument and
+ *   `finally`'s run) -- and `Promise.reject(…)` (rejected: `then`'s second
+ *   argument, `catch`'s first and `finally`'s run). A `resolve` argument
+ *   that may carry a function may be a thenable that never fulfils, so it
+ *   proves nothing.
+ *
+ * Refused when the file writes the method's name as a member (or, for a
+ * promise, `resolve` / `reject` / `constructor`), so a same-file
+ * monkeypatch is never trusted. A write in another file is the
+ * overwritten-builtin case A-3a's escape row accounts for in the
+ * NOT_AFFECTED direction only: the stored function gets its own edge, so
+ * its code is searched, but the resolved edge to the callback stays, and a
+ * replacement that never calls it makes that edge a false AFFECTED, as for
+ * the global builtins (task A-5a's re-audit). A builtin reached through a
+ * parameter or a container is RWF-063's open case (backlog BL-039), which
+ * these share with the global builtins. Every other position is the escape
+ * row's: possible for an attributable function, unknown otherwise.
+ * VT-213 used to cover these shapes with a resolved edge on no authority
+ * (PRM-13).
+ */
+function receiverBoundBuiltinOf(
+  callee: ts.Expression,
+  args: readonly ts.Expression[],
+): { readonly key: string; readonly behaviour: BuiltinBehaviour } | undefined {
+  const expression = skipOuterExpressions(callee);
+  if (!ts.isPropertyAccessExpression(expression)) {
+    return undefined;
+  }
+  const method = expression.name.text;
+  const receiver = skipOuterExpressions(expression.expression);
+  const sourceFile = expression.getSourceFile();
+  if (isMemberAssignedWithin(sourceFile, method)) {
+    return undefined;
+  }
+  const invokes = (
+    ...positions: number[]
+  ): { readonly key: string; readonly behaviour: BuiltinBehaviour } => ({
+    key: `receiver:${ts.isArrayLiteralExpression(receiver) ? "Array" : "Promise"}.prototype.${method}`,
+    behaviour: {
+      invokes: positions.map((position) => ({ position, as: "call" })),
+    },
+  });
+
+  if (ts.isArrayLiteralExpression(receiver)) {
+    const elements = receiver.elements;
+    if (
+      elements.length === 0 ||
+      elements.some((e) => ts.isOmittedExpression(e) || ts.isSpreadElement(e))
+    ) {
+      return undefined;
+    }
+    if (ARRAY_CALLBACK_METHODS.has(method)) {
+      return invokes(0);
+    }
+    if (method === "reduce" || method === "reduceRight") {
+      const initial = args[1];
+      const hasInitial = initial !== undefined && !ts.isSpreadElement(initial);
+      return elements.length >= 2 || hasInitial ? invokes(0) : undefined;
+    }
+    return undefined;
+  }
+
+  if (!ts.isCallExpression(receiver)) {
+    return undefined;
+  }
+  const settler = ambientGlobalKeyOf(receiver.expression);
+  if (
+    settler === undefined ||
+    ["resolve", "reject", "constructor"].some((name) =>
+      isMemberAssignedWithin(sourceFile, name),
+    )
+  ) {
+    return undefined;
+  }
+  if (settler === "global:Promise.resolve") {
+    const [value, ...extra] = receiver.arguments;
+    const fulfilled =
+      extra.length === 0 &&
+      (value === undefined ||
+        (!ts.isSpreadElement(value) && escapingValuesOf(value).length === 0));
+    if (!fulfilled) {
+      return undefined;
+    }
+    if (method === "then" || method === "finally") {
+      return invokes(0);
+    }
+    return undefined;
+  }
+  if (settler === "global:Promise.reject") {
+    if (method === "then") {
+      return invokes(1);
+    }
+    if (method === "catch" || method === "finally") {
+      return invokes(0);
+    }
+  }
+  return undefined;
+}
+
 /**
  * Task A-3b (AUD-02; ADR 0008 § 2's own-export row). The reason a call or
  * `new` whose callee is rooted in an undeclared CommonJS module-scope
@@ -1887,9 +2221,13 @@ async function builtinAccount(
   location: ReturnType<typeof toSourceLocation>,
   prepared: FileGraphData,
   ctx: WalkContext,
+  receiverBound?: BuiltinBehaviour,
 ): Promise<InvocationAccount> {
   const key = behaviourKey(builtin, form);
-  const behaviour = builtinBehaviour(builtin, form);
+  // Task A-5a: a receiver-bound builtin whose receiver is proven
+  // ({@link receiverBoundBuiltinOf}) brings its own behaviour; it has no
+  // admitted position, so only its invoking positions differ.
+  const behaviour = receiverBound ?? builtinBehaviour(builtin, form);
   const admits = (position: number | "any"): boolean =>
     !NEVER_ADMITTED.has(key) &&
     (position === "any"
@@ -1977,8 +2315,9 @@ async function builtinAccount(
  * unknown edge does not already say.
  *
  * Applied only when every edge of the account is unknown: a resolved
- * account needs no escape, and VT-213's resolved edge to an inline
- * callback is task A-5's (PRM-13).
+ * account needs no escape. Since task A-5a deleted VT-213's resolved edge
+ * to an inline callback (PRM-13), an inline callback handed to an
+ * unattributable callee is accounted here too.
  */
 async function withEscapesAtUnknownCallee(
   account: InvocationAccount,
@@ -2185,21 +2524,12 @@ function edgeAccount(edge: CallEdge): InvocationAccount {
 }
 
 /**
- * A site that gets no edge and no proof that none is needed (see
- * {@link UnprovenNoEdgeReason}: each reason is an open finding, named in
- * `UNPROVEN_NO_EDGE_LEDGER` with the lane-A task that removes it).
- */
-function unprovenNoEdge(reason: UnprovenNoEdgeReason): InvocationAccount {
-  return { kind: "unproven_no_edge", reason };
-}
-
-/**
  * Classifies and (when possible) resolves one call expression into its
  * {@link InvocationAccount} (see docs/SDD.md § 18, § 3.1's VT-201
  * completeness invariant, ADR 0008 invariant A1). Accounted with no edge
- * only with a no-edge proof for a call of a known builtin (task A-3a,
- * {@link builtinAccount}), or, unproven, for a static `require("x")`
- * (task A-5) -- never merely because resolution failed, and never
+ * only with a no-edge proof: for a call of a known builtin (task A-3a,
+ * {@link builtinAccount}), or for a static `require("x")` of the PROVEN
+ * ambient `require` (task A-5a) -- never merely because resolution failed, and never
  * silently. A callee rooted in a CommonJS module-scope binding gets an
  * unknown edge since task A-3b ({@link moduleScopeCalleeReason}). Every other visited call, including one bound to a local
  * parameter/variable this binder cannot trace (a function value flowing
@@ -2246,18 +2576,24 @@ async function classifyCall(
     );
   }
 
-  if (isStaticRequireCall(call)) {
-    // A static require("literal") is import setup, already captured in
-    // the module model; it is not itself a meaningful "call into" target.
-    // Recognised by spelling, not by proving `require` is the ambient one
-    // (PRM-15), so this is not yet ADR 0008's `AmbientStaticRequire`.
-    return unprovenNoEdge("static_require_by_text");
+  if (isAmbientStaticRequireCall(call)) {
+    // ADR 0008 § 2's `AmbientStaticRequire`: a static require("literal")
+    // of the PROVEN ambient `require` is import setup, the load already
+    // captured in the module model; it is not itself a call into a target.
+    // A `require` the file declares or writes (PRM-15: a local
+    // `function require`, a parameter) is an ordinary callee, below.
+    return {
+      kind: "no_edge",
+      proof: {
+        kind: "ambient_static_require",
+        specifier: (call.arguments[0] as ts.StringLiteral).text,
+      },
+    };
   }
 
   // Task A-3a: an unknown callee's arguments escape into it (ADR 0008 § 2).
   return withEscapesAtUnknownCallee(
     await classifyCallee(call.expression, call, from, location, prepared, ctx, {
-      inlineCallbackCall: call,
       args: call.arguments,
     }),
     call.arguments,
@@ -2273,15 +2609,10 @@ async function classifyCall(
  * language calls exactly as it calls a call expression's callee (ADR 0008
  * § 2: "the tag, resolved like a callee"). Everything the three share is
  * here, in the order `classifyCall` has always applied it, so a later fix
- * to one resolution authority (A-5, A-6) reaches all three sites at once.
+ * to one resolution authority (A-5a, A-5b, A-6) reaches all three sites at once.
  *
  * `site` is the node the invocation happens at, used only by VT-210 to
  * require that the site sits directly in the parameter's own function.
- * `inlineCallbackCall` is set only for a real call expression: VT-213's
- * inline-callback fallback reads a call's ARGUMENTS, and is deliberately
- * not extended to the new sites. It is an open displacement defect
- * (PRM-13, A-5), and a tag or decorator it could not attribute keeps its
- * honest unknown edge instead.
  *
  * `args` (task A-3a) is what the site hands the callee, for the builtin
  * table's account ({@link builtinAccount}): a call's arguments, a tagged
@@ -2296,7 +2627,6 @@ async function classifyCallee(
   prepared: FileGraphData,
   ctx: WalkContext,
   options: {
-    readonly inlineCallbackCall?: ts.CallExpression;
     readonly args: SiteArguments;
   },
 ): Promise<InvocationAccount> {
@@ -2456,6 +2786,22 @@ async function classifyCallee(
       location,
     });
   }
+  const receiverBound =
+    options.args === "forwarded"
+      ? undefined
+      : receiverBoundBuiltinOf(callee, options.args);
+  if (receiverBound) {
+    return builtinAccount(
+      receiverBound.key,
+      "call",
+      options.args,
+      from,
+      location,
+      prepared,
+      ctx,
+      receiverBound.behaviour,
+    );
+  }
   const builtin = builtinCalleeOf(callee, binding);
   if (builtin && isKnownBuiltinCallable(builtin.key)) {
     return builtinAccount(
@@ -2536,24 +2882,16 @@ async function classifyCallee(
     });
   }
 
-  // VT-213: a call this graph still cannot attribute might pass exactly
-  // one inline function/arrow-function argument (see SDD-v0.2.md § 7.1) --
-  // e.g. `arr.map(() => vulnerable())`, `promise.then(() => vulnerable())`.
-  // Attempted last, after every other resolution path has already failed.
-  if (options.inlineCallbackCall) {
-    const callbackTarget = resolveInlineCallbackArgument(
-      options.inlineCallbackCall,
-      prepared,
-    );
-    if (callbackTarget) {
-      return edgeAccount({
-        from,
-        type: "callback",
-        resolution: { kind: "resolved", target: callbackTarget },
-        location,
-      });
-    }
-  }
+  // VT-213 used to resolve a call this graph still could not attribute to
+  // its one inline function argument (`arr.map(() => vulnerable())`), on
+  // the premise that the callback "is unambiguously the only function
+  // value being handed to this call". ADR 0008 § 6 reopened it (PRM-13):
+  // nothing proves the callee CALLS its argument, and the resolved edge
+  // displaced the callee's unknown edge -- a false NOT_AFFECTED when the
+  // callee is the target, a fabricated AFFECTED when it never calls the
+  // callback. Task A-5a deleted it: the callee keeps its unknown edge
+  // below, and the callback gets the escape row's `possible` edge
+  // (`withEscapesAtUnknownCallee`, ADR 0008 § 2).
 
   // VT-305 (RWF-007) used to account a Node builtin module's member HERE,
   // after VT-213, so that `fs.readFile(file, () => ...)` got VT-213's
@@ -3733,16 +4071,17 @@ async function walkFile(
 
   /**
    * ADR 0008 invariant A1 reaches the sites in a branch VT-211 prunes as
-   * well: each is accounted `constant_folded_branch` rather than skipped,
-   * so pruning is a named, counted decision instead of an absence. No
-   * handler runs and no edge is added -- the graph is exactly what it was.
+   * well: each is accounted `provably_dead_branch` rather than skipped, so
+   * pruning is a named, counted decision instead of an absence. Since task
+   * A-5a every fold `evaluateConstantBoolean` makes is a proof (PRM-14).
+   * No handler runs and no edge is added.
    */
   function accountPrunedBranch(node: ts.Node): void {
     const site = invocationSiteOf(node);
     if (site) {
       record(site, {
-        kind: "unproven_no_edge",
-        reason: "constant_folded_branch",
+        kind: "no_edge",
+        proof: { kind: "provably_dead_branch" },
       });
     }
     ts.forEachChild(node, accountPrunedBranch);

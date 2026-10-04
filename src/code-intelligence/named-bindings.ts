@@ -1,4 +1,11 @@
 import ts from "typescript";
+import {
+  assignedNames,
+  enumOrNamespaceNames,
+  insideWith,
+  isProvenCommonJsModuleScope,
+  skipOuterExpressions,
+} from "./ambient-names.js";
 
 /**
  * P1-B3 -- SCOPE-AWARE NAMED BINDING RESOLUTION.
@@ -80,7 +87,9 @@ export interface NamedBindingValue {
 }
 
 /**
- * The name binds to a hoisted `function` declaration. Kept apart from
+ * The name binds to a hoisted `function` declaration that nothing in its
+ * owning scope reassigns (task A-5a, PRM-104: the binding is mutable, so
+ * it gets the stability check a `let` gets). Kept apart from
  * {@link NamedBindingValue} because a function declaration needs no
  * order check: hoisting is complete before any statement in the scope
  * runs, so a call textually above it still reaches it.
@@ -243,6 +252,17 @@ function isAssignedWithin(scope: ts.Node, name: string): boolean {
     assignedNamesByScope.set(scope, names);
   }
   return names.has(name);
+}
+
+/**
+ * Whether anything anywhere in `scope` assigns to the NAME `name`, in any
+ * assignment form, including a same-named binding a nested scope declares
+ * (over-approximate in the safe direction; see {@link buildAssignedNames}).
+ * Exported for VT-210 (task A-5a, PRM-17): a parameter whose name is
+ * written in its function does not hold what its call sites passed.
+ */
+export function isNameAssignedWithin(scope: ts.Node, name: string): boolean {
+  return isAssignedWithin(scope, name);
 }
 
 /**
@@ -581,7 +601,12 @@ function buildAssignedNames(scope: ts.Node): ReadonlySet<string> {
   scopeIndexBuilds += 1;
   const assigned = new Set<string>();
 
-  function scanAssignmentTarget(target: ts.Node): void {
+  function scanAssignmentTarget(raw: ts.Node): void {
+    // `(x) = v`, `(x as T) = v`, `x! = v`, `<T>x = v` write `x`: the
+    // wrappers change no value, and an unpeeled one hid the write (task
+    // A-5a's independent audit; `ambient-names.ts`'s `assignedNames`
+    // peels the same set).
+    const target = ts.isExpression(raw) ? skipOuterExpressions(raw) : raw;
     if (ts.isIdentifier(target)) {
       assigned.add(target.text);
       return;
@@ -627,10 +652,9 @@ function buildAssignedNames(scope: ts.Node): ReadonlySet<string> {
     } else if (
       (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
       (node.operator === ts.SyntaxKind.PlusPlusToken ||
-        node.operator === ts.SyntaxKind.MinusMinusToken) &&
-      ts.isIdentifier(node.operand)
+        node.operator === ts.SyntaxKind.MinusMinusToken)
     ) {
-      assigned.add(node.operand.text);
+      scanAssignmentTarget(node.operand);
     } else if (
       (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
       !ts.isVariableDeclarationList(node.initializer)
@@ -677,7 +701,38 @@ function buildAssignedMembers(scope: ts.Node): ReadonlySet<string> {
   scopeIndexBuilds += 1;
   const assigned = new Set<string>();
 
-  function addMember(expression: ts.Expression): void {
+  function addMember(raw: ts.Expression): void {
+    // The same wrappers and destructuring forms `buildAssignedNames` sees
+    // (task A-5a's independent audit): `(o.m) = v`, `o.m! = v`, and a
+    // member as a destructuring or `for…of` target (`[o.m] = [v]`,
+    // `({ k: o.m } = v)`, `for (o.m of vs)`) all write `m`.
+    const expression = skipOuterExpressions(raw);
+    if (ts.isObjectLiteralExpression(expression)) {
+      for (const property of expression.properties) {
+        if (ts.isPropertyAssignment(property)) {
+          addMember(property.initializer);
+        } else if (ts.isSpreadAssignment(property)) {
+          addMember(property.expression);
+        }
+      }
+      return;
+    }
+    if (ts.isArrayLiteralExpression(expression)) {
+      for (const element of expression.elements) {
+        if (!ts.isOmittedExpression(element)) {
+          addMember(ts.isSpreadElement(element) ? element.expression : element);
+        }
+      }
+      return;
+    }
+    if (
+      ts.isBinaryExpression(expression) &&
+      expression.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      // A default in a destructuring target: `[o.m = f] = []`.
+      addMember(expression.left);
+      return;
+    }
     if (ts.isPropertyAccessExpression(expression)) {
       assigned.add(expression.name.text);
       return;
@@ -711,6 +766,11 @@ function buildAssignedMembers(scope: ts.Node): ReadonlySet<string> {
       addMember(node.operand);
     } else if (ts.isDeleteExpression(node)) {
       addMember(node.expression);
+    } else if (
+      (ts.isForInStatement(node) || ts.isForOfStatement(node)) &&
+      !ts.isVariableDeclarationList(node.initializer)
+    ) {
+      addMember(node.initializer);
     }
     ts.forEachChild(node, visit);
   }
@@ -762,6 +822,28 @@ function findBindingDeclaration(
     return { declaration, scope };
   }
   return unresolved("no_declaration");
+}
+
+/**
+ * Whether `reference` provably binds to a declaration OTHER than
+ * `declaration`: the lexical lookup finds exactly one declaration of its
+ * name in its scope chain and it is a different node, or it finds none at
+ * all (an undeclared name cannot denote a declaration that would have been
+ * found). An ambiguous lookup is NOT proof, so it answers `false`.
+ *
+ * Exported for VT-210 (task A-5a, PRM-16): an identifier spelled like a
+ * higher-order function that binds to a same-named function in a sibling
+ * scope is not one of its references.
+ */
+export function bindsToOtherDeclaration(
+  reference: ts.Identifier,
+  declaration: ts.Node,
+): boolean {
+  const found = findBindingDeclaration(reference, reference.text);
+  if ("kind" in found) {
+    return found.cause === "no_declaration";
+  }
+  return found.declaration.node !== declaration;
 }
 
 /**
@@ -944,11 +1026,67 @@ export type ImportProvenanceDeclaration =
     };
 
 /**
+ * Whether `call` is a static `require("literal")` whose callee is the
+ * AMBIENT CommonJS `require` (ADR 0008 § 2, `AmbientStaticRequire`: "the
+ * callee is the *ambient* `require`, proved lexically"; task A-5a,
+ * PRM-15). All five hold:
+ *
+ * - the file's module scope is provably the CommonJS wrapper's, and its
+ *   `arguments` is never read there (`ambient-names.ts`,
+ *   `isProvenCommonJsModuleScope`: an ES module has no `require` binding,
+ *   and `arguments[1] = v` rebinds the wrapper's; both found by task
+ *   A-5a's independent audit);
+ * - no scope enclosing the call declares `require` in any form this module
+ *   records -- a function, a variable, a parameter, a catch binding, a
+ *   destructuring, an import (the same lookup every reference gets);
+ * - the file declares no TypeScript `enum` or `namespace` named `require`
+ *   (forms the lexical model does not record);
+ * - the file writes no bare `require` in any assignment form
+ *   (`require = …`, `({ require } = …)`): such a write may replace the
+ *   module-scope binding itself, from anywhere, so it is not scoped;
+ * - the call is not in a `with` body, where `require` may be a property.
+ *
+ * Before task A-5a the call graph, the import extraction and this module
+ * recognised `require("x")` by spelling, so a function-local
+ * `function require(name) { ... }` was read as the module loader: its call
+ * got no edge, and `const m = require("./util.js")` bound `m` to
+ * `util.js`'s exports whatever the local function returned.
+ */
+export function isAmbientStaticRequireCall(call: ts.CallExpression): boolean {
+  const callee = call.expression;
+  if (
+    !ts.isIdentifier(callee) ||
+    callee.text !== "require" ||
+    call.arguments.length !== 1
+  ) {
+    return false;
+  }
+  const [argument] = call.arguments;
+  if (argument === undefined || !ts.isStringLiteral(argument)) {
+    return false;
+  }
+  if (insideWith(callee)) {
+    return false;
+  }
+  const sourceFile = callee.getSourceFile();
+  if (
+    !isProvenCommonJsModuleScope(sourceFile) ||
+    assignedNames(sourceFile).has("require") ||
+    enumOrNamespaceNames(sourceFile).has("require")
+  ) {
+    return false;
+  }
+  const found = findBindingDeclaration(callee, "require");
+  return "kind" in found && found.cause === "no_declaration";
+}
+
+/**
  * The `require("<literal>")` call a declaration is initialized with, or
  * `undefined`.
  *
- * The shape test is deliberately identical to `source-index.ts`'s own
- * `isRequireCall` -- an identifier spelled `require`, exactly one
+ * The test is deliberately identical to the one `source-index.ts`'s
+ * `extractRequireBindings` applies -- `ambient-names.ts`'s
+ * `isAmbientStaticRequireCall`: the ambient `require`, exactly one
  * argument, that argument a string literal. Keeping the two in step
  * matters more than either being clever: a `require` this accepted and
  * the index did not (or the reverse) would be a provenance the rest of
@@ -971,20 +1109,17 @@ function requireCallInitializer(
   // withdrawn here and left for its own item. Reading the initializer as
   // written also keeps this in step with `source-index.ts`'s
   // `extractRequireBindings`, which tests `parent.initializer === call`.
+  //
+  // ONLY THE AMBIENT `require` (task A-5a, PRM-15): a `require` the file
+  // declares or writes is the program's own function, and what it returns
+  // says nothing about the specifier it is handed. Same test, and so the
+  // same answer, as `source-index.ts`'s `extractRequireBindings`.
   if (!variable.initializer) {
     return undefined;
   }
   const initializer = variable.initializer;
-  if (
-    !ts.isCallExpression(initializer) ||
-    !ts.isIdentifier(initializer.expression) ||
-    initializer.expression.text !== "require" ||
-    initializer.arguments.length !== 1
-  ) {
-    return undefined;
-  }
-  const [argument] = initializer.arguments;
-  return argument !== undefined && ts.isStringLiteral(argument)
+  return ts.isCallExpression(initializer) &&
+    isAmbientStaticRequireCall(initializer)
     ? initializer
     : undefined;
 }
@@ -1241,6 +1376,15 @@ function resolveFrom(
     }
     case "function": {
       if (ts.isFunctionDeclaration(declaration.node)) {
+        // A function declaration's binding is MUTABLE, exactly like a
+        // class declaration's: `function run() {}` followed anywhere in
+        // the owning scope by `run = other` -- or by a closure that does
+        // so -- rebinds the name, and a call reaches `other`. Hoisting
+        // settles WHEN the declaration's value exists, not that it stays.
+        // Same stability rule a `let` gets (task A-5a, PRM-104).
+        if (isAssignedWithin(scope, name)) {
+          return unresolved("reassigned");
+        }
         return { kind: "function", declaration: declaration.node };
       }
       // P1-B3b § 13: a named function EXPRESSION referring to itself from

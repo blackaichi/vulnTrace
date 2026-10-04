@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import ts from "typescript";
+import { isAmbientStaticRequireCall } from "./named-bindings.js";
 import type { GraphNodeKind, SourceLocation } from "../domain/graph.js";
 import { SourceFileNotFoundError } from "./source-index-errors.js";
 
@@ -441,8 +442,17 @@ function extractRequireBindings(
   const specifier = (call.arguments[0] as ts.StringLiteral).text;
   const parent = call.parent as ts.Node | undefined;
 
+  // ONLY THE AMBIENT `require` BINDS A NAME (task A-5a, PRM-15). Through a
+  // `require` the file declares or writes -- a local `function require`
+  // returning anything at all -- `const m = require("./util.js")` says
+  // nothing about what `m` holds, and binding `m` to `util.js`'s exports
+  // attributed `m.parse()` to the wrong module's function. The specifier
+  // is still recorded as a load (the fall-through below): over-approximating
+  // a load costs precision, dropping one could let family A certify a
+  // package that IS loaded as never loaded.
   if (
     parent &&
+    isAmbientStaticRequireCall(call) &&
     ts.isVariableDeclaration(parent) &&
     parent.initializer === call
   ) {
