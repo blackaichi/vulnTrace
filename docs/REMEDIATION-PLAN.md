@@ -736,6 +736,105 @@ Outcome lists them).
   also rests on reading the implementation. A-3a's `path.*` admissions
   contradict rule (a) this way.
 
+#### A-5 split, and A-5a additions to lane-A acceptance
+
+Added by task A-5a (2026-10-04). The criteria above are unchanged; this
+records how `A-5` was split, the project owner's decision that binds the
+second half, and what A-5a's outcome binds on the tasks after it.
+
+**The split.** The project owner split backlog row `A-5` on 2026-10-04
+into **A-5a** (VT-213, constant folding, the lexical `require`, VT-210,
+`function` declaration stability: PRM-13, 14, 15, 16, 17, 104) and
+**A-5b** (VT-208 receivers: PRM-18). Every "A-5" criterion above, and ADR
+0008 § 8's A-5 row, applies to the half that owns its subject.
+
+**Outcome of A-5a.**
+
+- VT-213's resolved edge to an inline callback is gone (an unattributable
+  callee keeps its unknown edge; the callback gets the escape row's
+  possible edge).
+- ADR 0008 § 4's receiver-bound documented invoking builtins give a
+  resolved edge on a proven receiver, by the project owner's second
+  decision of 2026-10-04:
+  - the iteration methods on an array literal with a first element;
+  - `then` / `finally` on `Promise.resolve()` of a value carrying no
+    function;
+  - `catch`, `then`'s second argument and `finally` on
+    `Promise.reject(…)`.
+
+  Deleting VT-213 alone had turned ADV2-018 and ADV2-024 into `UNKNOWN`.
+- `==` / `!=` are folded only for two literals of the same type.
+- A static `require` is a no-edge account only for the lexically proven
+  ambient `require` (`ambient_static_require`), in a file proven to be a
+  CommonJS module whose wrapper `arguments` it never reads. The import
+  extraction and the require provenance bind a name only through it.
+- VT-210 refuses any of these:
+  - an exported or escaping function;
+  - a file with JSX;
+  - a written parameter, wrappers included;
+  - `arguments`, `eval` or `with`;
+  - a spread at or before the position (RWF-071).
+
+  It skips an erased TypeScript `this` parameter (RWF-073).
+- A reassigned `function` declaration is `reassigned`.
+- The member-write scanner sees destructuring and `for…of` targets
+  (RWF-072).
+- `InvocationAccount` has no `unproven_no_edge` variant: all four of ADR
+  0008 § 2's no-edge proofs are real, and `UNPROVEN_NO_EDGE_LEDGER` is
+  deleted.
+
+**A claim of ADR 0008 measured false (`AGENTS.md` § C).** § 5's
+"designed configuration … 0 / 122 adversarial" for "VT-213 no longer
+displaces" was measured on a prototype that KEPT VT-213's resolved
+callback edge and only added the callee's unknown edge (§ 8: the pinned
+test "still passed under the prototype"). That edge is itself fabricated
+(PRM-13's A-3a appendix). Removing it costs ADV2-018 and ADV2-024 unless
+the receiver-bound builtins of § 4 are modeled, which A-5a does.
+
+**A-5b (the project owner's decision of 2026-10-04).** Keep § 4's
+static-member exception and A2's `const x = new C()` receiver authority,
+but withdraw a resolved method edge when ANY walked file may write that
+member: an assignment, a dynamic key, or a reflective mutator
+(`Object.defineProperty`, `Object.assign`, …). Also require a chain of
+plain class declarations, with no field or accessor shadowing the method
+in any class of the chain, and no constructor `return`.
+
+Measured on the base `3d87189` with the oracle harness (Node v22.11.0),
+each a false `NOT_AFFECTED`:
+
+- `let inst = new Safe()` reassigned to `new Danger()` by a deferred
+  write;
+- `this.go()` in a base method, overridden by the subclass that is
+  instantiated;
+- `inst.run = () => lib.parse(…)` before `inst.run()`;
+- a base-class field of the method's name shadowing a subclass method;
+- a static method overwritten from a third file before the entry calls
+  it (the shape the decision closes).
+
+`Lib.run()` on a stable class and `const d = new D(); d.run()` stay
+`AFFECTED` (the precision guards, ADV2-021's shape). The case programs
+are kept for A-5b; a constructor that returns another object was not
+measured validly (its fixture did not parse) and is re-measured there.
+
+**What A-5a binds.**
+
+- **A-5b**: VT-208 is untouched; the `this.m()` receiver is resolved by
+  the checker today and is not one of A2's authorities.
+- **A-6** (PRM-108): `extractRequireBindings` now binds a name only through
+  the ambient `require` (`isAmbientStaticRequireCall`); the string- and
+  computed-key fix must keep that condition.
+- **BL-039** (RWF-063): the receiver-bound builtins trust `Array.prototype`
+  and `Promise` the way A-3a's table trusts the global builtins, so a
+  monkeypatch through a parameter or a container reaches them too; the
+  fix must cover both.
+- **BL-041** (the JSX factory): VT-210 refuses every function in a file
+  with a JSX site. A task that resolves the factory may narrow this to the
+  functions that can be the factory, never drop it.
+- **ADR 0008 § 2's other A2 structural gates** (the branded
+  `resolvedEdge(authority, target)`, the binding-grammar A2 rows,
+  `VT-INV-A2-resolution-authority`) are assigned to no task by § 8.
+  Backlog `BL-047` carries them, after A-5b and A-6.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

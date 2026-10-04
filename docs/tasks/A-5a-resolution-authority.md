@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: A-5a
 - **Branch**: a-5a-resolution-authority
 - **Base SHA**: 3d87189fa381399f8386c3f0ad6b6d1b9d08411e
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `2c43d40` docs(tasks): A-5a task file — VT-213, strict folding, lexical require, VT-210, function declaration stability
+  - `e86f930` test(A-5a): real-Node reproductions — VT-213, folding, lexical require, VT-210, function declarations, receiver-bound builtins
+  - `aa563aa` fix(A-5a): resolution authority, call-graph side — VT-213, folding, lexical require, VT-210, function declarations
+  - (this commit) docs(A-5a): records — findings, debts, plan § 5a, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -242,3 +246,130 @@ unchanged.
 
 In the format of `AGENTS.md` § J. Also report: the two decisions; every
 correct `AFFECTED` turned into `UNKNOWN`; the new finding RWF-071.
+
+## Corrections (2026-10-05)
+
+Appended during the task; the text above is unchanged.
+
+1. **A third decision (project owner, 2026-10-04).** Deleting VT-213
+   turned two correct adversarial results into `UNKNOWN`: ADV2-018
+   (`[1, 2, 3].map(() => dangerousOp())`) and ADV2-024
+   (`Promise.resolve().then(() => dangerousOp())`), so
+   `npm run test:adversarial` failed. The project owner chose to model
+   ADR 0008 § 4's receiver-bound documented invoking builtins in this task
+   (`receiverBoundBuiltinOf`): a resolved edge only on a proven receiver.
+   That receiver is an array literal with a first element, calling an
+   iteration method; `Promise.resolve()` of a value carrying no function,
+   calling `then` / `finally`; or `Promise.reject(…)`, calling `catch`,
+   `then`'s second argument or `finally`. The two other options were to
+   keep the ADR prototype's non-displacing VT-213 edge, a fabricated edge,
+   or to record the cost as known failures. Not in "What to do"; it adds
+   10 oracle cases (`receiver.*`). Six of them were a fabricated
+   `AFFECTED` on the base, from VT-213, for a callback real Node never
+   runs.
+2. **A premise of ADR 0008 measured false.** § 5's "0 / 122 adversarial"
+   was measured on a prototype that kept VT-213's resolved callback edge
+   (§ 8: the pinned test "still passed under the prototype"). Recorded in
+   REMEDIATION-PLAN § 5a, "A-5 split, and A-5a additions".
+3. **"What to do" 4: the ambient `require` was whole-file, then lexical.**
+   The whole-file version (a `require` declared anywhere refuses every
+   `require` in the file) lost the prelude's binding in every shadow case.
+   The proof is now scope-precise through the lexical model
+   (`isAmbientStaticRequireCall`, moved to `named-bindings.ts`). Writes,
+   `with` and TypeScript `enum` / `namespace` stay whole-file.
+4. **The independent audit blocked, with four soundness findings, all
+   fixed here:**
+   - the name scanner missed writes through value-free wrappers
+     (`(fn) = f`, `[(fn)] = [f]`, `fn! = f`), so the PRM-17 and PRM-104
+     refusals missed them;
+   - `arguments[1] = f` in a sloppy CommonJS module scope rebinds the
+     wrapper's `require`;
+   - in an ES module a bare `require` is a global lookup
+     (`isProvenCommonJsModuleScope`: no `.mjs` / `.mts`, no ESM syntax, no
+     `package.json` `"type": "module"`, no wrapper `arguments`);
+   - a TypeScript `this` parameter shifted VT-210's index (RWF-073,
+     registered and fixed).
+
+   Checking the member-write scanner beside the name scanner found
+   RWF-072, a member written as a destructuring or `for…of` target,
+   registered and fixed. Five oracle cases (`audit.*`) and two
+   (`member-write.*`), each a false `NOT_AFFECTED` on the base.
+
+   The re-audit blocked once more: a `.js` file with a top-level `await`
+   runs as an ES module (Node's syntax detection), which the CommonJS
+   check missed. Fixed, with one more oracle case
+   (`audit.top-level-await-global-require`). It also measured a false
+   `AFFECTED`, which no fix here closes: a receiver-bound builtin
+   replaced by a no-op in another file. It is the same as for A-3a's
+   global builtins, and is recorded in PRM-13's status update.
+
+   The third round blocked on Node's other syntax-detection trigger: a
+   top-level `let` / `const` / `class` redeclaring a wrapper parameter
+   (`module`, `exports`, `require`, `__filename`, `__dirname`) is a
+   SyntaxError in the CommonJS wrapper, so Node runs the file as an ES
+   module. Fixed, with one more oracle case
+   (`audit.wrapper-redeclaration-global-require`).
+5. **Not in "What to do": the RWF-025 false-AFFECTED control**
+   (`verdict.destructuring-computed-key-reassignment-cache-poisoning.integration.test.ts`,
+   which ADR 0008 § 8 names for re-checking) moved from `NOT_AFFECTED` to
+   `UNKNOWN`. Its proof rested on the module body's `bail()` resolving to
+   a `function bail` that `({ bail } = HANDLERS)` replaces, which is
+   PRM-104's fabricated edge. The test now asserts `UNKNOWN` and no edge
+   to `bail`; it is reported as precision cost.
+
+## Outcome (2026-10-05)
+
+**Acceptance criteria**: all **yes**.
+
+- Reproductions (`tests/oracle/a5a-resolution-authority.test.ts`): 45
+  cases against real Node v22.11.0, all passing.
+  - 34 were unsound on the base: 27 false `NOT_AFFECTED` and 7 fabricated
+    `AFFECTED`.
+  - 1 was a precision gain: `receiver.array-literal-forEach-named`,
+    `UNKNOWN` → `AFFECTED`.
+  - 6 are precision guards that kept their verdict.
+  - 4 are regression guards that were already `UNKNOWN` on the base.
+
+  Base verdicts were re-measured on a scratch worktree at the base SHA.
+- VT-213's fallback is deleted. The pinned test asserts the callee's
+  unknown edge. The three PRM-13 records in
+  `tests/oracle/a3a-escaped-values.cases.ts` are deleted and assert
+  `UNKNOWN`.
+- `InvocationAccount` has no `unproven_no_edge` variant.
+  `UNPROVEN_NO_EDGE_LEDGER` and `UnprovenNoEdgeReason` are deleted.
+  `ambient_static_require` and `provably_dead_branch` have owner tests in
+  `call-graph.invocation-account.test.ts`.
+- Mutations: 41, each caught by a named test (the mutation script and
+  its output are in the PR body).
+- Differentials over the 139 corpus cases:
+  - verdict 0;
+  - proof 2 (ADV2-087 and RWB-05 gain `unsupported_callee_binding`
+    reasons, verdicts unchanged);
+  - graph 13 cases: VT-213's resolved callback edges become unknown plus
+    possible, or resolved by the receiver authority; VT-210 and
+    function-declaration resolutions are withdrawn to unknown; some unknown
+    reasons are re-targeted.
+
+  ADV2-018 and ADV2-024 stay `AFFECTED`, through the receiver-bound
+  builtins.
+- Validation: exactly the five known failures (OPEN-DEBTS D-09: `RWB-03`,
+  `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`), verdicts unchanged.
+- Correct `AFFECTED` results turned `UNKNOWN`: none on a corpus case or a
+  reproduction. The RWF-025 control's `NOT_AFFECTED` became `UNKNOWN`
+  (Corrections 5). The binding-grammar sweep has five cells whose
+  exported probe VT-210 now refuses, classified as `vt210-exported-probe`
+  (FINDINGS RWF-048 § 4g).
+- Independent audit:
+  - `BLOCKED`, with four soundness findings: wrapped writes, the
+    wrapper's `arguments`, ES modules, a TypeScript `this` parameter;
+  - `BLOCKED`, on a top-level `await`;
+  - `BLOCKED`, on a top-level `let` / `const` / `class` redeclaring a
+    wrapper parameter;
+  - then `CERTIFIED`.
+
+  All were fixed and reproduced. Two false-`AFFECTED` limitations are
+  recorded, not fixed: a receiver-bound builtin replaced by a no-op in
+  another file, and execution order.
+
+**Discovered**: RWF-071, RWF-072, RWF-073 (each fixed here); `BL-047`
+(P2, the A2 structural gates).

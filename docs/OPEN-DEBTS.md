@@ -862,6 +862,45 @@ list, backlog `BL-046`). Over the 139
 corpus cases: verdict differential 1 (`RWB-07` `UNKNOWN` → `NOT_AFFECTED`,
 its expected verdict), proof 2, graph 21. This entry still stands.
 
+**Progress, added by task `A-5a` (2026-10-05).** Task A-5a
+(`docs/tasks/A-5a-resolution-authority.md`; backlog `A-5` split into A-5a
+and A-5b by the project owner) applied ADR 0008's resolution authority
+(A2) on the call-graph side. It fixed:
+
+- `PRM-13`: VT-213's resolved edge to an inline callback is deleted.
+- `PRM-14`: loose equality is folded only for same-type literals.
+- `PRM-15`: a static `require` gets no edge only for the lexically proven
+  ambient `require` of a proven CommonJS module, and the import
+  extraction binds a name only through it.
+- `PRM-16` / `PRM-17`: VT-210 refuses an escaping function, a written
+  parameter, `arguments` / `eval` / `with` and a JSX file.
+- `PRM-104`: a reassigned function declaration is no longer its
+  declaration.
+
+It found and fixed `RWF-071` (a spread before a VT-210 parameter),
+`RWF-072` (a member written as a destructuring or `for…of` target) and
+`RWF-073` (a TypeScript `this` parameter).
+
+`UNPROVEN_NO_EDGE_LEDGER` is deleted: every no-edge account now carries
+one of ADR 0008 § 2's four proofs.
+
+By the project owner's decision, ADR 0008 § 4's receiver-bound invoking
+builtins (array iteration methods on an array literal, `then` / `catch` /
+`finally` on `Promise.resolve()` / `Promise.reject()`) give a resolved
+edge on a proven receiver. That keeps ADV2-018 and ADV2-024 `AFFECTED`
+without VT-213, whose zero cost in ADR 0008 § 5 was measured on a
+prototype that kept its fabricated edge.
+
+45 real-Node reproductions: 34 were unsound on the base (27 false
+`NOT_AFFECTED`, 7 fabricated `AFFECTED`). Its independent audit blocked
+three times, on wrapped writes, the CommonJS wrapper's `arguments`, ES
+modules (by syntax, by a top-level `await`, by a redeclared wrapper
+parameter) and a TypeScript `this` parameter, all fixed.
+
+Over the 139 corpus cases: verdict differential 0, proof 2 (reasons
+added, verdicts unchanged), graph 13. This entry still stands; PRM-18
+(VT-208) is A-5b's.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
