@@ -232,16 +232,17 @@ touches resolution semantics); the closure's whole-file widening scan
 
 ### D-09 — Known validation failures
 
-Six of the 17 real-world cases are kept **deliberately failing**, because
+Five of the 17 real-world cases are kept **deliberately failing**, because
 a disagreement with an independently-researched oracle is recorded rather
 than fixed away or re-scoped to match the tool. (Five until task A-3a,
-which added `RWB-07`; see its row.)
+which added `RWB-07`; six until task A-4, which restored it; see its
+row.)
 
 | Case | Expected | Actual | Cause |
 | --- | --- | --- | --- |
 | `RWB-03` | `AFFECTED` | `UNKNOWN` | RWF-006 — a webpack-bundled, getter-defined class export is not recognised as constructible/method-bearing. |
 | `RWB-05` | `NOT_AFFECTED` | `UNKNOWN` | **D-06 (RWF-002)**. The target now resolves exactly; what blocks the proof is unresolved edges elsewhere in `qs`'s own real dependencies. |
-| `RWB-07` | `NOT_AFFECTED` | `UNKNOWN` | **Task A-3a's fail-closed default, a sound precision cost.** `loadModernConfig(text)`, an exported function, hands its parameter to `JSON.parse`, whose first position coerces an object through `toString` / `Symbol.toPrimitive`: protocol hooks no position admission can cover before task A-4 accounts protocol members (ADR 0008's allowlist admission ruling, condition (b)). REMEDIATION-PLAN § 5a anticipated it; A-4 must re-admit the position ("A-3a additions"). |
+| ~~`RWB-07`~~ | `NOT_AFFECTED` | `NOT_AFFECTED` since task A-4 (`UNKNOWN` from A-3a to A-4) | **Passing again since task A-4**, which admitted `JSON.parse`'s first position mechanically (`tests/oracle/builtin-admission.test.ts`): its hooks are protocol members and Proxy traps, accounted at their definitions since A-4. The history: **Task A-3a's fail-closed default, a sound precision cost.** `loadModernConfig(text)`, an exported function, hands its parameter to `JSON.parse`, whose first position coerces an object through `toString` / `Symbol.toPrimitive`: protocol hooks no position admission can cover before task A-4 accounts protocol members (ADR 0008's allowlist admission ruling, condition (b)). REMEDIATION-PLAN § 5a anticipated it; A-4 must re-admit the position ("A-3a additions"). |
 | `RWB-09b` | `NOT_AFFECTED` | `NO_FINDING` | **A benchmark oracle-design limitation, not an analyzer defect.** The correct result really is no finding at all — the instance is confidently outside every affected range — and the case format has no way to express that as an expected outcome. |
 | `VAL-002` | `AFFECTED` | `UNKNOWN` | RWF-001 — a UMD `module.exports` assignment via a locally-aliased variable is invisible to export detection. |
 | `VAL-003` | `NOT_AFFECTED` | `UNKNOWN` | RWF-001, the same gap in the other direction — which is the point: it degrades precision **both** ways and never produces a false answer. |
@@ -833,6 +834,33 @@ cases, because no corpus file contains JSX and no corpus site reached
 `module_scope_callee` (`debug`, the one corpus package calling its own
 exports, reassigns `exports`, so its calls already had unknown edges).
 This entry still stands.
+
+**Progress, added by task `A-4` (2026-10-04).** Task A-4
+(`docs/tasks/A-4-protocol-members.md`) fixed `PRM-38`, `PRM-112` and
+`PRM-113` (protocol members the runtime invokes implicitly: coercion,
+thenables, iterators, `instanceof`, `for await`) through ADR 0008 § 2's
+protocol-member row, and `PRM-118` (an accessor body attributed to its
+enclosing owner, a fabricated path) through Amendment A-0 part B: an
+accessor is its own node, reached by a possible edge. It found and fixed
+`RWF-068` (the iterator's own `next` / `return` / `throw`, which the ADR's
+list omitted), by the project owner's decision of 2026-10-04; and, by the
+second decision, an unattributable value stored under a key the analyzer
+cannot read fails closed. The census has no `pending` kind left. It
+re-probed the builtin positions a protocol hook had kept off the
+allowlist and admitted those the mechanical admission test passes, which
+restored `RWB-07`'s correct `NOT_AFFECTED` (D-09 now has five known
+failures). 42 real-Node reproductions, each wrong on the base (36 false
+`NOT_AFFECTED`, 6 `AFFECTED` through an accessor body or name). Its
+independent audit blocked on an `EventEmitter` admission, a by-name root
+binding an accessor and module-namespace exports (three times: then
+exports written after their declaration, then a `var` redeclaration),
+all fixed, and found `RWF-069` (an
+admission path the builtin probe cannot build, backlog `BL-045`) and
+`RWF-070` (`await` constructs a promise's `constructor` /
+`Symbol.species`, a family-C false `NOT_AFFECTED` outside the protocol
+list, backlog `BL-046`). Over the 139
+corpus cases: verdict differential 1 (`RWB-07` `UNKNOWN` → `NOT_AFFECTED`,
+its expected verdict), proof 2, graph 21. This entry still stands.
 
 ## 2. Target intelligence is not analyzer uncertainty
 

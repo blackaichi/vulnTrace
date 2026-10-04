@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: A-4
 - **Branch**: a-4-protocol-members
 - **Base SHA**: 49487801f039e756879132761959f5e767bef7b9
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `b15c815` docs(tasks): A-4 task file — protocol members, accessor bodies
+  - `6d6ae38` test(A-4): real-Node reproductions — protocol members, accessor bodies
+  - `055a55d` fix(A-4): protocol members and accessor bodies as their own owners
+  - (this commit) docs(A-4): records — findings, ADR decision record, debts, plan § 5a, contract, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -210,3 +214,109 @@ other known validation failures (OPEN-DEBTS D-09) unchanged.
 In the format of `AGENTS.md` § J. Also report: the two decisions; the
 builtin re-probe table; every correct `AFFECTED` turned into `UNKNOWN`
 (for A-7).
+
+## Corrections (2026-10-04)
+
+Appended during the task; the text above is unchanged.
+
+1. **"What to do" 7 listed `events`' `EventEmitter`** among the positions
+   to admit. Its first position passed the mechanical admission test but
+   is NOT admitted: its `captureRejections` option is validated with an
+   error message that inspects a null-prototype value, running its
+   `util.inspect.custom` method, a hook the admission ruling forbids and
+   the probe never builds (found by the independent audit; RWF-069, which
+   the A-3a `path.*` admissions share, backlog `BL-045`).
+2. **"What to do" 2: `Symbol.for(…)` is proven `other`.** False:
+   `Symbol.for("nodejs.util.inspect.custom")` is `util.inspect.custom`. A
+   `Symbol.for(…)` key is `unread`; only `Symbol(…)` is `other`.
+3. **Premise: the well-known symbols invoked only by a builtin method on
+   a receiver include `Symbol.species`.** False: `await` reaches a
+   promise's `constructor` and `[Symbol.species]` through
+   SpeciesConstructor with no call in the program. Registered as RWF-070
+   (backlog `BL-046`, P1, the project owner's decision on the list),
+   recorded as an open-soundness-defect case.
+4. **"What to do" 4: the accessor's name "no identifier can spell", so no
+   name match binds it.** False: a string export key can
+   (`module.exports["get x"]`), and the entrypoint-root lookup bound it, a
+   fabricated root (the audit). Every lookup of graph nodes by name in
+   `src/analysis/verdict.ts` now excludes accessor nodes (`isNamedNode`).
+5. **Not in "What to do": an ES module's exports.** A namespace object's
+   properties are its exports (`${ns}`, `await ns`), so an exported
+   function, variable or export specifier under a protocol name is a
+   protocol definition (`moduleExportDefinitionOf`; the audit, inside
+   PRM-38's own wording). Exports are LIVE bindings: one the file writes
+   again (an assignment, or a second declaration of the name, `var`
+   included), or declares by destructuring, gets an unknown edge (the
+   re-audits).
+6. **Not in "What to do": RWF-023's owner walk.** `runsWhenEnclosingOwnerRuns`
+   treats a pushed accessor as the owner of a class defined in its body,
+   whose computed keys it evaluates; the RWF-023 deferral controls now
+   admit `UNKNOWN` behind the fixture's getter and setter, and nothing
+   else.
+7. **Gates, "verdict differential 0 … before the builtin re-probe".**
+   Measured after it: verdict 1 (`RWB-07`, into its expected verdict).
+
+## Outcome (2026-10-04)
+
+**Acceptance criteria**: all **yes** (the audit verdict below).
+
+- Reproductions (`tests/oracle/a4-protocol-members.test.ts`): 43 cases
+  plus 1 open-soundness-defect record (RWF-070). 42 fail on the base (36
+  false `NOT_AFFECTED`, 6 `AFFECTED` through an accessor body or name);
+  the 43rd, `registered-symbol.event-emitter-option`, is a regression
+  guard from the audit (`UNKNOWN` on the base, a false `NOT_AFFECTED` on
+  this task's first version). All are `UNKNOWN` on the branch.
+- `S2.class-instance.*` and `S2.class-static.*` are `UNKNOWN`, their
+  records deleted; `S2.literal.*` are `UNKNOWN` (allowed: `AFFECTED` or
+  `UNKNOWN`).
+- The census has no `pending` kind; site kinds `protocol_member`,
+  `accessor`; reason `protocol_value` (`unmodeled_construct`,
+  non-widening), both schema enums.
+- A-2 obligations: the walked-file check runs on every oracle and corpus
+  case; production-`buildFinding` reproductions for both site kinds
+  (`src/analysis/verdict.possible-edge.test.ts`).
+- **Builtin re-probe** (each position: the hooks the probe saw fire;
+  condition (b) generated per hook; non-retaining):
+
+  | Position | Hooks | Admitted |
+  | --- | --- | --- |
+  | `JSON.parse` #0 | `toString`, `toPrimitive`, `proxy:get` | yes (restores `RWB-07`) |
+  | `JSON.stringify` #0 | getter, `toJSON`, `proxy:get` / `ownKeys` / `getOwnPropertyDescriptor` | yes |
+  | `String` #0, `parseFloat` #0, `encodeURIComponent` #0, `Error` #0 (call and `new`) | `toString`, `toPrimitive`, `proxy:get` | yes |
+  | `Number` #0, `parseInt` #1, `new Date` #0 | `toString`, `valueOf`, `toPrimitive`, `proxy:get` | yes |
+  | `parseInt` #0 | `toString`, `toPrimitive`, `proxy:get` | yes |
+  | the 34 `Math` functions, every argument position | `toString`, `valueOf`, `toPrimitive`, `proxy:get` | yes |
+  | `new events.EventEmitter` #0 | `proxy:get` (probe); `util.inspect.custom` through a structured argument (audit) | **no** |
+  | `new Error` #1, `Object.assign` sources, `Object.entries` #0 | retain what they are handed | no |
+
+  A subclass of `Error` with no constructor still forwards into an
+  unknown edge (its second position is never admitted).
+- Correct `AFFECTED` results turned `UNKNOWN` (for A-7): `S2.literal.*`
+  and the direct getter read `accessor.literal-getter.read`. No corpus
+  case.
+- Mutations: 18, 17 caught by a named test; one equivalent
+  (merging accessor nodes into the function lookup: no lookup of that map
+  can reach an accessor declaration today; the separate map is defense in
+  depth).
+- Differentials (139 cases): graph 21 cases (nodes +25, sites +303/−88:
+  accessor nodes and protocol edges added, admitted builtin calls'
+  unknown edges removed), proof 2, verdict 1 (`RWB-07` `UNKNOWN` →
+  `NOT_AFFECTED`, its expected verdict). RWB-09a/b: graph changed
+  (12 accessor nodes each), verdicts unchanged. Validation: five known
+  failures (OPEN-DEBTS D-09), `RWB-07` no longer one.
+- Independent audit: `BLOCKED` (four findings: two in scope, fixed and
+  reproduced; two pre-existing, registered as RWF-069 and RWF-070), then
+  `BLOCKED` again (an exported protocol-named binding written after its
+  declaration, or declared by destructuring, is a live binding the first
+  fix missed: six shapes, fixed and reproduced as
+  `namespace.live-binding.*`), then `BLOCKED` a third time (a `var`
+  redeclaration writes the binding with no assignment expression: four
+  shapes, fixed by counting a second declaration of the name as a write,
+  reproduced), then `CERTIFIED`. Its last round named two pre-existing
+  false `NOT_AFFECTED` shapes the escape and protocol rows inherit from
+  open findings, now noted on them: a stale imported live binding
+  (PRM-62, lane E) and a module reached only through `export *` (PRM-101,
+  V-1).
+
+**Discovered**: RWF-068 (fixed), RWF-069 (`BL-045`, P2), RWF-070
+(`BL-046`, P1).

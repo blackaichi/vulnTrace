@@ -197,7 +197,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-35 | `vuln-lib` (synthetic fixture), cache | A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic | scan abort — see below | Open |
 | PRM-36 | `vuln-lib` (synthetic fixture), workspaces | The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set | false reason — see below | Open |
 | PRM-37 | `vuln-lib` (synthetic fixture) | A tagged-template call (`` tag`x` ``) gets no call-graph edge at all | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
-| PRM-38 | `vuln-lib` (synthetic fixture) | Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-38 | `vuln-lib` (synthetic fixture) | Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | PRM-60 | `vuln-lib` (synthetic fixture) | `unsupported_*` reasons are treated as never widening the closure, but four capability-receiver shapes let them load a new module | false NOT_AFFECTED — see below | Open |
 | PRM-61 | `vuln-lib` (synthetic fixture) | Export forwarding resolves to the first "own" binding of a name, which a later `module.exports` replacement or property write can make stale | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below | Open |
 | PRM-62 | `vuln-lib` (synthetic fixture) | An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value | false NOT_AFFECTED — see below | Open |
@@ -217,14 +217,14 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-109 | `vuln-lib` (synthetic fixture) | `graph.ts` restates the same "`unsupported_*` reasons cannot introduce a new module" premise PRM-60 disproves | false NOT_AFFECTED — see below | Open |
 | PRM-110 | `vuln-lib` (synthetic fixture) | The HTML report's per-finding summary reads only the first `unknownReasons` entry, so a rule mismatch reads as "no reason recorded" | false reason — see below | Open |
 | PRM-111 | `vuln-lib` (synthetic fixture) | An empty `--cve` value (`--cve ""`) is accepted and silently returns zero findings rather than being rejected | silent drop — see below | Open |
-| PRM-112 | `vuln-lib` (synthetic fixture) | `instanceof` against a class defining a static `[Symbol.hasInstance]` invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
-| PRM-113 | `vuln-lib` (synthetic fixture) | `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge | false NOT_AFFECTED — see below | Open |
+| PRM-112 | `vuln-lib` (synthetic fixture) | `instanceof` against a class defining a static `[Symbol.hasInstance]` invokes it with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
+| PRM-113 | `vuln-lib` (synthetic fixture) | `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-3b), through the fail-closed default — see below |
 | RWF-050 | n/a — a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) has no register row of its own | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below | Open |
 | PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a), through the fail-closed default — see below |
-| PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | Open |
+| PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | **Fixed** (A-4, Amendment A-0 part B) — see below |
 | RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | **Fixed** (RWF-051-typecheck) — see below |
 | RWF-052 | n/a — the repository's own debt register | `docs/OPEN-DEBTS.md` D-14 still describes RWF-046's file-scope `require` collapse as present and open, although RWF-046 closed it | record — a register entry overstates an open defect — see below | Open |
 | RWF-053 | n/a — the repository's own backlog and task records | `docs/tasks/BACKLOG.md`'s BL-001 row and `task-0-workflow-bootstrap.md`'s premise-verification note both claim `README.md` has no soundness-status notice, although it has had one since `ae82d33`, a day before that task started | record — two records overstate a missing notice — see below | **Fixed** (BL-001) — see below |
@@ -242,6 +242,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-065 | `vuln-lib` (synthetic fixture) | A module loaded through the module's own loader API in a shape the loader classifier does not recognise -- `module.parent.require("pkg")`, `module.children[i].require("pkg")` -- is invisible to the module-load closure | false NOT_AFFECTED (family A) — see below | Open (families B and C fail closed since A-3b; family A: backlog `BL-040`) |
 | RWF-066 | `vuln-lib` (synthetic fixture) | Under TypeScript's automatic JSX runtime (`jsx: react-jsx`, or an `@jsxImportSource` pragma), a JSX element compiles to `require("<importSource>/jsx-runtime")`, which no source line spells, so the module-load closure never sees the load | false NOT_AFFECTED (family A) — see below | **Fixed** (A-3b), through the fail-closed default — see below |
 | RWF-067 | `vuln-lib` (synthetic fixture) | A loader capability that escapes through a for-of destructuring assignment (`for ({ _load: h } of [require("module")])`) rebinds a name to `Module._load` unseen by the loader classifier, so the load it then performs is invisible to the module-load closure | false NOT_AFFECTED (family A) — see below | Open (backlog `BL-043`) |
+| RWF-068 | `vuln-lib` (synthetic fixture) | Every consumer of an iterator calls the `next` / `return` / `throw` methods of the object `[Symbol.iterator]()` returns, and ADR 0008 § 2's closed protocol list does not name them | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
+| RWF-069 | `vuln-lib` (synthetic fixture) | Admitted non-invoking builtin positions (`path.*`; a candidate `EventEmitter` position) run a `util.inspect.custom` method through an argument-type error message that inspects a structured null-prototype value, which the builtin probe never builds | admission rule violated; false NOT_AFFECTED until task A-4 — see below | Open (backlog `BL-045`); no live false `NOT_AFFECTED` since A-4 — see below |
+| RWF-070 | `vuln-lib` (synthetic fixture) | `await` reaches a promise's `constructor` and `Symbol.species` and constructs the class they name (SpeciesConstructor) with no call in the program; neither key is in ADR 0008 § 2's protocol list | false NOT_AFFECTED — see below | Open (backlog `BL-046`) |
 
 ---
 
@@ -16803,6 +16806,36 @@ The same `walkFile` gap as PRM-37 means an object's `toString()` invoked by stri
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 5 item 2 ("implicit protocol calls")`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task A-4, 2026-10-04): Fixed.** A definition under a
+key that may be a protocol member's is the invocation site
+`protocol_member` (`src/code-intelligence/protocol-members.ts`): a method
+gets a possible edge from the owner that evaluates its definition; a
+property, class field or store (`o.toString = f`,
+`C.prototype.valueOf = f`, `o[k] = f`) a possible edge to each
+attributable function its value carries, and an unknown `protocol_value`
+edge for a value it cannot attribute; a destructuring or `for…of` store
+into such a member an unknown edge. A key is a protocol key unless proven
+otherwise (a literal not in the list, a number, a private name, another
+well-known symbol or a `Symbol(…)` / `Symbol.for(…)` through the ambient
+`Symbol`, through stable `const`s): a computed key the analyzer cannot
+read may be `"toString"` at run time. A getter under a protocol key is
+also accounted for what it returns (`{ get then() { return f; } }`). The
+iterator's own `next` / `return` / `throw` were added to the list by the
+project owner's decision of 2026-10-04 (RWF-068). An ES module's exports
+are the properties of its namespace object, so an exported function,
+variable or export specifier under a protocol name is a definition too
+(`${ns}`, `await ns`; found by task A-4's independent audit); exports are
+live bindings, so one the file writes again (an assignment, or a second
+declaration of the name, `var` included), or declares by destructuring,
+gets an unknown edge (its re-audits). Outside the
+list, and so still open: `constructor` / `Symbol.species`, which `await`
+reaches (RWF-070). Reproduced against real
+Node in `tests/oracle/a4-protocol-members.test.ts` (coercion by a
+template, `+`, unary `+`; object-literal, class, instance-field,
+computed-key and stored members; thenables through `await` and an async
+`return`; `for…of`, spread, destructuring and `yield*`): each a false
+`NOT_AFFECTED` on the base, `UNKNOWN` on the branch.
+
 ---
 
 ## PRM-60 — `unsupported_*` reasons are treated as never widening the closure, but four capability-receiver shapes let them load a new module
@@ -16847,6 +16880,16 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-61 F
 `export let run = function(x){ return safe(x); }; run = function(x){ return danger(x); };` is attributed to the initializer's stale `safe` value, with no reassignment refusal comparable to the CommonJS side's. A `configure()`-style deferred reassignment gives the same result. Round 1 left this UNVERIFIED because ESM function-expression export attribution did not yet exist to reproduce it against; round 2 confirms that attribution now exists and both variants give family C.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-62 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Note (task A-4, 2026-10-04):** task A-4's independent audit measured
+that the escape row (A-3a) and the protocol-member row (A-4) inherit this
+attribution: an imported `let g` reassigned at load time in its module is
+bound to its stale initializer whether it is called (`g()`), handed to a
+builtin (`setTimeout(g, 0)`) or stored under a protocol key
+(`{ toString: g }`, `export { g as toString }`) -- a possible edge to the
+stale function, a false `NOT_AFFECTED` when only the later value calls
+the target. Nothing A-4 adds is wrong in a way a plain call is not; lane E
+fixes all of them together.
 
 ---
 
@@ -16937,6 +16980,13 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-67 F
 `verdict.ts`'s Site B premise is that a genuinely reachable target's file would already be indexed, so a phantom (unindexed) target's absence from reachability search is itself correct. A package loaded only via `export * from vuln-lib` runs its top-level call on real Node module evaluation, but never gets an indexed graph node, so the phantom-fed search reports unreachable with no corroboration from the closure. Family C certifies it unreachable regardless.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-101`) and § 4 (`r2-phantom-export-star-barrel`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Note (task A-4, 2026-10-04):** task A-4's independent audit measured the
+same gap for protocol members: an `export function toString` in a module
+reached only through `export * from` is never walked, so its definition's
+possible edge never exists (a false `NOT_AFFECTED`, base and branch alike).
+Imported directly, the same module is `UNKNOWN`. Closed with this finding
+(V-1).
 
 ---
 
@@ -17103,6 +17153,13 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-111`
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-112`) and § 4 (`p3-symbol-hasInstance`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task A-4, 2026-10-04): Fixed.** A static
+`[Symbol.hasInstance]` method is a `protocol_member` site (PRM-38's status
+update): a possible edge from the owner that evaluates the class
+definition. Reproduced in `tests/oracle/a4-protocol-members.test.ts`
+(`hasInstance.instanceof`): a false `NOT_AFFECTED` on the base, `UNKNOWN`
+on the branch.
+
 ---
 
 ## PRM-113 — `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge
@@ -17117,6 +17174,13 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-112`
 `const it = { async *[Symbol.asyncIterator]() { yield lib.parse("x"); } }; for await (const x of it) {}` invokes the async iterator with no edge; family C certifies `lib.parse` unreachable although Node drives the generator to yield its value.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-113`) and § 4 (`p3-symbol-asyncIterator`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task A-4, 2026-10-04): Fixed.** An
+`[Symbol.asyncIterator]` method is a `protocol_member` site (PRM-38's
+status update), and so are the iterator's `next` / `return` / `throw`
+(RWF-068). Reproduced in `tests/oracle/a4-protocol-members.test.ts`
+(`asyncIterator.for-await`): a false `NOT_AFFECTED` on the base,
+`UNKNOWN` on the branch.
 
 ---
 
@@ -17417,6 +17481,32 @@ accessor's definition, as an UNKNOWN edge (its target kept as the
 potential target), because the accessor may or may not run and has no
 node of its own until A-4. Calls and `new` expressions in an accessor
 body keep the attribution this finding records.
+
+**Status update (task A-4, 2026-10-04): Fixed (ADR 0008 Amendment A-0
+part B).** Every getter and setter with a body is a graph node of its own,
+kind `accessor`, named `get <key>` / `set <key>` and indexed apart from
+the function lookups, so no call, export attribution or checker
+declaration resolves to it; a string export key can spell its name
+(`module.exports["get x"]`), so every lookup of graph nodes by name
+excludes accessors (task A-4's independent audit found the entrypoint-root
+lookup binding one, a fabricated root; fixed, reproduced as
+`accessor.export-key-spells-its-name`). The walk pushes it for its
+parameters and body; its name and decorators stay with the definition.
+Its definer reaches it by a possible edge (the invocation site
+`accessor`), never a resolved one and never none, so a target behind an
+accessor is `UNKNOWN`. The A-1 sites inside an accessor body are now
+accounted from the accessor's node, and the withdrawal to unknown A-1
+used (`deferredToAccessor`) is gone. The eight pinned cases
+`S2.class-instance.*` and `S2.class-static.*` in
+`tests/oracle/adr0008-coverage.test.ts` are `UNKNOWN` (records deleted);
+`S2.literal.*` stay `AFFECTED` or `UNKNOWN`. Further reproductions in
+`tests/oracle/a4-protocol-members.test.ts` (`accessor.*`): a getter
+nobody reads, a class getter, a setter nobody writes, a setter's default
+parameter -- each `AFFECTED` on the base though real Node never runs it --
+and a getter read directly (`o.v`), `AFFECTED` on the base on a path that
+does not exist, now `UNKNOWN`: the precision cost Amendment A-0 part B
+accepts, which a later task restores only by a resolved edge for a
+property read of a known accessor (A-7 covers the reader builtins).
 
 ---
 
@@ -18325,3 +18415,127 @@ an array or object literal that a destructuring assignment or a for-of
 head reads (and the binding it writes), so a loader capability flowing
 there is a capability escape. Lane C, with RWF-065 (backlog `BL-040`).
 
+## RWF-068 — The iterator's own methods (`next`, `return`, `throw`) are invoked implicitly, and ADR 0008's protocol list does not name them
+
+**Status:** Fixed (task A-4)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B (the analyzer assumes a method nobody calls by name is
+never invoked)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A — task A-4
+
+**Discovered:** by task A-4, reproducing PRM-38's iterator shapes (oracle
+harness, Node v22.11.0, base `4948780`).
+
+`for…of`, spread, array destructuring, `yield*`, `for await…of` and the
+builtins that iterate call `[Symbol.iterator]()` and then the `next`
+method of the object it returns -- `return` too on an early exit (`break`,
+a throw), `throw` through `yield*`:
+
+```js
+class It { [Symbol.iterator]() { return this; } next() { lib.parse("x"); return { done: true }; } }
+for (const x of new It()) {}          // Node calls next, which calls parse
+```
+
+ADR 0008 § 2's protocol-member row is a closed list (`toString`,
+`valueOf`, `toJSON`, `then` and six well-known symbols). Implementing it
+as written gives `[Symbol.iterator]` a possible edge but `next` none, and
+family C certifies `parse` unreachable. A claim of the ADR, measured false
+for these shapes (`AGENTS.md` § C).
+
+**Fixed:** by the project owner's decision of 2026-10-04 (recorded in ADR
+0008, "Decision record — iterator methods and unreadable keys"), `next`, `return` and `throw`
+are protocol names (`PROTOCOL_NAMES`, `protocol-members.ts`). Reproduced
+in `tests/oracle/a4-protocol-members.test.ts` (`iterator-method.*`: a
+class iterator, a literal iterator, `return` on `break`): each a false
+`NOT_AFFECTED` on the base, `UNKNOWN` on the branch.
+
+## RWF-069 — Admitted builtin positions run a `util.inspect.custom` method through an error message the probe never builds
+
+**Status:** Open (backlog `BL-045`); no live false `NOT_AFFECTED` since
+task A-4
+**Failure class:** an admission the ruling forbids; a false NOT_AFFECTED
+until task A-4
+**Defect class:** B (the builtin is assumed to run only what its probe
+saw)
+**Proof family affected:** C
+**Severity:** Medium — P2 (the admission contradicts the ruling; the
+verdict is sound since A-4)
+**Fix lane:** A (backlog `BL-045`)
+
+**Discovered:** by task A-4's independent audit (oracle harness, Node
+v22.11.0).
+
+Node validates many builtin arguments with `ERR_INVALID_ARG_TYPE`, whose
+message builder (`determineSpecificType`) calls `util.inspect` on a value
+with no `constructor.name` -- a null-prototype object -- and inspection
+runs its `util.inspect.custom` method:
+
+```js
+const bad = { __proto__: null, [Symbol.for("nodejs.util.inspect.custom")]() { lib.parse("x"); return "x"; } };
+try { require("path").join(bad); } catch (e) {}   // Node calls parse
+```
+
+The allowlist admission ruling (ADR 0008, 2026-09-27) fails a position on
+any `util.inspect.custom` hook, but the builtin probe's argument kinds are
+single-feature objects with a prototype, so the hook never fires in the
+probe. Task A-3a's admitted `path.*` positions take this path, and so did
+`new events.EventEmitter`'s first position (its `captureRejections`
+option), which task A-4 first admitted and then withdrew. On task A-4's
+first version `path.join(bad)` was `NOT_AFFECTED` (family C); so was the
+`EventEmitter` form, a regression.
+
+**Since task A-4 the verdict is sound, the admission still is not.**
+`util.inspect.custom` is a registered symbol, so a method under it is
+written with a key the analyzer cannot read (`[util.inspect.custom]`,
+`[Symbol.for("nodejs.util.inspect.custom")]`, an alias), which task A-4
+makes a protocol-member definition with a possible edge from its definer
+(`protocolKeyOf` treats `Symbol.for(…)` as unread for this reason). Both
+reproductions are `UNKNOWN` in `tests/oracle/a4-protocol-members.test.ts`
+(`registered-symbol.*`). The `path.*` admissions still contradict rule (a):
+backlog `BL-045` withdraws or re-justifies them, and adds a structured
+null-prototype argument kind to the probe.
+
+## RWF-070 — `await` constructs the class a promise's `constructor` / `Symbol.species` names, with no call in the program
+
+**Status:** Open (backlog `BL-046`)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** B (the analyzer assumes a class nobody constructs by
+name is never constructed)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A (backlog `BL-046`; needs the project owner's decision on
+ADR 0008 § 2's list)
+
+**Discovered:** by task A-4's independent audit (oracle harness, Node
+v22.11.0, the base and the branch).
+
+`await x` resolves through `PromiseResolve`, the native `then`, and
+`SpeciesConstructor(x, %Promise%)`, which reads `x.constructor` and its
+`[Symbol.species]` and constructs what they name:
+
+```js
+function exec() {}
+class Q extends Promise { constructor(ex) { super(ex); lib.parse("x"); } }
+const x = new Promise(exec);
+x.constructor = Q;
+async function main() { await x; }
+main();                                  // Node constructs Q, calling parse
+```
+
+Family C answers `NOT_AFFECTED`: `x.constructor = Q` and a
+`static [Symbol.species]` member are keys outside ADR 0008 § 2's protocol
+list (as amended on 2026-10-04 for the iterator methods, RWF-068), so the
+store gives `Q` no edge. Task A-4's first version also stated that
+`Symbol.species` is "invoked only by a builtin method called on a
+receiver", which this shows false (corrected in
+`src/code-intelligence/protocol-members.ts` and the task file). Recorded as
+an open-soundness-defect case, `species.promise-constructor-store` in
+`tests/oracle/a4-protocol-members.test.ts`, with its correct verdict
+(`UNKNOWN`) standing.
+
+**What closes it.** Adding `constructor` (a store, a class field) and
+`Symbol.species` to the protocol list, with the class value's constructor
+as the possible edge's target -- an amendment of the list the project
+owner decides, as for RWF-068.

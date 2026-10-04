@@ -667,3 +667,32 @@ A-3 does not have to reconstruct it:
   `S3.in.has.named-handler`) stay closed by part A's exclusion of
   `new Proxy` at the creation site, which (b)'s oracle case for
   `Object.keys` must confirm.
+
+## Decision record — iterator methods and unreadable keys (project owner, 2026-10-04)
+
+Decided by the project owner on 2026-10-04, before task
+[`A-4`](../tasks/A-4-protocol-members.md) wrote its task file; recorded
+by that task. This ADR's body and every earlier section are unchanged;
+this section is appended.
+
+**Decision 1 (iterator methods). Accepted.** § 2's protocol-member row
+gains `next`, `return` and `throw`. Every consumer of an iterator --
+`for…of`, spread, array destructuring, `yield*`, `for await…of`, the
+iterating builtins -- calls the `next` method of the object
+`[Symbol.iterator]()` returns, `return` on an early exit and `throw`
+through `yield*`. With the row's closed list as written, an iterator
+class (`[Symbol.iterator]() { return this; } next() {…}`) or a literal
+iterator stays a false `NOT_AFFECTED`: reproduced against real Node by
+task A-4 and registered as RWF-068 (`tests/validation/FINDINGS.md`).
+Measured cost on the corpora: no verdict changed over the 139 cases.
+
+**Decision 2 (a value under a key that cannot be read). Fail closed.** A
+key is a protocol key unless proven otherwise; a computed key the
+analyzer cannot read may be `"toString"` at run time. A value the graph
+cannot attribute, stored under such a key (`o[k] = v`, `{ [k]: v }`, a
+class field `[k] = v`), gets an unknown edge (`protocol_value`, a subtype
+of `unmodeled_construct`; § 3). An attributable function there gets a
+possible edge in any case. Measured cost on the corpora: no verdict
+changed over the 139 cases; RWB-05 (already `UNKNOWN`) gained five
+`protocol_value` reasons. The cost on real projects with property-copy
+loops is not measured.

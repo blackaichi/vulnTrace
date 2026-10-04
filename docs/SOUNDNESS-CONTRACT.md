@@ -58,7 +58,10 @@ reported as `value_uncertainty` / `possible_invocation`. Owners:
 producer: a function value escaping into code the graph does not model,
 ADR 0008 § 2's escape row; task A-3b adds the JSX row (the component,
 and every function an element hands its factory) and an own-export
-call's escaping arguments; A-4 adds its own.)*
+call's escaping arguments; task A-4 adds the protocol-member row (a
+member the runtime may invoke implicitly, from the owner that evaluates
+its definition) and Amendment A-0 part B (an accessor, its own owner,
+from its definer).)*
 
 ### `NOT_AFFECTED`
 
@@ -246,7 +249,10 @@ which get no account at all, and the no-edge accounts the graph gives
 A-3, A-5). *(Status, task A-3b, 2026-10-02: hook assignments (A-3a) and
 JSX elements (A-3b) are sites now; the pending kinds left are protocol
 members and accessors (A-4), and the unproven no-edge accounts left are
-A-5's two, `static_require_by_text` and `constant_folded_branch`.)* While either remains, family C's completeness is relative to
+A-5's two, `static_require_by_text` and `constant_folded_branch`.)*
+*(Status, task A-4, 2026-10-04: protocol members and accessors are sites
+now, and the census has no `pending` kind left; the first group is
+empty. The second is A-5's two reasons.)* While either remains, family C's completeness is relative to
 them — which is what the implementation-status note at the top of this
 file says.
 
