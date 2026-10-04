@@ -430,9 +430,10 @@ const MAX_ALIAS_HOPS = 4;
  * empty result means the expression is provably primitive, or a literal
  * holding only primitives: nothing in it can carry the program's code.
  *
- * An accessor (`get x() {}`) inside an object literal is `opaque`: its
- * body has no node of its own until task A-4, and a getter can return a
- * function the receiving builtin then invokes.
+ * An accessor (`get x() {}`) inside an object literal is `opaque`: a
+ * getter can return a function the receiving builtin then invokes, and
+ * what it returns is not attributed here (the accessor itself is its own
+ * owner since task A-4, reached by a possible edge from its definer).
  */
 export function escapingValuesOf(
   expr: ts.Expression,
@@ -475,14 +476,14 @@ function collect(
         ts.isGetAccessorDeclaration(property) ||
         ts.isSetAccessorDeclaration(property)
       ) {
-        // An accessor body has no node of its own until task A-4, and a
-        // getter can RETURN a function the builtin then invokes
-        // (`Promise.resolve({ get then() { return f; } })`): opaque.
+        // A getter can RETURN a function the builtin then invokes
+        // (`new Readable({ get read() { return f; } })`): opaque. The
+        // accessor's own body is reached by its possible edge (task A-4).
         out.push({ kind: "opaque", expr: property.name as ts.Expression });
       }
       // A computed key's
       // ToPropertyKey coercion is a use site, accounted at the key
-      // object's definition (ADR 0008 § 2's protocol row, task A-4).
+      // object's definition (ADR 0008 § 2's protocol row, since task A-4).
     }
     return;
   }
@@ -659,7 +660,7 @@ function isPrimitiveReturningCall(expr: ts.Expression): boolean {
  * `!`, `void`, `-`, arithmetic, comparison, equality, `in`,
  * `instanceof`). Such an operator may itself run a coercion hook on its
  * operand, but that is a use site, accounted at the hook's definition
- * (ADR 0008 § 2's protocol row, task A-4) -- the builtin is handed only
+ * (ADR 0008 § 2's protocol row, since task A-4) -- the builtin is handed only
  * the primitive.
  */
 export function isPrimitiveSyntax(raw: ts.Expression): boolean {
@@ -718,7 +719,7 @@ export function isPrimitiveSyntax(raw: ts.Expression): boolean {
 // ---------------------------------------------------------------------------
 
 /** The operators that store their right-hand side's value (`=`, and the logical assignments). */
-function storesValue(op: ts.SyntaxKind): boolean {
+export function storesValue(op: ts.SyntaxKind): boolean {
   return (
     op === ts.SyntaxKind.EqualsToken ||
     op === ts.SyntaxKind.BarBarEqualsToken ||
@@ -776,7 +777,7 @@ export function escapingAssignmentOf(
 }
 
 /** The targets an assignment's left-hand side writes: itself, or every target of a destructuring pattern. */
-function destructuringTargets(raw: ts.Expression): ts.Expression[] {
+export function destructuringTargets(raw: ts.Expression): ts.Expression[] {
   const node = skipOuterExpressions(raw);
   if (ts.isObjectLiteralExpression(node)) {
     return node.properties.flatMap((property) =>

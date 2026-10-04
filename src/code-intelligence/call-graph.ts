@@ -37,6 +37,7 @@ import {
   type InvocationSiteKind,
   invocationSiteOf,
 } from "./invocation-sites.js";
+import { protocolKeyOf, type ProtocolDefinition } from "./protocol-members.js";
 import {
   jsxHandedExpressions,
   type JsxSettings,
@@ -68,6 +69,7 @@ import {
   type IndexedFunction,
   type SourceIndex,
   indexSourceFileFromDisk,
+  isAccessorWithBody,
   isFunctionLike,
   toSourceLocation,
 } from "./source-index.js";
@@ -121,6 +123,16 @@ interface FileGraphData {
   readonly model: ModuleModel;
   readonly moduleNodeId: GraphNodeId;
   readonly functionNodeIdByLocation: ReadonlyMap<string, GraphNodeId>;
+  /**
+   * Task A-4: the node of every accessor with a body (`source-index.ts`'s
+   * `accessors`), by location. A map of its own, never merged into
+   * {@link functionNodeIdByLocation}: every lookup of that map asks which
+   * function a call or a value DENOTES -- the lexical authority, VT-208's
+   * checker declaration, an inline callback -- and an accessor is never
+   * that (a checker declaration for `o.x` that is a getter would otherwise
+   * resolve `o.x()` to the getter, not to what it returns).
+   */
+  readonly accessorNodeIdByLocation: ReadonlyMap<string, GraphNodeId>;
   /** Export name -> the node implementing it, when it could be attributed to a local function declaration. */
   readonly exportNameToNodeId: ReadonlyMap<string, GraphNodeId>;
 }
@@ -161,6 +173,19 @@ function prepareFile(
     });
   }
 
+  const accessorNodeIdByLocation = new Map<string, GraphNodeId>();
+  for (const accessor of index.accessors) {
+    const id = functionNodeId(filePath, accessor);
+    accessorNodeIdByLocation.set(locationKey(accessor.location), id);
+    registerNode({
+      id,
+      kind: accessor.kind,
+      module: filePath,
+      name: accessor.name,
+      location: accessor.location,
+    });
+  }
+
   const exportNameToNodeId = new Map<string, GraphNodeId>();
   for (const [canonicalName, fn] of mapExportsToFunctions(index, model)) {
     const nodeId = functionNodeIdByLocation.get(locationKey(fn.location));
@@ -174,6 +199,7 @@ function prepareFile(
     model,
     moduleNodeId: modNodeId,
     functionNodeIdByLocation,
+    accessorNodeIdByLocation,
     exportNameToNodeId,
   };
 }
@@ -2984,40 +3010,43 @@ async function classifyImplicitSuper(
 }
 
 /**
- * The node whose execution evaluates `node`, for a site task A-1 added --
- * or the accessor, when that is an accessor body, which has no node of its
- * own yet (task A-4, ADR 0008 Amendment A-0 part B).
+ * The node whose execution evaluates `node`, for a site task A-1 or a
+ * later lane-A task added.
  *
  * WHY NOT THE WALK'S OWNER STACK. The stack pushes only function-like
- * nodes, so everything else nested in a class is walked under the owner
- * of the class definition. Three positions are not evaluated by it:
+ * nodes and (task A-4) accessors, so everything else nested in a class is
+ * walked under the owner of the class definition. Two positions are not
+ * evaluated by it:
  *
  * - a function-like member's computed NAME and its DECORATORS (and its
  *   parameters' decorators) run at class definition, although the walk has
  *   already pushed the member (RWF-023's key, RWF-058's decorator
  *   expression);
  * - an INSTANCE field's initializer runs when the class is CONSTRUCTED, by
- *   its constructor -- explicit or implicit -- not at definition;
- * - an accessor's body and parameters run when the property is read or
- *   written.
+ *   its constructor -- explicit or implicit -- not at definition.
+ *
+ * An accessor's body and parameters run when the property is read or
+ * written: since task A-4 the accessor is its own owner (ADR 0008
+ * Amendment A-0 part B), and its node is the answer. Before A-4 it had no
+ * node, and the sites here were hung, withdrawn to unknown, from the owner
+ * of the accessor's definition.
  *
  * Calls and `new` expressions keep the stack's attribution, which predates
- * A-1 (RWF-059 records the instance-field half; PRM-118 the accessor
- * half). A-1's own sites -- tagged templates, decorators -- are
- * attributed here instead: before A-1 they had no edge at all, and the
- * task A-1 audit reproduced the stack's attribution turning a correct
- * NOT_AFFECTED into a false AFFECTED for a decorated class defined in an
- * instance field or a getter that never runs.
+ * A-1 (RWF-059 records the instance-field half). A-1's own sites -- tagged
+ * templates, decorators -- are attributed here instead: before A-1 they
+ * had no edge at all, and the task A-1 audit reproduced the stack's
+ * attribution turning a correct NOT_AFFECTED into a false AFFECTED for a
+ * decorated class defined in an instance field.
  */
 function evaluatingOwnerOf(
   node: ts.Node,
   prepared: FileGraphData,
-): GraphNodeId | { readonly accessor: ts.AccessorDeclaration } | undefined {
+): GraphNodeId | undefined {
   const sourceFile = prepared.index.sourceFile;
+  const locationOf = (at: ts.Node): string =>
+    locationKey(toSourceLocation(sourceFile, at));
   const nodeIdAt = (at: ts.Node): GraphNodeId | undefined =>
-    prepared.functionNodeIdByLocation.get(
-      locationKey(toSourceLocation(sourceFile, at)),
-    );
+    prepared.functionNodeIdByLocation.get(locationOf(at));
 
   let child: ts.Node = node;
   let parent: ts.Node | undefined = node.parent;
@@ -3052,9 +3081,15 @@ function evaluatingOwnerOf(
     if (
       (ts.isGetAccessorDeclaration(parent) ||
         ts.isSetAccessorDeclaration(parent)) &&
-      parent.name !== child
+      parent.name !== child &&
+      !ts.isDecorator(child)
     ) {
-      return { accessor: parent };
+      const accessor = prepared.accessorNodeIdByLocation.get(
+        locationOf(parent),
+      );
+      if (accessor) {
+        return accessor;
+      }
     }
     if (ts.isSourceFile(parent)) {
       return prepared.moduleNodeId;
@@ -3066,55 +3101,15 @@ function evaluatingOwnerOf(
 }
 
 /**
- * The account of a site whose evaluating owner is an accessor body
- * ({@link evaluatingOwnerOf}): the same edges, from the owner that
- * evaluates the accessor's DEFINITION (where the walk has always
- * attributed an accessor body's calls, PRM-118), with every RESOLVED edge
- * withdrawn to unknown (its target kept as the potential target). The accessor may or may not run, and it has no node
- * of its own to hang a resolved edge on; an unknown edge withholds the
- * negative proof over the region without claiming the call happens. ADR
- * 0008 § 1's `possible` edge (task A-2) is the precise account, from the
- * accessor's own node (task A-4).
- */
-function deferredToAccessor(account: InvocationAccount): InvocationAccount {
-  if (account.kind !== "edges") {
-    return account;
-  }
-  const [first, ...rest] = account.edges.map((edge): CallEdge =>
-    edge.resolution.kind === "resolved"
-      ? {
-          ...edge,
-          resolution: {
-            kind: "unknown",
-            reason: "unsupported_construct",
-            potentialTargets: [edge.resolution.target],
-          },
-        }
-      : edge,
-  );
-  return { kind: "edges", edges: [first!, ...rest] };
-}
-
-/**
- * Accounts a site A-1 added from the owner that evaluates `evaluated`
- * ({@link evaluatingOwnerOf}), falling back to the walk's owner. Inside an
- * accessor body -- at any depth of nested accessors -- the account hangs
- * from the owner of the outermost accessor's definition, withdrawn to
- * unknown.
+ * Accounts a site from the owner that evaluates `evaluated`
+ * ({@link evaluatingOwnerOf}), falling back to the walk's owner.
  */
 function fromEvaluatingOwner(
   evaluated: ts.Node,
   env: SiteEnvironment,
   classify: (from: GraphNodeId) => Promise<InvocationAccount>,
 ): Promise<InvocationAccount> {
-  let owner = evaluatingOwnerOf(evaluated, env.prepared);
-  let deferred = false;
-  while (owner !== undefined && typeof owner !== "string") {
-    deferred = true;
-    owner = evaluatingOwnerOf(owner.accessor, env.prepared);
-  }
-  const account = classify(owner ?? env.owner);
-  return deferred ? account.then(deferredToAccessor) : account;
+  return classify(evaluatingOwnerOf(evaluated, env.prepared) ?? env.owner);
 }
 
 /** What a handler needs besides its site. */
@@ -3171,6 +3166,8 @@ const INVOCATION_SITE_HANDLERS = {
     fromEvaluatingOwner(site.node, env, (from) =>
       classifyJsx(site.node, from, env.prepared, env.ctx),
     ),
+  protocol_member: (site, env) => classifyProtocolMember(site.definition, env),
+  accessor: (site, env) => classifyAccessor(site.node, env),
 } as const satisfies { readonly [K in InvocationSiteKind]: SiteHandler<K> };
 
 /**
@@ -3267,6 +3264,182 @@ async function classifyJsx(
     prepared,
     ctx,
   );
+}
+
+/**
+ * The edges for a value the runtime may invoke implicitly (task A-4, ADR
+ * 0008 § 2's protocol-member row and § 3), invoked from `from`: a
+ * POSSIBLE edge to each attributable function or class it carries, and
+ * an UNKNOWN edge (`protocol_value`) for what cannot be attributed --
+ * under an unreadable key too, which may be a protocol key at run time
+ * (the project owner's decision of 2026-10-04). A builtin's own function
+ * carries none of the program's code; if that is all the value holds, the
+ * caller decides.
+ */
+async function protocolValueEdges(
+  value: ts.Expression,
+  from: GraphNodeId,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<CallEdge[]> {
+  const location = toSourceLocation(prepared.index.sourceFile, value);
+  const edges: CallEdge[] = [];
+  for (const escaping of escapingValuesOf(value)) {
+    if (escaping.kind === "opaque") {
+      edges.push(protocolValueEdge(from, location));
+      continue;
+    }
+    const target = await escapeTargetOf(escaping, prepared, ctx);
+    if (target === "builtin") {
+      continue;
+    }
+    edges.push(
+      target === undefined
+        ? protocolValueEdge(from, location)
+        : {
+            from,
+            type: "method",
+            resolution: { kind: "possible", target },
+            location,
+          },
+    );
+  }
+  return edges;
+}
+
+function protocolValueEdge(
+  from: GraphNodeId,
+  location: ReturnType<typeof toSourceLocation>,
+): CallEdge {
+  return {
+    from,
+    type: "method",
+    resolution: {
+      kind: "unknown",
+      reason: "protocol_value",
+      potentialTargets: [],
+    },
+    location,
+  };
+}
+
+function edgesAccount(
+  edges: readonly CallEdge[],
+  otherwise: CallEdge,
+): InvocationAccount {
+  const [first, ...rest] = edges;
+  return first
+    ? { kind: "edges", edges: [first, ...rest] }
+    : edgeAccount(otherwise);
+}
+
+/**
+ * Task A-4, ADR 0008 § 2's protocol-member row (PRM-38, PRM-112,
+ * PRM-113): "*possible*, from the owner that evaluates the definition". A
+ * method under a protocol key gets a possible edge to itself; a property,
+ * field or store, to every attributable function its value carries, and
+ * an unknown edge for what it cannot attribute; a destructuring or
+ * `for…of` store an unknown edge, since what it stores is read from
+ * elsewhere. If the defining owner never runs, the member never exists;
+ * if it runs, the member's body is searched, and its own unknown edges
+ * count against family C.
+ */
+async function classifyProtocolMember(
+  definition: ProtocolDefinition,
+  env: SiteEnvironment,
+): Promise<InvocationAccount> {
+  const { prepared, ctx } = env;
+  const sourceFile = prepared.index.sourceFile;
+  const evaluated =
+    definition.form === "value" && ts.isPropertyDeclaration(definition.node)
+      ? definition.value
+      : definition.node;
+  const from = evaluatingOwnerOf(evaluated, prepared) ?? env.owner;
+  const location = toSourceLocation(sourceFile, definition.node);
+  switch (definition.form) {
+    case "method": {
+      const target = prepared.functionNodeIdByLocation.get(
+        locationKey(location),
+      );
+      return edgeAccount(
+        target
+          ? {
+              from,
+              type: "method",
+              resolution: { kind: "possible", target },
+              location,
+            }
+          : protocolValueEdge(from, location),
+      );
+    }
+    case "value":
+    case "store":
+      return edgesAccount(
+        await protocolValueEdges(definition.value, from, prepared, ctx),
+        protocolValueEdge(from, location),
+      );
+    case "pattern_store":
+      return edgeAccount(protocolValueEdge(from, location));
+  }
+}
+
+/**
+ * Task A-4, ADR 0008 Amendment A-0 part B (PRM-118): "A getter or setter
+ * becomes its own owner, reached from its defining owner by a *possible*
+ * edge. It never gets no edge." A getter under a key that may be a
+ * protocol key has one more account: the runtime INVOKES what it returns
+ * (`{ get then() { return f; } }` and `await`), so each value a `return`
+ * of its body hands back is a protocol value, from the getter's own node.
+ */
+async function classifyAccessor(
+  node: ts.AccessorDeclaration & { readonly body: ts.Block },
+  env: SiteEnvironment,
+): Promise<InvocationAccount> {
+  const { prepared, ctx } = env;
+  const location = toSourceLocation(prepared.index.sourceFile, node);
+  const from = evaluatingOwnerOf(node, prepared) ?? env.owner;
+  const target = prepared.accessorNodeIdByLocation.get(locationKey(location));
+  if (!target) {
+    return edgeAccount(protocolValueEdge(from, location));
+  }
+  const edges: CallEdge[] = [
+    {
+      from,
+      type: "method",
+      resolution: { kind: "possible", target },
+      location,
+    },
+  ];
+  if (
+    ts.isGetAccessorDeclaration(node) &&
+    protocolKeyOf(node.name) !== "other"
+  ) {
+    for (const returned of returnedExpressions(node.body)) {
+      edges.push(
+        ...(await protocolValueEdges(returned, target, prepared, ctx)),
+      );
+    }
+  }
+  return edgesAccount(edges, edges[0]!);
+}
+
+/** The expressions the `return` statements of a body hand back -- its own, not a nested function's or class's. */
+function returnedExpressions(body: ts.Block): ts.Expression[] {
+  const found: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isReturnStatement(node)) {
+      if (node.expression) {
+        found.push(node.expression);
+      }
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) {
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return found;
 }
 
 function accountFor(
@@ -3455,10 +3628,11 @@ function defersEvaluationOf(child: ts.Node, parent: ts.Node): boolean {
  * the walk pushed, and therefore the current stack top) or to the source
  * file (the module node), refusing as soon as it crosses a deferred
  * position. That refusal is what keeps the critical false-AFFECTED
- * controls honest: an INSTANCE field holding a class expression
- * (`class Outer { field = class Inner { [key()]() {} }; }`) and a class
- * defined inside an accessor body are both deferred, and their computed
- * keys must not become module-load reachable.
+ * control honest: an INSTANCE field holding a class expression
+ * (`class Outer { field = class Inner { [key()]() {} }; }`) is deferred,
+ * and its computed keys must not become module-load reachable. A class
+ * defined inside an accessor body is evaluated by the accessor, which is
+ * its own owner since task A-4 (reached only by a possible edge).
  */
 function runsWhenEnclosingOwnerRuns(element: ts.Node): boolean {
   let child: ts.Node = element;
@@ -3468,6 +3642,13 @@ function runsWhenEnclosingOwnerRuns(element: ts.Node): boolean {
     // The walk pushed a node for this function, so the current owner IS
     // this function: the class definition runs exactly when it runs.
     if (isFunctionLike(parent)) {
+      return true;
+    }
+    // Since task A-4 the walk pushes an accessor too, for its parameters
+    // and body: a class defined there runs exactly when the accessor runs,
+    // and the accessor's own node -- reached only by a possible edge -- is
+    // the current owner. Its NAME runs with its definition: keep climbing.
+    if (isAccessorWithBody(parent) && parent.name !== child) {
       return true;
     }
     if (defersEvaluationOf(child, parent)) {
@@ -3592,6 +3773,11 @@ async function walkFile(
       await visit(computedName.expression);
     }
 
+    if (isAccessorWithBody(node)) {
+      await visitAccessor(node);
+      return;
+    }
+
     if (isFunctionLike(node)) {
       const nodeId = prepared.functionNodeIdByLocation.get(
         locationKey(toSourceLocation(prepared.index.sourceFile, node)),
@@ -3657,6 +3843,44 @@ async function walkFile(
     }
 
     if (pushed) {
+      stack.pop();
+    }
+  }
+
+  /**
+   * Task A-4 (ADR 0008 Amendment A-0 part B, PRM-118): an accessor is its
+   * own owner. Its own site -- the possible edge from the owner that
+   * evaluates its definition -- and its NAME and DECORATORS, which run
+   * with the definition, are walked under the enclosing owner, exactly as
+   * before; its parameters (default values run on `set`) and its body are
+   * walked under its own node. Before this task the walk never pushed an
+   * accessor, so every call in its body was attributed to the enclosing
+   * owner, as if it ran when the definition was evaluated -- a resolved
+   * path the program may never take.
+   */
+  async function visitAccessor(
+    node: ts.AccessorDeclaration & { readonly body: ts.Block },
+  ): Promise<void> {
+    const site = invocationSiteOf(node);
+    const enclosing = stack[stack.length - 1];
+    if (site && enclosing) {
+      record(site, await accountFor(site, { owner: enclosing, prepared, ctx }));
+    }
+    for (const modifier of node.modifiers ?? []) {
+      await visit(modifier);
+    }
+    await visit(node.name);
+    const nodeId = prepared.accessorNodeIdByLocation.get(
+      locationKey(toSourceLocation(prepared.index.sourceFile, node)),
+    );
+    if (nodeId) {
+      stack.push(nodeId);
+    }
+    for (const parameter of node.parameters) {
+      await visit(parameter);
+    }
+    await visit(node.body);
+    if (nodeId) {
       stack.pop();
     }
   }

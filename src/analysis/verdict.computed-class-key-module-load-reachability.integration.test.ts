@@ -38,6 +38,27 @@ import { buildFindingForTest } from "../testing/finding.js";
 
 const FIXTURE = "commonjs-computed-class-key-module-load-reachability";
 
+/**
+ * The `possible_invocation` reasons of a finding whose path does not run
+ * through an accessor node (`get …` / `set …`, task A-4). Behind an
+ * accessor, UNKNOWN is the accepted precision cost; anywhere else in the
+ * deferral fixture it would mean a deferred position became reachable.
+ */
+function pathsNotThroughAnAccessor(
+  finding:
+    | {
+        readonly verdict?: string;
+        readonly evidence?: { readonly reasons?: readonly string[] };
+      }
+    | undefined,
+): string[] {
+  const reasons = finding?.evidence?.reasons ?? [];
+  if (finding?.verdict === "UNKNOWN" && reasons.length === 0) {
+    return ["an UNKNOWN finding with no reason to check"];
+  }
+  return reasons.filter((reason) => !/#(?:get|set) accessor@/.test(reason));
+}
+
 async function scan(options: {
   readonly module: string;
   readonly export: string;
@@ -325,7 +346,7 @@ describe(`RWF-023 fixture: a vulnerable target invoked from a COMPUTED CLASS-ELE
   });
 
   describe("the deferral controls -- what must NOT become reachable", () => {
-    it("proves the sink unreachable when every class definition is deferred", async () => {
+    it("proves the sink unreachable when every class definition is deferred -- except behind an accessor, which is reached by a possible edge", async () => {
       // `deferred.js` carries the IDENTICAL computed key in eleven deferred
       // positions: inside an uncalled function, arrow and callback; inside
       // a method, getter and constructor body; held by an instance field
@@ -334,16 +355,22 @@ describe(`RWF-023 fixture: a vulnerable target invoked from a COMPUTED CLASS-ELE
       // ground-truth fixture), so a complete negative proof here is CORRECT
       // -- and issuing it is what makes RWF-023 a fix rather than a
       // widening.
+      //
+      // Task A-4 (ADR 0008 Amendment A-0 part B): the getter and the setter
+      // are their own owners, reached from the module by a possible edge,
+      // so the keys of the classes they define are searched, and the sink
+      // behind them is UNKNOWN -- the precision cost the amendment accepts
+      // for an accessor nobody runs. Every other position must still be
+      // unreachable: the verdict is never AFFECTED, and every path that
+      // makes it UNKNOWN runs through one of the two accessors.
       const { finding } = await scan({
         module: "fixture-lib/danger",
         export: "explode",
         entrypoint: "src/deferred.cjs",
       });
 
-      expect(finding?.verdict).toBe("NOT_AFFECTED");
-      expect(finding?.evidence?.confirmedUnreachableTarget).toMatchObject({
-        reachableSubgraphComplete: true,
-      });
+      expect(["NOT_AFFECTED", "UNKNOWN"]).toContain(finding?.verdict);
+      expect(pathsNotThroughAnAccessor(finding)).toEqual([]);
     });
 
     it("keeps a nested class in an INSTANCE FIELD unreachable (the critical false-AFFECTED control)", async () => {
@@ -364,8 +391,11 @@ describe(`RWF-023 fixture: a vulnerable target invoked from a COMPUTED CLASS-ELE
       // rule that stopped at "the class is at module scope" would root
       // this key and manufacture a false AFFECTED. The field's VALUE is
       // per-instance -- RWF-018's line, reproduced rather than moved.
-      expect(finding?.verdict).toBe("NOT_AFFECTED");
+      // (Since task A-4 the sink is UNKNOWN through the fixture's getter
+      // and setter; see the test above.)
+      expect(finding?.verdict).not.toBe("AFFECTED");
       expect(finding?.evidence?.path ?? []).not.toContain(keyNode?.id);
+      expect(pathsNotThroughAnAccessor(finding)).toEqual([]);
     });
   });
 

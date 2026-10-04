@@ -90,6 +90,20 @@ export interface SourceIndex {
   readonly filePath: string;
   readonly sourceFile: ts.SourceFile;
   readonly functions: readonly IndexedFunction[];
+  /**
+   * Every getter and setter with a body (task A-4, ADR 0008 Amendment A-0
+   * part B): each is its own owner, a graph node of kind `accessor`. Kept
+   * OUT of {@link functions} deliberately. Every lookup of `functions` --
+   * export attribution (`mapExportsToFunctions`), entrypoint roots, the
+   * call graph's lexical and VT-208 resolution -- asks "which function is
+   * CALLED", and an accessor is never what a call expression calls: `o.x()`
+   * runs the getter and then calls what it returns. Its name is
+   * `get <key>` / `set <key>`, which no identifier can spell -- but a string
+   * export key can (`module.exports["get x"]`), so every lookup of graph
+   * nodes by name excludes kind `accessor` (`verdict.ts`'s `isNamedNode`,
+   * task A-4's independent audit).
+   */
+  readonly accessors: readonly IndexedFunction[];
   readonly imports: readonly IndexedImport[];
   readonly exports: readonly IndexedExport[];
   /**
@@ -819,6 +833,39 @@ function extractDeclarationExport(
   return [];
 }
 
+/**
+ * A getter or setter with a body: one the program can run (task A-4). An
+ * abstract or ambient accessor has no body and no code.
+ */
+export function isAccessorWithBody(
+  node: ts.Node,
+): node is ts.AccessorDeclaration & { readonly body: ts.Block } {
+  return (
+    (ts.isGetAccessorDeclaration(node) || ts.isSetAccessorDeclaration(node)) &&
+    node.body !== undefined
+  );
+}
+
+function extractAccessor(
+  sourceFile: ts.SourceFile,
+  node: ts.AccessorDeclaration,
+): IndexedFunction {
+  const prefix = ts.isGetAccessorDeclaration(node) ? "get" : "set";
+  const key =
+    ts.isIdentifier(node.name) ||
+    ts.isPrivateIdentifier(node.name) ||
+    ts.isStringLiteralLike(node.name) ||
+    ts.isNumericLiteral(node.name)
+      ? node.name.text
+      : undefined;
+  return {
+    kind: "accessor",
+    name: key === undefined ? prefix : `${prefix} ${key}`,
+    isAsync: false,
+    location: toSourceLocation(sourceFile, node),
+  };
+}
+
 /** Shared by other code-intelligence modules that need to track function boundaries (e.g. call-graph.ts). */
 export function isFunctionLike(
   node: ts.Node,
@@ -839,6 +886,7 @@ export function isFunctionLike(
 
 function buildIndex(sourceFile: ts.SourceFile): SourceIndex {
   const functions: IndexedFunction[] = [];
+  const accessors: IndexedFunction[] = [];
   const imports: IndexedImport[] = [];
   const exportsList: IndexedExport[] = [];
 
@@ -854,6 +902,8 @@ function buildIndex(sourceFile: ts.SourceFile): SourceIndex {
       !classHasOwnConstructor(node)
     ) {
       functions.push(extractImplicitConstructor(sourceFile, node));
+    } else if (isAccessorWithBody(node)) {
+      accessors.push(extractAccessor(sourceFile, node));
     }
 
     if (ts.isImportDeclaration(node)) {
@@ -900,6 +950,7 @@ function buildIndex(sourceFile: ts.SourceFile): SourceIndex {
     filePath: sourceFile.fileName,
     sourceFile,
     functions,
+    accessors,
     imports,
     exports: exportsList,
     hasSyntaxErrors: hasSyntaxErrors(sourceFile),

@@ -406,8 +406,8 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "`tests/oracle/builtin-admission.test.ts`, run in CI by " +
       "`npm run test:oracle` (it spawns real Node, so it is not a " +
       "Foundation-gate owner). JSX elements are sites since task A-3b; " +
-      "the pending kinds left (protocol members, accessors) are open " +
-      "defects of A-4, named in the census.",
+      "protocol members and accessors since task A-4, which left the " +
+      "census with no pending kind.",
   },
   {
     id: "possible-edge-into-walked-file",
@@ -448,8 +448,8 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "asserts them through the production `buildFinding` on real " +
       "projects (UNKNOWN with `possible_invocation`, family C withheld by " +
       "an unknown edge behind a `possible` edge and kept by a clean one, " +
-      "family B withdrawn by VT-300 through one). No producer emits a " +
-      "`possible` edge yet (A-3, A-4).",
+      "family B withdrawn by VT-300 through one). Its producers are tasks " +
+      "A-3a, A-3b and A-4, each with production reproductions there.",
   },
 ];
 

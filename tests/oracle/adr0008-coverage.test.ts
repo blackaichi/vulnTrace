@@ -65,31 +65,33 @@ type Pin =
   /**
    * An `open-defect` record a lane-A task closed: its record was deleted,
    * and the case asserts the verdict REMEDIATION-PLAN § 5a requires
-   * (`UNKNOWN`), with real Node calling the target.
+   * (`UNKNOWN`), with real Node's answer (`called`) re-checked.
    */
-  | { readonly kind: "closed"; readonly rwf: string; readonly by: string };
+  | {
+      readonly kind: "closed";
+      readonly rwf: string;
+      readonly by: string;
+      readonly called: boolean;
+    };
 
-/**
- * Every false AFFECTED below: a concrete-looking path real Node never
- * takes. (Every false NOT_AFFECTED this suite pinned -- family C over a
- * complete subgraph -- was closed by task A-3a; see `closed` pins.)
- */
-const OBSERVED_FALSE_AFFECTED: VerdictObservation = {
-  verdict: "AFFECTED",
-  proofFamily: "-",
-  target: "vuln-lib#parse",
-  reachableSubgraphComplete: false,
-  unknownEdges: 0,
-};
-
-const fa = (rwf: string, unknownEdges = 0): Pin => ({
-  kind: "open-defect",
+/** Closed by task A-3a: the case is UNKNOWN (REMEDIATION-PLAN § 5a, "A-0 additions"). Every false NOT_AFFECTED this suite pinned. */
+const closedByA3a = (rwf: string): Pin => ({
+  kind: "closed",
   rwf,
-  failure: "false AFFECTED",
-  observed: { ...OBSERVED_FALSE_AFFECTED, unknownEdges },
+  by: "A-3a",
+  called: true,
 });
-/** Closed by task A-3a: the case is UNKNOWN (REMEDIATION-PLAN § 5a, "A-0 additions"). */
-const closedByA3a = (rwf: string): Pin => ({ kind: "closed", rwf, by: "A-3a" });
+/**
+ * Closed by task A-4: the getter is its own owner, reached by a possible
+ * edge (Amendment A-0 part B), so the target is UNKNOWN. Every false
+ * AFFECTED this suite pinned: real Node never runs these getters.
+ */
+const closedByA4 = (rwf: string): Pin => ({
+  kind: "closed",
+  rwf,
+  by: "A-4",
+  called: false,
+});
 
 const READERS = [
   "JSON.stringify",
@@ -118,13 +120,11 @@ const PINS: Readonly<Record<string, Pin>> = {
   // non-enumerable and is correctly NOT_AFFECTED; the enumerable one is
   // the AUD-01 descriptor shape sweep round 2 recorded.
   ...forReaders("literal", { kind: "sound-called" }),
-  // PRM-118 (task A-4). Re-measured by task A-3a: the three reader
-  // builtins are now fail-closed on the named instance (one unknown edge);
-  // `{...o}` is not a call. Still a false AFFECTED through the getter
-  // body's attribution to the class-definition owner.
-  ...forReaders("class-instance", fa("PRM-118", 1)),
-  "S2.class-instance.spread": fa("PRM-118"),
-  ...forReaders("class-static", fa("PRM-118")),
+  // PRM-118, closed by task A-4: the getter body is no longer attributed
+  // to the class-definition owner; the getter is reached by a possible
+  // edge only.
+  ...forReaders("class-instance", closedByA4("PRM-118")),
+  ...forReaders("class-static", closedByA4("PRM-118")),
   ...forReaders("defineProperty", { kind: "sound-not-called" }),
   // AUD-01, closed by task A-3a: the descriptor's getter is a possible
   // edge (the escape row, "a property descriptor"), and the named object
@@ -217,7 +217,7 @@ describe.each(ALL.map((s) => [s.id, s] as const))("%s", (_id, scenario) => {
       return;
     }
     if (pin.kind === "closed") {
-      expect(called, "real Node calls the target").toBe(true);
+      expect(called, "real Node's ground truth").toBe(pin.called);
       expect(live.verdict, `${pin.rwf}, closed by ${pin.by}`).toBe("UNKNOWN");
       return;
     }

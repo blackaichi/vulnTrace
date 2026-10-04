@@ -2,7 +2,11 @@ import { isBuiltin } from "node:module";
 import ts from "typescript";
 import { escapingAssignmentOf, type EscapeRoot } from "./escape-row.js";
 import { isJsxSite, type JsxSite } from "./jsx-runtime.js";
-import { classHasOwnConstructor } from "./source-index.js";
+import {
+  protocolDefinitionOf,
+  type ProtocolDefinition,
+} from "./protocol-members.js";
+import { classHasOwnConstructor, isAccessorWithBody } from "./source-index.js";
 
 /**
  * ADR 0008 invariant A1 (task A-1): WHICH syntax is an invocation-capable
@@ -25,7 +29,7 @@ import { classHasOwnConstructor } from "./source-index.js";
  *   PRM-19).
  */
 
-/** The site kinds A-1 accounts for, `escaping_assignment` (task A-3a) and `jsx` (task A-3b). Later lane-A tasks add theirs. */
+/** The site kinds A-1 accounts for, `escaping_assignment` (task A-3a), `jsx` (task A-3b), `protocol_member` and `accessor` (task A-4). */
 export type InvocationSiteKind =
   | "call"
   | "construct"
@@ -33,7 +37,9 @@ export type InvocationSiteKind =
   | "decorator"
   | "implicit_super"
   | "escaping_assignment"
-  | "jsx";
+  | "jsx"
+  | "protocol_member"
+  | "accessor";
 
 export type ClassLike = ts.ClassDeclaration | ts.ClassExpression;
 
@@ -86,6 +92,26 @@ export type InvocationSite =
        */
       readonly kind: "jsx";
       readonly node: JsxSite;
+    }
+  | {
+      /**
+       * Task A-4, ADR 0008 § 2's protocol-member row (PRM-38, PRM-112,
+       * PRM-113): a definition under a key the runtime may invoke
+       * implicitly -- by coercion, `await`, iteration, `instanceof`,
+       * `using`, a builtin (`protocol-members.ts`).
+       */
+      readonly kind: "protocol_member";
+      readonly node: ProtocolDefinition["node"];
+      readonly definition: ProtocolDefinition;
+    }
+  | {
+      /**
+       * Task A-4, ADR 0008 Amendment A-0 part B (PRM-118): a getter or
+       * setter, its own owner, invoked implicitly by a property read or
+       * write.
+       */
+      readonly kind: "accessor";
+      readonly node: ts.AccessorDeclaration & { readonly body: ts.Block };
     };
 
 /**
@@ -113,11 +139,23 @@ export function invocationSiteOf(node: ts.Node): InvocationSite | undefined {
     return base ? { kind: "implicit_super", node, base } : undefined;
   }
   if (ts.isBinaryExpression(node)) {
+    // An assignment into an ambient or builtin value is the escape row's,
+    // whatever key it writes: its account already gives every value it
+    // stores an edge.
     const root = escapingAssignmentOf(node, isBuiltin);
-    return root ? { kind: "escaping_assignment", node, root } : undefined;
+    if (root) {
+      return { kind: "escaping_assignment", node, root };
+    }
   }
   if (isJsxSite(node)) {
     return { kind: "jsx", node };
+  }
+  if (isAccessorWithBody(node)) {
+    return { kind: "accessor", node };
+  }
+  const definition = protocolDefinitionOf(node);
+  if (definition) {
+    return { kind: "protocol_member", node: definition.node, definition };
   }
   return undefined;
 }
@@ -256,7 +294,8 @@ function decoratedClassOf(decorator: ts.Decorator): ClassLike | undefined {
 /**
  * How one syntax kind stands with respect to invariant A1.
  *
- * - `site`: an invocation-capable site with a handler today.
+ * - `site`: an invocation-capable site with a handler today (`also`: the
+ *   other site kinds some nodes of the same kind are).
  * - `pending`: invocation-capable, and NOT yet accounted for. An open
  *   soundness defect, owned by the lane-A task and findings named -- not
  *   an exception. The task that accounts for it turns it into a `site`.
@@ -266,12 +305,14 @@ export type CensusEntry =
   | {
       readonly role: "site";
       readonly site: InvocationSiteKind;
+      readonly also?: readonly InvocationSiteKind[];
       /** Set when only some nodes of the kind are sites. */
       readonly when?: string;
       /**
        * Set when other nodes of the kind are invocation-capable and still
        * unaccounted: the part a later lane-A task owns (task A-3a's
-       * `BinaryExpression`, whose protocol-named property writes are A-4's).
+       * `BinaryExpression`, whose protocol-named property writes were
+       * A-4's).
        */
       readonly pending?: Omit<
         Extract<CensusEntry, { role: "pending" }>,
@@ -280,7 +321,7 @@ export type CensusEntry =
     }
   | {
       readonly role: "pending";
-      readonly tasks: readonly "A-4"[];
+      readonly tasks: readonly string[];
       readonly findings: readonly string[];
       readonly what: string;
     }
@@ -314,17 +355,22 @@ const COMPILER_ONLY = none(
 const USE_SITE = none(
   "use site of an implicit invocation that ADR 0008 § 2 accounts at the definition (protocol member, accessor, Proxy creation), not here",
 );
-const PROTOCOL_DEFINITION: CensusEntry = {
-  role: "pending",
-  tasks: ["A-4"],
-  findings: ["PRM-38", "PRM-112", "PRM-113"],
-  what: "a protocol-named method or function-valued property (toString, valueOf, toJSON, then, Symbol.iterator, …) is invoked implicitly: ADR 0008 § 2's protocol-member row",
-};
-const ACCESSOR_DEFINITION: CensusEntry = {
-  role: "pending",
-  tasks: ["A-4"],
-  findings: ["PRM-118"],
-  what: "an accessor body is its own owner, invoked implicitly by a property read or write: ADR 0008 Amendment A-0 part B",
+/**
+ * Task A-4 (ADR 0008 § 2's protocol-member row; PRM-38, PRM-112, PRM-113):
+ * a definition under a key that may be a protocol member's
+ * (`protocol-members.ts`). The use sites that invoke it -- a coercion,
+ * `await`, `for…of`, `instanceof` -- stay `USE_SITE`.
+ */
+const PROTOCOL_MEMBER = (when: string): CensusEntry => ({
+  role: "site",
+  site: "protocol_member",
+  when,
+});
+/** Task A-4 (ADR 0008 Amendment A-0 part B; PRM-118): an accessor is its own owner. */
+const ACCESSOR_SITE: CensusEntry = {
+  role: "site",
+  site: "accessor",
+  when: "a getter or setter with a body (an abstract or ambient one has no code)",
 };
 /**
  * Task A-3b (PRM-116, RWF-066): a JSX element or fragment is a call to the
@@ -364,23 +410,29 @@ export const SYNTAX_KIND_CENSUS = {
   JsxSelfClosingElement: JSX_SITE,
   JsxOpeningFragment: JSX_SITE,
 
-  // -- pending: invocation-capable, not yet accounted -----------------------
   BinaryExpression: {
     role: "site",
     site: "escaping_assignment",
-    when: "an assignment (`=`, `||=`, `&&=`, `??=`) that stores a value which may carry the program's own code into an ambient global, a member of one, or a member of a builtin module's value (task A-3a, ADR 0008 § 2's escape row, PRM-114)",
-    pending: {
-      tasks: ["A-4"],
-      findings: ["PRM-38"],
-      what: "an assignment to a protocol-named property registers a method the runtime invokes implicitly (A-4). Its operators' coercions are use sites (see USE_SITE)",
-    },
+    also: ["protocol_member"],
+    when: "an assignment (`=`, `||=`, `&&=`, `??=`) that stores a value which may carry the program's own code into an ambient global, a member of one, or a member of a builtin module's value (task A-3a, ADR 0008 § 2's escape row, PRM-114); otherwise one storing into a member under a key that may be a protocol member's (task A-4). Its operators' coercions are use sites (see USE_SITE)",
   },
-  MethodDeclaration: PROTOCOL_DEFINITION,
-  PropertyAssignment: PROTOCOL_DEFINITION,
-  ShorthandPropertyAssignment: PROTOCOL_DEFINITION,
-  PropertyDeclaration: PROTOCOL_DEFINITION,
-  GetAccessor: ACCESSOR_DEFINITION,
-  SetAccessor: ACCESSOR_DEFINITION,
+  MethodDeclaration: PROTOCOL_MEMBER(
+    "a method with a body, of a class or object literal, under a key that may be a protocol member's",
+  ),
+  PropertyAssignment: PROTOCOL_MEMBER(
+    "a property of an object literal (not a destructuring pattern) whose value may carry the program's code, under a key that may be a protocol member's",
+  ),
+  ShorthandPropertyAssignment: PROTOCOL_MEMBER(
+    "a shorthand property of an object literal (not a destructuring pattern) named like a protocol member, whose value may carry the program's code",
+  ),
+  PropertyDeclaration: PROTOCOL_MEMBER(
+    "a class field whose initializer may carry the program's code, under a key that may be a protocol member's",
+  ),
+  ForOfStatement: PROTOCOL_MEMBER(
+    "a `for…of` whose target writes a member under a key that may be a protocol member's; otherwise a use site of the iterator protocol (see USE_SITE)",
+  ),
+  GetAccessor: ACCESSOR_SITE,
+  SetAccessor: ACCESSOR_SITE,
 
   // -- use sites, accounted at the definition --------------------------------
   PropertyAccessExpression: USE_SITE,
@@ -397,7 +449,6 @@ export const SYNTAX_KIND_CENSUS = {
   PostfixUnaryExpression: USE_SITE,
   DeleteExpression: USE_SITE,
   ComputedPropertyName: USE_SITE,
-  ForOfStatement: USE_SITE,
   ForInStatement: USE_SITE,
   WithStatement: USE_SITE,
   VariableDeclarationList: USE_SITE,
@@ -406,7 +457,9 @@ export const SYNTAX_KIND_CENSUS = {
   JsxSpreadAttribute: USE_SITE,
 
   // -- definitions ------------------------------------------------------------
-  FunctionDeclaration: DEFINITION,
+  FunctionDeclaration: PROTOCOL_MEMBER(
+    "an ES module's named export under a protocol name (`export function then() {}`): a property of the module's namespace object, which `await` or a coercion invokes (task A-4); otherwise a definition, whose body runs only when a site invokes it",
+  ),
   FunctionExpression: DEFINITION,
   ArrowFunction: DEFINITION,
   Constructor: DEFINITION,
@@ -414,7 +467,9 @@ export const SYNTAX_KIND_CENSUS = {
     "a definition whose body runs at class definition: every call in it is its own site, attributed to the owner that evaluates the class",
   ),
   Parameter: DEFINITION,
-  VariableDeclaration: DEFINITION,
+  VariableDeclaration: PROTOCOL_MEMBER(
+    "an exported variable under a protocol name (`export const then = …`) whose value may carry the program's code (task A-4); otherwise a definition",
+  ),
   EnumDeclaration: none(
     "evaluated where it is declared: its member initializers run at once, and every call in them is its own site under the enclosing owner",
   ),
@@ -502,7 +557,9 @@ export const SYNTAX_KIND_CENSUS = {
   ImportSpecifier: MODULE_SYNTAX,
   NamedExports: MODULE_SYNTAX,
   NamespaceExport: MODULE_SYNTAX,
-  ExportSpecifier: MODULE_SYNTAX,
+  ExportSpecifier: PROTOCOL_MEMBER(
+    "an export specifier publishing a value under a protocol name (`export { f as then }`, or a re-export) on the module's namespace object (task A-4); otherwise module syntax, accounted by module_load edges",
+  ),
   ImportAttributes: MODULE_SYNTAX,
   ImportAttribute: MODULE_SYNTAX,
   ImportTypeAssertionContainer: MODULE_SYNTAX,
@@ -557,6 +614,11 @@ export const LEXICAL_FAMILIES: readonly {
     entry: none("a JSDoc comment node: never evaluated"),
   },
 ];
+
+/** Every site kind a census entry says nodes of its kind can be. */
+export function siteKindsOf(entry: CensusEntry): readonly InvocationSiteKind[] {
+  return entry.role === "site" ? [entry.site, ...(entry.also ?? [])] : [];
+}
 
 const censusByKind = new Map<ts.SyntaxKind, CensusEntry>(
   Object.entries(SYNTAX_KIND_CENSUS).map(([name, entry]) => [

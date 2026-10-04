@@ -50,9 +50,9 @@ const INSTALLED_LIB: Readonly<Record<string, string>> = {
 
 /**
  * Family C: `main` (the only root) calls `safe`. `callsVulnerable` and
- * `callsSafe` are never called, so today nothing reaches them -- they
- * stand for the function values A-3 and A-4 will give `possible` edges
- * (a callback handed to an unmodeled builtin, an accessor body).
+ * `callsSafe` are never called, so nothing reaches them over a resolved
+ * edge -- they stand for the function values A-3 and A-4 give `possible`
+ * edges (a callback handed to an unmodeled builtin, an accessor body).
  */
 const FAMILY_C_PROJECT: ProofProject = {
   files: {
@@ -472,6 +472,89 @@ describe("A-3b's emitted possible edges reach buildFinding as possible_invocatio
       proof.inputs.graph.edges.some((e) => e.resolution.kind === "possible"),
       "the production graph emits the possible edge",
     ).toBe(true);
+    const outcome = await runProof(proof.inputs);
+    expect(outcome.verdict, describeOutcome(outcome)).toBe("UNKNOWN");
+    expect(reasonsOf(outcome)).toContain(
+      "value_uncertainty/possible_invocation",
+    );
+  });
+});
+
+/**
+ * Task A-4, REMEDIATION-PLAN § 5a ("A-2 additions"): the `protocol_member`
+ * and `accessor` site kinds emit a possible edge from the owner that
+ * evaluates the definition (ADR 0008 § 2's protocol-member row, Amendment
+ * A-0 part B), through the production graph builder and `buildFinding`,
+ * with no edge injected. The region behind the edge is otherwise
+ * complete, so the target reached only through it is reported as
+ * `possible_invocation`.
+ */
+describe("A-4's emitted possible edges reach buildFinding as possible_invocation", () => {
+  it.each([
+    [
+      "a protocol member: an object-literal toString (protocol_member)",
+      'const o = { toString() { vulnerable(1); return ""; } };\n',
+    ],
+    [
+      "a protocol member: a stored then (protocol_member)",
+      "const t = {};\nt.then = callsVulnerable;\n",
+    ],
+    [
+      "a protocol member: a class's Symbol.iterator (protocol_member)",
+      "class It { *[Symbol.iterator]() { yield vulnerable(1); } }\n",
+    ],
+    [
+      "an accessor: a class getter (accessor)",
+      "class C { get v() { return vulnerable(1); } }\n",
+    ],
+    [
+      "an accessor: an object-literal setter (accessor)",
+      "const o = { set v(x) { vulnerable(x); } };\n",
+    ],
+  ])("%s", async (_name, body) => {
+    const proof = await workspace.materialize({
+      ...FAMILY_C_PROJECT,
+      files: {
+        ...FAMILY_C_PROJECT.files,
+        "src/index.js":
+          'const { safe, vulnerable } = require("vuln-lib");\n' +
+          "function main(){ return safe(1); }\n" +
+          "function callsVulnerable(){ return vulnerable(1); }\n" +
+          body +
+          "module.exports = { main };\n",
+      },
+    });
+    expect(
+      proof.inputs.graph.edges.some((e) => e.resolution.kind === "possible"),
+      "the production graph emits the possible edge",
+    ).toBe(true);
+    const outcome = await runProof(proof.inputs);
+    expect(outcome.verdict, describeOutcome(outcome)).toBe("UNKNOWN");
+    expect(reasonsOf(outcome)).toContain(
+      "value_uncertainty/possible_invocation",
+    );
+  });
+});
+
+/**
+ * Task A-4's independent audit: an accessor node is named `get <key>`,
+ * which a string export key can spell. Binding a node by NAME -- an
+ * entrypoint's root candidates -- must never root an accessor, or a getter
+ * nobody runs becomes a resolved path (a fabricated AFFECTED).
+ */
+describe("an accessor is never rooted by name", () => {
+  it("module.exports['get x'] does not root the getter `get x`", async () => {
+    const proof = await workspace.materialize({
+      ...FAMILY_C_PROJECT,
+      files: {
+        ...FAMILY_C_PROJECT.files,
+        "src/index.js":
+          'const { safe, vulnerable } = require("vuln-lib");\n' +
+          "function main(){ return safe(1); }\n" +
+          "const o = { get x() { return vulnerable(1); } };\n" +
+          'module.exports = { main };\nmodule.exports["get x"] = 1;\n',
+      },
+    });
     const outcome = await runProof(proof.inputs);
     expect(outcome.verdict, describeOutcome(outcome)).toBe("UNKNOWN");
     expect(reasonsOf(outcome)).toContain(

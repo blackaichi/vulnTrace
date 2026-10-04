@@ -133,6 +133,8 @@ export const UNCERTAINTY_REASONS = [
   // --- An own-export call and a JSX factory call (ADR 0008 § 2, task A-3b) ---
   "own_export_call",
   "jsx_factory_call",
+  // --- A value a protocol member may invoke implicitly (ADR 0008 § 2, task A-4) ---
+  "protocol_value",
   "declaration_only_resolution",
   "aliased_require",
   "create_require",
@@ -255,6 +257,9 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // Task A-3b, ADR 0008 § 2's JSX row: the classic factory is a value in
   // scope that the graph does not resolve yet (backlog BL-041).
   jsx_factory_call: "unmodeled_construct",
+  // Task A-4, ADR 0008 § 2's protocol-member row and § 3: the implicit
+  // invocation is modeled; the value it invokes is not attributable.
+  protocol_value: "unmodeled_construct",
   // Both workspace shapes are genuine, closeable frontend gaps: a `pkg-*`
   // or brace pattern is documented npm workspace syntax this analyzer
   // declines to interpret, and a `pnpm-workspace.yaml` layout is a file it

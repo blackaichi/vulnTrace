@@ -203,6 +203,18 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
 }
 
 /**
+ * Whether `node` is the node named `name` in `file`, for the lookups below
+ * that bind a node by NAME (an entrypoint's configured symbol, its root
+ * candidates, the synthetic-graph fallback). An accessor node is never one
+ * (task A-4): its name (`get x`) is a label, not a binding, and a string
+ * export key can spell it (`module.exports["get x"] = 1`), which would root
+ * a getter nobody runs -- a fabricated path (task A-4's independent audit).
+ */
+function isNamedNode(node: GraphNode, file: string, name: string): boolean {
+  return node.module === file && node.kind !== "accessor" && node.name === name;
+}
+
+/**
  * Finds every graph node implementing `{module: resolvedFile, export:
  * exportName}` — usually exactly one, but see the class-member step below
  * for when more than one is a structurally valid answer. Returns `[]`
@@ -299,8 +311,8 @@ function findExportNodeInFile(
     return [];
   }
 
-  const fallback = graph.nodes.find(
-    (n) => n.module === resolvedFile && n.name === exportName,
+  const fallback = graph.nodes.find((n) =>
+    isNamedNode(n, resolvedFile, exportName),
   );
   return fallback ? [fallback] : [];
 }
@@ -1101,8 +1113,9 @@ function entrypointSourceNodes(
   }
 
   if (entrypoint.symbol) {
-    const node = graph.nodes.find(
-      (n) => n.module === entrypoint.filePath && n.name === entrypoint.symbol,
+    const symbol = entrypoint.symbol;
+    const node = graph.nodes.find((n) =>
+      isNamedNode(n, entrypoint.filePath, symbol),
     );
     if (node) {
       sources.push(node);
@@ -1145,8 +1158,8 @@ function entrypointSourceNodes(
   // and the false NOT_AFFECTED and false AFFECTED each one prevents.
   const candidates = entrypointRootCandidates(index, model);
   for (const name of candidates.names) {
-    const node = graph.nodes.find(
-      (n) => n.module === entrypoint.filePath && n.name === name,
+    const node = graph.nodes.find((n) =>
+      isNamedNode(n, entrypoint.filePath, name),
     );
     if (node) {
       sources.push(node);
@@ -1186,9 +1199,7 @@ function entrypointSourceNodes(
   const unmaterialized = candidates.rootRequirements.filter(
     (requirement) =>
       !requirement.names.some((name) =>
-        graph.nodes.some(
-          (n) => n.module === entrypoint.filePath && n.name === name,
-        ),
+        graph.nodes.some((n) => isNamedNode(n, entrypoint.filePath, name)),
       ) &&
       !requirement.locations.some((location) =>
         graph.nodes.some(

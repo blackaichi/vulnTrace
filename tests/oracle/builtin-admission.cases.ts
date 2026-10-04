@@ -207,10 +207,6 @@ function protocolObject(hook: string, call: string): string {
   }
 }
 
-/** Why a getter hook's case has no negative control before task A-4. */
-const ACCESSOR_CONTROLS_REASON =
-  "an accessor body's calls are attributed, withdrawn to unknown, to the owner that defines it until an accessor is its own owner (task A-4), so no variant of this project can be NOT_AFFECTED; condition (b) asks only that the case never is";
-
 function oracleCase(
   id: string,
   source: string,
@@ -280,12 +276,12 @@ export function admissionOracleCases(
     ];
   }
   if (hookClass === "accessor") {
+    // Since task A-4 the getter is its own owner, reached by a possible
+    // edge from the module: with `safe` in its body the region is complete.
+    const program = (call: string) =>
+      `${setup}const __arg = { get probe() { ${call} return 1; } };\n${invoke}`;
     return [
-      oracleCase(
-        `${id}.getter`,
-        `${setup}const __arg = { get probe() { ${PARSE} return 1; } };\n${invoke}`,
-        { inapplicable: ACCESSOR_CONTROLS_REASON },
-      ),
+      oracleCase(`${id}.getter`, program(PARSE), { negative: program(SAFE) }),
     ];
   }
   if (hookClass === "protocol") {

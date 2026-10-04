@@ -88,8 +88,8 @@ export interface A1Case {
   /**
    * Only for an UNKNOWN case: set to `false` when real Node never calls
    * the target, and UNKNOWN is the sound precision cost of an invocation
-   * that may or may not happen (a site in an accessor body, which has no
-   * node of its own until task A-4). Otherwise an UNKNOWN case is a
+   * that may or may not happen (a site in an accessor body, reached by a
+   * possible edge since task A-4). Otherwise an UNKNOWN case is a
    * fail-closed account of a call that does happen.
    */
   readonly realNodeCalls?: false;
@@ -226,8 +226,9 @@ export const TAGGED_TEMPLATES: readonly A1Case[] = [
     },
     // Task A-3a: the substitution hands String.raw a primitive (`"" + …`).
     // Handed the call's result itself, String.raw -- which coerces a
-    // substitution with `toString`, a protocol hook no position admission
-    // covers before task A-4 -- is the fail-closed default, and the
+    // substitution with `toString`, and is not on the allowlist (task A-4
+    // re-probed only the positions the plan lists) -- is the fail-closed
+    // default, and the
     // negative control (the hook calling `safe`) would be UNKNOWN too.
     (fn) => `String.raw\`a\${"" + lib.${fn}("x")}\`;\n`,
   ),
@@ -565,7 +566,7 @@ export const DECORATORS_AUDIT: readonly A1Case[] = [
     id: "decorator.standard.getter-body-class-never-read",
     finding: "PRM-115",
     mechanism:
-      "the decorated class is written in a getter body that is never read: UNKNOWN until an accessor is its own owner (A-4)",
+      "the decorated class is written in a getter body that is never read: UNKNOWN, the getter being its own owner reached by a possible edge (A-4)",
     language: "ts-standard-decorators",
     expected: "UNKNOWN",
     realNodeCalls: false,
