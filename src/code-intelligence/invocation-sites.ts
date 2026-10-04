@@ -491,7 +491,7 @@ export const SYNTAX_KIND_CENSUS = {
   VariableStatement: STRUCTURE,
   ExpressionStatement: STRUCTURE,
   IfStatement: none(
-    "structure; a branch the walk prunes has every site in it accounted `constant_folded_branch` (UnprovenNoEdgeReason)",
+    "structure; a branch the walk prunes has every site in it accounted `provably_dead_branch` (NoEdgeProof, task A-5a)",
   ),
   DoStatement: STRUCTURE,
   WhileStatement: STRUCTURE,

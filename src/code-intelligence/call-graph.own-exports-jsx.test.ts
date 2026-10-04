@@ -85,9 +85,9 @@ function describeEdges(graph: CallGraph, from: string): string[] {
   );
 }
 
-function unprovenAccounts(built: Built): string[] {
+function noEdgeAccounts(built: Built): string[] {
   return built.observations.flatMap((o) =>
-    o.account.kind === "unproven_no_edge" ? [o.account.reason] : [],
+    o.account.kind === "no_edge" ? [o.account.proof.kind] : [],
   );
 }
 
@@ -112,7 +112,7 @@ describe("a call rooted in a module-scope binding gets an unknown edge (AUD-02)"
     expect(describeEdges(built.graph, moduleNode(built))).toEqual([
       "unknown own_export_call",
     ]);
-    expect(unprovenAccounts(built)).toEqual([]);
+    expect(noEdgeAccounts(built)).toEqual([]);
   });
 
   it.each([
@@ -136,7 +136,7 @@ describe("a call rooted in a module-scope binding gets an unknown edge (AUD-02)"
       expect(describeEdges(built.graph, moduleNode(built))).toEqual([
         `unknown ${reason}`,
       ]);
-      expect(unprovenAccounts(built)).toEqual([]);
+      expect(noEdgeAccounts(built)).toEqual([]);
     },
   );
 
@@ -207,7 +207,7 @@ describe("a call rooted in a module-scope binding gets an unknown edge (AUD-02)"
     expect(
       edge?.resolution.kind === "unknown" && edge.resolution.reason,
     ).toMatch(/^unsupported_/);
-    expect(unprovenAccounts(built)).toEqual([]);
+    expect(noEdgeAccounts(built)).toEqual([]);
   });
 
   it.each([

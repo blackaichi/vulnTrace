@@ -479,14 +479,12 @@ export interface CallEdge {
  *   first producer (escaped function values, ADR 0008 § 2's escape row).
  * - `no_edge`: the site gets no edge, and a {@link NoEdgeProof} from ADR
  *   0008 § 2's closed set says why none is needed.
- * - `unproven_no_edge`: the site gets no edge, AND nothing proves that is
- *   sound. See {@link UnprovenNoEdgeReason}.
  *
- * ADR 0008 § 2 closes the set of no-edge proofs (`AmbientStaticRequire`,
- * `PrimitiveOnlyArguments`, `NonInvokingBuiltin`, `ProvablyDeadBranch`).
- * Task A-3a made the two builtin ones real; the other two are still
- * unproven reasons below (`static_require_by_text`,
- * `constant_folded_branch`, both task A-5's).
+ * There is no third outcome. Until task A-5a an `unproven_no_edge` account
+ * named the no-edge branches still taken without a proof, each owned by an
+ * open finding in a ledger; A-5a proved the last two (PRM-14, PRM-15) and
+ * deleted the variant, the reason type and the ledger, which is ADR 0008's
+ * stated end state for them ("this type is empty").
  */
 export type InvocationAccount =
   | {
@@ -496,20 +494,19 @@ export type InvocationAccount =
   | {
       readonly kind: "no_edge";
       readonly proof: NoEdgeProof;
-    }
-  | {
-      readonly kind: "unproven_no_edge";
-      readonly reason: UnprovenNoEdgeReason;
     };
 
 /**
- * Why a call of a known builtin (`code-intelligence/builtin-callables.ts`)
- * needs no edge (ADR 0008 § 2's closed no-edge proofs; task A-3a). Both
- * hold only for a callee PROVEN to be the builtin: an ambient global whose
- * root name no enclosing scope declares, or a builtin module's export
- * reached through the binder's own declaration authority -- never a name
- * that merely looks like one. `builtin` is the behaviour key
- * (`"call global:Array.isArray"`, `"call module:path:join"`).
+ * Why a site needs no edge: ADR 0008 § 2's closed set of no-edge proofs,
+ * all four now real. Each variant's owner test is in
+ * `call-graph.invocation-account.test.ts`.
+ *
+ * The two builtin proofs (task A-3a) hold only for a callee PROVEN to be
+ * the builtin: an ambient global whose root name no enclosing scope
+ * declares, or a builtin module's export reached through the binder's own
+ * declaration authority -- never a name that merely looks like one.
+ * `builtin` is the behaviour key (`"call global:Array.isArray"`,
+ * `"call module:path:join"`).
  *
  * - `primitive_only_arguments`: every argument is provably primitive, so
  *   the builtin is handed nothing that can carry the program's own code.
@@ -518,60 +515,22 @@ export type InvocationAccount =
  *   `tests/oracle/builtin-admission.test.ts`), and no argument is an
  *   attributable function (the escape row would give that one an edge,
  *   and it takes precedence over every admitted position).
- *
- * Each variant's owner test is in `call-graph.invocation-account.test.ts`.
+ * - `ambient_static_require` (`AmbientStaticRequire`, task A-5a): a static
+ *   `require("literal")` whose callee is PROVEN to be the ambient CommonJS
+ *   `require` (`named-bindings.ts`, `isAmbientStaticRequireCall`); the
+ *   module model records the load of its specifier. A `require` the file
+ *   declares or writes is an ordinary callee (PRM-15).
+ * - `provably_dead_branch` (`ProvablyDeadBranch`, task A-5a): a site in the
+ *   branch of an `if` whose condition folds, by a fold that is itself a
+ *   proof -- literal `true`/`false`, `!`, strict (in)equality of two
+ *   literals, loose (in)equality only of two literals of the same type
+ *   (PRM-14).
  */
 export type NoEdgeProof =
   | { readonly kind: "primitive_only_arguments"; readonly builtin: string }
-  | { readonly kind: "non_invoking_builtin"; readonly builtin: string };
-
-/**
- * The no-edge branches the graph still takes WITHOUT a proof, each named
- * by the certified decision it comes from. They are open soundness
- * defects, not exceptions: each is reproduced as a false NOT_AFFECTED in
- * `tests/validation/FINDINGS.md`, and each is removed by a named lane-A
- * task ({@link UNPROVEN_NO_EDGE_LEDGER}). ADR 0008's end state is that
- * this type is empty.
- *
- * VT-201's exemption of ambient globals is gone: task A-3a accounted for
- * the ambient and builtin callees (removing `builtin_module_callee`, VT-305)
- * and narrowed the rest to `module_scope_callee`, the CommonJS module-scope
- * roots, which task A-3b removed (AUD-02: an own-export call is an
- * `own_export_call` unknown edge; any other call through `module` or
- * `require` a `loader_capability_escape` one).
- *
- * - `static_require_by_text` (P1-B3b): `require("x")` recognised by its
- *   spelling, not by proving `require` is the ambient one; a local
- *   `function require` is never seen. `AmbientStaticRequire` needs that
- *   lexical proof.
- * - `constant_folded_branch` (VT-211): a site in the branch an `if` whose
- *   condition `evaluateConstantBoolean` folds never takes. Strict equality
- *   of same-type literals is a proof; the loose `==`/`!=` folding it also
- *   performs is not, so the account as a whole is unproven until the two
- *   are separated.
- */
-export type UnprovenNoEdgeReason =
-  "static_require_by_text" | "constant_folded_branch";
-
-/**
- * Who owns each {@link UnprovenNoEdgeReason}: the open findings it is the
- * mechanism of, and the lane-A task (ADR 0008 § 8) that removes it.
- * `call-graph.invocation-account.test.ts` requires every finding named
- * here to still be OPEN, so closing one without deleting its reason --
- * or deleting a reason while its finding stays open -- fails a test.
- */
-export const UNPROVEN_NO_EDGE_LEDGER: Readonly<
-  Record<
-    UnprovenNoEdgeReason,
-    {
-      readonly closedBy: "A-5";
-      readonly findings: readonly [string, ...string[]];
-    }
-  >
-> = {
-  static_require_by_text: { closedBy: "A-5", findings: ["PRM-15"] },
-  constant_folded_branch: { closedBy: "A-5", findings: ["PRM-14"] },
-};
+  | { readonly kind: "non_invoking_builtin"; readonly builtin: string }
+  | { readonly kind: "ambient_static_require"; readonly specifier: string }
+  | { readonly kind: "provably_dead_branch" };
 
 /** The structure Reachability operates over (see docs/SDD.md § 18). */
 export interface CallGraph {

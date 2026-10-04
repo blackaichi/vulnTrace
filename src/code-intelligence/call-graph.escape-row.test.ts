@@ -87,9 +87,14 @@ function describeEdges(graph: CallGraph, from: string): string[] {
   );
 }
 
-function proofs(built: Built): NoEdgeProof[] {
+type BuiltinNoEdgeProof = Extract<NoEdgeProof, { readonly builtin: string }>;
+
+/** The builtin no-edge proofs (task A-3a); a static `require`'s own proof (task A-5a) is not this file's subject. */
+function proofs(built: Built): BuiltinNoEdgeProof[] {
   return built.observations.flatMap((o) =>
-    o.account.kind === "no_edge" ? [o.account.proof] : [],
+    o.account.kind === "no_edge" && "builtin" in o.account.proof
+      ? [o.account.proof]
+      : [],
   );
 }
 

@@ -2711,90 +2711,72 @@ describe("buildCallGraph: static branch folding (VT-211)", () => {
 });
 
 describe("buildCallGraph: inline callback-argument invocation (VT-213)", () => {
-  it("connects a call site to the exactly-one inline arrow-function argument it passes", async () => {
+  // VT-213 used to resolve an unattributable call to its one inline
+  // callback, displacing the callee's unknown edge (PRM-13). ADR 0008 § 6
+  // reopened it and task A-5a deleted it: the callee keeps its honest
+  // unknown edge, and the callback -- an attributable function escaping
+  // into code the graph does not model -- gets the escape row's POSSIBLE
+  // edge (ADR 0008 § 2), so its body is searched but never makes a path
+  // AFFECTED. These three tests pinned the displacement; the second one
+  // ("someUtterlyArbitraryMethodName") pinned it by OMISSION, never
+  // asserting the callee's edge (REMEDIATION-PLAN § 3). Each now asserts
+  // both edges.
+  async function mainAccount(source: string) {
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
-    const entry = write(
-      root,
-      "src/index.ts",
-      'import { vulnerable } from "./lib.js";\n' +
-        "function main() {\n  return [1, 2, 3].map(() => vulnerable());\n}\n",
-    );
-
+    const entry = write(root, "src/index.ts", source);
     const graph = await graphFor(root, [entry]);
-
     const mainNode = findNode(graph, (n) => n.name === "main");
     const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
     expect(mainNode).toBeDefined();
     expect(vulnerableNode).toBeDefined();
-
-    const mainEdge = graph.edges.find((e) => e.from === mainNode?.id);
-    expect(mainEdge).toMatchObject({
-      type: "callback",
-      resolution: { kind: "resolved" },
-    });
+    const mainEdges = graph.edges.filter((e) => e.from === mainNode?.id);
+    const possible = mainEdges.filter((e) => e.resolution.kind === "possible");
     const callbackNodeId =
-      mainEdge?.resolution.kind === "resolved"
-        ? mainEdge.resolution.target
+      possible[0]?.resolution.kind === "possible"
+        ? possible[0].resolution.target
         : undefined;
-    expect(callbackNodeId).toBeDefined();
+    return { graph, mainEdges, possible, callbackNodeId, vulnerableNode };
+  }
 
-    // The callback's own body (walked separately, unaffected by this task)
-    // must itself resolve to vulnerable() -- confirming the full two-hop
-    // path main -> callback -> vulnerable is now connected end to end.
-    const callbackEdge = graph.edges.find((e) => e.from === callbackNodeId);
-    expect(callbackEdge).toMatchObject({
-      resolution: { kind: "resolved", target: vulnerableNode?.id },
-    });
-  });
-
-  it("connects a call site to an inline callback regardless of the method name (no special-casing)", async () => {
-    const root = tempProject();
-    write(root, "src/lib.ts", "export function vulnerable() {}\n");
-    const entry = write(
-      root,
-      "src/index.ts",
-      'import { vulnerable } from "./lib.js";\n' +
-        "function main(obj) {\n  return obj.someUtterlyArbitraryMethodName(() => vulnerable());\n}\n",
+  it("keeps the callee's unknown edge and gives the one inline arrow a possible edge, never a resolved one (PRM-13)", async () => {
+    const { graph, mainEdges, possible, callbackNodeId, vulnerableNode } =
+      await mainAccount(
+        'import { vulnerable } from "./lib.js";\n' +
+          "function main(arr) {\n  return arr.map(() => vulnerable());\n}\n",
+      );
+    expect(
+      mainEdges.filter((e) => e.resolution.kind === "unknown"),
+    ).toHaveLength(1);
+    expect(mainEdges.filter((e) => e.resolution.kind === "resolved")).toEqual(
+      [],
     );
-
-    const graph = await graphFor(root, [entry]);
-
-    const mainNode = findNode(graph, (n) => n.name === "main");
-    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
-    const mainEdge = graph.edges.find((e) => e.from === mainNode?.id);
-    const callbackNodeId =
-      mainEdge?.resolution.kind === "resolved"
-        ? mainEdge.resolution.target
-        : undefined;
-    expect(callbackNodeId).toBeDefined();
+    expect(possible).toHaveLength(1);
+    expect(possible[0]).toMatchObject({ type: "callback" });
+    // The callback's own body is walked and still resolves to vulnerable().
     const callbackEdge = graph.edges.find((e) => e.from === callbackNodeId);
     expect(callbackEdge).toMatchObject({
       resolution: { kind: "resolved", target: vulnerableNode?.id },
     });
   });
 
-  it("connects a call site to an inline function-expression argument, not just arrow functions", async () => {
-    const root = tempProject();
-    write(root, "src/lib.ts", "export function vulnerable() {}\n");
-    const entry = write(
-      root,
-      "src/index.ts",
-      'import { vulnerable } from "./lib.js";\n' +
-        "function main() {\n" +
-        "  return [1, 2, 3].map(function () {\n    return vulnerable();\n  });\n" +
-        "}\n",
+  it("gives obj.someUtterlyArbitraryMethodName(() => ...) an unknown edge for the callee, a parameter's member (PRM-13)", async () => {
+    const { graph, mainEdges, callbackNodeId, vulnerableNode } =
+      await mainAccount(
+        'import { vulnerable } from "./lib.js";\n' +
+          "function main(obj) {\n  return obj.someUtterlyArbitraryMethodName(() => vulnerable());\n}\n",
+      );
+    // The assertion the pinned test omitted: the callee itself, which the
+    // graph cannot attribute, carries an unknown edge.
+    expect(mainEdges.filter((e) => e.resolution.kind === "unknown")).toEqual([
+      expect.objectContaining({
+        type: "method",
+        resolution: expect.objectContaining({ kind: "unknown" }),
+      }),
+    ]);
+    expect(mainEdges.filter((e) => e.resolution.kind === "resolved")).toEqual(
+      [],
     );
-
-    const graph = await graphFor(root, [entry]);
-
-    const mainNode = findNode(graph, (n) => n.name === "main");
-    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
-    const mainEdge = graph.edges.find((e) => e.from === mainNode?.id);
-    const callbackNodeId =
-      mainEdge?.resolution.kind === "resolved"
-        ? mainEdge.resolution.target
-        : undefined;
     expect(callbackNodeId).toBeDefined();
     const callbackEdge = graph.edges.find((e) => e.from === callbackNodeId);
     expect(callbackEdge).toMatchObject({
@@ -2802,7 +2784,29 @@ describe("buildCallGraph: inline callback-argument invocation (VT-213)", () => {
     });
   });
 
-  it("still falls back to unsupported_literal_receiver for a NAMED callback reference (not an inline literal)", async () => {
+  it("treats an inline function expression the same way as an arrow (PRM-13)", async () => {
+    const { graph, mainEdges, possible, callbackNodeId, vulnerableNode } =
+      await mainAccount(
+        'import { vulnerable } from "./lib.js";\n' +
+          "function main(arr) {\n" +
+          "  return arr.map(function () {\n    return vulnerable();\n  });\n" +
+          "}\n",
+      );
+    expect(
+      mainEdges.filter((e) => e.resolution.kind === "unknown"),
+    ).toHaveLength(1);
+    expect(possible).toHaveLength(1);
+    const callbackEdge = graph.edges.find((e) => e.from === callbackNodeId);
+    expect(callbackEdge).toMatchObject({
+      resolution: { kind: "resolved", target: vulnerableNode?.id },
+    });
+  });
+
+  it("resolves a NAMED callback handed to a non-empty array literal's map: a receiver-bound documented invoking builtin (ADR 0008 § 4, task A-5a)", async () => {
+    // Before task A-5a this was an unknown `unsupported_literal_receiver`
+    // edge. `[1, 2, 3]` is proven to be an array with a first element, so
+    // `map` is guaranteed to call `vulnerable`: a resolved edge with that
+    // authority.
     const root = tempProject();
     write(root, "src/lib.ts", "export function vulnerable() {}\n");
     const entry = write(
@@ -2815,10 +2819,14 @@ describe("buildCallGraph: inline callback-argument invocation (VT-213)", () => {
     const graph = await graphFor(root, [entry]);
 
     const mainNode = findNode(graph, (n) => n.name === "main");
-    const edge = graph.edges.find((e) => e.from === mainNode?.id);
-    expect(edge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_literal_receiver" },
-    });
+    const vulnerableNode = findNode(graph, (n) => n.name === "vulnerable");
+    const edges = graph.edges.filter((e) => e.from === mainNode?.id);
+    expect(edges).toEqual([
+      expect.objectContaining({
+        type: "callback",
+        resolution: { kind: "resolved", target: vulnerableNode?.id },
+      }),
+    ]);
   });
 
   it("still falls back to unsupported_receiver_binding when more than one inline callback argument is present", async () => {
