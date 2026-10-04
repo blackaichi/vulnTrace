@@ -163,10 +163,12 @@ describe("the builtin table", () => {
  * REMEDIATION-PLAN § 5a's "mechanical admission" criterion names these
  * builtins as examples whose probe fires. Each one's outcome is asserted
  * here, with the hooks that decide it, so the report's admission table is
- * a measured fact. A protocol-member hook is accounted by condition (a),
- * but its condition-(b) oracle case cannot pass before task A-4 accounts
- * protocol members (the object's method has no incoming edge), so no
- * position firing one is admitted by this task.
+ * a measured fact. A protocol-member hook is accounted by condition (a);
+ * its condition-(b) oracle case could not pass before task A-4 accounted
+ * protocol members and accessors (the object's method had no incoming
+ * edge), so task A-3a admitted no position firing one. Task A-4 re-probed
+ * them: `JSON.parse` #0 and `JSON.stringify` #0 fire only protocol
+ * members and accessor bodies, pass (b), retain nothing, and are admitted.
  */
 describe("the admission outcome of the builtins the plan names", () => {
   const cases: readonly {
@@ -218,7 +220,7 @@ describe("the admission outcome of the builtins the plan names", () => {
       position: 0,
       arity: 1,
       fires: ["getter", "toJSON"],
-      admitted: false,
+      admitted: true,
     },
     {
       key: "global:Object.assign",
@@ -239,7 +241,7 @@ describe("the admission outcome of the builtins the plan names", () => {
       position: 0,
       arity: 1,
       fires: ["toString", "toPrimitive"],
-      admitted: false,
+      admitted: true,
     },
     {
       key: "global:JSON.parse",
@@ -269,10 +271,8 @@ describe("the admission outcome of the builtins the plan names", () => {
       ).toBe(c.admitted);
       if (c.admitted) {
         expect(
-          [...fired.keys()].every(
-            (hook) => classifyHook(hook) === "proxy_trap",
-          ),
-        ).toBe(true);
+          [...fired.keys()].filter((hook) => classifyHook(hook) === "other"),
+        ).toEqual([]);
       }
     },
     60_000,

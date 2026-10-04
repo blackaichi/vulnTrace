@@ -7,7 +7,7 @@ export type GraphNodeId = string;
  * (see docs/SDD.md § 18).
  */
 export type GraphNodeKind =
-  "function" | "method" | "constructor" | "callback" | "module";
+  "function" | "method" | "constructor" | "callback" | "accessor" | "module";
 
 export interface SourceLocation {
   readonly file: string;
@@ -111,6 +111,16 @@ export type DynamicCallReason =
    * scope, in a module already loaded.
    */
   | "jsx_factory_call"
+  /**
+   * Task A-4 (ADR 0008 § 2's protocol-member row): a value the runtime may
+   * invoke implicitly -- stored under a key that may be a protocol member
+   * (`{ then: v }`, `o.toString = v`, `o[k] = v`, a protocol-named
+   * getter's return value) -- that the graph cannot attribute.
+   * `unmodeled_construct`, non-widening: the value is already in scope, in
+   * a module already loaded (a loader handed over as a value is the
+   * module-load closure's, `loader-constructs.ts`).
+   */
+  | "protocol_value"
   /**
    * Task A-3b (PRM-116, RWF-066): a JSX element or fragment whose compiled
    * form may LOAD a module the graph does not follow: the automatic
@@ -367,6 +377,7 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "unresolved_target":
     case "own_export_call":
     case "jsx_factory_call":
+    case "protocol_value":
     case "escaped_value": {
       // Task A-3a, `escaped_value`: the escaped value is already in scope,
       // in a module the graph already loaded; a builtin running it cannot

@@ -9,6 +9,7 @@ import {
   SYNTAX_KIND_CENSUS,
   censusEntryFor,
   invocationSiteOf,
+  siteKindsOf,
   type CensusEntry,
   type InvocationSiteKind,
 } from "./invocation-sites.js";
@@ -123,6 +124,43 @@ const SITE_EXAMPLES: Readonly<
     tsx: true,
   },
   JsxOpeningFragment: { source: "const e = <>{a}</>;", site: "jsx", tsx: true },
+  MethodDeclaration: {
+    source: `const o = { toString() { return ""; } };`,
+    site: "protocol_member",
+  },
+  PropertyAssignment: {
+    source: "const o = { then: () => 1 };",
+    site: "protocol_member",
+  },
+  ShorthandPropertyAssignment: {
+    source: "const then = () => 1; const o = { then };",
+    site: "protocol_member",
+  },
+  PropertyDeclaration: {
+    source: "class C { valueOf = () => 1; }",
+    site: "protocol_member",
+  },
+  ForOfStatement: {
+    source: "for (o.toString of fns) {}",
+    site: "protocol_member",
+  },
+  FunctionDeclaration: {
+    source: "export function then() {}",
+    site: "protocol_member",
+  },
+  VariableDeclaration: {
+    source: "export const toString = () => 1;",
+    site: "protocol_member",
+  },
+  ExportSpecifier: {
+    source: "function f() {} export { f as valueOf };",
+    site: "protocol_member",
+  },
+  GetAccessor: {
+    source: "const o = { get v() { return 1; } };",
+    site: "accessor",
+  },
+  SetAccessor: { source: "const o = { set v(x) {} };", site: "accessor" },
 };
 
 function nodesOfKind(
@@ -164,7 +202,7 @@ describe("invocationSiteOf agrees with the census", () => {
       const nodes = nodesOfKind(example.source, kind, example.tsx);
       expect(nodes.length).toBeGreaterThan(0);
       for (const node of nodes) {
-        expect(entry.role === "site" && entry.site).toBe(example.site);
+        expect(siteKindsOf(entry)).toContain(example.site);
         expect(invocationSiteOf(node)?.kind).toBe(example.site);
       }
     },
@@ -201,7 +239,7 @@ describe("invocationSiteOf agrees with the census", () => {
       const site = invocationSiteOf(node);
       const entry = censusEntryFor(node.kind);
       if (site !== undefined) {
-        if (entry?.role !== "site" || entry.site !== site.kind) {
+        if (entry === undefined || !siteKindsOf(entry).includes(site.kind)) {
           mismatches.push(`${kindName(node.kind)} yielded ${site.kind}`);
         }
       } else if (entry?.role === "site" && entry.when === undefined) {
@@ -211,6 +249,22 @@ describe("invocationSiteOf agrees with the census", () => {
     };
     visit(sourceFile);
     expect(mismatches).toEqual([]);
+  });
+
+  it("an assignment storing into a member under a protocol key is a protocol_member site (task A-4); into an ambient value, an escaping_assignment", () => {
+    const cases: readonly [string, string | undefined][] = [
+      ["o.toString = () => 1;", "protocol_member"],
+      ["C.prototype.then = function () {};", "protocol_member"],
+      ["o[Symbol.iterator] = function* () {};", "protocol_member"],
+      ["({ a: o.valueOf } = src);", "protocol_member"],
+      ["o.name = () => 1;", undefined],
+      ["o.toString = 1;", undefined],
+      ["Error.prepareStackTrace = () => 1;", "escaping_assignment"],
+    ];
+    for (const [source, site] of cases) {
+      const [node] = nodesOfKind(source, ts.SyntaxKind.BinaryExpression);
+      expect(invocationSiteOf(node!)?.kind, source).toBe(site);
+    }
   });
 
   it("a class is an implicit_super site only when derived, with no constructor, and not ambient", () => {

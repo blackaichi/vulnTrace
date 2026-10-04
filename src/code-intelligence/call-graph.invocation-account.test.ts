@@ -217,9 +217,10 @@ describe("a derived class's implicit constructor constructs its base (PRM-19)", 
 
   it("accounts an ambient base by the builtin table: the forwarded arguments are values it cannot see (task A-3a)", async () => {
     // Before task A-3a this was the unproven `ambient_global_callee`
-    // account. `Error`'s first position runs `toString` on a non-primitive
-    // message, which no position admission covers before task A-4, so the
-    // forwarded `...args` get the fail-closed unknown edge.
+    // account. `Error`'s first position is admitted since task A-4, but
+    // its second (`{ cause }`, stored on the error) never is, and the
+    // forwarded `...args` may fill any position: the fail-closed unknown
+    // edge.
     const built = await build({
       "index.js": `class MyError extends Error {}\n`,
     });
@@ -391,7 +392,7 @@ describe("a tagged template or decorator is accounted from the owner that evalua
     );
   });
 
-  it("inside a getter body: withdrawn to unknown, from the owner of the getter's definition", async () => {
+  it("inside a getter body: from the getter's own node (task A-4: an accessor is its own owner)", async () => {
     const built = await build(
       {
         "index.ts":
@@ -401,6 +402,7 @@ describe("a tagged template or decorator is accounted from the owner that evalua
       "index.ts",
     );
     const logged = nodeNamed(built.graph, "logged");
+    const getter = nodeNamed(built.graph, "get g", "accessor");
     const decorator = built.observations.filter(
       (o) => o.site.kind === "decorator",
     );
@@ -409,12 +411,8 @@ describe("a tagged template or decorator is accounted from the owner that evalua
         kind: "edges",
         edges: [
           expect.objectContaining({
-            from: moduleNode(built),
-            resolution: {
-              kind: "unknown",
-              reason: "unsupported_construct",
-              potentialTargets: [logged],
-            },
+            from: getter,
+            resolution: { kind: "resolved", target: logged },
           }),
         ],
       },

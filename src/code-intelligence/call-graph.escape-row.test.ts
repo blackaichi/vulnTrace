@@ -154,7 +154,11 @@ describe("the fail-closed default (ADR 0008 § 3)", () => {
     const built = await build(
       `const util = require("util");\nconst o = { [util.inspect.custom]() { return "x"; } };\nconsole.log(o);\n`,
     );
+    // The method's own possible edge is the protocol-member row's (task
+    // A-4): a computed key it cannot read may be a protocol key. The call
+    // still gets its unknown edge: the escape row does not expand `o`.
     expect(describeEdges(built.graph, moduleNode(built))).toEqual([
+      `possible ${nodeNamed(built.graph, "[util.inspect.custom]")}`,
       "unknown escaped_value",
     ]);
   });

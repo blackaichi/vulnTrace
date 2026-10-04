@@ -593,7 +593,11 @@ export const AUDITED: readonly A3aCase[] = [
       `const fs = require("fs");\n` +
       `const u = { href: "file:///x", protocol: "file:", hostname: "", pathname: { length: 0, toString() { lib.parse("x"); return "/no-such-file"; } } };\n` +
       `fs.existsSync(u);\n`,
-    negative: `const u = { href: "file:///x", protocol: "file:", hostname: "", pathname: { length: 0, toString() { lib.parse("x"); return "/no-such-file"; } } };\n`,
+    // Since task A-4 the `toString` definition is itself a protocol member,
+    // reached by a possible edge from the module whatever reads it; the
+    // negative control keeps the definition, calling `safe` from it, and
+    // drops the trigger.
+    negative: `const u = { href: "file:///x", protocol: "file:", hostname: "", pathname: { length: 0, toString() { lib.safe("x"); return "/no-such-file"; } } };\n`,
   },
   {
     id: "audit.reassigned-function-declaration",

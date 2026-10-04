@@ -244,8 +244,8 @@ export const BUILTIN_BEHAVIOUR: Readonly<Record<string, BuiltinBehaviour>> = {
   // Measured and NOT admitted: `clearImmediate` writes properties onto its
   // argument (the retention probe sees the difference), and
   // `fs.readFileSync` fires `valueOf` at its first position in one context
-  // (a protocol hook, whose condition-(b) case cannot pass before task
-  // A-4) and reads standard input when handed `0`. Withdrawn after task
+  // (a protocol hook) and reads standard input when handed `0`, a path no
+  // hook shows (task A-4 did not re-probe it). Withdrawn after task
   // A-3a's independent audit, for hooks only a STRUCTURED argument reaches
   // and the probe's single-feature argument kinds never build:
   // `fs.existsSync` (a URL-shaped object -- `href`, `protocol`, `pathname`
@@ -261,4 +261,68 @@ export const BUILTIN_BEHAVIOUR: Readonly<Record<string, BuiltinBehaviour>> = {
   "call module:path:relative": { admitted: [0, 1] },
   "call module:path:normalize": { admitted: [0] },
   "call module:path:isAbsolute": { admitted: [0] },
+
+  // -- Task A-4: positions A-3a could not admit because a PROTOCOL hook (or
+  // an accessor body) fires there, whose condition-(b) oracle case could
+  // not pass before protocol members and accessors were accounted
+  // (REMEDIATION-PLAN § 5a, "A-3a additions"). Each coerces its argument
+  // (ToString, ToNumber, ToPrimitive) or serializes it, and returns or
+  // stores only a primitive; read, none takes a path through a structured
+  // argument beyond ToPrimitive / ToString / ToNumber and `JSON.stringify`'s
+  // walk of own enumerable properties (getters, `toJSON`). Each passes the
+  // mechanical admission test. Not admitted: `new events.EventEmitter`'s
+  // first position, whose probe passes, but whose `captureRejections`
+  // option is validated with an error message that INSPECTS a structured
+  // null-prototype value, running its `util.inspect.custom` method (task
+  // A-4's independent audit; the A-3a `path` positions share the path,
+  // RWF-069). Not admitted, because they RETAIN what they
+  // are handed: `new Error`'s second position (`cause` is stored on the
+  // error), `Object.assign`'s sources and `Object.entries`' argument (their
+  // values are returned). So a subclass of `Error` with no constructor
+  // still forwards its arguments into an unknown edge: forwarded values
+  // need every position admitted.
+  "call global:JSON.parse": { admitted: [0] },
+  "call global:JSON.stringify": { admitted: [0] },
+  "call global:String": { admitted: [0] },
+  "call global:Number": { admitted: [0] },
+  "call global:parseInt": { admitted: [0, 1] },
+  "call global:parseFloat": { admitted: [0] },
+  "call global:encodeURIComponent": { admitted: [0] },
+  "call global:Error": { admitted: [0] },
+  "construct global:Error": { admitted: [0] },
+  "construct global:Date": { admitted: [0] },
+  "call global:Math.abs": { admitted: [0] },
+  "call global:Math.acos": { admitted: [0] },
+  "call global:Math.acosh": { admitted: [0] },
+  "call global:Math.asin": { admitted: [0] },
+  "call global:Math.asinh": { admitted: [0] },
+  "call global:Math.atan": { admitted: [0] },
+  "call global:Math.atanh": { admitted: [0] },
+  "call global:Math.cbrt": { admitted: [0] },
+  "call global:Math.ceil": { admitted: [0] },
+  "call global:Math.clz32": { admitted: [0] },
+  "call global:Math.cos": { admitted: [0] },
+  "call global:Math.cosh": { admitted: [0] },
+  "call global:Math.exp": { admitted: [0] },
+  "call global:Math.expm1": { admitted: [0] },
+  "call global:Math.floor": { admitted: [0] },
+  "call global:Math.fround": { admitted: [0] },
+  "call global:Math.log": { admitted: [0] },
+  "call global:Math.log10": { admitted: [0] },
+  "call global:Math.log1p": { admitted: [0] },
+  "call global:Math.log2": { admitted: [0] },
+  "call global:Math.round": { admitted: [0] },
+  "call global:Math.sign": { admitted: [0] },
+  "call global:Math.sin": { admitted: [0] },
+  "call global:Math.sinh": { admitted: [0] },
+  "call global:Math.sqrt": { admitted: [0] },
+  "call global:Math.tan": { admitted: [0] },
+  "call global:Math.tanh": { admitted: [0] },
+  "call global:Math.trunc": { admitted: [0] },
+  "call global:Math.atan2": { admitted: [0, 1] },
+  "call global:Math.imul": { admitted: [0, 1] },
+  "call global:Math.pow": { admitted: [0, 1] },
+  "call global:Math.hypot": { admitted: "all" },
+  "call global:Math.max": { admitted: "all" },
+  "call global:Math.min": { admitted: "all" },
 };
