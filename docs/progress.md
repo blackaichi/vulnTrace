@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-05, by `A-5b`.
+**Last updated:** 2026-10-05, by `A-6`.
 
 ## Objective
 
@@ -71,8 +71,13 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   `new C()` for an instance call, over plain class declarations) and
   withdraws a resolved method edge when any prepared file may write the
   member (`member-writes.ts`, reason `receiver_member_written`). Fixed
-  PRM-18. What binds A-6, A-7, E and C next: REMEDIATION-PLAN § 5a, "A-3a
-  additions" through "A-5b additions".
+  PRM-18. `A-6`, the last of lane A, applied it on the binder side: a
+  callee binds to an export only when its whole member chain is consumed
+  (PRM-20, at every site); a single trailing `.call` / `.apply` is kept for
+  a function export under the same member-write check (RWF-075, found and
+  fixed); a destructured require is named by its key (PRM-108's origin; a
+  computed key is still open at the consumer, C-4). What binds A-7, E and C
+  next: REMEDIATION-PLAN § 5a, "A-3a additions" through "A-6 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -103,22 +108,27 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`A-5b` — resolution authority, call-graph side: VT-208 receivers, with a
-whole-graph member-write check
-([task file](tasks/A-5b-receiver-member-writes.md)): `READY_FOR_REVIEW`,
-its pull request awaiting the project owner. `A-5a` merged as PR #83.
+`A-6` — resolution authority, binder side: trailing chains; import names
+for string/computed keys
+([task file](tasks/A-6-binder-resolution-authority.md)): `READY_FOR_REVIEW`,
+its pull request awaiting the project owner. `A-5b` merged as PR #84.
+Lane A is complete once it merges.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-5b`:
-`A-6` (binder side), then lane V. The P1 gaps `BL-048` (RWF-074, VT-214's
-object-literal member check, discovered by A-5b; small, reusing A-5b's
-whole-graph check), `BL-040` and `BL-043` (live family-A false
-`NOT_AFFECTED`s) are candidates to reorder ahead of them.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-6`:
+lane V (`V-1`..`V-4`), then `C-1` and lane B. The P1 gaps `BL-048`
+(RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
+`BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
+candidates to reorder ahead of them.
 
 ## Recently discovered
 
-From `A-5b`: `BL-048` (**P1**, RWF-074: VT-214's object-literal member
+From `A-6`: RWF-075 (fixed by A-6: ADR 0008's `.call` / `.apply`
+exception read literally), `BL-050` (**P1**, RWF-076: an ES module's
+default import read as CommonJS interop, a family-C false `NOT_AFFECTED`),
+`BL-051` (**P1**, RWF-077: a destructured loader through `.call`, family
+A) and `BL-049` (P4, precision: retire `resolvesToUnrelatedConstructor`). From `A-5b`: `BL-048` (**P1**, RWF-074: VT-214's object-literal member
 check misses `with` and writes from other files, a family-C false
 `NOT_AFFECTED`). From `A-5a`: RWF-071, RWF-072, RWF-073 (each a false `NOT_AFFECTED`,
 fixed by A-5a), and `BL-047` (P2: ADR 0008 § 2's A2 structural gates,

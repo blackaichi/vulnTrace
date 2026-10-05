@@ -179,7 +179,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-17 | `vuln-lib` (synthetic fixture) | A higher-order parameter's reassignment inside the function body is never checked before its call sites are treated as authoritative | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | PRM-18 | `vuln-lib` (synthetic fixture) | The TypeScript checker's static apparent type of a receiver is used as the runtime receiver, even when reassigned | false NOT_AFFECTED — see below | **Fixed** (A-5b) — see below |
 | PRM-19 | `vuln-lib` (synthetic fixture) | A derived class's synthesized implicit default constructor gets no edge to the resolved base constructor | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
-| PRM-20 | `vuln-lib` (synthetic fixture) | `bindCallee` resolves a trailing method chain (`x.y()`) to the receiver `x` itself, discarding which method was called | false NOT_AFFECTED — see below | Open |
+| PRM-20 | `vuln-lib` (synthetic fixture) | `bindCallee` resolves a trailing method chain (`x.y()`) to the receiver `x` itself, discarding which method was called | false NOT_AFFECTED — see below | **Fixed** (A-6) — see below |
 | PRM-21 | `vuln-lib` (synthetic fixture) | A same-file `const` binding shadows an ambient global (`require`, `eval`, `process`, `module`) for the whole file | false NOT_AFFECTED — see below | Open |
 | PRM-22 | `vuln-lib` (synthetic fixture) | The loader classifier's alias lookup for module/eval/vm-style capabilities is first-match and scope-blind | false NOT_AFFECTED — see below | Open |
 | PRM-23 | `vuln-lib` (synthetic fixture) | A truncated module-load closure (`traversal_truncated`) does not block families B/C, missing a closure-widening hook outside the truncated file set | false NOT_AFFECTED — see below | Open |
@@ -213,7 +213,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-105 | `vuln-lib` (synthetic fixture) | Member access and call results are treated as opaque in the escape sweep, hiding a capability reached through `[x][0]`, `.at(0)`, a computed key or `Reflect.get` | false NOT_AFFECTED — see below | Open |
 | PRM-106 | `vuln-lib` (synthetic fixture) | `require.bind(...)` is deliberately excluded from the capability-receiver check | false NOT_AFFECTED — see below | Open |
 | PRM-107 | `vuln-lib` (synthetic fixture), nested + top instance | `module.paths` is recognized only through a small, fully-enumerated set of literal method-name calls | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below | Open |
-| PRM-108 | `vuln-lib` (synthetic fixture) | A destructured builtin binding's imported name falls back to the local name for a string-literal or computed property key | false NOT_AFFECTED — see below | Open |
+| PRM-108 | `vuln-lib` (synthetic fixture) | A destructured builtin binding's imported name falls back to the local name for a string-literal or computed property key | false NOT_AFFECTED — see below | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below |
 | PRM-109 | `vuln-lib` (synthetic fixture) | `graph.ts` restates the same "`unsupported_*` reasons cannot introduce a new module" premise PRM-60 disproves | false NOT_AFFECTED — see below | Open |
 | PRM-110 | `vuln-lib` (synthetic fixture) | The HTML report's per-finding summary reads only the first `unknownReasons` entry, so a rule mismatch reads as "no reason recorded" | false reason — see below | Open |
 | PRM-111 | `vuln-lib` (synthetic fixture) | An empty `--cve` value (`--cve ""`) is accepted and silently returns zero findings rather than being rejected | silent drop — see below | Open |
@@ -249,6 +249,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-072 | `vuln-lib` (synthetic fixture) | The member-write scanner (`isMemberAssignedWithin`) misses a member written as a destructuring or `for…of` target, or through a value-free wrapper, so an object-literal member is resolved to a value it no longer holds | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | RWF-073 | `vuln-lib` (synthetic fixture) | VT-210 counts a TypeScript `this` parameter, which is erased, as an argument position, so every later parameter is attributed to the argument one place to its right | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | RWF-074 | `vuln-lib` (synthetic fixture) | VT-214's object-literal member check (`isMemberAssignedWithin` over the binding's own scope) does not see a member written through `with`, nor written from another file, so `o.run()` is resolved to the value the literal wrote | false NOT_AFFECTED — see below | Open (backlog `BL-048`) |
+| RWF-075 | `vuln-lib` (synthetic fixture) | ADR 0008's A-6 row keeps a single trailing `.call` / `.apply` on an exact export resolved, with no condition: a write of a member named `call` / `apply` (on the function, or on `Function.prototype`), or a class export's own static `call`, makes the call reach another function | false NOT_AFFECTED — see below | **Fixed** (A-6) — see below |
+| RWF-076 | `vuln-lib` (synthetic fixture) | An ES module's default import is bound as the CommonJS interop object: `import d from "esm-pkg"; d.safe()` is attributed to the named export `safe`, though `d` is the module's separate `default` export | false NOT_AFFECTED — see below | Open (backlog `BL-050`) |
+| RWF-077 | `vuln-lib` (synthetic fixture) | A builtin loader bound by destructuring and called through `.call` / `.apply` (`const { fork } = require("child_process"); fork.call(null, w)`) is keyed `fork.call`, which no table names, and the loader classifier never sees the load | false NOT_AFFECTED (family A) — see below | Open (backlog `BL-051`) |
 
 ---
 
@@ -16750,6 +16753,42 @@ lib.safe.Inner {}`), a tag (`` lib.safe.Inner`x` ``) and a decorator
 measured by A-1's independent audit on the base and the branch. A-6's fix
 to `bindCallee` covers them with no separate work.
 
+
+**Status update (task A-6, 2026-10-05): Fixed.** `bindCallee`
+(`symbol-binder.ts`) now binds a callee only when the binding and the
+chain's leading members name one export and NO member is read after it
+(ADR 0008 invariant A2, "an exact export with the whole member chain
+consumed"). Any other chain past a package export binds to
+`not_an_import`, and the call graph's later authorities either prove the
+member (task A-5b's receiver authority, for a static method of an
+imported class) or end in an unknown edge. `SymbolBindingResolved` no
+longer carries `unconsumedChain`, so a resolved binding cannot hold a
+chain. Two answers consume a longer chain: a builtin's member path (the
+builtin table's key, unchanged), and a single trailing `.call` /
+`.apply`, a new result kind (`resolved_function_method`) that only a
+call site accepts -- see RWF-075 for the conditions it needed.
+
+All three spellings ADR 0008 names, and every site that resolves a callee
+through the binder -- a call, a tag, a decorator, a `new`, an `extends`
+base, a VT-214 alias (`resolveAliasedValue`, which `classifyNew` and the
+alias paths also read) -- were a false `NOT_AFFECTED` on the base
+`9292cb3` and are `UNKNOWN` after, against real Node:
+`tests/oracle/a6-binder-resolution-authority.test.ts` (`trailing.*`,
+`site.*`, `alias.*`). `lib.parse.bind(null)("x")` was `AFFECTED` through
+an edge that said the `bind` call invokes `parse` (a fabricated edge);
+it is `UNKNOWN`. Graph level: `call-graph.binder-chain.test.ts`; binder:
+`symbol-binder.test.ts`, whose pinned test ("ignores a trailing method
+chain on an already-bound named import") now asserts `not_an_import`.
+
+The fix also falsified the premise of a control:
+`unsupported-construct.test.ts` "does not label a call whose receiver is
+locally bound and resolvable" used `helper.execute()` on an imported
+object literal, "resolvable" only through this truncation (an edge to the
+`helper` export, then `unresolved_target`). It now ends in
+`unsupported_receiver_binding` -- both non-widening; the category moves
+from `identity_unresolved` to `unmodeled_construct`, which is what the
+gap is -- and the control's resolvable side is an imported class's static
+method, which an authority does resolve.
 ---
 
 ## PRM-21 — A same-file `const` binding shadows an ambient global (`require`, `eval`, `process`, `module`) for the whole file
@@ -17384,6 +17423,50 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-107`
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-108`) and § 4 (`r2-builtin-destructure-string-key`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task A-6, 2026-10-05): fixed in part -- the origin.**
+`extractRequireBindings` (`source-index.ts`) names a destructured element
+by its key's exact text: an identifier, a string literal, or a computed
+string literal (`["fork"]`, `` [`fork`] ``). A numeric key records no
+name (no builtin member is numeric). The premise PRM-108 cited
+(`symbol-binder.ts`: `loader-constructs.ts` reads the import table
+"refusal-only by construction") is corrected in place: the loader
+classifier decides from `importedName` which builtin member a local
+denotes, and a member it misses never widens the closure.
+
+`const { "fork": f } = require("child_process"); f(worker)`, and the same
+with `["fork"]` and `` [`fork`] ``, were a family-A false `NOT_AFFECTED`
+on the base `9292cb3` and are `UNKNOWN` (`child_process_execution`) after,
+against real Node (`tests/oracle/a6-binder-resolution-authority.test.ts`,
+`key.*`).
+
+**An unreadable computed key keeps the local name.** For `{ [k]: f }` the
+index still records `f` as the imported name -- NOT an import name: it is
+the base's row, kept because its only reader of the name, the loader
+classifier, adds a closure-widening capability from it or nothing (the
+audit's re-run measured it equal to recording no row on every
+unreadable-key shape probed, except the same-name shape below,
+`{ [k]: fork }`, where it is the only widening evidence). The first
+version of this fix dropped the row, and task A-6's independent audit
+(finding 1) measured the cost: `const { [k]: fork } = …; fork(worker)` and
+`const { ["fork"]: fork } = …` went from `UNKNOWN` on the base to a false
+`NOT_AFFECTED`. Both are regression guards now
+(`key.computed-*-same-name`).
+
+**Still open (the consumer, task C-4).** An unreadable computed key
+whose local name is not a loader-capable member of that builtin is still a
+family-A false `NOT_AFFECTED`, as on the base, for any builtin and however
+the binding is used (a direct call, a higher-order argument, a `const`
+alias, `.call`): `{ [k]: f }`, `{ [k]: isMainThread }` (a member, but not
+a loader), `{ ["fo" + "rk"]: f }` (built from literals, still unread), and
+`{ [k]: isMainThread } = require("worker_threads")` with `k` naming
+`Worker`, then `new isMainThread(w)` -- measured by the independent audit's
+re-run on the base, the first version of the fix and the final one, with
+the same verdict on all three. The classifier does not fail closed on a
+destructured builtin binding whose member it cannot name. It is an open-soundness-defect record
+(`key.computed-dynamic`), never an expectation. ADR 0010 assigns
+"destructured string/computed keys" to C-4; once C-4 fails closed there,
+the index can stop recording the local name.
 ---
 
 ## PRM-109 — `graph.ts` restates the same "`unsupported_*` reasons cannot introduce a new module" premise PRM-60 disproves
@@ -18976,3 +19059,125 @@ edge. A receiver-bound builtin replaced from another file
 name and withdraw it with `member-writes.ts`'s whole-graph check after the
 walk. Not done in A-5b, whose task file kept VT-214 out of scope.
 
+## RWF-075 — A single trailing `.call` / `.apply` resolved with no member-write or class condition
+
+**Status:** **Fixed** (A-6)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a member that may hold several functions, read as the
+prototype's), and A for the class shape (the export's name standing for a
+member of the class)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A
+
+**Discovered:** by task A-6, implementing ADR 0008 § 8's A-6 row, which
+says the pinned test "must now expect `not_an_import`, except a single
+trailing `.call`/`.apply`". Read literally -- keep `lib.parse.call(…)`
+resolved to `parse` -- that exception is a false `NOT_AFFECTED` in two
+shapes, measured against real Node v22.11.0 (oracle harness):
+
+```js
+lib.safe.call = lib.parse;     // replaces the member `.call` reads
+lib.safe.call(null, "x");      // Node calls parse; the edge said safe
+```
+
+```js
+// vuln-lib: class Klass { static call(self, x) { return parse(x); } }
+lib.Klass.call(null, "x");     // the class's own static `call` runs
+```
+
+The first was a false `NOT_AFFECTED` on the base `9292cb3` (PRM-20's
+truncation resolved it to `safe`). The second was `AFFECTED` on the base,
+through `resolvesToUnrelatedConstructor` and task A-5b's receiver
+authority; an implementation of the exception that resolved it to the
+export would have turned it into a false `NOT_AFFECTED` (an edge to
+`Klass`'s constructor, which never calls `parse`) -- task A-6's mutation
+M4 measures exactly that. The same holds for `Function.prototype.call`
+replaced in any prepared file.
+
+**Fixed** in task A-6: the `.call` / `.apply` edge (`classifyCallee`,
+`call-graph.ts`) is resolved only to an export whose node is a function,
+a method or a callback -- never a class constructor, an accessor or a
+module node, which fall to the rest of the ladder -- and is recorded for
+task A-5b's whole-graph member-write check (`member-writes.ts`) on the
+method's own name, so a write of `call` / `apply` anywhere withdraws it to
+`receiver_member_written`. It is a call-site answer only
+(`resolved_function_method`): `new lib.parse.call()` and
+`const c = lib.parse.call` bind to nothing. Tests:
+`tests/oracle/a6-binder-resolution-authority.test.ts` (`call.*`) and
+`call-graph.binder-chain.test.ts`. Not chased through a re-export: such a
+call is `UNKNOWN` (precision).
+
+**Limit, as `member-writes.ts` states it.** The withdrawal sees a write of
+`call` / `apply` in a file the graph prepared, in the forms that module
+lists. A `Function.prototype` write reached without spelling `call`,
+`apply`, `Object`, `Reflect` or a mutator name (through
+`({}).constructor`, a sloppy `this`), or made by code the graph never
+prepared, is not seen -- the same "NOT SEEN" list task A-5b recorded for
+receiver methods.
+
+## RWF-076 — An ES module's default import is bound as the CommonJS interop object
+
+**Status:** Open (backlog `BL-050`)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** A (a member of the `default` export read as the named
+export of the same name)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A or E (the default-export model)
+
+**Discovered:** by task A-6's independent audit (finding 2), measured
+against real Node v22.11.0 on the base `9292cb3` and on the A-6 branch
+(the same verdict on both; A-6 did not change it):
+
+```js
+// node_modules/vuln-lib: "type": "module"
+export { parse, safe };
+export default { safe: parse, parse: safe };
+// src/index.mjs
+import d from "vuln-lib";
+d.safe("x");          // Node calls parse; the graph resolved the export `safe`
+```
+
+`d.safe.call(null, "x")` is the same. `bindCallee` reads a default
+binding's first member as a named export -- CommonJS interop, where the
+default import IS `module.exports` -- whatever the target module's format.
+For an ES module target the default import is the separate `default`
+export, so `d.safe` is a member of it: "an exact export with the whole
+member chain consumed" (ADR 0008 invariant A2) does not hold. Distinct
+from AUD-13 (task E-5), which is the ESM-to-CommonJS direction and a false
+`AFFECTED`.
+
+**The fix:** decide the default binding's meaning from the target's
+module format -- for an ES module target, its first member is a member of
+the `default` export, `not_an_import` unless an authority names it.
+
+## RWF-077 — A destructured builtin loader called through `.call` / `.apply` is invisible to the module-load closure
+
+**Status:** Open (backlog `BL-051`)
+**Failure class:** false NOT_AFFECTED (family A)
+**Defect class:** A (the builtin's key read with the trailing `.call`)
+**Proof family affected:** A
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** C (the loader classifier)
+
+**Discovered:** by task A-6's independent audit (finding 3), measured
+against real Node v22.11.0 on the base `9292cb3` and on the A-6 branch
+(the same verdict on both):
+
+```js
+const { fork } = require("child_process");
+fork.call(null, __dirname + "/worker.js");   // the worker loads vuln-lib
+```
+
+`bindCallee` keys the callee `module:child_process:fork.call`, which the
+builtin table does not name, so the call is a non-widening unknown edge;
+the loader classifier recognizes `fork(…)` and `cp.fork.call(cp, …)`
+(`loader_capability_escape`) but not `.call` / `.apply` on a destructured
+loader binding, so the module-load closure stays complete and family A
+certifies the package unloaded. Oracle record:
+`tests/oracle/a6-binder-resolution-authority.test.ts`,
+`key.named-loader-call` (an open-soundness-defect record).
+
+**The fix:** the loader classifier treats `<loader>.call` / `.apply` (and
+`.bind`'s result) as the loader, for every binding form.

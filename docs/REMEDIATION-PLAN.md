@@ -897,6 +897,60 @@ above).
   attribution today; PRM-29 / PRM-30, E-1), and ES module live-binding
   re-exports (not measured: the harness entry is CommonJS).
 
+#### A-6 additions (task A-6, 2026-10-05)
+
+**Outcome of A-6** (ADR 0008 invariant A2, binder side; § 8's A-6 row).
+
+- `bindCallee` binds a callee only when the binding and the chain's
+  leading members name one export and no member is read after it; any
+  other chain past a package export is `not_an_import` (PRM-20, all three
+  spellings, at every site that resolves a callee through the binder).
+  `SymbolBindingResolved.unconsumedChain` is gone, so a resolved binding
+  cannot carry a chain; a builtin's member path is still the builtin
+  table's key.
+- The § 8 row's exception, a single trailing `.call` / `.apply`, is a
+  separate result kind (`resolved_function_method`) that only a call site
+  accepts, resolved only to a function export (never a class constructor,
+  an accessor or a module node) and withdrawn by task A-5b's whole-graph
+  member-write check on the method's name. The row read literally is a
+  false `NOT_AFFECTED` (RWF-075, fixed here): a written `call` / `apply`,
+  and a class's own static `call`.
+- `extractRequireBindings` names an element by its key's exact text (an
+  identifier, a string literal, a computed string literal); a numeric key
+  records no name; an unreadable computed key keeps the base's row, the
+  local name, which is not an import name but which the loader classifier
+  can only widen on -- dropping it turned two base `UNKNOWN`s into false
+  `NOT_AFFECTED`s (task A-6's independent audit, finding 1).
+
+**What A-6 binds.**
+
+- **C-4** (PRM-108's consumer): an unreadable computed key whose local
+  name is not a loader-capable member of that builtin -- `{ [k]: f }`,
+  `{ [k]: isMainThread }`, `{ ["fo" + "rk"]: f }`, `worker_threads`'s
+  `Worker` under any local name -- is still a family-A false
+  `NOT_AFFECTED`, however the binding is used (open-soundness-defect record `key.computed-dynamic` in
+  `tests/oracle/a6-binder-resolution-authority.*`). C-4 must fail closed on
+  a destructured builtin binding whose member it cannot name; the index
+  then stops recording the local name for it. RWF-077 (a destructured
+  loader called through `.call` / `.apply`, backlog `BL-051`) is the same
+  classifier's. The index admits computed string-literal keys and
+  `named-bindings.ts` does not (it refuses every computed key, so the call
+  graph's attribution fails closed); E-1's lexical computed-key constants
+  should align the two.
+- **E-4**: `symbol-binder.ts`'s export attribution now covers exactly
+  "an exact export with the whole member chain consumed"; a member write
+  on a module object (RWF-047) still reaches the attribution itself, as
+  before.
+- **BL-047**: `resolved_function_method` is one more A2 authority the
+  branded `resolvedEdge(authority, target)` must name.
+- **`resolvesToUnrelatedConstructor`** (`call-graph.ts`) was written
+  against the truncation; it now refuses only a whole-module member naming
+  a class export (`lib.Klass()`, `new lib.Klass()`) and fails closed.
+  Retiring it is a precision question (backlog `BL-049`).
+- **RWF-076** (backlog `BL-050`, found by A-6's audit): a default import's
+  first member is read as a named export whatever the target's module
+  format; for an ES module target it is a member of the `default` export.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

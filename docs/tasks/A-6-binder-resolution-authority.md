@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: A-6
 - **Branch**: a-6-binder-resolution-authority
 - **Base SHA**: 9292cb3b8e13bc0dad36ba19daeb3d459ad015e6
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `cf20fc6` docs(tasks): A-6 task file — trailing chains; import names for string/computed keys
+  - `423fdd6` test(A-6): real-Node reproductions — trailing chains, .call/.apply, string and computed keys
+  - `de30565` fix(A-6): resolution authority, binder side — whole-chain exports, .call/.apply, key-named imports
+  - (this commit) docs(A-6): records — findings, plan § 5a, debts, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -137,21 +141,21 @@ real value).
 
 ## Acceptance criteria
 
-- [ ] Every oracle case's sound verdict holds, real Node's ground truth
+- [x] Every oracle case's sound verdict holds, real Node's ground truth
       matches `called`, and every case whose base differs from its
       expected fails on the base commit.
-- [ ] `bindCallee` returns `not_an_import` for every chain past a package
+- [x] `bindCallee` returns `not_an_import` for every chain past a package
       export except a single trailing `.call` / `.apply`; the pinned
       `symbol-binder.test.ts` test asserts it.
-- [ ] A `.call` / `.apply` edge is withdrawn on a write of the method's
+- [x] A `.call` / `.apply` edge is withdrawn on a write of the method's
       name in any prepared file, and is never an edge to a class
       constructor or a value read.
-- [ ] `extractRequireBindings` names a string-keyed element by its key and
+- [x] `extractRequireBindings` names a string-keyed element by its key and
       records no name for a numeric or computed key.
-- [ ] Each new guard has a mutation caught by a named test.
-- [ ] PRM-108's remaining consumer gap is an open-soundness-defect record,
+- [x] Each new guard has a mutation caught by a named test.
+- [x] PRM-108's remaining consumer gap is an open-soundness-defect record,
       never an expectation.
-- [ ] Records: FINDINGS (PRM-20, PRM-108, the new `.call` member-write
+- [x] Records: FINDINGS (PRM-20, PRM-108, the new `.call` member-write
       finding), OPEN-DEBTS, plan § 5a "A-6 additions", backlog, progress,
       scorecard.
 
@@ -165,3 +169,29 @@ only from a false `NOT_AFFECTED` (or a fabricated `AFFECTED`) to
 ## Report
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
+
+## Corrections
+
+- **The base count.** "16 are a false `NOT_AFFECTED` on the base" above
+  was a miscount of the same measurement: the list it gives has 18 (seven
+  trailing-chain spellings, four sites, three aliases, the member-written
+  `.call`, three PRM-108 keys). With the cases the independent audit added,
+  the suite has 32 cases: 20 false `NOT_AFFECTED` and one fabricated
+  `AFFECTED` on the base; 18 and the fabricated one are `UNKNOWN` after;
+  two remain false `NOT_AFFECTED` as on the base, as open-soundness-defect
+  records (`{ [k]: f }`, PRM-108's consumer; RWF-077).
+- **What to do, step 4.** "a numeric or computed key records no name" was
+  the first version of the fix, and the independent audit BLOCKED it
+  (finding 1): dropping the row for a computed key turned
+  `const { ["fork"]: fork } = …` and `const { [k]: fork } = …` from
+  `UNKNOWN` on the base into false `NOT_AFFECTED`s, because the base's
+  local-name row was the loader classifier's only (accidental) evidence.
+  The rule now: an identifier, string or computed string-literal key names
+  the element by its text; a numeric key records no name; an unreadable
+  computed key keeps the base's local-name row -- not an import name, kept
+  only because the classifier can only widen on it -- until C-4 fails
+  closed there. The shape boundary is therefore NOT `named-bindings.ts`'s
+  (which refuses every computed key); the call graph's attribution still
+  refuses them, so it fails closed.
+- **Scope.** The audit's findings 2 and 3 are pre-existing and out of
+  scope: RWF-076 (backlog `BL-050`) and RWF-077 (`BL-051`).
