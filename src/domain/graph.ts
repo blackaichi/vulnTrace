@@ -122,6 +122,18 @@ export type DynamicCallReason =
    */
   | "protocol_value"
   /**
+   * Task A-5b (PRM-18, ADR 0008 invariant A2): a method call whose
+   * receiver's class proves which method it reaches -- a `const` bound to
+   * `new C()`, or a stable class for a static member -- while some prepared
+   * file may write a member of that name (an assignment, a dynamic key,
+   * `__proto__`, `with`, a reflective mutator; `member-writes.ts`), so the
+   * member may hold another function when the call runs. The edge names the
+   * method it no longer proves in `potentialTargets`. `value_uncertainty`,
+   * non-widening: whatever the member holds is a value already in scope, in
+   * a module already loaded.
+   */
+  | "receiver_member_written"
+  /**
    * Task A-3b (PRM-116, RWF-066): a JSX element or fragment whose compiled
    * form may LOAD a module the graph does not follow: the automatic
    * runtime's implicit `require("<jsxImportSource>/jsx-runtime")`, a
@@ -378,6 +390,7 @@ export function isClosureWideningReason(reason: DynamicCallReason): boolean {
     case "own_export_call":
     case "jsx_factory_call":
     case "protocol_value":
+    case "receiver_member_written":
     case "escaped_value": {
       // Task A-3a, `escaped_value`: the escaped value is already in scope,
       // in a module the graph already loaded; a builtin running it cannot

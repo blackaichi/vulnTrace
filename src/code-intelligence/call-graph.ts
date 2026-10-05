@@ -53,6 +53,7 @@ import {
 } from "./loader-constructs.js";
 import { classifyUnsupportedConstruct } from "./unsupported-construct.js";
 import { isConstDeclaration } from "./local-aliases.js";
+import { fileMayWriteMember } from "./member-writes.js";
 import {
   bindsToOtherDeclaration,
   isMemberAssignedWithin,
@@ -60,6 +61,7 @@ import {
   resolveDestructuredBindingElement,
   resolveNamedBinding,
   resolveParameterDeclaration,
+  unwrapTypeOnly,
   type NamedBinding,
 } from "./named-bindings.js";
 import {
@@ -1688,112 +1690,418 @@ function findNodeAtPosition(root: ts.Node, position: number): ts.Node {
 }
 
 /**
- * Resolves `instance.method()` (or `ClassName.staticMethod()`) to the real
- * class method it calls, using the TypeScript type checker to determine
- * the receiver's own apparent type (see SDD-v0.2.md § 7.3, VT-208) --
- * something no purely syntactic name/import-based matching can do, since
- * nothing about the identifier `instance` itself names the class `Lib`.
- * Also resolves a member INHERITED from a base class, not just one the
- * receiver's own class declares directly (VT-216): a locally-defined
- * subclass with no override of its own (`class MySub extends Base {}`)
- * still resolves `instance.vulnerableMethod()` to `Base`'s real
- * declaration, since the checker's own apparent-type/property resolution
- * already walks the heritage chain. Returns `undefined` (the caller falls
- * through to the generic `unsupported_construct` edge) whenever the
- * receiver's type can't be resolved to exactly one concrete method
- * declaration -- an `any`-typed receiver, an interface with no located
- * implementation, a union of multiple classes producing more than one
- * candidate declaration, and so on.
+ * Task A-5b (ADR 0008 invariant A2, § 4; PRM-18): the authority for a
+ * method call's RECEIVER. Replaces VT-208 / VT-216, which took the
+ * TypeScript checker's static type of ANY receiver -- `this`, a parameter,
+ * a `let`, an element access, a call result -- as its runtime value. A
+ * static type is a declaration-time claim: a reassigned binding, `this` in
+ * an overridable method, an own field, a constructor `return`, a member
+ * written anywhere or a replaced prototype each make the call reach a
+ * function the type does not name, and family C then certified the real
+ * callee unreachable.
  *
- * `call-graph.ts`'s own traversal walks a lightweight, standalone-parsed
- * AST (`indexSourceFileFromDisk`, no binder/checker), deliberately kept
- * separate from a full `ts.Program` for performance (SDD's own
- * performance requirements). `getTypeAtLocation` needs a node from the
- * *program's* own bound AST, not this standalone one, so this bridges the
- * two by position: the receiver's already-known line/column (from the
- * standalone parse) locates the equivalent node in the program's parse of
- * the exact same source text -- both parses produce identical positions
- * for identical syntax, so this is a safe, if slightly indirect, way to
- * avoid switching the whole traversal onto the program's AST just for
- * this one case.
+ * Resolved only for the two receivers the project owner's decision of
+ * 2026-10-04 keeps:
+ *
+ * - STATIC, `C.m()` (ADR 0008 § 4's static-member exception): `C` binds to
+ *   a class through the graph's own class authority
+ *   ({@link classDeclarationOf}) and `m` is a static method on its chain;
+ * - INSTANCE, `x.m()` (A2's "a receiver bound once to a `new`
+ *   expression"): `x`'s lexical binding is a `const` initialized by
+ *   `new C(...)` -- through `named-bindings.ts`'s stability-checked alias
+ *   hops -- `C` binds through the same authority, and `m` is an instance
+ *   method on `C`'s chain.
+ *
+ * The chain must be plain ({@link methodOnPlainChain}). Every other
+ * receiver keeps the unknown edge it had before VT-208. The edge returned
+ * here is provisional: `buildCallGraph` withdraws it after the walk when
+ * any prepared file may write `m` ({@link ReceiverMethodRecord}).
  */
-function resolveInstanceMethod(
+async function resolveReceiverMethod(
   callee: ts.PropertyAccessExpression,
   prepared: FileGraphData,
   ctx: WalkContext,
-): GraphNodeId | undefined {
-  const program = ctx.getProgram();
-  if (!program) {
-    return undefined;
+): Promise<ReceiverMethod | undefined> {
+  const member = callee.name.text;
+  const receiver = skipOuterExpressions(callee.expression);
+
+  const asClass = await classDeclarationOf(receiver, prepared, ctx);
+  if (asClass) {
+    return methodOnPlainChain(asClass, member, "static", ctx);
   }
 
-  const programSourceFile = program.getSourceFile(prepared.index.filePath);
-  if (!programSourceFile) {
+  if (!ts.isIdentifier(receiver)) {
     return undefined;
   }
+  // `named-bindings.ts` stops an alias chain at the last NAME when the
+  // value behind it is not one of its own usable shapes (a `new` is not),
+  // so `const y = x; y.m()` comes back as `x`: the remaining hops are
+  // followed here, each through the same stability-checked resolution and
+  // each a `const`.
+  let value: ts.Expression = receiver;
+  for (let hops = 0; ts.isIdentifier(value); hops += 1) {
+    const binding = resolveNamedBinding(value);
+    if (
+      hops > MAX_RECEIVER_CHAIN ||
+      binding.kind !== "value" ||
+      !isConstDeclaration(binding.declaration)
+    ) {
+      return undefined;
+    }
+    value = unwrapTypeOnly(binding.value);
+  }
+  if (!ts.isNewExpression(value)) {
+    return undefined;
+  }
+  // The `new` site is in the file that declares the binding, which is this
+  // file: `named-bindings.ts` resolves lexically, never across modules.
+  const constructed = await classDeclarationOf(value.expression, prepared, ctx);
+  return constructed
+    ? methodOnPlainChain(constructed, member, "instance", ctx)
+    : undefined;
+}
 
-  const receiverLocation = toSourceLocation(
-    prepared.index.sourceFile,
-    callee.expression,
+/**
+ * A method {@link resolveReceiverMethod} resolved, and every member name
+ * whose write may change what the call reaches: the method's own, and the
+ * export slot each imported class of the chain was read from (task A-5b's
+ * independent audit: `m.Lib = m.Evil; m.Lib.run()` replaces the class the
+ * attribution named, through the exports object, not through its name).
+ */
+interface ReceiverMethod {
+  readonly target: GraphNodeId;
+  readonly members: readonly string[];
+}
+
+/**
+ * A class declaration, the prepared file it is written in, and the export
+ * slot it was read from: none for a lexical binding, its export name for an
+ * import. A whole-module export replaced by a later `module.exports = …`
+ * is the export write set's (lane E, PRM-29 / PRM-30): the defining file's
+ * own `module.exports = C` is a write of the same slot, so no member name
+ * can tell the two apart.
+ */
+interface LocatedClass {
+  readonly cls: ts.ClassDeclaration;
+  readonly file: FileGraphData;
+  readonly exportSlots: readonly string[];
+}
+
+/**
+ * The class declaration `expression` denotes, through the authorities a
+ * `new` callee and A-1's implicit `super` already use
+ * ({@link implicitChainEndOf}): the lexical `class` binding, or an exact
+ * import (no unconsumed chain) whose export is a class -- never a builtin,
+ * which `bindCallee` does not resolve. `undefined` for a class
+ * EXPRESSION, a class whose name its own file assigns
+ * (`class C {}; C = Other;` rebinds what an importer reads), and anything
+ * the graph cannot attribute.
+ */
+async function classDeclarationOf(
+  expression: ts.Expression,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<LocatedClass | undefined> {
+  const unwrapped = skipOuterExpressions(expression);
+  if (ts.isIdentifier(unwrapped)) {
+    const local = resolveNamedBinding(unwrapped);
+    if (local.kind === "class") {
+      return ts.isClassDeclaration(local.declaration)
+        ? { cls: local.declaration, file: prepared, exportSlots: [] }
+        : undefined;
+    }
+  }
+  // Any other name falls to the import authority, which binds only an
+  // import provenance and never a local (RWF-046).
+  const binding = await bindCallee(
+    unwrapped,
+    ctx.resolver,
+    prepared.index.filePath,
   );
+  if (binding.kind !== "resolved" || binding.unconsumedChain.length > 0) {
+    return undefined;
+  }
+  ctx.onDiscoverFile(binding.target.modulePath);
+  const targetFile = ctx.ensurePrepared(binding.target.modulePath);
+  const cls = targetFile
+    ? exportedClassOf(targetFile, binding.target.exportedName)
+    : undefined;
   if (
-    receiverLocation.line === undefined ||
-    receiverLocation.column === undefined
+    !targetFile ||
+    !cls ||
+    !ts.isClassDeclaration(cls) ||
+    !cls.name ||
+    isNameAssignedWithin(targetFile.index.sourceFile, cls.name.text)
   ) {
     return undefined;
   }
+  return { cls, file: targetFile, exportSlots: [binding.target.exportedName] };
+}
 
-  let receiverNode: ts.Node;
-  try {
-    const position = programSourceFile.getPositionOfLineAndCharacter(
-      receiverLocation.line - 1,
-      receiverLocation.column - 1,
-    );
-    receiverNode = findNodeAtPosition(programSourceFile, position);
-  } catch {
+const MAX_RECEIVER_CHAIN = 8;
+
+/**
+ * The method `member` a static (`C.m`) or instance (`new C().m`) lookup
+ * reaches on `start`'s chain, or `undefined` when the chain cannot prove
+ * it. The project owner's decision of 2026-10-04: "a chain of plain class
+ * declarations, with no field or accessor shadowing the method in any
+ * class of the chain, and no constructor `return`". Concretely, from
+ * `start` to its root, every class:
+ *
+ * - is a plain class ({@link isPlainClass}): a declaration, no decorator,
+ *   no constructor that `return`s (which replaces `this`, for the derived
+ *   classes too);
+ * - extends nothing, or a class bound by {@link classDeclarationOf} (no
+ *   builtin, function constructor, call or unattributable base);
+ * - names every member readably (a computed key the analyzer cannot read
+ *   may be `member`).
+ *
+ * The lookup is the runtime's: for an instance, a field of the name in ANY
+ * class of the chain is an own property of the instance and shadows every
+ * method; otherwise the first class declaring an accessor or method of the
+ * name decides. For a static member, the first class declaring a static
+ * method, field or accessor of the name decides. Two implementations of
+ * the name in the deciding class refuse. Overload signatures, `abstract`
+ * members and `declare` fields have no runtime presence and are skipped.
+ */
+async function methodOnPlainChain(
+  start: LocatedClass,
+  member: string,
+  side: "static" | "instance",
+  ctx: WalkContext,
+): Promise<ReceiverMethod | undefined> {
+  let found: { method: ts.MethodDeclaration; file: FileGraphData } | undefined;
+  const members = new Set([member]);
+  let current: LocatedClass | undefined = start;
+  for (let depth = 0; current; depth += 1) {
+    if (depth > MAX_RECEIVER_CHAIN || !isPlainClass(current.cls)) {
+      return undefined;
+    }
+    for (const slot of current.exportSlots) {
+      members.add(slot);
+    }
+    const named = membersNamed(current.cls, member, side);
+    if (named === "unreadable") {
+      return undefined;
+    }
+    if (side === "instance" && named.fields > 0) {
+      return undefined;
+    }
+    if (!found) {
+      if (named.accessors > 0 || (side === "static" && named.fields > 0)) {
+        return undefined;
+      }
+      if (named.methods.length > 1) {
+        return undefined;
+      }
+      const [method] = named.methods;
+      if (method) {
+        found = { method, file: current.file };
+        if (side === "static") {
+          break;
+        }
+      }
+    }
+    const base = current.cls.heritageClauses?.find(
+      (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+    )?.types[0]?.expression;
+    if (!base) {
+      break;
+    }
+    current = await classDeclarationOf(base, current.file, ctx);
+    if (!current) {
+      return undefined;
+    }
+  }
+  if (!found) {
     return undefined;
   }
-
-  const checker = program.getTypeChecker();
-  let methodDecl: ts.MethodDeclaration | undefined;
-  try {
-    // checker.getPropertyOfType (rather than manually scanning the
-    // receiver's own classDecl.members, the pre-VT-216 approach) is what
-    // makes this resolve both a static member off a class reference
-    // (`ClassName.member()`, the receiver's type is `typeof ClassName`)
-    // and an INHERITED instance member (`instance.member()` where
-    // `member` is declared on a base class, not the receiver's own class)
-    // for free: the checker's own apparent-type resolution already walks
-    // the full static/instance and heritage-clause distinctions that a
-    // raw AST member scan does not (see VT-216, SDD-v0.2.md § 7.3's known
-    // gap). Exactly one real method declaration is required -- a union
-    // type can produce more than one distinct declaration for the same
-    // property name, and picking one over another there would be a
-    // guess, not a resolution (mirrors the pre-VT-216 behavior of
-    // bailing out on "a union of multiple classes").
-    const type = checker.getTypeAtLocation(receiverNode);
-    const property = checker.getPropertyOfType(type, callee.name.text);
-    const methodDeclarations = property?.declarations?.filter(
-      (d): d is ts.MethodDeclaration => ts.isMethodDeclaration(d),
-    );
-    methodDecl =
-      methodDeclarations?.length === 1 ? methodDeclarations[0] : undefined;
-  } catch {
-    return undefined;
-  }
-  if (!methodDecl) {
-    return undefined;
-  }
-
-  const methodFile = methodDecl.getSourceFile().fileName;
-  const methodLocation = toSourceLocation(
-    methodDecl.getSourceFile(),
-    methodDecl,
+  const methodFile = found.file;
+  ctx.onDiscoverFile(methodFile.index.filePath);
+  const target = methodFile.functionNodeIdByLocation.get(
+    locationKey(toSourceLocation(methodFile.index.sourceFile, found.method)),
   );
+  return target ? { target, members: [...members] } : undefined;
+}
 
-  ctx.onDiscoverFile(methodFile);
-  const targetFile = ctx.ensurePrepared(methodFile);
-  return targetFile?.functionNodeIdByLocation.get(locationKey(methodLocation));
+/**
+ * A class with nothing that changes, at runtime, what its declaration
+ * says: no decorator on itself, a member or a parameter (a decorator can
+ * replace the class or a method), and no constructor body containing a
+ * `return` (a returned object replaces `this`). A `declare class` needs no
+ * rule of its own: its members have no bodies, so no method is found.
+ */
+function isPlainClass(cls: ts.ClassDeclaration): boolean {
+  let plain = true;
+  const visit = (node: ts.Node): void => {
+    if (!plain) {
+      return;
+    }
+    if (ts.isDecorator(node)) {
+      plain = false;
+      return;
+    }
+    // A decorator or `return` inside a nested function or class belongs
+    // to it; a member's own decorators are its modifiers, visited above
+    // its body.
+    if (node !== cls && (ts.isClassLike(node) || isNestedFunction(node))) {
+      return;
+    }
+    if (ts.isReturnStatement(node)) {
+      plain = !isInsideConstructor(node, cls);
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(cls);
+  return plain;
+}
+
+/** A function-like node other than a class member, whose `return` and decorators are its own. */
+function isNestedFunction(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node)
+  );
+}
+
+/** Whether `node`'s nearest class member is a constructor of `cls`. */
+function isInsideConstructor(node: ts.Node, cls: ts.ClassDeclaration): boolean {
+  let current: ts.Node | undefined = node.parent;
+  while (current && current.parent !== cls) {
+    current = current.parent;
+  }
+  return current !== undefined && ts.isConstructorDeclaration(current);
+}
+
+/** What one class declares under a name, on one side. */
+interface NamedMembers {
+  readonly methods: readonly ts.MethodDeclaration[];
+  readonly fields: number;
+  readonly accessors: number;
+}
+
+/**
+ * The runtime members of `cls` named `member` on `side`, or
+ * `"unreadable"` when a member of that side has a computed name the
+ * analyzer cannot read. An instance's own fields include a TypeScript
+ * parameter property (`constructor(public m: F)`).
+ */
+function membersNamed(
+  cls: ts.ClassDeclaration,
+  member: string,
+  side: "static" | "instance",
+): NamedMembers | "unreadable" {
+  const methods: ts.MethodDeclaration[] = [];
+  let fields = 0;
+  let accessors = 0;
+  for (const element of cls.members) {
+    if (ts.isConstructorDeclaration(element)) {
+      if (side === "instance" && element.body) {
+        for (const parameter of element.parameters) {
+          if (
+            ts.isParameterPropertyDeclaration(parameter, element) &&
+            ts.isIdentifier(parameter.name) &&
+            parameter.name.text === member
+          ) {
+            fields += 1;
+          }
+        }
+      }
+      continue;
+    }
+    if (
+      !ts.isMethodDeclaration(element) &&
+      !ts.isPropertyDeclaration(element) &&
+      !ts.isGetAccessorDeclaration(element) &&
+      !ts.isSetAccessorDeclaration(element)
+    ) {
+      continue;
+    }
+    if (hasStaticModifier(element) !== (side === "static")) {
+      continue;
+    }
+    if (
+      element.modifiers?.some(
+        (modifier) =>
+          modifier.kind === ts.SyntaxKind.AbstractKeyword ||
+          modifier.kind === ts.SyntaxKind.DeclareKeyword,
+      )
+    ) {
+      continue;
+    }
+    const name = memberNameText(element.name);
+    if (name === undefined) {
+      return "unreadable";
+    }
+    if (name !== member) {
+      continue;
+    }
+    if (ts.isMethodDeclaration(element)) {
+      if (element.body) {
+        methods.push(element);
+      }
+    } else if (ts.isPropertyDeclaration(element)) {
+      fields += 1;
+    } else {
+      accessors += 1;
+    }
+  }
+  return { methods, fields, accessors };
+}
+
+/** A class member's name as the runtime keys it, or `undefined` for a computed key the analyzer cannot read. */
+function memberNameText(name: ts.PropertyName): string | undefined {
+  if (
+    ts.isIdentifier(name) ||
+    ts.isPrivateIdentifier(name) ||
+    ts.isStringLiteral(name) ||
+    ts.isNoSubstitutionTemplateLiteral(name)
+  ) {
+    return name.text;
+  }
+  if (ts.isNumericLiteral(name)) {
+    return String(Number(name.text));
+  }
+  if (ts.isComputedPropertyName(name)) {
+    const key = skipOuterExpressions(name.expression);
+    if (ts.isStringLiteralLike(key)) {
+      return key.text;
+    }
+    if (ts.isNumericLiteral(key)) {
+      return String(Number(key.text));
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Task A-5b: a method edge resolved by {@link resolveReceiverMethod},
+ * recorded so that `buildCallGraph` can withdraw it once every file is
+ * prepared: the decision withdraws the edge when ANY walked file may write
+ * one of `members` (`member-writes.ts`), and which files are walked is known only
+ * after the walk. `escapes` gives the escape row's edges for the call's
+ * arguments, which an unknown callee gets (ADR 0008 § 2) and a resolved
+ * one does not.
+ */
+interface ReceiverMethodRecord {
+  readonly edge: CallEdge;
+  readonly members: readonly string[];
+  readonly escapes: () => Promise<readonly CallEdge[]>;
+}
+
+/** The unknown edge a withdrawn receiver method edge becomes, naming the method it no longer proves. */
+function withdrawnReceiverMethodEdge(edge: CallEdge): CallEdge {
+  return {
+    ...edge,
+    resolution: {
+      kind: "unknown",
+      reason: "receiver_member_written",
+      potentialTargets:
+        edge.resolution.kind === "resolved" ? [edge.resolution.target] : [],
+    },
+  };
 }
 
 interface WalkContext {
@@ -1802,17 +2110,10 @@ interface WalkContext {
   readonly ensurePrepared: (filePath: string) => FileGraphData | undefined;
   readonly onDiscoverFile: (filePath: string) => void;
   /**
-   * Lazily builds (and memoizes) a real `ts.Program` for VT-208's
-   * instance-method resolution (SDD-v0.2.md § 7.3), or `undefined` when no
-   * {@link TsProject} was supplied to `buildCallGraph` (every caller that
-   * predates VT-208). Never called unless a property-access call this
-   * graph cannot otherwise attribute is actually encountered, and built at
-   * most once per `buildCallGraph` invocation regardless of how many such
-   * calls occur -- this is real type-checking, meaningfully more expensive
-   * than the lightweight standalone parsing used everywhere else in this
-   * file, so it must never run unconditionally.
+   * Task A-5b: records a method edge {@link resolveReceiverMethod}
+   * resolved, for `buildCallGraph`'s whole-graph member-write check.
    */
-  readonly getProgram: () => ts.Program | undefined;
+  readonly onReceiverMethodEdge: (record: ReceiverMethodRecord) => void;
   /** See {@link BuildCallGraphOptions.onInvocationAccount}. */
   readonly onInvocationAccount?: (
     observation: InvocationAccountObservation,
@@ -2827,20 +3128,41 @@ async function classifyCallee(
     });
   }
 
-  // VT-208: a method call on a receiver this binder can't attribute by
-  // name/import might still be resolvable via the real TypeScript type
-  // checker (SDD-v0.2.md § 7.3) -- e.g. `instance.vulnerableMethod()`
-  // where `instance` is a locally-constructed class instance. Attempted
-  // only here, after every cheaper syntactic path has already failed.
+  // Task A-5b (PRM-18): a method call on a receiver bound to a class, or
+  // to a `const` constructed from one ({@link resolveReceiverMethod}),
+  // replacing VT-208's checker-typed receiver. Attempted only here, after
+  // every cheaper syntactic path has already failed. The edge is recorded
+  // for the whole-graph member-write check, which withdraws it to the
+  // unknown edge below -- and the escape row's edges an unknown callee
+  // gets -- when any prepared file may write the member.
   if (ts.isPropertyAccessExpression(callee)) {
-    const methodTarget = resolveInstanceMethod(callee, prepared, ctx);
-    if (methodTarget) {
-      return edgeAccount({
+    const method = await resolveReceiverMethod(callee, prepared, ctx);
+    if (method) {
+      const edge: CallEdge = {
         from,
         type: "method",
-        resolution: { kind: "resolved", target: methodTarget },
+        resolution: { kind: "resolved", target: method.target },
         location,
+      };
+      const args = options.args;
+      ctx.onReceiverMethodEdge({
+        edge,
+        members: method.members,
+        escapes: async () => {
+          if (args === "forwarded") {
+            return [];
+          }
+          const account = await withEscapesAtUnknownCallee(
+            edgeAccount(withdrawnReceiverMethodEdge(edge)),
+            args,
+            from,
+            prepared,
+            ctx,
+          );
+          return account.kind === "edges" ? account.edges.slice(1) : [];
+        },
       });
+      return edgeAccount(edge);
     }
   }
 
@@ -3806,7 +4128,7 @@ function accountFor(
  * or not it's ever called. Before this, a module was only discovered as a
  * side effect of a *successful call binding* into it (`onDiscoverFile` was
  * only ever invoked from inside `classifyCall`/`classifyNew`/
- * `resolveReExportChain`/`resolveInstanceMethod`), so a module that is
+ * `resolveReExportChain`/VT-208's receiver resolution), so a module that is
  * genuinely loaded but never called into (or whose only call site the
  * binder can't attribute) was invisible to the graph entirely.
  *
@@ -4244,12 +4566,10 @@ export interface BuildCallGraphOptions {
   readonly maxGraphNodes?: number;
   readonly maxAnalysisSeconds?: number;
   /**
-   * The loaded project (see ts-project.ts), enabling VT-208's instance-
-   * method resolution (SDD-v0.2.md § 7.3) via a real, lazily-built
-   * `ts.Program`/type checker. Optional and unused by default -- every
-   * caller that omits it (as every caller predating VT-208 does) keeps
-   * producing an honest `unknown(unsupported_construct)` edge for a method
-   * call this graph can't otherwise attribute, exactly as before.
+   * The loaded project (see ts-project.ts): its JSX compiler options
+   * (task A-3b). Until task A-5b it also built a type checker for VT-208's
+   * receiver resolution, which the receiver authority
+   * ({@link resolveReceiverMethod}) replaced without one.
    */
   readonly project?: TsProject;
   /**
@@ -4351,62 +4671,7 @@ export async function buildCallGraph(
     return prepared;
   }
 
-  let program: ts.Program | undefined;
-  let programAttempted = false;
-
-  function getProgram(): ts.Program | undefined {
-    if (!programAttempted) {
-      programAttempted = true;
-      const project = options.project;
-      if (project) {
-        try {
-          // Rooted at entryFiles, not just project.fileNames: the latter
-          // is empty for any project with no tsconfig.json at all (a
-          // common case, including most of this file's own test
-          // fixtures), which would otherwise silently produce a
-          // zero-root-file program that can never resolve anything.
-          // entryFiles are guaranteed non-empty and, by construction,
-          // reach every file the call graph itself will ever walk via
-          // imports -- ts.createProgram follows those same imports to
-          // build the rest of the program, same as `tsc` itself. Combined
-          // with project.fileNames too, in case a relevant file is only
-          // reachable through tsconfig's own "include", not a resolved
-          // import chain.
-          const rootFiles = new Set([
-            ...options.entryFiles,
-            ...project.fileNames,
-          ]);
-          // maxNodeModuleJsDepth defaults to 0: TypeScript will resolve a
-          // plain-.js node_modules import's *specifier* but declines to
-          // parse/include the file itself for type acquisition, leaving
-          // its type as `any` -- confirmed directly (VT-208's own
-          // investigation) against a real vulnerable-package-shaped
-          // fixture with no .d.ts of its own, exactly the common case
-          // this analyzer targets. Set generously rather than left at the
-          // default: the existing maxFiles/maxGraphNodes/maxAnalysisSeconds
-          // limits already bound the overall analysis, so this doesn't
-          // need its own small ceiling.
-          const compilerOptions: ts.CompilerOptions = {
-            ...project.rawCompilerOptions,
-            maxNodeModuleJsDepth: 100,
-          };
-          program = ts.createProgram(
-            [...rootFiles],
-            compilerOptions,
-            ts.createCompilerHost(compilerOptions, true),
-          );
-        } catch {
-          // Target-project tsconfig/source data can be arbitrarily broken
-          // (see docs/SDD.md § 29); VT-208's resolution is a best-effort
-          // enhancement, not a requirement -- fall back to the
-          // unsupported_construct edge every earlier caller already
-          // produces rather than aborting the whole scan.
-          program = undefined;
-        }
-      }
-    }
-    return program;
-  }
+  const receiverMethods: ReceiverMethodRecord[] = [];
 
   const ctx: WalkContext = {
     edges,
@@ -4421,29 +4686,83 @@ export async function buildCallGraph(
         queue.push(filePath);
       }
     },
-    getProgram,
+    onReceiverMethodEdge: (record) => {
+      receiverMethods.push(record);
+    },
     onInvocationAccount: options.onInvocationAccount,
     nodeKindOf: (id) => nodes.get(id)?.kind,
     jsx: options.project?.rawCompilerOptions,
   };
 
-  while (queue.length > 0) {
-    if (!withinLimits()) {
+  async function walkQueue(): Promise<void> {
+    while (queue.length > 0) {
+      if (!withinLimits()) {
+        break;
+      }
+
+      const filePath = queue.shift();
+      if (!filePath || walked.has(filePath)) {
+        continue;
+      }
+      walked.add(filePath);
+
+      const prepared = ensurePrepared(filePath);
+      if (!prepared) {
+        continue;
+      }
+
+      await walkFile(prepared, ctx);
+    }
+  }
+
+  await walkQueue();
+
+  // Task A-5b, the project owner's decision of 2026-10-04: a method edge
+  // resolved from its receiver's class stands only while NO walked file
+  // may write the member (`member-writes.ts`). Every prepared file is
+  // asked -- a superset of the walked ones -- once the walk has prepared
+  // them all. A withdrawn edge becomes the unknown edge the site had
+  // before VT-208, and the call's arguments get the escape row's edges an
+  // unknown callee gets; those can discover files, which are walked in
+  // turn (and may resolve, or write, further members), so this runs to a
+  // fixed point. It only ever adds unknown and possible edges and walked
+  // files, so it terminates.
+  const withdrawn = new Set<ReceiverMethodRecord>();
+  for (;;) {
+    const written = new Map<string, boolean>();
+    const mayBeWritten = (member: string): boolean => {
+      let answer = written.get(member);
+      if (answer === undefined) {
+        answer = [...fileData.values()].some((file) =>
+          fileMayWriteMember(file.index.sourceFile, member),
+        );
+        written.set(member, answer);
+      }
+      return answer;
+    };
+    const withdrawing = receiverMethods.filter(
+      (record) => !withdrawn.has(record) && record.members.some(mayBeWritten),
+    );
+    if (withdrawing.length === 0) {
       break;
     }
-
-    const filePath = queue.shift();
-    if (!filePath || walked.has(filePath)) {
-      continue;
+    const replacements = new Map(
+      withdrawing.map((record) => [
+        record.edge,
+        withdrawnReceiverMethodEdge(record.edge),
+      ]),
+    );
+    for (const [index, edge] of edges.entries()) {
+      const replacement = replacements.get(edge);
+      if (replacement) {
+        edges[index] = replacement;
+      }
     }
-    walked.add(filePath);
-
-    const prepared = ensurePrepared(filePath);
-    if (!prepared) {
-      continue;
+    for (const record of withdrawing) {
+      withdrawn.add(record);
+      edges.push(...(await record.escapes()));
     }
-
-    await walkFile(prepared, ctx);
+    await walkQueue();
   }
 
   // A-2's producer obligation 2 (REMEDIATION-PLAN § 5a, "A-2 additions"),

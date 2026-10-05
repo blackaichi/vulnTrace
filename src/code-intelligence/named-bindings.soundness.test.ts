@@ -502,7 +502,12 @@ describe("P1-B3 § 25: receiver binding matrix", () => {
     expectUnresolvedNamedBinding(graph);
   });
 
-  it("REFUSES a constructed receiver -- Block C stays Block C", async () => {
+  // Task A-5b: a receiver bound once to `new C()` is now an authority of
+  // its own (ADR 0008 A2, the project owner's decision of 2026-10-04), the
+  // call graph's `resolveReceiverMethod` -- never this module's object-
+  // literal receiver path, which still models no instance. The control
+  // shows the edge comes from that authority: a member write withdraws it.
+  it("leaves a constructed receiver to the receiver authority (task A-5b)", async () => {
     const graph = await graphForSource(
       [
         "class Thing { m() {} }",
@@ -511,7 +516,21 @@ describe("P1-B3 § 25: receiver binding matrix", () => {
         "module.exports = { main };",
       ].join("\n"),
     );
-    expectUnresolvedNamedBinding(graph);
+    expectResolvedTo(graph, "m");
+
+    const written = await graphForSource(
+      [
+        "class Thing { m() {} }",
+        "const x = new Thing();",
+        "function main() { x.m(); }",
+        "x.m = function other() {};",
+        "module.exports = { main };",
+      ].join("\n"),
+    );
+    expect(mainEdge(written)?.resolution).toMatchObject({
+      kind: "unknown",
+      reason: "receiver_member_written",
+    });
   });
 });
 
