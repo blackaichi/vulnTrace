@@ -84,7 +84,6 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
         specifier: "foo",
         exportedName: "vulnerable",
       },
-      unconsumedChain: [],
     });
   });
 
@@ -101,7 +100,6 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
         specifier: "foo",
         exportedName: "vulnerable",
       },
-      unconsumedChain: [],
     });
   });
 
@@ -116,7 +114,6 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
         specifier: "foo",
         exportedName: "vulnerable",
       },
-      unconsumedChain: [],
     });
   });
 
@@ -131,7 +128,6 @@ describe("bindCallee: converges the four SDD § 17 forms onto the same target", 
         specifier: "foo",
         exportedName: "vulnerable",
       },
-      unconsumedChain: [],
     });
   });
 });
@@ -167,32 +163,88 @@ describe("bindCallee: additional binding shapes", () => {
     });
   });
 
-  it("ignores a trailing method chain on an already-bound named import", async () => {
+  /**
+   * Task A-6 (PRM-20, ADR 0008 invariant A2: "an exact export with the
+   * whole member chain consumed"). This test used to be "ignores a trailing
+   * method chain on an already-bound named import" and expected
+   * `vulnerable.someMethod()` to resolve to `vulnerable` itself -- the false
+   * premise PRM-20 records: the call reaches a member of the export, and
+   * an edge to the export certified the member's real target unreachable.
+   */
+  it("binds nothing for a trailing method chain on an already-bound named import (PRM-20)", async () => {
     const text =
       'import { vulnerable } from "foo";\nvulnerable.someMethod();\n';
     const result = await bindCallee(findCallee(text), resolver, "a.ts");
 
-    expect(result).toMatchObject({
-      kind: "resolved",
-      target: { exportedName: "vulnerable" },
-    });
+    expect(result).toEqual({ kind: "not_an_import" });
   });
 
-  it("reports the members the export did not consume (task A-3a)", async () => {
-    const named = await bindCallee(
-      findCallee('import { vulnerable } from "foo";\nvulnerable.a.b();\n'),
-      resolver,
-      "a.ts",
-    );
-    expect(named).toMatchObject({ unconsumedChain: ["a", "b"] });
+  it("binds nothing for any chain past the export, in every binding form and spelling (PRM-20)", async () => {
+    const programs: readonly (readonly [string, string, number])[] = [
+      ['import { api } from "foo";\napi.parse();\n', "a.ts", 0],
+      ['import { api } from "foo";\napi["parse"]();\n', "a.ts", 0],
+      ['import { api } from "foo";\napi.a.b();\n', "a.ts", 0],
+      ['const { api } = require("foo");\napi.parse();\n', "a.js", 1],
+      ['const lib = require("foo");\nlib.api.parse();\n', "a.js", 1],
+      ['import lib from "foo";\nlib.api.parse();\n', "a.ts", 0],
+      ['import * as ns from "foo";\nns.api.parse();\n', "a.ts", 0],
+      // `.call` / `.apply` is kept only as the LAST and ONLY member.
+      [
+        'const lib = require("foo");\nlib.safe.call.call(lib.parse);\n',
+        "a.js",
+        1,
+      ],
+      ['const lib = require("foo");\nlib.parse.call.apply();\n', "a.js", 1],
+      ['const lib = require("foo");\nlib.api.parse.call();\n', "a.js", 1],
+      ['import { parse } from "foo";\nparse.bind(null);\n', "a.ts", 0],
+    ];
+    for (const [text, file, occurrence] of programs) {
+      const result = await bindCallee(
+        findCallee(text, occurrence),
+        resolver,
+        file,
+      );
+      expect(result, text).toEqual({ kind: "not_an_import" });
+    }
+  });
+
+  it("resolves a single trailing .call / .apply as the export invoked through Function.prototype (task A-6)", async () => {
     const whole = await bindCallee(
       findCallee('const foo = require("foo");\nfoo.vulnerable.call();\n', 1),
       resolver,
       "a.js",
     );
-    expect(whole).toMatchObject({
+    expect(whole).toEqual({
+      kind: "resolved_function_method",
+      target: {
+        modulePath: "/resolved/foo/index.js",
+        specifier: "foo",
+        exportedName: "vulnerable",
+      },
+      method: "call",
+    });
+    const named = await bindCallee(
+      findCallee('import { vulnerable } from "foo";\nvulnerable.apply();\n'),
+      resolver,
+      "a.ts",
+    );
+    expect(named).toMatchObject({
+      kind: "resolved_function_method",
       target: { exportedName: "vulnerable" },
-      unconsumedChain: ["call"],
+      method: "apply",
+    });
+  });
+
+  it("still keys a builtin by its whole member chain (task A-3a)", async () => {
+    const result = await bindCallee(
+      findCallee('import { promises } from "fs";\npromises.readFile();\n'),
+      fakeResolver({}, {}, new Set(["fs"])),
+      "a.ts",
+    );
+    expect(result).toEqual({
+      kind: "builtin",
+      specifier: "fs",
+      exportPath: ["promises", "readFile"],
     });
   });
 });
