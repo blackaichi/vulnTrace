@@ -1976,12 +1976,15 @@ describe("buildCallGraph: completeness invariant (VT-201)", () => {
   });
 
   it("marks a method call on a locally-constructed instance as uncertain instead of vanishing", async () => {
+    // Task A-5b: a `const` bound to `new Lib()` is the receiver authority's
+    // (see "receiver authority" below), so the instance here is a `let`,
+    // which the authority refuses: the call keeps its unknown edge.
     const root = tempProject();
     const entry = write(
       root,
       "src/index.ts",
       "class Lib {\n  vulnerableMethod() {}\n}\n" +
-        "function main() {\n  const instance = new Lib();\n  instance.vulnerableMethod();\n}\n",
+        "function main() {\n  let instance = new Lib();\n  instance.vulnerableMethod();\n}\n",
     );
 
     const graph = await graphFor(root, [entry]);
@@ -2109,7 +2112,7 @@ describe("buildCallGraph: completeness invariant (VT-201)", () => {
   });
 });
 
-describe("buildCallGraph: instance method resolution via the type checker (VT-208)", () => {
+describe("buildCallGraph: instance method resolution (VT-208; task A-5b's receiver authority)", () => {
   it("resolves a method call on a locally-constructed instance when a project is supplied", async () => {
     const root = tempProject();
     const entry = write(
@@ -2188,7 +2191,7 @@ describe("buildCallGraph: instance method resolution via the type checker (VT-20
     });
   });
 
-  it("still produces the pre-VT-208 unsupported_receiver_binding edge when no project is supplied", async () => {
+  it("resolves without a project: the receiver authority needs no type checker (task A-5b)", async () => {
     const root = tempProject();
     const entry = write(
       root,
@@ -2201,11 +2204,15 @@ describe("buildCallGraph: instance method resolution via the type checker (VT-20
     const graph = await graphFor(root, [entry]);
 
     const mainNode = findNode(graph, (n) => n.name === "main");
+    const methodNode = findNode(
+      graph,
+      (n) => n.kind === "method" && n.name === "vulnerableMethod",
+    );
     const methodEdge = graph.edges.find(
       (e) => e.from === mainNode?.id && e.type === "method",
     );
     expect(methodEdge).toMatchObject({
-      resolution: { kind: "unknown", reason: "unsupported_receiver_binding" },
+      resolution: { kind: "resolved", target: methodNode?.id },
     });
   });
 });

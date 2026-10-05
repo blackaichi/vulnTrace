@@ -135,6 +135,8 @@ export const UNCERTAINTY_REASONS = [
   "jsx_factory_call",
   // --- A value a protocol member may invoke implicitly (ADR 0008 § 2, task A-4) ---
   "protocol_value",
+  // --- A method edge withdrawn by a member write (ADR 0008 A2, task A-5b) ---
+  "receiver_member_written",
   "declaration_only_resolution",
   "aliased_require",
   "create_require",
@@ -260,6 +262,12 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // Task A-4, ADR 0008 § 2's protocol-member row and § 3: the implicit
   // invocation is modeled; the value it invokes is not attributable.
   protocol_value: "unmodeled_construct",
+  // Task A-5b, ADR 0008 invariant A2: the call and the method its
+  // receiver's class declares are both modeled; what is not unique is the
+  // function the member holds when the call runs, because some file may
+  // write it. Value uncertainty, like `dynamic_member_access`: no syntax
+  // support closes it, only knowing which object a write reaches.
+  receiver_member_written: "value_uncertainty",
   // Both workspace shapes are genuine, closeable frontend gaps: a `pkg-*`
   // or brace pattern is documented npm workspace syntax this analyzer
   // declines to interpret, and a `pnpm-workspace.yaml` layout is a file it
