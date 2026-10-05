@@ -127,7 +127,10 @@ export type DynamicCallReason =
    * `new C()`, or a stable class for a static member -- while some prepared
    * file may write a member of that name (an assignment, a dynamic key,
    * `__proto__`, `with`, a reflective mutator; `member-writes.ts`), so the
-   * member may hold another function when the call runs. The edge names the
+   * member may hold another function when the call runs. Since task A-6,
+   * also an export invoked through `lib.parse.call(…)` / `.apply(…)` while
+   * a member named `call` / `apply` may be written (on the function, or on
+   * `Function.prototype`). The edge names the
    * method it no longer proves in `potentialTargets`. `value_uncertainty`,
    * non-widening: whatever the member holds is a value already in scope, in
    * a module already loaded.

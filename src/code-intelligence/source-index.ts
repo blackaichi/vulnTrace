@@ -412,6 +412,35 @@ function extractFunction(
   };
 }
 
+/**
+ * The `importedName` {@link extractRequireBindings} records for one
+ * object-pattern element (task A-6, PRM-108): the key's exact text when it
+ * is an identifier, a string literal or a computed string literal;
+ * `undefined` (no named binding) for a numeric key; and, for a computed key
+ * it cannot read, the LOCAL name -- not an import name, see the call site.
+ */
+function destructuredImportName(
+  key: ts.PropertyName | ts.BindingName,
+  localName: string,
+): string | undefined {
+  if (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) {
+    return key.text;
+  }
+  if (ts.isComputedPropertyName(key)) {
+    const expression = skipParentheses(key.expression);
+    return ts.isStringLiteralLike(expression) ? expression.text : localName;
+  }
+  return undefined;
+}
+
+function skipParentheses(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (ts.isParenthesizedExpression(current)) {
+    current = current.expression;
+  }
+  return current;
+}
+
 function isRequireCall(node: ts.Node): node is ts.CallExpression {
   if (!ts.isCallExpression(node) || !ts.isIdentifier(node.expression)) {
     return false;
@@ -427,7 +456,10 @@ function isRequireCall(node: ts.Node): node is ts.CallExpression {
  * Extracts CommonJS `require()` bindings. Only the two common,
  * unambiguous forms are unpacked into named bindings: a direct identifier
  * assignment (`const foo = require("foo")`) and a direct object
- * destructure (`const { a, b: c } = require("foo")`). Anything else —
+ * destructure (`const { a, b: c, "d": e } = require("foo")`), each element
+ * named by its key's exact text when it has one (task A-6, PRM-108; see
+ * {@link destructuredImportName} for a numeric or an unreadable computed
+ * key). Anything else —
  * deep member access (`require("foo").bar.baz`), array destructuring, a
  * require expression nested in a larger expression — is recorded as a
  * side-effect-only `require` of its specifier, without fabricating a
@@ -470,19 +502,45 @@ function extractRequireBindings(
     if (ts.isObjectBindingPattern(parent.name)) {
       const bindings: IndexedImport[] = [];
       for (const element of parent.name.elements) {
-        if (ts.isIdentifier(element.name) && !element.dotDotDotToken) {
-          const importedName =
-            element.propertyName && ts.isIdentifier(element.propertyName)
-              ? element.propertyName.text
-              : element.name.text;
-          bindings.push({
-            specifier,
-            bindingKind: "commonjs",
-            localName: element.name.text,
-            importedName,
-            location: toSourceLocation(sourceFile, element),
-          });
+        if (!ts.isIdentifier(element.name) || element.dotDotDotToken) {
+          continue;
         }
+        // THE IMPORTED NAME IS THE KEY, never the local name (task A-6,
+        // PRM-108). `const { "fork": f } = require("child_process")` binds
+        // `f` to `fork`; reading it as a member named `f` kept the loader
+        // classifier from seeing `f(worker)` load a module. A key whose
+        // text IS the member -- an identifier, a string literal, or a
+        // computed string literal (`{ ["fork"]: f }`, `` { [`fork`]: f } ``)
+        // -- names it exactly. A numeric key names no builtin member and
+        // records no named binding (the load itself is still recorded
+        // below).
+        //
+        // AN UNREADABLE COMPUTED KEY (`{ [k]: f }`) KEEPS THE LOCAL NAME,
+        // and that row is NOT an import name: PRM-108's premise stays
+        // false for it, and it stays open (task C-4). It is kept because
+        // its only reader of the name, the loader classifier
+        // (`loader-constructs.ts`, `namedBuiltinBindingOf`), adds a
+        // closure-widening capability from it or nothing -- measured equal
+        // to recording no row on every unreadable-key shape the audit's
+        // re-run probed, except a local name that IS the loader member,
+        // where it is the only widening evidence -- and dropping the row,
+        // as this task first did, turned
+        // `const { [k]: fork } = require("child_process"); fork(w)` from
+        // `UNKNOWN` into a false `NOT_AFFECTED` (task A-6's independent
+        // audit, finding 1). Recording no name is the fail-closed answer
+        // only once the consumer fails closed on a member it cannot name.
+        const key = element.propertyName ?? element.name;
+        const importedName = destructuredImportName(key, element.name.text);
+        if (importedName === undefined) {
+          continue;
+        }
+        bindings.push({
+          specifier,
+          bindingKind: "commonjs",
+          localName: element.name.text,
+          importedName,
+          location: toSourceLocation(sourceFile, element),
+        });
       }
       if (bindings.length > 0) {
         return bindings;

@@ -1818,7 +1818,7 @@ async function classDeclarationOf(
     ctx.resolver,
     prepared.index.filePath,
   );
-  if (binding.kind !== "resolved" || binding.unconsumedChain.length > 0) {
+  if (binding.kind !== "resolved") {
     return undefined;
   }
   ctx.onDiscoverFile(binding.target.modulePath);
@@ -2077,8 +2077,9 @@ function memberNameText(name: ts.PropertyName): string | undefined {
 }
 
 /**
- * Task A-5b: a method edge resolved by {@link resolveReceiverMethod},
- * recorded so that `buildCallGraph` can withdraw it once every file is
+ * Task A-5b: a method edge resolved by {@link resolveReceiverMethod} --
+ * and, since task A-6, an export invoked through its `call` / `apply`
+ * ({@link memberDependentEdgeAccount}) -- recorded so that `buildCallGraph` can withdraw it once every file is
  * prepared: the decision withdraws the edge when ANY walked file may write
  * one of `members` (`member-writes.ts`), and which files are walked is known only
  * after the walk. `escapes` gives the escape row's edges for the call's
@@ -2104,6 +2105,41 @@ function withdrawnReceiverMethodEdge(edge: CallEdge): CallEdge {
   };
 }
 
+/**
+ * A resolved edge whose callee is read off a member a write could replace
+ * -- a receiver's method (task A-5b) or a function's `call` / `apply`
+ * (task A-6) -- recorded for `buildCallGraph`'s whole-graph member-write
+ * check, which withdraws it when any prepared file may write one of
+ * `members`. A withdrawn edge's site is then an unknown callee, so its
+ * arguments get the escape row's edges (ADR 0008 § 2).
+ */
+function memberDependentEdgeAccount(
+  edge: CallEdge,
+  members: readonly string[],
+  args: SiteArguments,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): InvocationAccount {
+  ctx.onReceiverMethodEdge({
+    edge,
+    members,
+    escapes: async () => {
+      if (args === "forwarded") {
+        return [];
+      }
+      const account = await withEscapesAtUnknownCallee(
+        edgeAccount(withdrawnReceiverMethodEdge(edge)),
+        args,
+        edge.from,
+        prepared,
+        ctx,
+      );
+      return account.kind === "edges" ? account.edges.slice(1) : [];
+    },
+  });
+  return edgeAccount(edge);
+}
+
 interface WalkContext {
   readonly edges: CallEdge[];
   readonly resolver: ModuleResolver;
@@ -2111,7 +2147,8 @@ interface WalkContext {
   readonly onDiscoverFile: (filePath: string) => void;
   /**
    * Task A-5b: records a method edge {@link resolveReceiverMethod}
-   * resolved, for `buildCallGraph`'s whole-graph member-write check.
+   * resolved (and, task A-6, an export's `call` / `apply` edge), for
+   * `buildCallGraph`'s whole-graph member-write check.
    */
   readonly onReceiverMethodEdge: (record: ReceiverMethodRecord) => void;
   /** See {@link BuildCallGraphOptions.onInvocationAccount}. */
@@ -2135,12 +2172,17 @@ interface WalkContext {
 
 /**
  * True when `binding`'s resolved export name is itself a class's
- * constructor, but `callee`/`value` is a property access with a real
- * trailing chain beyond the bare import reference -- i.e. `bindCallee`'s
- * own chain-ignoring shortcut for named imports (see its doc comment) has
- * matched the wrong thing: `ClassName.member()` /
- * `new ClassName.Member()` is not a call to, or construction of,
- * `ClassName` itself.
+ * constructor, and `callee`/`value` is a property access.
+ *
+ * It was written against a trailing chain: `bindCallee` once ignored the
+ * members a named import's callee read after the export, so
+ * `ClassName.member()` / `new ClassName.Member()` resolved to `ClassName`
+ * itself. Since task A-6 (PRM-20) a `"resolved"` binding has consumed its
+ * whole chain, so that shape no longer reaches here -- it binds to
+ * `"not_an_import"`. What the guard still refuses is a whole-module
+ * member naming a class export (`lib.Klass()`, `new lib.Klass()`), the
+ * second a precision cost it has always carried; it fails closed, and is
+ * kept until a task measures its removal.
  *
  * Guards against a resolved-but-wrong edge, which is strictly worse than
  * an honest `unresolved_target`: a real-looking edge to an unrelated node
@@ -2450,7 +2492,7 @@ async function escapeTargetOf(
       if (binding.kind === "builtin") {
         return "builtin";
       }
-      if (binding.kind !== "resolved" || binding.unconsumedChain.length > 0) {
+      if (binding.kind !== "resolved") {
         return undefined;
       }
       ctx.onDiscoverFile(binding.target.modulePath);
@@ -2707,7 +2749,7 @@ async function implicitChainEndOf(
       return implicitChainEndOf(local.declaration, prepared, ctx, depth + 1);
     }
   }
-  if (binding.kind === "resolved" && binding.unconsumedChain.length === 0) {
+  if (binding.kind === "resolved") {
     const targetFile = ctx.ensurePrepared(binding.target.modulePath);
     const baseClass = targetFile
       ? exportedClassOf(targetFile, binding.target.exportedName)
@@ -2987,6 +3029,44 @@ async function classifyCallee(
     }
   }
 
+  // Task A-6 (ADR 0008's A-6 row): `lib.parse.call(…)` / `.apply(…)` runs
+  // `Function.prototype.call` / `.apply` on the export, which invokes the
+  // export itself -- when the export is a plain function. A class's own
+  // static `call` / `apply` is reached instead of the prototype's (and a
+  // class cannot be called without `new`), so a class constructor -- like
+  // an accessor or a module node -- is left to the rest of the ladder
+  // (task A-5b's receiver authority resolves a declared static member).
+  // The edge stands only while no prepared file may write a member of the
+  // method's name: `lib.safe.call = lib.parse` replaces what the call
+  // reads, on the function or on `Function.prototype` (`member-writes.ts`,
+  // the same whole-graph check as a receiver's method). Not chased through
+  // a re-export: the function the chain ends at is not located here.
+  if (binding.kind === "resolved_function_method") {
+    ctx.onDiscoverFile(binding.target.modulePath);
+    const targetFile = ctx.ensurePrepared(binding.target.modulePath);
+    const target = targetFile?.exportNameToNodeId.get(
+      binding.target.exportedName,
+    );
+    const kind = target === undefined ? undefined : ctx.nodeKindOf(target);
+    if (
+      target !== undefined &&
+      (kind === "function" || kind === "method" || kind === "callback")
+    ) {
+      return memberDependentEdgeAccount(
+        {
+          from,
+          type: "import",
+          resolution: { kind: "resolved", target },
+          location,
+        },
+        [binding.method],
+        options.args,
+        prepared,
+        ctx,
+      );
+    }
+  }
+
   if (binding.kind === "ambiguous") {
     return edgeAccount({
       from,
@@ -3138,31 +3218,18 @@ async function classifyCallee(
   if (ts.isPropertyAccessExpression(callee)) {
     const method = await resolveReceiverMethod(callee, prepared, ctx);
     if (method) {
-      const edge: CallEdge = {
-        from,
-        type: "method",
-        resolution: { kind: "resolved", target: method.target },
-        location,
-      };
-      const args = options.args;
-      ctx.onReceiverMethodEdge({
-        edge,
-        members: method.members,
-        escapes: async () => {
-          if (args === "forwarded") {
-            return [];
-          }
-          const account = await withEscapesAtUnknownCallee(
-            edgeAccount(withdrawnReceiverMethodEdge(edge)),
-            args,
-            from,
-            prepared,
-            ctx,
-          );
-          return account.kind === "edges" ? account.edges.slice(1) : [];
+      return memberDependentEdgeAccount(
+        {
+          from,
+          type: "method",
+          resolution: { kind: "resolved", target: method.target },
+          location,
         },
-      });
-      return edgeAccount(edge);
+        method.members,
+        options.args,
+        prepared,
+        ctx,
+      );
     }
   }
 
@@ -3366,7 +3433,7 @@ async function classifyConstructee(
             resolution: { kind: "resolved", target: targetNodeId },
             location,
           },
-          targetFile && binding.unconsumedChain.length === 0
+          targetFile
             ? exportedClassOf(targetFile, binding.target.exportedName)
             : undefined,
           targetFile,
