@@ -835,6 +835,68 @@ measured validly (its fixture did not parse) and is re-measured there.
   `VT-INV-A2-resolution-authority`) are assigned to no task by § 8.
   Backlog `BL-047` carries them, after A-5b and A-6.
 
+#### A-5b additions (task A-5b, 2026-10-05)
+
+**Outcome of A-5b** (the project owner's decision of 2026-10-04, recorded
+above).
+
+- VT-208 / VT-216 (`resolveInstanceMethod`) and the type-checked
+  `ts.Program` it built are deleted. A method edge is resolved only by the
+  receiver authority (`resolveReceiverMethod`): a static call on a class
+  bound through the graph's own class authority (the lexical `class`
+  binding, or an exact import of a class its own file never reassigns),
+  or an instance call on a `const` bound to `new C()` (through `const`
+  alias hops). The chain must be plain: no decorator, no constructor
+  `return`, every base a class bound the same way, readable member names;
+  an instance's field of the name anywhere in the chain, or an accessor or
+  static field found before the method, refuses.
+- After the walk, every prepared file is scanned once
+  (`member-writes.ts`), and a resolved method edge is withdrawn to the new
+  unknown reason `receiver_member_written` (`value_uncertainty`,
+  non-widening) when any file may write the member: an assignment in any
+  form, a dynamic key, `__proto__` (also as a string handed to a call),
+  `with`, a reflective mutator read by name (`Object.defineProperty` /
+  `defineProperties` / `assign` / `setPrototypeOf`, `Reflect.set` /
+  `defineProperty` / `deleteProperty` / `setPrototypeOf`, `util.inherits`,
+  `__defineGetter__` / `__defineSetter__`; a `__proto__` key a mutator
+  copies), or `Object`, `Reflect` or the global object used as a value --
+  or when any file may write the export slot an imported class of the
+  chain was read from (`m.Lib = m.Evil`). The call's arguments then get
+  the escape row's edges an unknown callee gets; files they discover are
+  walked, to a fixed point.
+- The constructor `return` shape § 5a could not measure is measured: a
+  false `NOT_AFFECTED` on the base, `UNKNOWN` on the branch.
+- **What VT-208 resolved beyond the plan's shapes.** It asked the checker
+  about ANY receiver: `this`, a parameter, an element access
+  (`this[CACHE].get()` in `lru-cache` resolved to `LRUCache#get`). Over
+  the 139 corpus cases the graph differential is 3 cases (RWB-03, RWB-09a,
+  RWB-09b), 134 resolved edges withdrawn to unknown (74 `this`, 35
+  receiver bindings, 20 indexed receivers, 5 `receiver_member_written`);
+  the proof and verdict differentials are 0. ADV-021, ADV2-020, ADV2-021,
+  ADV2-022 and ADV2-041 keep their resolved edges.
+
+**What A-5b binds.**
+
+- **BL-048** (RWF-074, discovered here): VT-214's object-literal member
+  check is the binding's own scope and assignment forms only, so `with`
+  and a write from another file reach a false `NOT_AFFECTED`. The fix
+  records VT-214's edge and withdraws it with the same whole-graph check.
+- **BL-047**: the receiver authority is one of A2's closed set
+  ("a receiver bound once to a `new` expression of a class with no member
+  writes", and § 4's static members); the branded
+  `resolvedEdge(authority, target)` must name it.
+- **Lane E**: an imported class is attributed through
+  `exportNameToNodeId` / `exportedClassOf`, the export attribution `new C()`
+  already trusts. The method edge does not merely inherit it: task A-5b's
+  independent audit showed it resolving `m.Lib.run()` where the
+  constructor edge for `new m.Lib()` stays unknown, so a written export
+  slot (`m.Lib = m.Evil`, a deferred `swap()`, PRM-29's shape) was a new
+  false `NOT_AFFECTED`. The method edge therefore also guards the export
+  slot by name. What it still inherits from the attribution: a
+  whole-module export replaced by `module.exports = …` (refused by the
+  attribution today; PRM-29 / PRM-30, E-1), and ES module live-binding
+  re-exports (not measured: the harness entry is CommonJS).
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

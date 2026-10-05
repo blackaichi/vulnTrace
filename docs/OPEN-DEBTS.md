@@ -901,6 +901,25 @@ Over the 139 corpus cases: verdict differential 0, proof 2 (reasons
 added, verdicts unchanged), graph 13. This entry still stands; PRM-18
 (VT-208) is A-5b's.
 
+**Progress, added by task `A-5b` (2026-10-05).** Task A-5b
+(`docs/tasks/A-5b-receiver-member-writes.md`) closed `PRM-18`: VT-208's
+checker-typed receiver is replaced by the receiver authority of the
+project owner's decision of 2026-10-04 -- a stable class for a static
+call, a `const` bound to `new C()` for an instance call, over a chain of
+plain class declarations -- and a resolved method edge is withdrawn to
+`receiver_member_written` when any prepared file may write the member (an
+assignment, a dynamic key, `__proto__`, `with`, a reflective mutator).
+29 real-Node reproductions: 12 false `NOT_AFFECTED` on the base, all
+`UNKNOWN` on the branch. 45 mutations, each caught by a named test. Its
+independent audit blocked once, on a `__proto__` key copied by
+`Object.assign` and on a written class export slot (a regression the
+branch had introduced); both fixed.
+Over the 139 corpus cases: verdict differential 0, proof 0, graph 3 (134
+resolved edges withdrawn, most of them `this` receivers in RWB-03 and
+RWB-09a/b). It found `RWF-074` (VT-214's object-literal member check
+misses `with` and writes from other files, a family-C false
+`NOT_AFFECTED`; backlog `BL-048`). This entry still stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

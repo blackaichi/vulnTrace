@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: A-5b
 - **Branch**: a-5b-receiver-member-writes
 - **Base SHA**: 431aebc69193096bd1e8320a0974f0f825a3df8f
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `b485c14` docs(tasks): A-5b task file — VT-208 receivers, with a whole-graph member-write check
+  - `cd454d1` test(A-5b): real-Node reproductions — VT-208 receivers and member writes
+  - `013aa60` fix(A-5b): receiver authority and the whole-graph member-write check
+  - (this commit) docs(A-5b): records — findings, plan § 5a, debts, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -241,3 +245,91 @@ In the format of `AGENTS.md` § J. Also report: the edges VT-208 resolved
 that the authority no longer resolves (`this`, element-access and
 call-result receivers), as graph differential; every correct `AFFECTED`
 turned into `UNKNOWN`.
+
+## Corrections (2026-10-05)
+
+Appended during the task; the text above is unchanged.
+
+1. **"What to do" 4 recognizes more than it lists.** Also a write of any
+   member: a string `"__proto__"` handed to a call (the `__proto__`
+   setter through its descriptor), Node's `util.inherits` (any use; also
+   as a named import), and a `__proto__` key a mutator copies (the
+   independent audit's finding 1). A mutator destructured from any value,
+   not only from `Object`, counts.
+2. **The receiver authority guards the export slot too** (the independent
+   audit's finding 2). An imported class is read through an export slot
+   (`m.Lib`, `const { Lib } = require(…)`); the edge is withdrawn when any
+   prepared file may write that slot's name. Without it the branch turned
+   `m.Lib = m.Evil; m.Lib.run()` and a deferred `swap()` from `UNKNOWN`
+   into a false `NOT_AFFECTED`: the method edge resolved where the
+   constructor edge for `new m.Lib()` does not. Four `audit.export-slot-*`
+   oracle cases. A whole-module export replaced by `module.exports = …` is
+   not guarded (the defining file's own `module.exports = C` writes the
+   same slot); the export attribution refuses it today (measured), and it
+   stays lane E's (PRM-29 / PRM-30).
+3. **`const` alias hops are followed by the authority itself.**
+   `named-bindings.ts` stops an alias chain at the last name when the
+   value behind it is a `new` expression; `const y = x; y.m()` resolves,
+   each hop a stability-checked `const`.
+4. **No ADR 0008 text was changed** ("What to do" 7 named § 6's VT-208
+   row): as in task A-5a, the outcome is recorded in REMEDIATION-PLAN
+   § 5a, "A-5b additions".
+5. **Three existing tests pinned "no instance modeling"** and are
+   rewritten to keep their intent: `call-graph.test.ts` VT-201's
+   completeness case (now a `let` receiver, which the authority refuses),
+   the VT-208 "no project" case (resolves without a type checker), and
+   `named-bindings.soundness.test.ts` § 25 (the named-binding path still
+   models no instance; the edge comes from the receiver authority, which a
+   member write withdraws).
+6. **Discovered: RWF-074** (VT-214's object-literal member check misses
+   `with` and writes from other files; a family-C false `NOT_AFFECTED`
+   predating A-5b), registered, backlog `BL-048` (P1). Out of this task's
+   boundary (VT-214).
+
+## Outcome (2026-10-05)
+
+**Acceptance criteria**: all **yes**.
+
+- Reproductions (`tests/oracle/a5b-receiver-member-writes.test.ts`): 29
+  cases against real Node v22.11.0, all passing.
+  - 12 were a false `NOT_AFFECTED` on the base: the 10 of "Premises" and
+    the independent audit's computed and shorthand `__proto__` keys copied
+    by `Object.assign`.
+  - 8 regression guards were already `UNKNOWN` on the base.
+  - 5 precision guards keep `AFFECTED`, and their negative controls keep
+    `NOT_AFFECTED`.
+  - 4 `audit.export-slot-*` cases record the false `NOT_AFFECTED` the first
+    fix introduced (a written class export slot); `UNKNOWN` on the base,
+    where the receiver did not resolve, and on the branch.
+
+  Base verdicts were measured on a `git archive` copy of the base SHA.
+- `resolveInstanceMethod` and the type-checked `ts.Program` are deleted;
+  method edges come only from `resolveReceiverMethod`.
+- Graph-level tests (`call-graph.receiver-authority.test.ts`, 73): every
+  refusal and every write form, with controls.
+- Mutations: 45, each caught by a named test (the list and its output are
+  in the PR body).
+- Structure: no member-write index is built when no method edge was
+  resolved, and at most one per prepared file per graph (two named tests).
+- Differentials over the 139 corpus cases:
+  - verdict 0; proof 0;
+  - graph 3 cases (RWB-03, RWB-09a, RWB-09b): 134 resolved edges withdrawn
+    to unknown, 74 `this` receivers, 35 receiver bindings, 20 indexed
+    receivers, 5 `receiver_member_written` (fast-xml-parser).
+
+  ADV-021, ADV2-020, ADV2-021, ADV2-022 and ADV2-041 keep their resolved
+  edges and verdicts.
+- Validation: exactly the five known failures (OPEN-DEBTS D-09: `RWB-03`,
+  `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`), verdicts unchanged.
+- Correct `AFFECTED` results turned `UNKNOWN`: none on a corpus case or a
+  reproduction.
+- Independent audit: `BLOCKED` with two in-scope findings (a `__proto__`
+  key copied by `Object.assign`; a written class export slot, a regression
+  of the first fix), both fixed with oracle cases, unit tests and
+  mutations; then `CERTIFIED`. The re-audit measured four neighbouring
+  shapes that are a false `NOT_AFFECTED` on the base and the branch alike,
+  through the import-chain binding, which are RWF-047 / PRM-29's (lane E);
+  recorded in PRM-18's status update.
+
+**Discovered**: RWF-074 (backlog `BL-048`, P1).
+

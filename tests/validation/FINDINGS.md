@@ -177,7 +177,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-15 | `vuln-lib` (synthetic fixture) | A same-file `const require = ...` shadow is matched by identifier text before the lexical authority runs | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | PRM-16 | `vuln-lib` (synthetic fixture) | A same-file caller is treated as the unique call site of an exported higher-order parameter, even with cross-file callers | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | PRM-17 | `vuln-lib` (synthetic fixture) | A higher-order parameter's reassignment inside the function body is never checked before its call sites are treated as authoritative | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
-| PRM-18 | `vuln-lib` (synthetic fixture) | The TypeScript checker's static apparent type of a receiver is used as the runtime receiver, even when reassigned | false NOT_AFFECTED — see below | Open |
+| PRM-18 | `vuln-lib` (synthetic fixture) | The TypeScript checker's static apparent type of a receiver is used as the runtime receiver, even when reassigned | false NOT_AFFECTED — see below | **Fixed** (A-5b) — see below |
 | PRM-19 | `vuln-lib` (synthetic fixture) | A derived class's synthesized implicit default constructor gets no edge to the resolved base constructor | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-20 | `vuln-lib` (synthetic fixture) | `bindCallee` resolves a trailing method chain (`x.y()`) to the receiver `x` itself, discarding which method was called | false NOT_AFFECTED — see below | Open |
 | PRM-21 | `vuln-lib` (synthetic fixture) | A same-file `const` binding shadows an ambient global (`require`, `eval`, `process`, `module`) for the whole file | false NOT_AFFECTED — see below | Open |
@@ -248,6 +248,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-071 | `vuln-lib` (synthetic fixture) | VT-210 reads the argument written at a higher-order parameter's position with no check for a spread argument at or before it, so the parameter is attributed to an expression that does not land there | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | RWF-072 | `vuln-lib` (synthetic fixture) | The member-write scanner (`isMemberAssignedWithin`) misses a member written as a destructuring or `for…of` target, or through a value-free wrapper, so an object-literal member is resolved to a value it no longer holds | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | RWF-073 | `vuln-lib` (synthetic fixture) | VT-210 counts a TypeScript `this` parameter, which is erased, as an argument position, so every later parameter is attributed to the argument one place to its right | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
+| RWF-074 | `vuln-lib` (synthetic fixture) | VT-214's object-literal member check (`isMemberAssignedWithin` over the binding's own scope) does not see a member written through `with`, nor written from another file, so `o.run()` is resolved to the value the literal wrote | false NOT_AFFECTED — see below | Open (backlog `BL-048`) |
 
 ---
 
@@ -16601,6 +16602,76 @@ position).
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-18`) and § 4 (`checker-static-type-receiver`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task A-5b, 2026-10-05): Fixed.** VT-208 / VT-216's
+checker-typed receiver (`resolveInstanceMethod`) is deleted, together with
+the type-checked `ts.Program` it built. A method call gets a resolved edge
+only from the receiver authority (`resolveReceiverMethod`,
+`call-graph.ts`), the project owner's decision of 2026-10-04:
+
+- a static call `C.m()` on a class bound through the graph's own class
+  authority (the lexical `class` binding, or an exact import whose export
+  is a class its own file never reassigns);
+- an instance call `x.m()` on a `const` initialized by `new C(...)`
+  (through `const` alias hops), `C` bound the same way;
+- over a chain of plain class declarations: no decorator, no constructor
+  `return`, every base a class bound the same way, every member name
+  readable; a field of the name anywhere in an instance's chain, or an
+  accessor or static field found before the method, refuses.
+
+After the walk, a resolved method edge is withdrawn to the new unknown
+reason `receiver_member_written` (`value_uncertainty`, non-widening) when
+any prepared file may write the member (`member-writes.ts`): an
+assignment in any form, a dynamic key, `__proto__`, `with`, or a
+reflective mutator (`Object.defineProperty` / `defineProperties` /
+`assign` / `setPrototypeOf`, `Reflect.set` / `defineProperty` /
+`deleteProperty` / `setPrototypeOf`, `util.inherits`,
+`__defineGetter__` / `__defineSetter__`), read by name, with `Object`,
+`Reflect` or the global object used as a value writing any member. A
+`__proto__` key a mutator copies (computed or shorthand; a plain
+`__proto__:` key is the literal's prototype) writes any member. The edge
+is also withdrawn when the export slot an imported class of the chain was
+read from is written (`m.Lib = m.Evil` before `m.Lib.run()`). The call's
+arguments then get the escape row's edges an unknown callee gets.
+
+Every other receiver -- `this`, `super`, a parameter, a `let` / `var`, an
+element access, a call result, an inline `new` -- keeps its unknown edge.
+Reproduced against real Node in
+`tests/oracle/a5b-receiver-member-writes.test.ts` (29 cases): 12 false
+`NOT_AFFECTED` on the base, `UNKNOWN` on the branch (the five shapes of
+REMEDIATION-PLAN § 5a, a constructor `return`, a same-class field, a
+reassigned class name, `__proto__`, `with`, and a computed and a shorthand
+`__proto__` key copied by `Object.assign`); eight regression guards and
+five precision guards keep their verdicts. Four `audit.export-slot-*`
+cases record a false `NOT_AFFECTED` the branch introduced and its
+independent audit caught before the fix (`UNKNOWN` on the base, where
+`m.Lib.run()` did not resolve at all). Each refusal and write form has a
+named test in `call-graph.receiver-authority.test.ts`, and each of 45
+mutations is caught by one. ADV-021, ADV2-020, ADV2-021, ADV2-022 and
+ADV2-041 keep their verdicts.
+
+**Not seen** (recorded, not fixed): a reflective mutator reached through a
+value derived from a builtin with no spelling of `Object`, `Reflect` or a
+mutator name (`({}).constructor[k]`, the global object as a sloppy
+`this`); code the graph never prepared, which a resource limit or an
+unresolved load leaves out (OPEN-DEBTS D-17's truncation and lane C); a
+whole-module class export replaced by a later `module.exports = …`, which
+the export attribution refuses today (the export write set's, PRM-29 /
+PRM-30).
+
+**Neighbouring shapes the re-audit measured, not A-5b's.** Four shapes are a
+false `NOT_AFFECTED` on the base and on the branch alike, through the
+import-chain binding (`bindCallee` / the export attribution), not through
+the receiver authority: an unrelated `dummy.run = 1` write leaves them
+unchanged, which would withdraw an edge the authority had made. They are
+`exports.Api = i.Lib` followed by the importer's `m.Api = m.Evil;
+m.Api.run()` (or a destructured `Api.run()`), a re-exported namespace
+swapped by a called `swap()`, and `m.default = m.Evil; m.default.run()`.
+Each is a member write on a module object followed by a call (RWF-047,
+E-4) or a property write inside a called function (PRM-29, E-1), the
+records lane E closes; the plain-function form `m.f = m.g; m.f()` is
+RWF-047's own reproduction.
+
 ---
 
 ## PRM-19 — A derived class's synthesized implicit default constructor gets no edge to the resolved base constructor
@@ -18858,3 +18929,50 @@ each(lib.parse, helper);   // fn is lib.parse; the graph read helper
 ("VT-210 skips a TypeScript `this` parameter"). The oracle harness runs
 plain Node, so this TypeScript shape has no oracle case here; the audit's
 reproduction ran it with type stripping.
+
+## RWF-074 — VT-214's object-literal member check misses `with` and writes from other files
+
+**Status:** Open (backlog `BL-048`)
+**Failure class:** false NOT_AFFECTED
+**Defect class:** C (a member that may hold several values, read as the
+one the object literal wrote)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** A
+
+**Discovered:** by task A-5b, checking the receiver paths that share the
+member scanner its whole-graph check builds on (oracle harness, Node
+v22.11.0, on the branch; VT-214's code is unchanged by A-5b, so the
+defect predates it).
+
+VT-214 (`resolveNamedReceiverBinding`, `call-graph.ts`) resolves
+`o.run()` on a `const` bound to an object literal to the value the literal
+wrote, unless `isMemberAssignedWithin(binding.scope, "run")` sees a write.
+That check is the binding's own scope only, and assignment forms only:
+
+```js
+function helper(x) { return lib.safe(x); }
+const o = { run: helper };
+with (o) { run = lib.parse; }   // writes o.run through a bare name
+o.run("x");                     // Node calls parse; the graph resolved helper
+```
+
+```js
+// o.js
+const o = { run: helper };
+function go() { return o.run("x"); }
+module.exports = { o, go };
+// patch.js, required by the entry before go() runs
+require("./o.js").o.run = (x) => { lib.parse("x"); };
+```
+
+Both are certified `NOT_AFFECTED`; real Node calls `parse`. The
+reflective mutators do not reach a false `NOT_AFFECTED` here today: the
+replacement function escapes into the builtin and gets the escape row's
+edge. A receiver-bound builtin replaced from another file
+(`Array.prototype.forEach = …`) is `UNKNOWN` for the same reason.
+
+**The fix** is task A-5b's: record VT-214's resolved edge with its member
+name and withdraw it with `member-writes.ts`'s whole-graph check after the
+walk. Not done in A-5b, whose task file kept VT-214 out of scope.
+
