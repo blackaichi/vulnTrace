@@ -10,19 +10,37 @@ export interface CanonicalSymbolTarget {
   readonly exportedName: string;
 }
 
+/**
+ * The expression denotes export `target` itself: the binding and the
+ * expression's member chain together name the export, and NO member is
+ * read after it (task A-6, ADR 0008 invariant A2: "an exact export with
+ * the whole member chain consumed"). `lib.parse` and `parse` from
+ * `const { parse } = require(…)` are; `lib.api.parse` and `api.parse` are
+ * not -- they denote some member of the `api` export, which no authority
+ * here can name, and bind to `not_an_import` (PRM-20).
+ */
 export interface SymbolBindingResolved {
   readonly kind: "resolved";
   readonly target: CanonicalSymbolTarget;
-  /**
-   * Task A-3a: the members the expression reads AFTER the export it binds
-   * to -- `["b"]` for `lib.a.b` with `lib` a whole-module binding, `[]` for
-   * `lib.a`. `target` names the export only; a VALUE whose chain is not
-   * empty is some member of that export, not the export itself. The call
-   * graph's escape row attributes an escaped value only when this is
-   * empty. (Callees still ignore it: refusing a trailing chain on a callee
-   * is task A-6's, PRM-20.)
-   */
-  readonly unconsumedChain: readonly string[];
+}
+
+/**
+ * Task A-6 (ADR 0008's A-6 row): the one trailing chain the binder keeps.
+ * `lib.parse.call(…)` / `parse.apply(…)` reads exactly one member after
+ * the export, `call` or `apply`, and as a CALLEE that member is
+ * `Function.prototype.call` / `.apply` invoking the export itself -- while
+ * the export is a function (a class's own static `call` would be reached
+ * instead) and nothing writes a member of that name (the call graph's
+ * whole-graph member-write check). Kept apart from
+ * {@link SymbolBindingResolved} on purpose: it is an answer for a call
+ * site only. As a VALUE (`const c = lib.parse.call`) the expression is
+ * `Function.prototype.call`, never `parse`, so every reader that binds a
+ * value asks for `"resolved"` and cannot receive this by accident.
+ */
+export interface SymbolBindingResolvedFunctionMethod {
+  readonly kind: "resolved_function_method";
+  readonly target: CanonicalSymbolTarget;
+  readonly method: "call" | "apply";
 }
 
 /**
@@ -80,13 +98,23 @@ export interface SymbolBindingBuiltin {
   readonly exportPath: readonly string[];
 }
 
-/** The callee does not reference an imported binding at all (e.g. a call to a locally-defined function). */
+/**
+ * The binder names no export the callee denotes: it does not reference an
+ * imported binding at all (e.g. a call to a locally-defined function), or
+ * (task A-6, PRM-20) it reads a member chain past the export it binds to
+ * (`api.parse`, `lib.api.parse`, `lib.safe.call.call`), whose value no
+ * authority here can name. Never a licence to attribute by the chain's
+ * text: the call graph's later authorities either prove the member (task
+ * A-5b's receiver authority, for a static method of an imported class) or
+ * end in an unknown edge.
+ */
 export interface SymbolBindingNotAnImport {
   readonly kind: "not_an_import";
 }
 
 export type SymbolBindingResult =
   | SymbolBindingResolved
+  | SymbolBindingResolvedFunctionMethod
   | SymbolBindingAmbiguous
   | SymbolBindingUnresolvedModule
   | SymbolBindingDeclarationOnly
@@ -286,11 +314,18 @@ function importBindingFor(
     //     and NEVER `localName`, so none of them names an export:
     //     `call-graph.ts`'s `emitModuleLoadEdges` (specifier only,
     //     emits `module_load` edges), `module-load-closure.ts` (maps
-    //     `{specifier, location}`), `commonjs-reexports.ts`'s
-    //     `usableFactsOf` (a boolean gate on `bindingKind`), and
-    //     `loader-constructs.ts` (text-keyed, but refusal-only by
-    //     construction -- its `LoaderConstruct` carries a
-    //     `DynamicCallReason` and no target).
+    //     `{specifier, location}`), and `commonjs-reexports.ts`'s
+    //     `usableFactsOf` (a boolean gate on `bindingKind`).
+    //   - `loader-constructs.ts` reads `localName` AND `importedName`,
+    //     and is NOT refusal-only, as this list once said (PRM-108): it
+    //     names no export, but it decides from `importedName` which
+    //     builtin member a local denotes (`fork` of `child_process`), and
+    //     a member it fails to recognize never widens the module-load
+    //     closure -- a family-A false `NOT_AFFECTED`. Its authority is
+    //     `source-index.ts`'s `extractRequireBindings`, which since task
+    //     A-6 takes the imported name from the destructuring KEY under
+    //     the shape boundary named-bindings.ts applies here (an
+    //     identifier or a string literal) and records no name otherwise.
     //
     // A NEW CALLER MUST RE-ESTABLISH THIS. If you add a second path
     // into export attribution, either route it through
@@ -362,6 +397,15 @@ export function importSpecifierOf(
  * scope (docs/SDD.md § 22) — such calls fall through to `"not_an_import"`,
  * not a fabricated target.
  *
+ * THE WHOLE CHAIN IS CONSUMED, OR NOTHING IS BOUND (task A-6, ADR 0008
+ * invariant A2, PRM-20). The binding and the leading members name one
+ * export; a member read after it (`api.parse()`, `lib.api.parse()`) is a
+ * value of that export this binder cannot name, and binds to
+ * `"not_an_import"`. Two answers consume a longer chain: a builtin
+ * module's member path (the builtin table's key), and a single trailing
+ * `.call` / `.apply`, which a call site resolves to the export itself
+ * (`"resolved_function_method"`).
+ *
  * TAKES NO `ModuleModel` (RWF-046). It used to, and used it for exactly
  * one thing: `imports.find((imp) => imp.localName === calleeText)`. That
  * table is file-wide and name-keyed, so it could not say WHICH
@@ -401,9 +445,12 @@ export async function bindCallee(
   let unconsumedChain: readonly string[];
 
   if (binding.kind === "named") {
-    // A trailing property chain here (e.g. `vulnerable.someMethod()`) is a
-    // method call on the already-bound export's value, not a reference to
-    // a different export — the chain is intentionally not consulted.
+    // The binding names the export; any property chain is read AFTER it,
+    // off the export's value (`api.parse()` calls `api`'s member `parse`,
+    // not `api`). That chain is consumed below -- by the builtin table's
+    // key, or by the one `.call` / `.apply` rule -- or the expression
+    // binds to nothing (task A-6, PRM-20). It was once "intentionally not
+    // consulted", and `api.parse()` became an edge to `api`.
     //
     // No `?? reference.text` fallback: the type makes `importedName`
     // required on a named binding, so there is no case where the local
@@ -445,6 +492,10 @@ export async function bindCallee(
   }
 
   if (resolution.kind === "builtin") {
+    // The whole chain is the builtin table's key (`fs.promises.readFile`):
+    // a builtin's members are Node's, and the table accounts each one it
+    // names; a member it does not name is the program's own addition, an
+    // unknown callee (task A-3a).
     return {
       kind: "builtin",
       specifier: resolution.specifier,
@@ -452,13 +503,25 @@ export async function bindCallee(
     };
   }
 
-  return {
-    kind: "resolved",
-    target: {
-      modulePath: resolution.resolvedFileName,
-      specifier: binding.specifier,
-      exportedName,
-    },
-    unconsumedChain,
+  const target: CanonicalSymbolTarget = {
+    modulePath: resolution.resolvedFileName,
+    specifier: binding.specifier,
+    exportedName,
   };
+
+  if (unconsumedChain.length === 0) {
+    return { kind: "resolved", target };
+  }
+
+  const [method, ...beyond] = unconsumedChain;
+  if (beyond.length === 0 && (method === "call" || method === "apply")) {
+    return { kind: "resolved_function_method", target, method };
+  }
+
+  // Task A-6 (PRM-20): a member of the export, read off its value at run
+  // time -- `api.parse()`, `lib.api.parse()`, `lib.safe.call.call(…)`. No
+  // authority in this binder names it, and the export it starts from is
+  // NOT the callee: an edge to it would certify the member's real target
+  // unreachable.
+  return { kind: "not_an_import" };
 }
