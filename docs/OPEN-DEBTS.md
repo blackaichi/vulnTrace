@@ -920,6 +920,33 @@ RWB-09a/b). It found `RWF-074` (VT-214's object-literal member check
 misses `with` and writes from other files, a family-C false
 `NOT_AFFECTED`; backlog `BL-048`). This entry still stands.
 
+**Progress, added by task `A-6` (2026-10-05).** Task A-6
+(`docs/tasks/A-6-binder-resolution-authority.md`), the last of lane A,
+closed `PRM-20`: `bindCallee` binds a callee only when the binding and the
+chain's leading members name one export and no member is read after it,
+at every site that resolves a callee through the binder (a call, a tag, a
+decorator, a `new`, an `extends` base, a VT-214 alias). ADR 0008's single
+trailing `.call` / `.apply` is kept for a function export only, and
+withdrawn by task A-5b's whole-graph member-write check; read literally,
+the exception was itself a false `NOT_AFFECTED` (`RWF-075`, found and
+fixed here). It fixed `PRM-108`'s origin: a destructured require is named
+by its key's exact text (identifier, string, computed string literal); an
+unreadable computed key keeps the base's local-name row until task C-4
+fails closed on it, because dropping it was a regression (two base
+`UNKNOWN`s turned false `NOT_AFFECTED`; the independent audit's finding 1,
+fixed before review). 32 real-Node reproductions: 18 false `NOT_AFFECTED`
+and one fabricated `AFFECTED` on the base are `UNKNOWN` on the branch; two
+remain false `NOT_AFFECTED`, as on the base, as open-soundness-defect
+records (`{ [k]: f }`, PRM-108's consumer; RWF-077). The audit also found
+`RWF-076` (an ES module's default import read as CommonJS interop) and
+`RWF-077` (a destructured loader through `.call`), both pre-existing
+(backlog `BL-050`, `BL-051`). Eight mutations, each caught by a named
+test.
+Over the 139 corpus cases: verdict differential 0, proof 0, graph 0 --
+the corpora hold no trailing chain past a package export, so the oracle
+cases are this task's measurement (a zero corpus differential is not
+evidence of soundness, D-12). This entry still stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
