@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-05, by `A-5a`.
+**Last updated:** 2026-10-05, by `A-5b`.
 
 ## Objective
 
@@ -65,9 +65,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   `function` declaration is unresolved; every no-edge account carries a
   proof (`UNPROVEN_NO_EDGE_LEDGER` deleted). ADR 0008 § 4's receiver-bound
   invoking builtins resolve on a proven receiver (the owner's decision).
-  Fixed PRM-13, 14, 15, 16, 17, 104, RWF-071, RWF-072, RWF-073. What binds
-  A-5b, A-6, A-7, E and C next: REMEDIATION-PLAN § 5a, "A-3a additions"
-  through "A-5 split, and A-5a additions".
+  Fixed PRM-13, 14, 15, 16, 17, 104, RWF-071, RWF-072, RWF-073. `A-5b`
+  (the second half) replaced VT-208's checker-typed receiver with the
+  receiver authority (a stable class for a static call, a `const` bound to
+  `new C()` for an instance call, over plain class declarations) and
+  withdraws a resolved method edge when any prepared file may write the
+  member (`member-writes.ts`, reason `receiver_member_written`). Fixed
+  PRM-18. What binds A-6, A-7, E and C next: REMEDIATION-PLAN § 5a, "A-3a
+  additions" through "A-5b additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -98,23 +103,24 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`A-5a` — resolution authority, call-graph side: VT-213, strict folding,
-lexical `require`, VT-210, `function` declaration stability
-([task file](tasks/A-5a-resolution-authority.md)): `READY_FOR_REVIEW`, its
-pull request awaiting the project owner. `A-4` merged as PR #82.
+`A-5b` — resolution authority, call-graph side: VT-208 receivers, with a
+whole-graph member-write check
+([task file](tasks/A-5b-receiver-member-writes.md)): `READY_FOR_REVIEW`,
+its pull request awaiting the project owner. `A-5a` merged as PR #83.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-5a`:
-`A-5b` (VT-208 receivers with a whole-graph member-write check, the
-project owner's decision of 2026-10-04; its measured shapes are in
-REMEDIATION-PLAN § 5a, "A-5 split"), then `A-6`. The P1 loader gaps
-`BL-040` and `BL-043` (live family-A false `NOT_AFFECTED`s) are
-candidates to reorder ahead of them.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-5b`:
+`A-6` (binder side), then lane V. The P1 gaps `BL-048` (RWF-074, VT-214's
+object-literal member check, discovered by A-5b; small, reusing A-5b's
+whole-graph check), `BL-040` and `BL-043` (live family-A false
+`NOT_AFFECTED`s) are candidates to reorder ahead of them.
 
 ## Recently discovered
 
-From `A-5a`: RWF-071, RWF-072, RWF-073 (each a false `NOT_AFFECTED`,
+From `A-5b`: `BL-048` (**P1**, RWF-074: VT-214's object-literal member
+check misses `with` and writes from other files, a family-C false
+`NOT_AFFECTED`). From `A-5a`: RWF-071, RWF-072, RWF-073 (each a false `NOT_AFFECTED`,
 fixed by A-5a), and `BL-047` (P2: ADR 0008 § 2's A2 structural gates,
 assigned to no task by § 8). From `A-4`: RWF-068 (fixed by A-4: the iterator's own methods),
 `BL-046` (**P1**, RWF-070: `await` constructs a promise's `constructor` /
