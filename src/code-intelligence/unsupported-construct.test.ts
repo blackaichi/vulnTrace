@@ -286,12 +286,20 @@ describe("P1-B1 the subtype reaches a real call-graph edge", () => {
    * differ only in what `helper` BINDS TO. The resolvable one must produce
    * no unsupported edge at all; only the unbound one may.
    */
+  //
+  // The resolvable side was once `export const helper = { execute() {} }`.
+  // It was "resolvable" only through PRM-20's truncation, which bound
+  // `helper.execute()` to the `helper` export itself (an object, so no node:
+  // `unresolved_target`). Since task A-6 a member of an imported object is
+  // the receiver gap this test's other half labels, so the resolvable side
+  // is now a receiver an authority really resolves: a static method of an
+  // imported class (task A-5b's receiver authority).
   it("does not label a call whose receiver is locally bound and resolvable", async () => {
     const root = tempProject();
     write(
       root,
       "src/helper.ts",
-      "export const helper = { execute() { return 1; } };\n",
+      "export class helper {\n  static execute() { return 1; }\n}\n",
     );
     const entry = write(
       root,
@@ -308,6 +316,13 @@ describe("P1-B1 the subtype reaches a real call-graph edge", () => {
         edge.resolution.kind === "unknown" ? edge.resolution.reason : "",
       );
     expect(reasons).not.toContain("unsupported_receiver_binding");
+    expect(
+      graph.edges.some(
+        (edge) =>
+          edge.resolution.kind === "resolved" &&
+          edge.resolution.target.endsWith("#execute@2:3"),
+      ),
+    ).toBe(true);
   });
 
   /**

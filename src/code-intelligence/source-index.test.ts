@@ -362,6 +362,67 @@ describe("indexSourceFile: CommonJS require", () => {
     ]);
   });
 
+  // Task A-6 (PRM-108's origin): the imported name is the KEY, read under
+  // named-bindings.ts's shape boundary -- never the local name.
+  it("names a string-keyed element by its key (PRM-108)", () => {
+    const index = indexSourceFile(
+      "a.js",
+      'const { "fork": f, "a-b": g } = require("child_process");\n',
+    );
+    expect(
+      index.imports.map((imp) => [imp.localName, imp.importedName]),
+    ).toEqual([
+      ["f", "fork"],
+      ["g", "a-b"],
+    ]);
+  });
+
+  it("names a computed string-literal key by its text (PRM-108)", () => {
+    const index = indexSourceFile(
+      "a.js",
+      'const { ["fork"]: f, [`exec`]: g, [("spawn")]: h } = require("child_process");\n',
+    );
+    expect(
+      index.imports.map((imp) => [imp.localName, imp.importedName]),
+    ).toEqual([
+      ["f", "fork"],
+      ["g", "exec"],
+      ["h", "spawn"],
+    ]);
+  });
+
+  it("records no name for a numeric key, and still records the load (PRM-108)", () => {
+    const index = indexSourceFile(
+      "a.js",
+      'const { 1: h } = require("child_process");\n',
+    );
+    expect(index.imports).toEqual([
+      {
+        specifier: "child_process",
+        bindingKind: "commonjs",
+        location: { file: "a.js", line: 1, column: 18 },
+      },
+    ]);
+  });
+
+  // Task A-6's independent audit, finding 1: dropping this row turned
+  // `const { [k]: fork } = require("child_process"); fork(w)` from UNKNOWN
+  // into a false NOT_AFFECTED. The local name is NOT the imported name; the
+  // row is kept for the loader classifier, which can only widen on it,
+  // until task C-4 fails closed on a member it cannot name.
+  it("keeps the local name for an unreadable computed key, beside the readable elements (PRM-108, audit finding 1)", () => {
+    const index = indexSourceFile(
+      "a.js",
+      'const { [k]: fork, exec: e } = require("child_process");\n',
+    );
+    expect(
+      index.imports.map((imp) => [imp.localName, imp.importedName]),
+    ).toEqual([
+      ["fork", "fork"],
+      ["e", "exec"],
+    ]);
+  });
+
   it("indexes a bare require() as a side-effect-only commonjs import", () => {
     const index = indexSourceFile("a.js", 'require("foo");\n');
     expect(index.imports).toEqual([
