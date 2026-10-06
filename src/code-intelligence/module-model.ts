@@ -5925,7 +5925,7 @@ export function entrypointRootCandidates(
  * literal name" — must go through this mapping rather than comparing
  * against a function's own name directly (see call-graph.ts's
  * `prepareFile`, which builds call edges this way, and
- * src/analysis/verdict.ts's `findOrPhantomTarget`, which locates a rule's
+ * src/analysis/verdict.ts's `findExportNodeInFile`, which locates a rule's
  * declared target the same way — see TASK-023 completion report for the
  * regression this fixes).
  */

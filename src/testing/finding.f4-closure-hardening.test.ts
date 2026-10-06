@@ -79,6 +79,25 @@ const graph: CallGraph = {
   edges: [],
 };
 
+/**
+ * The same project with fixture-lib's target a real, unreached node: the
+ * only graph on which family C can stand since task V-1 (a target with no
+ * graph node is unresolved, never a phantom).
+ */
+const graphWithTarget: CallGraph = {
+  nodes: [
+    ...graph.nodes,
+    {
+      id: `${LIB_FILE}#vulnerable`,
+      kind: "function",
+      module: LIB_FILE,
+      name: "vulnerable",
+      location: { file: LIB_FILE, line: 1, column: 1 },
+    },
+  ],
+  edges: [],
+};
+
 /** Resolves the advisory's module to a path that is equally imaginary. */
 const resolver: ModuleResolver = {
   resolve: async (specifier: string, importerFilePath: string) =>
@@ -109,6 +128,7 @@ function call(options: {
   readonly packageInstance?: string;
   readonly moduleLoadClosure?: ModuleLoadClosure;
   readonly moduleLoadClosureUnavailable?: boolean;
+  readonly graph?: CallGraph;
 }) {
   return buildFindingForTest({
     vulnerability,
@@ -117,13 +137,16 @@ function call(options: {
     packageInstance: options.packageInstance,
     matchResult: "affected",
     rule,
-    graph,
+    graph: options.graph ?? graph,
     entrypoints: [entrypoint],
     resolver,
     projectRoot: "/project",
     syntheticGraphHasNoRealFiles: true,
     moduleLoadClosure: options.moduleLoadClosure,
     moduleLoadClosureUnavailable: options.moduleLoadClosureUnavailable,
+    // Needed only to attribute `graphWithTarget`'s node, whose file does
+    // not exist; on `graph` there is no node of fixture-lib to attribute.
+    allowSyntheticNameOnlyTargetBinding: options.graph !== undefined,
   });
 }
 
@@ -173,11 +196,10 @@ describe("F4 § 24: a synthetic default closure cannot answer a package-instance
     // synthesized default could never have produced, because it has no way
     // to know.
     //
-    // What remains is a family C proof, which claims something else
-    // entirely (this symbol is never called) and is unaffected by the
-    // instance being loaded. That is the same audited takeover the F4
-    // mutation matrix records for this mutation; the assertion here is
-    // about family A's evidence being GONE, not about the verdict.
+    // Nothing takes over (task V-1): the graph has no node of the loaded
+    // instance, so there is no attributed target for family C -- until V-1
+    // a phantom stood in for one, and this case was family C. The
+    // assertion here is about family A's evidence being GONE.
     const finding = await call({
       packageInstance: LIB_INSTANCE,
       moduleLoadClosure: {
@@ -189,9 +211,8 @@ describe("F4 § 24: a synthetic default closure cannot answer a package-instance
     expect(
       finding?.evidence?.confirmedAbsentFromModuleLoadClosure,
     ).toBeUndefined();
-    expect(
-      finding?.evidence?.confirmedUnreachableTarget?.reachableSubgraphComplete,
-    ).toBe(true);
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
   });
 
   it("accepts a declared-absent closure beside a packageInstance", async () => {
@@ -210,8 +231,9 @@ describe("F4 § 24: a synthetic default closure cannot answer a package-instance
     // F4 § 25: the hardening must not change semantics for the suites that
     // legitimately use the flag. Those pass no `packageInstance` -- the
     // very property that made the old default safe -- and still get the
-    // synthesized closure.
-    const finding = await call({});
+    // synthesized closure. (Over a real target: since task V-1 a target
+    // with no graph node is unresolved, so family C needs one.)
+    const finding = await call({ graph: graphWithTarget });
 
     expect(finding?.verdict).toBe("NOT_AFFECTED");
     // Family C, not family A: with no instance there is no instance-absence

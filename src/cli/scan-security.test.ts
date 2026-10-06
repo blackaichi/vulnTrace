@@ -199,11 +199,20 @@ describe("runScanCommand: resource limits are enforced and diagnosed", () => {
       // zero edges of its own, indistinguishable from a leaf that
       // genuinely calls nothing, unless the verdict layer itself knows
       // the graph was truncated.
+      //
+      // The trailing side-effect import of fixture-lib (task V-1) prepares
+      // its module, so the target is a REAL graph node, attributed and
+      // never reached: exactly the family-C candidate VT-202 must withhold.
+      // Without it fixture-lib has no graph node, the target is unresolved
+      // before the verdict layer's truncation check runs, and this test
+      // would pass whether or not `graphTruncated` reaches buildFinding
+      // (task V-1's independent audit, finding 3).
       write(
         root,
         "src/file0.js",
         'import { decoy } from "./decoy.js";\n' +
           'import { middle } from "./middle.js";\n' +
+          'import "fixture-lib";\n' +
           "export function main() {\n  decoy();\n  return middle();\n}\n",
       );
       write(
@@ -255,6 +264,11 @@ describe("runScanCommand: resource limits are enforced and diagnosed", () => {
       expect(output.findings[0].evidence.reasons).toEqual([
         "call-graph construction was truncated by a configured resource limit (analysis.limits) before every reachable path could be exhaustively searched",
       ]);
+      expect(output.diagnostics).toContainEqual({
+        source: "call-graph",
+        message:
+          "analysis stopped after reaching the configured file limit (2); results may be incomplete",
+      });
     },
   );
 

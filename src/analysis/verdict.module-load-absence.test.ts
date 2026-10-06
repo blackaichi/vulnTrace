@@ -332,7 +332,38 @@ describe("VT-307d case 14, superseded by FOUNDATION-F2/F2-A: closure unavailable
     ).toBeUndefined();
     expect(finding?.evidence?.confirmedAbsentInstance).toBeUndefined();
     expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
+    // Task V-1: on the Site-B graph there is no call-graph negative left to
+    // block -- fixture-lib has no graph node, so its target is unresolved
+    // before any guard runs, and the evidence names the missing closure.
     expect(finding?.evidence?.reasons?.[0]).toContain(
+      "no module-load closure was available",
+    );
+
+    // Over a real, attributed, unreached target, where family C would
+    // otherwise stand, the unavailable closure is itself the blocker.
+    const attributed = await buildFindingForTest({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      packageInstance: LIB_INSTANCE,
+      matchResult: "affected",
+      rule,
+      graph: {
+        nodes: [
+          moduleNode("src#<module>", ENTRY_FILE),
+          fnNode("lib#vulnerable", LIB_FILE, "vulnerable", 1),
+        ],
+        edges: [],
+      },
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": LIB_FILE }),
+      projectRoot: "/project",
+      moduleLoadClosureUnavailable: true,
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+    expect(attributed?.verdict).toBe("UNKNOWN");
+    expect(attributed?.evidence?.confirmedUnreachableTarget).toBeUndefined();
+    expect(attributed?.evidence?.reasons?.[0]).toContain(
       "module_load_closure_unavailable",
     );
   });

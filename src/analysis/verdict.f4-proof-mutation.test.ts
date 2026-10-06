@@ -409,12 +409,20 @@ describe("F4 baselines: each produces exactly one valid negative proof", () => {
 // ====================================================================
 
 describe("F4 family A mutations: the module-load absence proof", () => {
+  // Task V-1 (ADR 0011 predicate 3): family A's baseline package has no
+  // node in the call graph -- that is what makes it family A's -- so once a
+  // mutation withdraws family A, Site B has no attributed target left and
+  // the finding is UNKNOWN for that reason (`vulnerable_target_unresolved`,
+  // ADR 0011 § 3), before any call-graph proof guard is consulted. Until
+  // V-1 a phantom target stood in for it, and these rows observed the
+  // guard that then withdrew the phantom's family C. The closure condition
+  // a row injects is still named, in the finding's prose.
   runMatrix("A", () => familyA.inputs, [
     {
       mutation: "closure_absent",
       invalidates: true,
       apply: (inputs) => mutate(inputs, { moduleLoadClosure: undefined }),
-      expectUncertaintyReason: "module_load_closure_unavailable",
+      expectUncertaintyReason: "vulnerable_target_unresolved",
     },
     {
       mutation: "closure_incomplete_parse_failure",
@@ -426,7 +434,7 @@ describe("F4 family A mutations: the module-load absence proof", () => {
             "parse_failure",
           ),
         }),
-      expectUncertaintyReason: "parse_failure",
+      expectUncertaintyReason: "vulnerable_target_unresolved",
     },
     {
       mutation: "closure_incomplete_unresolved_module",
@@ -438,7 +446,7 @@ describe("F4 family A mutations: the module-load absence proof", () => {
             "unresolved_module",
           ),
         }),
-      expectUncertaintyReason: "unresolved_module",
+      expectUncertaintyReason: "vulnerable_target_unresolved",
     },
     {
       mutation: "closure_roots_empty_so_gate_ineligible",
@@ -448,9 +456,9 @@ describe("F4 family A mutations: the module-load absence proof", () => {
           moduleLoadClosure: closureWithoutRoots(closureOf(familyA)),
         }),
       // The CONTEXT drops a closure whose roots are not these entrypoints
-      // before the gate is ever reached, so the blocker reported is
-      // absence -- the gate-eligibility requirement enforced one layer up.
-      expectUncertaintyReason: "module_load_closure_unavailable",
+      // before the gate is ever reached, so to family A the closure is
+      // absent -- the gate-eligibility requirement enforced one layer up.
+      expectUncertaintyReason: "vulnerable_target_unresolved",
     },
     {
       mutation: "closure_roots_are_a_foreign_file",
@@ -461,7 +469,7 @@ describe("F4 family A mutations: the module-load absence proof", () => {
             "/elsewhere/other-project/src/index.js",
           ]),
         }),
-      expectUncertaintyReason: "module_load_closure_unavailable",
+      expectUncertaintyReason: "vulnerable_target_unresolved",
     },
     {
       mutation: "closure_reports_this_exact_instance_as_loaded",
@@ -512,7 +520,7 @@ describe("F4 family A mutations: the module-load absence proof", () => {
             `${familyA.root}/src/index.js#<module>`,
           ),
         }),
-      expectUncertaintyReason: "module_load_closure_unavailable",
+      expectUncertaintyReason: "vulnerable_target_unresolved",
     },
     // ------------------------------------------------------- CONTROLS
     {
@@ -553,12 +561,13 @@ describe("F4 family A mutations: the module-load absence proof", () => {
     },
   ]);
 
-  it("AUDIT: closure-says-loaded hands over to family C, which claims something else", async () => {
-    // F4 § 8. Family A's claim ("cannot be loaded") is destroyed by this
-    // mutation. Family C's claim ("this resolved symbol is never called")
-    // is untouched by it, and C's own guards still hold. The takeover is
-    // therefore sound -- but it must be AUDITED rather than assumed, so
-    // the replacement's independent preconditions are asserted here.
+  it("AUDIT: closure-says-loaded hands over to NO family: family C needs a real target", async () => {
+    // F4 § 8, re-stated by task V-1 (ADR 0011 § 6 reopens VT-301B). Family
+    // A's claim ("cannot be loaded") is destroyed by this mutation. Until
+    // V-1 family C took over, over a PHANTOM: the call graph has no node of
+    // this package, so "this resolved symbol is never called" was a claim
+    // about a target nothing had attributed (PRM-101's mechanism). Family C
+    // requires a resolved, attributed target, so nothing takes over.
     const outcome = await runProof(
       mutate(familyA.inputs, {
         moduleLoadClosure: closureLoads(
@@ -568,18 +577,16 @@ describe("F4 family A mutations: the module-load absence proof", () => {
       }),
     );
 
-    expect(outcome.family).toBe("C");
-    expect(outcome.family).not.toBe("A");
-    // Family C's OWN guards, each checked independently of A's:
+    expect(outcome.verdict).toBe("UNKNOWN");
+    expect(outcome.family).toBe("NONE");
+    expect(outcome.unknownReasons.map((reason) => reason.reason)).toContain(
+      "vulnerable_target_unresolved",
+    );
     expect(
-      outcome.finding?.evidence?.confirmedUnreachableTarget
-        ?.reachableSubgraphComplete,
+      outcome.finding?.evidence?.reasons?.some((reason) =>
+        reason.includes("shows this package instance loaded"),
+      ),
     ).toBe(true);
-    expect(familyA.inputs.graphTruncated).toBe(false);
-    expect(outcome.proofTarget).toEqual({
-      module: "vuln-lib",
-      export: "vulnerable",
-    });
     // And no family-A residue survives anywhere on the finding.
     expect(
       outcome.finding?.evidence?.confirmedAbsentFromModuleLoadClosure,
@@ -591,10 +598,10 @@ describe("F4 family A mutations: the module-load absence proof", () => {
     // The mutation above manufactures an inconsistency -- a closure that
     // reports an instance loaded beside a call graph with no node of it.
     // The real construct that produces that pair is a re-export
-    // declaration, which call-graph DISCOVERY does not follow; and in the
-    // real shape the call it hides leaves an unresolved edge in the
-    // reachable subgraph, so family C is withdrawn too. Pinned here so
-    // the takeover above is never read as a claim about production.
+    // declaration, which call-graph DISCOVERY does not follow. Here the
+    // call it hides leaves an unresolved edge in the reachable subgraph;
+    // where it hides none (PRM-101, `tests/oracle/v1-site-b-corroboration`),
+    // the phantom target was family C until task V-1.
     const reexport = await workspace.materialize({
       files: {
         "package.json": JSON.stringify({ name: "app", type: "module" }),
@@ -641,12 +648,12 @@ describe("F4 family A mutations: the module-load absence proof", () => {
     expectExactlyOneProof(outcome);
   });
 
-  it("AUDIT: a closure truncated on its OWN walk hands over to family C", async () => {
-    // `traversal_truncated` is the single documented exclusion in
-    // `invalidatesCallGraphNegativeProof`: it bounds the CLOSURE's walk
-    // and says nothing about how far the CALL GRAPH got, which has its
-    // own independent guard. Family A needs `complete` and loses it;
-    // family C needs `graphTruncated === false` and still has it.
+  it("AUDIT: a closure truncated on its OWN walk hands over to NO family", async () => {
+    // Family A needs `complete` and loses it. Until task V-1 family C took
+    // over, over a phantom target (the call graph has no node of this
+    // package); a phantom never supports family C (ADR 0011 predicate 3),
+    // so the finding is UNKNOWN for that reason, whatever V-2 later
+    // decides about `traversal_truncated` itself (ADR 0011 § 8).
     const outcome = await runProof(
       mutate(familyA.inputs, {
         moduleLoadClosure: closureIncomplete(
@@ -656,14 +663,14 @@ describe("F4 family A mutations: the module-load absence proof", () => {
       }),
     );
 
-    expect(outcome.family).toBe("C");
+    expect(outcome.verdict).toBe("UNKNOWN");
+    expect(outcome.family).toBe("NONE");
+    expect(outcome.unknownReasons.map((reason) => reason.reason)).toContain(
+      "vulnerable_target_unresolved",
+    );
     expect(
       outcome.finding?.evidence?.confirmedAbsentFromModuleLoadClosure,
     ).toBeUndefined();
-    expect(
-      outcome.finding?.evidence?.confirmedUnreachableTarget
-        ?.reachableSubgraphComplete,
-    ).toBe(true);
     expectExactlyOneProof(outcome);
 
     // And the exclusion is not a blanket one: the SAME closure, truncated
@@ -1780,9 +1787,10 @@ describe("F4 monotonicity: added uncertainty can never restore confidence", () =
   }
 
   it("family A: piling uncertainty onto an already-withdrawn proof never brings it back", async () => {
-    // Family A's first step is deliberately one that hands over to family
-    // C (the audited takeover), so this ladder also proves the SECOND
-    // uncertainty cannot resurrect A -- it can only take C away too.
+    // Family A's first step was chosen to hand over to family C; since task
+    // V-1 nothing takes over (family A's package has no graph node, so
+    // there is no attributed target for C), and the ladder proves that no
+    // further uncertainty resurrects any proof.
     let inputs = mutate(familyA.inputs, {
       moduleLoadClosure: closureIncomplete(
         closureOf(familyA),
@@ -1790,7 +1798,8 @@ describe("F4 monotonicity: added uncertainty can never restore confidence", () =
       ),
     });
     const afterFirst = await runProof(inputs);
-    expect(afterFirst.family).toBe("C");
+    expect(afterFirst.verdict).toBe("UNKNOWN");
+    expect(afterFirst.family).toBe("NONE");
 
     inputs = mutate(inputs, { graphTruncated: true });
     const afterSecond = await runProof(inputs);
@@ -2044,16 +2053,10 @@ describe("F4 contracts hold under every mutation the suite performed", () => {
     // The renamed field, asserted on a proof produced under mutation
     // rather than only on a pristine baseline. `callGraphComplete` -- the
     // overstated name this replaced -- must not reappear.
+    // (Family A under `traversal_truncated` was a survivor until task V-1;
+    // it was a phantom-backed family C, and is UNKNOWN now.)
     const survivors = [
       await runProof(familyC.inputs),
-      await runProof(
-        mutate(familyA.inputs, {
-          moduleLoadClosure: closureIncomplete(
-            closureOf(familyA),
-            "traversal_truncated",
-          ),
-        }),
-      ),
       await runProof(
         mutate(familyC.inputs, {
           moduleLoadClosure: closureForgets(

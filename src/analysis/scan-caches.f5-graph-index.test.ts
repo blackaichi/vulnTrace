@@ -12,6 +12,7 @@ import {
 import {
   buildGraphPackageInstanceIndex,
   createScanAnalysisCaches,
+  graphFilesOfPackageInstance,
   graphPackageInstancesByName,
 } from "./scan-caches.js";
 
@@ -936,4 +937,103 @@ describe("F5 graph package-instance index: a refusal preserves the family-B proo
     // ...and the refusal changed nothing at all.
     expect(result.after).toEqual(result.before);
   }, 120_000);
+});
+
+/**
+ * Task V-1 (ADR 0011 predicate 2): the instance-keyed query that decides
+ * Site A, filled by the same single pass, asserted against the walk
+ * `verdict.ts`'s `graphFilesOfInstance` falls back to.
+ */
+function walkFilesOfInstance(
+  graph: CallGraph,
+  packageInstance: string,
+  knownPackageRoots: KnownPackageRoots | undefined,
+): string[] {
+  const files = new Set<string>();
+  for (const node of graph.nodes) {
+    if (
+      identifyModule(node.module, knownPackageRoots).packageInstance ===
+      packageInstance
+    ) {
+      files.add(node.module);
+    }
+  }
+  return [...files];
+}
+
+describe("F5 graph package-instance index: the instance-keyed query (task V-1)", () => {
+  it("matches the walk by exact instance, whatever name the manifest declares", () => {
+    const root = project({
+      // PRM-102's shape: installed at `vuln-lib`, manifest says otherwise.
+      "node_modules/vuln-lib/package.json": manifest("vuln-lib-fork", "1.0.0"),
+      "node_modules/vuln-lib/index.js": "module.exports = {};\n",
+      "node_modules/vuln-lib/impl.js": "module.exports = {};\n",
+      "node_modules/nest/node_modules/vuln-lib/package.json": manifest(
+        "vuln-lib",
+        "1.0.0",
+      ),
+      "node_modules/nest/node_modules/vuln-lib/index.js":
+        "module.exports = {};\n",
+      "src/app.js": "module.exports = {};\n",
+    });
+    const graph = graphOf([
+      path.join(root, "src/app.js"),
+      path.join(root, "node_modules/vuln-lib/impl.js"),
+      path.join(root, "node_modules/nest/node_modules/vuln-lib/index.js"),
+      path.join(root, "node_modules/vuln-lib/index.js"),
+    ]);
+    const caches = cachesFor(graph, undefined);
+    const top = path.join(root, "node_modules/vuln-lib");
+    const nested = path.join(root, "node_modules/nest/node_modules/vuln-lib");
+
+    for (const instance of [top, nested, path.join(root, "node_modules/x")]) {
+      expect(
+        [
+          ...(graphFilesOfPackageInstance(caches, graph, undefined, instance) ??
+            []),
+        ],
+        instance,
+      ).toEqual(walkFilesOfInstance(graph, instance, undefined));
+    }
+    // The manifest-named instance is found by instance and missed by name.
+    expect(
+      graphFilesOfPackageInstance(caches, graph, undefined, top)?.size,
+    ).toBe(2);
+    expect(
+      graphPackageInstancesByName(caches, graph, undefined, "vuln-lib")?.has(
+        top,
+      ),
+    ).toBe(false);
+  });
+
+  it("refuses to answer, never answers empty, for a graph it does not describe", () => {
+    const root = project({
+      "node_modules/foo/package.json": manifest("foo", "1.0.0"),
+      "node_modules/foo/a.js": "module.exports = {};\n",
+    });
+    const instance = path.join(root, "node_modules/foo");
+    const graph = graphOf([path.join(root, "node_modules/foo/a.js")]);
+    const caches = cachesFor(graph, undefined);
+
+    // Another graph object, and no caches at all: "walk it yourself".
+    expect(
+      graphFilesOfPackageInstance(
+        caches,
+        graphOf([path.join(root, "node_modules/foo/a.js")]),
+        undefined,
+        instance,
+      ),
+    ).toBeUndefined();
+    expect(
+      graphFilesOfPackageInstance(undefined, graph, undefined, instance),
+    ).toBeUndefined();
+    expect(
+      graphFilesOfPackageInstance(caches, graph, undefined, instance)?.size,
+    ).toBe(1);
+    // A graph that grew after the index was taken: refused, not answered.
+    (graph.nodes as GraphNode[]).push(graph.nodes[0]!);
+    expect(
+      graphFilesOfPackageInstance(caches, graph, undefined, instance),
+    ).toBeUndefined();
+  });
 });

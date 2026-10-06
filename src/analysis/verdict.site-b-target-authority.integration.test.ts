@@ -374,8 +374,11 @@ describe("Site B target authority: sound answers are preserved", () => {
 
   it("still reports NOT_AFFECTED for a package nothing imports at all", async () => {
     // The most common source of correct negatives, and the one Site B's
-    // phantom exists for. The advisory's package resolves, belongs to the
-    // finding's own instance, and no file of it is in the graph.
+    // phantom existed for. The advisory's package resolves, belongs to the
+    // finding's own instance, and no file of it is in the graph. Since task
+    // V-1 (ADR 0011 § 4) it is proved by family A -- the complete
+    // module-load closure does not contain the instance -- never by a
+    // family C search over a phantom target.
     const repo = buildRepo({
       declareWorkspaces: true,
       linkFooTo: "foo",
@@ -448,6 +451,14 @@ describe("Site B target authority: sound answers are preserved", () => {
     });
 
     expect(finding?.verdict).toBe("NOT_AFFECTED");
+    expect(
+      finding?.evidence?.confirmedAbsentFromModuleLoadClosure?.packageInstance,
+    ).toBe(
+      canonicalizePackageInstancePath(
+        path.join(repo.root, "packages", "unused"),
+      ),
+    );
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
   });
 });
 
