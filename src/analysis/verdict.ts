@@ -18,6 +18,7 @@ import {
 import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
 import {
   isClosureWideningReason,
+  type CallEdge,
   type CallGraph,
   type GraphNode,
   type GraphNodeId,
@@ -572,6 +573,98 @@ function graphFilesOfInstance(
     }
   }
   return files;
+}
+
+/**
+ * The modules `closure` loads whose top level the call graph never put in
+ * the searched region, in closure order (task V-1; family C's closure
+ * corroboration): every loaded module's `<module>` node must be reachable
+ * from an entrypoint source over resolved or `possible` edges -- the edges
+ * family C's search follows. A module node merely EXISTING is not enough:
+ * a name imported through `export { x } from "m"` makes the graph build
+ * `m`'s nodes without an edge into `m`'s top level, which real Node still
+ * runs (task V-1's third audit). An absent closure answers none: every
+ * call-graph proof is already refused without one
+ * (`callGraphNegativeProofBlockers`), so this is never the guard for it.
+ */
+function modulesLoadedButNotEvaluated(
+  closure: ModuleLoadClosure | undefined,
+  graph: CallGraph,
+  entrypoints: readonly Entrypoint[],
+  caches: ScanAnalysisCaches | undefined,
+): readonly string[] {
+  if (closure === undefined) {
+    return [];
+  }
+  const evaluated = modulesEvaluatedFromEntrypoints(graph, entrypoints, caches);
+  return closure.loadedFiles.filter((file) => !evaluated.has(file));
+}
+
+/**
+ * Every module whose `<module>` node is reachable from `entrypoints`'
+ * source nodes over resolved and `possible` edges. One walk per scan:
+ * memoized in `caches` for the same graph, entrypoint array and node count.
+ */
+function modulesEvaluatedFromEntrypoints(
+  graph: CallGraph,
+  entrypoints: readonly Entrypoint[],
+  caches: ScanAnalysisCaches | undefined,
+): ReadonlySet<string> {
+  const memo = caches?.graph === graph ? caches.reachableModules : undefined;
+  if (
+    memo !== undefined &&
+    memo.entrypoints === entrypoints &&
+    memo.nodeCount === graph.nodes.length
+  ) {
+    return memo.modules;
+  }
+
+  const edgesByFrom = new Map<GraphNodeId, CallEdge[]>();
+  for (const edge of graph.edges) {
+    const list = edgesByFrom.get(edge.from);
+    if (list === undefined) {
+      edgesByFrom.set(edge.from, [edge]);
+    } else {
+      list.push(edge);
+    }
+  }
+  const visited = new Set<GraphNodeId>();
+  const queue: GraphNodeId[] = [];
+  for (const entrypoint of entrypoints) {
+    for (const source of entrypointSourceNodes(graph, entrypoint).sources) {
+      if (!visited.has(source.id)) {
+        visited.add(source.id);
+        queue.push(source.id);
+      }
+    }
+  }
+  for (let head = 0; head < queue.length; head += 1) {
+    for (const edge of edgesByFrom.get(queue[head]!) ?? []) {
+      const resolution = edge.resolution;
+      if (
+        (resolution.kind === "resolved" || resolution.kind === "possible") &&
+        !visited.has(resolution.target)
+      ) {
+        visited.add(resolution.target);
+        queue.push(resolution.target);
+      }
+    }
+  }
+
+  const modules = new Set<string>();
+  for (const node of graph.nodes) {
+    if (node.kind === "module" && visited.has(node.id)) {
+      modules.add(node.module);
+    }
+  }
+  if (caches !== undefined && caches.graph === graph) {
+    caches.reachableModules = {
+      entrypoints,
+      nodeCount: graph.nodes.length,
+      modules,
+    };
+  }
+  return modules;
 }
 
 /** Reads `<packageInstance>/package.json`'s own declared version, or `undefined` if it can't be read/parsed. */
@@ -2201,6 +2294,47 @@ export async function buildFinding(
           ? "entrypoint_root_incomplete"
           : "unreachability_not_positively_established",
       ]),
+    };
+  }
+
+  // FAMILY C's CLOSURE CORROBORATION (task V-1, RWF-078). "No path to the
+  // target" is a claim about every module that runs, and the search covers
+  // only the top levels it reaches. The call graph follows no re-export
+  // declaration as a module evaluation: a module loaded only through
+  // `export * from` gets no node, and one whose names are imported through
+  // `export { x } from` gets nodes but no edge into its top level. Either
+  // way it runs with its top level outside the searched region, and a call
+  // it makes to the target is invisible. The module-load closure does walk
+  // re-export declarations. So family C stands only when the `<module>`
+  // node of every module the closure loads is reachable from an entrypoint;
+  // otherwise UNKNOWN.
+  //
+  // A truncated closure lists fewer modules, which is safe for a counting
+  // reason, not an inclusion one: the closure truncates only after loading
+  // exactly `maxFiles` files, so a check that passes means the graph holds
+  // at least `maxFiles` files too, which marks the graph truncated (the
+  // scan passes both the same limit) -- and `graphTruncated` withdrew
+  // family C above.
+  const unevaluated = modulesLoadedButNotEvaluated(
+    moduleLoadClosure,
+    graph,
+    entrypoints,
+    caches,
+  );
+  if (unevaluated.length > 0) {
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      target: representativeTarget,
+      evidence: {
+        path: [],
+        reasons: [
+          `the module-load closure loads ${unevaluated.length} module(s) whose top-level code the call graph never searched (for example, a module reached only through a re-export declaration such as \`export * from\` or \`export { x } from\`), and which may call the target: ${unevaluated
+            .slice(0, 5)
+            .join(", ")}${unevaluated.length > 5 ? ", ..." : ""}`,
+        ],
+      },
+      unknownReasons: aggregateUncertainty(["loaded_module_not_evaluated"]),
     };
   }
 

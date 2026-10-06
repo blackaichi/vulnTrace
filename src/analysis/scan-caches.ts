@@ -70,6 +70,17 @@ export interface ScanAnalysisCaches {
    * {@link graphPackageInstancesByName}).
    */
   graphPackageIndex?: GraphPackageInstanceIndex;
+  /**
+   * Task V-1: the modules whose `<module>` node is reachable from this
+   * scan's entrypoints (family C's closure corroboration), computed once.
+   * Read back only for the same entrypoint array (by REFERENCE) and the
+   * same node count; otherwise recomputed. Performance only.
+   */
+  reachableModules?: {
+    readonly entrypoints: readonly unknown[];
+    readonly nodeCount: number;
+    readonly modules: ReadonlySet<string>;
+  };
 }
 
 /**

@@ -10,7 +10,6 @@ import {
 } from "../../src/testing/oracle/hit.js";
 import type { ProjectSpec } from "../../src/testing/oracle/project.js";
 import { syntheticProvider } from "../../src/testing/oracle/provider.js";
-import type { VerdictObservation } from "../../src/testing/open-soundness-defect.js";
 
 /**
  * Task V-1 (docs/tasks/V-1-site-b-closure-corroboration.md): ADR 0011
@@ -27,6 +26,13 @@ import type { VerdictObservation } from "../../src/testing/open-soundness-defect
  *   NAME, matched against the installed manifest's name. An instance whose
  *   manifest names it differently (a lock entry without `name`) was "never
  *   in the graph", although its files were.
+ * - **RWF-078** (found by V-1's audits; ADR 0011, Amendment V-1): a module
+ *   loaded only through `export *` -- the target's own, another
+ *   package's, or the application's -- is never evaluated by the call
+ *   graph, so family C stood over a target it calls; so is a module whose
+ *   names are imported through `export { x } from`. Family C now stands
+ *   only when every module the closure loads has its `<module>` node
+ *   reachable from an entrypoint.
  *
  * LOUD FIXTURES. Every library exports every name a case binds (`parse`,
  * the rule's target; `safe`, its inert sibling; and `toString` where the
@@ -78,17 +84,6 @@ export interface V1Case {
   readonly positive?: string;
   /** The specifier the loud-fixture check loads, in place of `vuln-lib`. */
   readonly loudSpecifier?: string;
-  /**
-   * An open soundness defect this task does not close: the case asserts
-   * the record (the exact wrong result, and its open FINDINGS entry), never
-   * the wrong verdict as an expectation (AGENTS.md § G).
-   */
-  readonly openDefect?: {
-    readonly rwf: string;
-    /** Every sound verdict, when more than `expected` (default: `[expected]`). */
-    readonly admissible?: readonly CaseVerdict[];
-    readonly observed: VerdictObservation;
-  };
   /** Whether real Node calls the target. */
   readonly called: boolean;
   /** The analyzer's verdict on the base commit, measured before the fix. */
@@ -564,12 +559,12 @@ export const NESTED_CASES: readonly V1Case[] = [
 ];
 
 // ---------------------------------------------------------------------------
-// RWF-078 -- PRM-101's mechanism at Site A, which V-1 does not close: one of
-// the package's files is in the graph (the app imports it for its side
-// effect), so Site A attributes the real `impl.js#parse`; the module that
-// calls it, `index.js`, is loaded only through `export *`, which the call
-// graph does not evaluate. Found by task V-1's independent audit; an open
-// soundness defect, asserted as a record, never as an expectation.
+// RWF-078 -- a module loaded only through `export *` is never evaluated by
+// the call graph, so a call it makes is no edge: family C stood over a real
+// target such a module calls. Found by task V-1's audits; closed by V-1's
+// family-C closure corroboration (a module the closure loads and the graph
+// has no node of withdraws family C). The module may be the target's own
+// (Site A), another package's, or the application's.
 // ---------------------------------------------------------------------------
 
 /** `index.js` calls `parse` (from `impl.js`) at its top level. */
@@ -620,8 +615,111 @@ const REEXPORTING_DEPENDENCY: Readonly<Record<string, string>> = {
 };
 
 const TOP_SAFE = `import top from "vuln-lib";\ntop.safe("x");\n`;
+const LIB_SAFE = `import lib from "vuln-lib";\nlib.safe("x");\n`;
 
-export const SITE_A_CASES: readonly V1Case[] = [
+/** An application module, loaded only through the app's own barrel. */
+function appBarrel(call: string): Readonly<Record<string, string>> {
+  return {
+    "src/re.mjs": `export * from "./side.mjs";\n`,
+    "src/side.mjs": `import lib from "vuln-lib";\n${call}\nexport const y = 1;\n`,
+  };
+}
+
+/** An application module whose `helper` the app imports through a named re-export. */
+function appNamedBarrel(call: string): Readonly<Record<string, string>> {
+  return {
+    "src/re.mjs": `export { helper } from "./side.mjs";\n`,
+    "src/side.mjs": `import lib from "vuln-lib";\n${call}\nexport function helper() { return 1; }\n`,
+  };
+}
+
+/**
+ * RWF-078 through a NAMED re-export (task V-1's third audit): importing a
+ * name through `export { x } from "m"` makes the call graph build `m`'s
+ * nodes, with no edge into `m`'s top level, which real Node runs. Having a
+ * node is therefore not being evaluated; family C requires every loaded
+ * module's `<module>` node to be reachable from an entrypoint.
+ */
+export const NAMED_REEXPORT_CASES: readonly V1Case[] = [
+  {
+    id: "named-reexport.site-a",
+    finding: "RWF-078",
+    mechanism:
+      '`export { safe } from "vuln-lib"`: the app calls `safe`; `index.js`\'s top level calls `parse`',
+    language: "mjs",
+    lib: TOP_LEVEL_FORWARDING_LIB,
+    boundNames: ["parse", "safe"],
+    files: { "src/re.mjs": `export { safe } from "vuln-lib";\n` },
+    source: `import { safe } from "./re.mjs";\nsafe("x");\n`,
+    negative: `console.log("app");\n`,
+    negativeFamily: "A",
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "named-reexport.app-module",
+    finding: "RWF-078",
+    mechanism:
+      'the app imports `helper` through `export { helper } from "./side.mjs"`; `side.mjs`\'s top level calls `parse`',
+    language: "mjs",
+    lib: QUIET_LIB,
+    boundNames: ["parse", "safe"],
+    files: appNamedBarrel(`lib.parse("x");`),
+    source: LIB_SAFE + `import { helper } from "./re.mjs";\nhelper();\n`,
+    negative: LIB_SAFE,
+    negativeFamily: "C",
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "named-reexport.other-package",
+    finding: "RWF-078",
+    mechanism:
+      'the app imports `helper` from a package whose `index.js` is `export { helper } from "./side.js"`; `side.js`\'s top level calls `parse`',
+    language: "mjs",
+    lib: QUIET_LIB,
+    boundNames: ["parse", "safe"],
+    installed: { other: "1.0.0" },
+    files: {
+      "node_modules/other/package.json": JSON.stringify({
+        name: "other",
+        version: "1.0.0",
+        type: "module",
+        main: "index.js",
+      }),
+      "node_modules/other/index.js": `export { helper } from "./side.js";\n`,
+      "node_modules/other/side.js": `import lib from "vuln-lib";\nlib.parse("x");\nexport function helper() { return 1; }\n`,
+    },
+    source: LIB_SAFE + `import { helper } from "other";\nhelper();\n`,
+    negative: LIB_SAFE,
+    negativeFamily: "C",
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "named-reexport.app-module.quiet",
+    finding: "RWF-078",
+    mechanism:
+      "the app imports `helper` through a named re-export; `side.mjs` calls only `safe`",
+    language: "mjs",
+    lib: QUIET_LIB,
+    boundNames: ["parse", "safe"],
+    files: appNamedBarrel(`lib.safe("x");`),
+    source: LIB_SAFE + `import { helper } from "./re.mjs";\nhelper();\n`,
+    negative: LIB_SAFE,
+    negativeFamily: "C",
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "a module whose top level the call graph never searched runs; nothing proves it does not call the target (task V-1's family-C closure corroboration)",
+  },
+];
+
+export const NOT_EVALUATED_CASES: readonly V1Case[] = [
   {
     id: "export-star.site-a.side-effect-import",
     finding: "RWF-078",
@@ -634,36 +732,15 @@ export const SITE_A_CASES: readonly V1Case[] = [
     source: `import "vuln-lib/impl.js";\nimport "./re.mjs";\n`,
     negative: `import "vuln-lib/impl.js";\n`,
     negativeFamily: "C",
-    openDefect: {
-      rwf: "RWF-078",
-      admissible: ["UNKNOWN", "AFFECTED"],
-      observed: {
-        verdict: "NOT_AFFECTED",
-        proofFamily: "C",
-        target: "vuln-lib#parse",
-        reachableSubgraphComplete: true,
-        unknownEdges: 0,
-      },
-    },
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
   },
-];
-
-/**
- * RWF-078 REACHED BY V-1 (task V-1's re-audit, finding 1). The finding is
- * the nested fork-named instance. On the base the name-keyed lookup sent it
- * to the family-B branch, which a closure loading it refused: UNKNOWN. V-1
- * selects Site A by the exact instance, and Site A has RWF-078's gap, so
- * the branch answers a false NOT_AFFECTED -- the same answer the base
- * already gives when the nested instance's manifest name matches. Recorded,
- * not expected; whether V-1 may ship with it is the project owner's
- * decision (docs/tasks/V-1-site-b-closure-corroboration.md, Corrections).
- */
-export const RWF078_REACHED_BY_V1: readonly V1Case[] = [
   {
-    id: "export-star.nested-fork.reached-by-v1",
+    // V-1's instance-keyed selection sends this fork-named instance to
+    // Site A; before the family-C corroboration that made it a false
+    // NOT_AFFECTED the base did not give (task V-1's re-audit, finding 1).
+    id: "export-star.nested-fork.site-a",
     finding: "RWF-078",
     mechanism:
       "a dependency side-effect-imports a nested fork-named `vuln-lib`'s `impl.js` and re-exports it with `export *`; its `index.js` calls `parse` at its top level",
@@ -678,20 +755,68 @@ export const RWF078_REACHED_BY_V1: readonly V1Case[] = [
     positive:
       TOP_SAFE + `import { callParse } from "a/caller.cjs";\ncallParse("x");\n`,
     negativeFamily: "B",
-    openDefect: {
-      rwf: "RWF-078",
-      admissible: ["UNKNOWN", "AFFECTED"],
-      observed: {
-        verdict: "NOT_AFFECTED",
-        proofFamily: "C",
-        target: "vuln-lib#parse",
-        reachableSubgraphComplete: true,
-        unknownEdges: 0,
-      },
-    },
     called: true,
     base: "UNKNOWN",
     expected: "UNKNOWN",
+  },
+  {
+    id: "export-star.app-module-barrel",
+    finding: "RWF-078",
+    mechanism:
+      'the app\'s barrel `export * from "./side.mjs"` runs `side.mjs`, whose top level calls `parse`',
+    language: "mjs",
+    lib: QUIET_LIB,
+    boundNames: ["parse", "safe"],
+    files: appBarrel(`lib.parse("x");`),
+    source: LIB_SAFE + `import "./re.mjs";\n`,
+    negative: LIB_SAFE,
+    negativeFamily: "C",
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "export-star.other-package-barrel",
+    finding: "RWF-078",
+    mechanism:
+      'another package\'s `export * from "./side.js"` runs `side.js`, whose top level calls `parse`',
+    language: "mjs",
+    lib: QUIET_LIB,
+    boundNames: ["parse", "safe"],
+    installed: { other: "1.0.0" },
+    files: {
+      "node_modules/other/package.json": JSON.stringify({
+        name: "other",
+        version: "1.0.0",
+        type: "module",
+        main: "index.js",
+      }),
+      "node_modules/other/index.js": `export * from "./side.js";\n`,
+      "node_modules/other/side.js": `import lib from "vuln-lib";\nlib.parse("x");\nexport const y = 1;\n`,
+    },
+    source: LIB_SAFE + `import "other";\n`,
+    negative: LIB_SAFE,
+    negativeFamily: "C",
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "export-star.app-module-barrel.quiet",
+    finding: "RWF-078",
+    mechanism: "the app's barrel runs `side.mjs`, which calls only `safe`",
+    language: "mjs",
+    lib: QUIET_LIB,
+    boundNames: ["parse", "safe"],
+    files: appBarrel(`lib.safe("x");`),
+    source: LIB_SAFE + `import "./re.mjs";\n`,
+    negative: LIB_SAFE,
+    negativeFamily: "C",
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "a module the call graph never evaluated runs; nothing proves it does not call the target (task V-1's family-C closure corroboration)",
   },
 ];
 
@@ -699,6 +824,6 @@ export const ALL_CASES: readonly V1Case[] = [
   ...EXPORT_STAR_CASES,
   ...NAME_MISMATCH_CASES,
   ...NESTED_CASES,
-  ...SITE_A_CASES,
-  ...RWF078_REACHED_BY_V1,
+  ...NOT_EVALUATED_CASES,
+  ...NAMED_REEXPORT_CASES,
 ];

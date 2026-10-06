@@ -1069,11 +1069,13 @@ describe("F4 family C mutations: the target-unreachability proof", () => {
         }),
     },
     {
-      // The closure's own record of a loaded FILE's identity is not read
-      // by family C, whose completeness claim is about the reachable
-      // subgraph of the call graph.
+      // Until task V-1 this was a control: family C did not read the
+      // closure's loaded files. It does now (RWF-078): the renamed file is
+      // a module the closure loads and the call graph has no node of -- a
+      // module never evaluated, whose top level may call the target -- so
+      // family C must not stand.
       mutation: "a_loaded_file_identity_rewritten_in_the_closure",
-      invalidates: false,
+      invalidates: true,
       apply: (inputs) =>
         mutate(inputs, {
           moduleLoadClosure: closureWithFileRenamed(
@@ -1082,6 +1084,7 @@ describe("F4 family C mutations: the target-unreachability proof", () => {
             `${familyC.root}/node_modules/vuln-lib/other.js`,
           ),
         }),
+      expectUncertaintyReason: "loaded_module_not_evaluated",
     },
   ]);
 

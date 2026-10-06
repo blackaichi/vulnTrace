@@ -192,3 +192,69 @@ covers when the package is genuinely unloaded.
 Families B and C become strictly harder to reach and strictly easier to
 audit: every proof names the closure it was corroborated by. Site B's
 phantom survives only as an explanatory placeholder for an `UNKNOWN`.
+
+## Amendment V-1 (accepted by the project owner, 2026-10-06)
+
+**What was found.** Task V-1's independent audits reproduced, against real
+Node, that § 4's second modeled exception -- "a loaded, attributed,
+unreached target keeps family C … corroboration is only predicate 1" --
+rests on a false premise: that the call graph evaluates every module that
+runs. It does not follow a re-export declaration (`export * from "x"`),
+so a module loaded only that way runs its top level with no node in the
+graph, and a call it makes to the target is no edge. Family C then stood
+over a real target such a module calls (`RWF-078`, a false
+`NOT_AFFECTED`), whether the module is the target's own (Site A),
+another package's, or the application's. § 7 placed the `export *` shape
+in lane A/E as precision; at Site A and beyond it is soundness.
+
+**The rule, amended.** Invariant V gains a fifth predicate, checked by
+`buildFinding` before family C is issued:
+
+5. every module the closure loads was evaluated in the searched region:
+   its `<module>` node is reachable from an entrypoint source over
+   resolved or `possible` edges -- the edges family C's search follows;
+   otherwise the finding is `UNKNOWN`. Having a node is not enough: a
+   name imported through `export { x } from "m"` makes the call graph
+   build `m`'s nodes with no edge into `m`'s top level, which real Node
+   runs (task V-1's third audit).
+
+§ 4's second exception now reads: a loaded, attributed, unreached target
+keeps family C **when every module the closure loads was evaluated by the
+call graph**.
+
+**Fail-closed default.** One row is added to § 3's table, and with it one
+reason token -- a subtype of an existing category, not a seventh:
+
+| Situation | Category | Reason |
+| --- | --- | --- |
+| the closure loads a module whose `<module>` node no entrypoint reaches | `unmodeled_construct` | `loaded_module_not_evaluated` (new) |
+
+`unmodeled_construct` because the analyzer sees the re-export declaration
+and does not model the module's evaluation; a module-evaluation edge
+through every re-export declaration (`export *` and `export { x } from`;
+§ 7) closes it, and wins back the precision (backlog `BL-052`).
+
+**Measured cost.** Over the 139 corpus cases: verdict differential 0 (the
+corpus's family-C negatives all reach every loaded module's top level).
+Known cost: a scan that loads any module only through a re-export
+declaration loses family C for every finding in it, including correct
+negatives (`export-star.app-module-barrel.quiet`,
+`named-reexport.app-module.quiet` in
+`tests/oracle/v1-site-b-corroboration.cases.ts`); named re-exports are an
+ordinary barrel pattern, so this cost is real outside the corpus. Family A
+and family B are unaffected: each already requires a complete closure
+without the instance.
+
+**Why every loaded module, not the target instance's, and why reachable,
+not present.** Both narrower predicates were measured insufficient: a
+module of the application or of another package, loaded only through
+`export *`, calls the target just as well (`export-star.app-module-barrel`,
+`export-star.other-package-barrel`); and a module with nodes but an
+unreached top level -- imported through `export { x } from` -- does too
+(`named-reexport.*`).
+
+**Why a truncated closure is safe.** The closure truncates only after
+loading exactly `maxFiles` files. If all of them are reached in the call
+graph, the graph holds at least `maxFiles` files, which marks it truncated
+(the scan passes both traversals the same limit), and `graphTruncated`
+withdraws family C first.

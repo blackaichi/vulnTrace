@@ -180,6 +180,14 @@ interface ScanWork {
   readonly manifestReads: number;
   /** Distinct (instance, specifier) pairs the public-entry memo held. */
   readonly publicEntryKeys: number;
+  /**
+   * Task V-1: distinct reachable-module sets family C's closure
+   * corroboration computed. Each computation stores a NEW set in the scan
+   * caches, so this counts the graph walks it made.
+   */
+  readonly reachableModuleWalks: number;
+  /** Findings that reached family C (`NOT_AFFECTED` with its evidence). */
+  readonly familyCFindings: number;
 }
 
 /**
@@ -248,6 +256,8 @@ async function measureScan(
   const before = { ...context.caches.identity.operations };
   const packageInstance = path.join(root, "node_modules", "wide");
   let findings = 0;
+  let familyCFindings = 0;
+  const reachableModuleSets = new Set<object>();
   for (let i = 0; i < advisoryCount; i += 1) {
     const vulnerability: Vulnerability = {
       id: `GHSA-f5-${i}`,
@@ -282,6 +292,12 @@ async function measureScan(
     if (finding) {
       findings += 1;
     }
+    if (finding?.evidence?.confirmedUnreachableTarget !== undefined) {
+      familyCFindings += 1;
+    }
+    if (context.caches.reachableModules !== undefined) {
+      reachableModuleSets.add(context.caches.reachableModules);
+    }
   }
 
   const after = context.caches.identity.operations;
@@ -295,6 +311,8 @@ async function measureScan(
     realpathCalls: after.realpathCalls - before.realpathCalls,
     manifestReads: after.manifestReads - before.manifestReads,
     publicEntryKeys: context.caches.publicEntries.size,
+    reachableModuleWalks: reachableModuleSets.size,
+    familyCFindings,
   };
 }
 
@@ -337,6 +355,16 @@ describe("F5 multiplier gate: verdict work is O(nodes) + O(1) per advisory", () 
     expect(many.identityRequests).toBeLessThan(
       many.graphNodes * MANY_ADVISORIES,
     );
+  }, 120_000);
+
+  it("walks the graph once per scan for family C's closure corroboration (task V-1)", async () => {
+    // Every family-C candidate asks whether each module the closure loads
+    // is reached from an entrypoint. That is one graph walk, memoized in
+    // the scan caches -- never one per advisory.
+    const many = await measureScan(MANY_ADVISORIES);
+    // Many family-C candidates, or the bound below is vacuous.
+    expect(many.familyCFindings).toBeGreaterThan(1);
+    expect(many.reachableModuleWalks).toBe(1);
   }, 120_000);
 
   it("pays no filesystem cost at all during verdict evaluation", async () => {
