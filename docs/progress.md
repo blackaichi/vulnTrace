@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-05, by `A-6`.
+**Last updated:** 2026-10-06, by `V-1`.
 
 ## Objective
 
@@ -78,6 +78,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   fixed); a destructured require is named by its key (PRM-108's origin; a
   computed key is still open at the consumer, C-4). What binds A-7, E and C
   next: REMEDIATION-PLAN § 5a, "A-3a additions" through "A-6 additions".
+- Lane V has started. `V-1` (ADR 0011 predicates 2 and 3) deleted Site
+  B's phantom target: a package with no node in the call graph is proved
+  unreachable only by family A, and is otherwise `UNKNOWN` -- a package
+  loaded only through `export *` was a family-C false `NOT_AFFECTED`
+  (PRM-101), and one that calls nothing is now `UNKNOWN` (the measured
+  precision cost). Site A vs Site B is chosen by the exact
+  `packageInstance`, never by the manifest's name (PRM-102). What binds
+  V-2..V-4: REMEDIATION-PLAN § 5a, "V-1 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -108,22 +116,27 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`A-6` — resolution authority, binder side: trailing chains; import names
-for string/computed keys
-([task file](tasks/A-6-binder-resolution-authority.md)): `READY_FOR_REVIEW`,
-its pull request awaiting the project owner. `A-5b` merged as PR #84.
-Lane A is complete once it merges.
+`V-1` — closure corroboration for Site B; instance-keyed site selection
+([task file](tasks/V-1-site-b-closure-corroboration.md)): **`BLOCKED`,
+needing the project owner's decision** -- its instance-keyed selection
+extends RWF-078 to fork-named instances the base answered `UNKNOWN`
+(task file, Corrections 4). Branch pushed; no pull request yet. `A-6`
+merged as PR #85, completing lane A.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `A-6`:
-lane V (`V-1`..`V-4`), then `C-1` and lane B. The P1 gaps `BL-048`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-1`:
+`V-2`..`V-4`, then `C-1` and lane B. The P1 gaps `BL-052`
+(RWF-078, a decision first), `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
 
+From `V-1`: `BL-052` (**P1**, RWF-078: PRM-101's mechanism at Site A -- a
+module loaded only through `export *` is never evaluated, so family C
+stands over a real target it calls; needs the project owner's decision).
 From `A-6`: RWF-075 (fixed by A-6: ADR 0008's `.call` / `.apply`
 exception read literally), `BL-050` (**P1**, RWF-076: an ES module's
 default import read as CommonJS interop, a family-C false `NOT_AFFECTED`),

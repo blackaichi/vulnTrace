@@ -206,8 +206,8 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-65 | `vuln-lib` (synthetic fixture), paginated OSV response | The real `OsvProvider` sends one request with no `page_token`, so a paginated OSV response's later pages are silently never seen | silent drop — see below | Open |
 | PRM-66 | `bad` (synthetic workspace fixture) | A workspace member with a malformed manifest is silently skipped only when its lockfile entry is versionless | silent drop (versionless lock entry only) — see below | Open |
 | PRM-67 | `vuln-lib` (synthetic fixture) | `SUPPORTED_MODEL_EXCLUSIONS` omits `--conditions` and `--import`/preload flags, so the model's stated scope is false | disclosure — see below | Open |
-| PRM-101 | `vuln-lib` (synthetic fixture) | Site B hands a phantom target to reachability with no closure corroboration, certifying export-*-only code unreachable although its top level runs | false NOT_AFFECTED — see below | Open |
-| PRM-102 | `vuln-lib-fork` (synthetic fixture, manifest name mismatch) | Site A/B selection is keyed by advisory package NAME, not by exact `PackageInstance` | false NOT_AFFECTED (realistic for a lock entry whose manifest name differs from the queried name) — see below | Open |
+| PRM-101 | `vuln-lib` (synthetic fixture) | Site B hands a phantom target to reachability with no closure corroboration, certifying export-*-only code unreachable although its top level runs | false NOT_AFFECTED — see below | **Fixed** (V-1) — see below |
+| PRM-102 | `vuln-lib-fork` (synthetic fixture, manifest name mismatch) | Site A/B selection is keyed by advisory package NAME, not by exact `PackageInstance` | false NOT_AFFECTED (realistic for a lock entry whose manifest name differs from the queried name) — see below | **Fixed** (V-1) — see below |
 | PRM-103 | `vuln-lib` (synthetic fixture) | A cyclic `require` observes an intermediate `module.exports` value mid-cycle, but last-write-wins attribution only considers the final write | false NOT_AFFECTED — see below | Open |
 | PRM-104 | `vuln-lib` (synthetic fixture) | A `FunctionDeclaration` binding used as an export has no reassignment check, unlike the class/function-expression branches next to it | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | PRM-105 | `vuln-lib` (synthetic fixture) | Member access and call results are treated as opaque in the escape sweep, hiding a capability reached through `[x][0]`, `.at(0)`, a computed key or `Reflect.get` | false NOT_AFFECTED — see below | Open |
@@ -252,6 +252,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-075 | `vuln-lib` (synthetic fixture) | ADR 0008's A-6 row keeps a single trailing `.call` / `.apply` on an exact export resolved, with no condition: a write of a member named `call` / `apply` (on the function, or on `Function.prototype`), or a class export's own static `call`, makes the call reach another function | false NOT_AFFECTED — see below | **Fixed** (A-6) — see below |
 | RWF-076 | `vuln-lib` (synthetic fixture) | An ES module's default import is bound as the CommonJS interop object: `import d from "esm-pkg"; d.safe()` is attributed to the named export `safe`, though `d` is the module's separate `default` export | false NOT_AFFECTED — see below | Open (backlog `BL-050`) |
 | RWF-077 | `vuln-lib` (synthetic fixture) | A builtin loader bound by destructuring and called through `.call` / `.apply` (`const { fork } = require("child_process"); fork.call(null, w)`) is keyed `fork.call`, which no table names, and the loader classifier never sees the load | false NOT_AFFECTED (family A) — see below | Open (backlog `BL-051`) |
+| RWF-078 | `vuln-lib` (synthetic fixture) | A package whose module that calls the target is loaded only through `export *`, while another of its files is in the call graph, keeps a family-C proof over the real target at Site A: the graph never evaluates the re-exported module (PRM-101's mechanism at Site A) | false NOT_AFFECTED (family C) — see below | Open (backlog `BL-052`) |
 
 ---
 
@@ -17298,6 +17299,34 @@ possible edge never exists (a false `NOT_AFFECTED`, base and branch alike).
 Imported directly, the same module is `UNKNOWN`. Closed with this finding
 (V-1).
 
+**Status update (task V-1, 2026-10-06): Fixed.** Site B's phantom target
+is deleted (`resolveTargetNodes`, `src/analysis/verdict.ts`; ADR 0011
+predicate 3). A Site B target with no real node in the call graph is
+proved unreachable only by family A -- a complete module-load closure
+that does not contain the finding's instance -- and is otherwise
+`UNKNOWN` (`identity_unresolved` / `vulnerable_target_unresolved`, ADR
+0011 § 3), with the closure's shortfall named in the evidence and the
+unknown edges reachable from the entrypoints still reported (what the
+phantom search used to report). Against real Node
+(`tests/oracle/v1-site-b-corroboration.test.ts`, `export-star.*`): the
+app's own barrel, a dependency's barrel, and a namespace whose
+re-exported `toString` the runtime calls (task A-4's note above) were
+family-C `NOT_AFFECTED` on the base `62193c0` and are `UNKNOWN` after;
+so is a barrel whose library calls nothing, the precision cost ADR 0011
+§ 5 measured (`export-star.app-barrel.quiet`). A package nothing loads
+stays `NOT_AFFECTED`, now asserted as family A (`unloaded.family-a`;
+`verdict.site-b-target-authority.integration.test.ts`).
+
+Scope of the fix: this finding is Site B's phantom, and that is gone. The
+same mechanism -- a module loaded only through `export *` is never
+evaluated by the call graph -- also reaches Site A, when another file of
+the package is in the graph: family C then stands over the real target
+the unevaluated module calls. Task V-1's independent audit reproduced it
+(base and branch alike); it is recorded separately as `RWF-078` (backlog
+`BL-052`): after V-1, `export *` is a precision cost at Site B but still
+a soundness gap at Site A, although ADR 0011 § 7 treats it as precision
+only.
+
 ---
 
 ## PRM-102 — Site A/B selection is keyed by advisory package NAME, not by exact `PackageInstance`
@@ -17312,6 +17341,23 @@ Imported directly, the same module is `UNKNOWN`. Closed with this finding
 `verdict.ts`'s Site B fallback ("no node of this name") is keyed by the advisory's package name string; when a lock entry's real installed manifest name differs from the name it is queried under, the graph-node lookup by name misses the real node set and family C certifies the package unreachable although Node loads and calls it under its real name.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-102`) and § 4 (`r2-siteB-name-mismatch-forwarded`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task V-1, 2026-10-06): Fixed.** A finding with a
+`packageInstance` takes Site A exactly when the call graph holds a file
+of that instance, whatever name its manifest declares
+(`graphFilesOfInstance`, `src/analysis/verdict.ts`, answered from the F5
+index's same single pass, `byPackageInstance` in
+`src/analysis/scan-caches.ts`; ADR 0011 predicate 2). The name-keyed
+lookup now serves only a finding with no instance (direct `buildFinding`
+callers; production always passes one) and the family-B / Site-B choice
+for an instance the graph never traversed, both of which reach
+`NOT_AFFECTED` only through a complete closure without the instance.
+Against real Node (`tests/oracle/v1-site-b-corroboration.test.ts`,
+`name-mismatch.*`): an instance at `node_modules/vuln-lib` whose manifest
+says `vuln-lib-fork`, with `parse` forwarded from `impl.js`, was a
+family-C `NOT_AFFECTED` on the base `62193c0` -- its positive control
+too -- and is `AFFECTED` after; the same package with `parse` defined in
+`index.js`, and under its own name, stay `AFFECTED`.
 
 ---
 
@@ -19181,3 +19227,70 @@ certifies the package unloaded. Oracle record:
 
 **The fix:** the loader classifier treats `<loader>.call` / `.apply` (and
 `.bind`'s result) as the loader, for every binding form.
+
+---
+
+## RWF-078 — A module loaded only through `export *` is never evaluated by the call graph, so family C stands at Site A over a target it calls
+
+**Status:** Open (backlog `BL-052`)
+**Failure class:** false NOT_AFFECTED (family C)
+**Defect class:** C (the closure records the module as loaded; the call
+graph, which follows no re-export declaration, treats it as never run)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** V or A/E — needs the project owner's decision (below)
+
+**Discovered:** by task V-1's independent audit (finding 1), measured
+against real Node v22.11.0 on the base `62193c0` and on the V-1 branch
+(the same verdict on both):
+
+```js
+// node_modules/vuln-lib/index.js (CommonJS)
+const parse = require("./impl");
+parse("top-level");                      // runs when index.js loads
+module.exports = { parse, safe };
+
+// src/index.mjs
+import "vuln-lib/impl.js";               // puts impl.js in the graph
+import "./re.mjs";                       // re.mjs: export * from "vuln-lib";
+```
+
+Real Node calls `parse`. `impl.js` is in the call graph, so Site A
+attributes the real `impl.js#parse` node; `index.js`, whose top level calls
+it, is loaded only through the `export *` declaration, which call-graph
+discovery does not follow, so nothing reaches `parse` and family C
+certifies it unreachable. The module-load closure does walk the
+declaration and records the instance as loaded, but family C does not
+consult which of the instance's modules the closure loaded. Without the
+side-effect import (no file of the package in the graph) the same program
+is Site B, which task V-1 made `UNKNOWN` (PRM-101).
+
+**What it falsifies.** ADR 0011 § 4's modeled exception -- "a loaded,
+attributed, unreached target keeps family C … corroboration is only
+predicate 1" -- rests on the call graph having evaluated every module the
+closure loads. It has not, for a module reached only through a re-export
+declaration. ADR 0011 § 7 places the cure for the `export *` shape in lane
+A/E ("a module-evaluation edge through `export *`") as a precision
+matter; at Site A it is a soundness one.
+
+**The fix (a decision):** either family C requires that every module of
+the target's instance the closure loads is a module the call graph
+walked (a lane-V corroboration predicate, failing closed to `UNKNOWN`), or
+the call graph evaluates a module reached through a re-export declaration
+(a module-evaluation edge, lanes A/E), which also wins back PRM-101's
+precision. Oracle record: `tests/oracle/v1-site-b-corroboration.test.ts`,
+`export-star.site-a.side-effect-import` (an open-soundness-defect record).
+
+**Task V-1 extends its reach (measured by V-1's independent re-audit,
+finding 1).** V-1 selects Site A by the exact instance. An instance whose
+manifest name differs from the advisory's used to take the name-keyed
+route instead, which answered `UNKNOWN` here (Site B could not resolve
+it, or the family-B branch was refused by a closure that loads it). Under
+V-1 it takes Site A and inherits this gap: a nested fork-named instance
+re-exported with `export *` by a dependency that also side-effect-imports
+one of its files is `UNKNOWN` on the base `62193c0` and a false
+`NOT_AFFECTED` (family C) on the V-1 branch, with real Node calling
+`parse` -- the answer the base already gives when the manifest name
+matches. Oracle record: `export-star.nested-fork.reached-by-v1`. Whether
+V-1 may merge before this finding is fixed is the project owner's
+decision (`docs/tasks/V-1-site-b-closure-corroboration.md`, Corrections).
