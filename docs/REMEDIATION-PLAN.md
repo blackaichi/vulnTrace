@@ -951,6 +951,76 @@ above).
   first member is read as a named export whatever the target's module
   format; for an ES module target it is a member of the `default` export.
 
+#### V-1 additions (task V-1, 2026-10-06)
+
+**Outcome of V-1** (ADR 0011 predicates 2 and 3; § 8's V-1 row).
+
+- `phantomNode` is deleted. A Site B target with no real node is
+  `unresolvedReason` (`vulnerable_target_unresolved`) once family A's gate
+  has had its chance; the evidence names the closure's shortfall
+  (unavailable, incomplete with its reasons, or showing the instance
+  loaded), and the unknown edges reachable from the entrypoints are still
+  reported, as the phantom search reported them.
+- A finding with a `packageInstance` takes Site A exactly when the call
+  graph holds a file of that instance (`graphFilesOfInstance`, from the F5
+  index's single pass). The name-keyed `graphPackageInstances` survives
+  for a finding with no instance and for the family-B / Site-B choice.
+- The finding's `target` is no longer set for an unattributed Site B
+  target, as for Site A's.
+
+**What V-1 binds.**
+
+- **V-2**: of § 8's V-2 row, `verdict.f4-proof-mutation.test.ts`'s
+  "a closure truncated on its OWN walk" audit and the
+  `scan-security.test.ts` VT-202 truncation test were both
+  phantom-backed: the first now asserts no takeover, the second runs over
+  a real, attributed target (a side-effect import of the package) and
+  still asserts VT-202's own reason; `verdict.negative-proof.test.ts` case
+  10b no longer pins the exclusion: it asserts only that a Site B target
+  is not family C. What remains for V-2 is the exclusion itself over a
+  real target (PRM-23): `invalidatesCallGraphNegativeProof`,
+  the family-C matrix's "closure_incomplete_traversal_truncated_only"
+  control and the F2 proof-guard test "is unchanged for a present,
+  incomplete closure".
+- **V-3**: the name-keyed lookups left in `verdict.ts` are
+  `graphPackageInstances` and those V-3's census names.
+  `graphPackageInstances` attributes no target any more, but it is not
+  only a label: it chooses between family B and Site B for an instance the
+  graph never traversed, and Site B's family A also needs the advisory's
+  module, resolved from the project root, to land in the instance. An
+  unloaded nested install is therefore family B when a same-named instance
+  is in the graph and `UNKNOWN` when none is -- sound both ways, a
+  precision difference (task V-1's independent audit, finding 4). Its
+  census direction is `refuse-only` in effect (either branch reaches
+  `NOT_AFFECTED` only through a complete closure without the instance);
+  V-3 should record it so, with this caveat.
+- **V-4**: `AttributedTarget` has one producer fewer to type; a Site B
+  real node (synthetic graphs, findings without an instance) is still
+  bound by `findExportNodeInFile`.
+- **Precision, and a soundness gap V-1 does not close**: at Site B a
+  package loaded only through `export *` and not called is `UNKNOWN`
+  (ADR 0011 § 5). At Site A the same mechanism is still a false
+  `NOT_AFFECTED`: when another file of the package is in the graph, the
+  module loaded only through `export *` is never evaluated, and family C
+  stands over the real target it calls (`RWF-078`, backlog `BL-052`). ADR
+  0011 § 4's "a loaded, attributed, unreached target keeps family C"
+  rests on a premise RWF-078 falsifies; § 7's module-evaluation edge
+  through `export *` is therefore a soundness fix at Site A, not only
+  precision. Which of the two fixes RWF-078 records is the project
+  owner's decision.
+- **Verdicts V-1 moves toward `NOT_AFFECTED`**: an instance whose
+  manifest name differs from the advisory's now takes Site A. Where the
+  base answered `UNKNOWN` through the name-keyed route, the branch answers
+  family C over the instance's real target -- the proof a same-named
+  instance already gets. That is oracle-correct when nothing reaches the
+  target (`name-mismatch.nested.safe`), and a **false** `NOT_AFFECTED` in
+  RWF-078's shape (`export-star.nested-fork.reached-by-v1`, measured by
+  task V-1's independent re-audit): V-1 extends RWF-078 to instances the
+  base answered `UNKNOWN`. **Decision pending** (the task's first STOP
+  condition): accept it as a disclosed regression until `BL-052`, order
+  `BL-052` before V-1, or keep name-equivalent selection for these
+  instances until RWF-078 is fixed.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: BLOCKED (`NEEDS_DECISION`: see Corrections, item 4)
 - **Backlog ID**: V-1
 - **Branch**: v-1-site-b-closure-corroboration
 - **Base SHA**: 62193c08b35f444e4389e83d0df230aa9a7cafb5
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `7b3fc8c` docs(tasks): V-1 task file — Site B closure corroboration, instance-keyed selection
+  - `12ba3a5` test(V-1): real-Node reproductions — export-star-only packages, manifest-name mismatch
+  - `81302bc` fix(V-1): Site B proves only through family A; Site A chosen by exact instance
+  - (this commit) docs(V-1): records — findings, RWF-078, plan § 5a, debts, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -179,3 +183,78 @@ The full set in `AGENTS.md` section I, unrelaxed. Expected:
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5), in
 exactly that order.
+
+## Corrections
+
+Appended after work started (the sections above are not rewritten).
+
+1. **Premise checked: ADR 0011 § 8's list of tests that change.** The
+   change failed exactly twenty existing tests, all built on the phantom:
+   the ten F4 mutation tests, four in `verdict.test.ts`, case 14 of
+   `verdict.module-load-absence.test.ts`, cases 8 and 10b of
+   `verdict.negative-proof.test.ts`, two in
+   `finding.f4-closure-hardening.test.ts` (F4 § 24) and the VT-202 scan
+   test. ADR 0011 § 8 assigns some of them to V-2 (case 10b, the F4
+   "closure truncated on its OWN walk" audit, the VT-202 test); they fail
+   here because their target was a phantom. Case 10b is re-stated without
+   re-pinning PRM-23's premise, which stays V-2's.
+2. **Explainability kept.** The first corpus differential showed five
+   `UNKNOWN` findings losing the blockers the phantom search reported
+   (`dynamic_require`, `dynamic_import`, `unsupported_receiver_binding`).
+   An unattributed Site B target now still reports the unknown edges
+   reachable from the entrypoints, beside `vulnerable_target_unresolved`.
+3. **The independent audit blocked** (four findings, all measured again
+   against real Node before acting):
+   - Finding 1: PRM-101's mechanism still reaches Site A (a false
+     `NOT_AFFECTED`, base and branch alike). Pre-existing and outside
+     this task's code scope; registered as `RWF-078` (backlog `BL-052`,
+     P1, a decision first) with an open-soundness-defect record, and the
+     records' claim that `export *` is now only a precision cost is
+     corrected.
+   - Finding 2: one verdict moves toward `NOT_AFFECTED` -- a nested
+     fork-named instance, `UNKNOWN` on the base through the name-keyed
+     family-B branch, is family C over its real target on the branch,
+     and real Node never calls it (`name-mismatch.nested.safe`). **This
+     meets the first STOP condition above as written.** It was not
+     treated as a stop, because the move is predicate 2's specified
+     effect (the instance gets exactly the proof a same-named instance
+     already gets) and the verdict is oracle-confirmed; it is disclosed
+     in the records and the pull request for the project owner's review.
+   - Finding 3: the re-stated VT-202 scan test no longer guarded the
+     production wiring of `graphTruncated`; it now runs over a real,
+     attributed target and is caught by that mutation again.
+   - Finding 4: the name-keyed family-B / Site-B choice can decide a
+     verdict, not only a family (pre-existing, identical on base and
+     branch, sound both ways: a precision difference). **This meets the
+     third STOP condition above as written**; it was not treated as a
+     stop because nothing about it changed here. The comment and the plan
+     are corrected, and V-3's census is told.
+4. **The independent re-audit blocked, on a decision.** It measured that
+   finding 2's move toward `NOT_AFFECTED` is not always oracle-correct: in
+   RWF-078's shape (a dependency side-effect-imports one file of a nested
+   fork-named `vuln-lib` and re-exports the rest with `export *`, whose
+   top level calls `parse`), the base answers `UNKNOWN` and the branch a
+   **false** `NOT_AFFECTED` (family C), with real Node calling `parse`
+   (`export-star.nested-fork.reached-by-v1`, an open-soundness-defect
+   record of RWF-078; reproduced again before recording). V-1's
+   instance-keyed selection (ADR 0011 predicate 2, the specified change)
+   sends such instances to Site A, where RWF-078's gap applies -- the
+   answer the base already gives when the manifest name matches. **This
+   is the first STOP condition, and this time it stops the task.** The
+   options for the project owner:
+   - accept it as a disclosed regression, bounded by RWF-078, until
+     `BL-052` fixes RWF-078 (the branch as it stands);
+   - order `BL-052` (its own decision first) before V-1, then resume V-1;
+   - keep the name-keyed route for an instance whose manifest name
+     differs from the advisory's until RWF-078 is fixed -- which keeps
+     PRM-102's false `NOT_AFFECTED` open for that time.
+   The re-audit's notes are also acted on: the RWF-078 records admit
+   `AFFECTED` as sound (real Node calls `parse`), and a record case's
+   negative-control family is asserted.
+5. **Acceptance criterion 1, as written, is too strong.** Not every case
+   fails on the base: `unloaded.family-a`, `name-mismatch.direct` and
+   `name-mismatch.forwarded.matching-name` are contrast and control cases
+   that pass on the base by design, and the two RWF-078 cases are
+   records of an open defect (one with the same wrong verdict on the
+   base, one with the base `UNKNOWN`). Every case whose `base` differs
+   from its `expected` fails on the base.
