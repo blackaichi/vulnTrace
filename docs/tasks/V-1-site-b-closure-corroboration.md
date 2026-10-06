@@ -1,0 +1,181 @@
+# V-1 — Closure corroboration for Site B; instance-keyed site selection
+
+## Status
+
+- **Status**: IN_PROGRESS
+- **Backlog ID**: V-1
+- **Branch**: v-1-site-b-closure-corroboration
+- **Base SHA**: 62193c08b35f444e4389e83d0df230aa9a7cafb5
+- **Commits**: (filled in by the last commit)
+- **Superseded by**: —
+
+## Project context
+
+First task of lane V of the soundness remediation
+([`docs/REMEDIATION-PLAN.md`](../REMEDIATION-PLAN.md) § 5a order 8),
+after lane A closed with [`A-6`](A-6-binder-resolution-authority.md)
+(PR #85, merged 2026-10-06). Lane V has no dependency on lane A (plan
+§ 5a, order 8's rationale); V-2, V-3, V-4, E-3 and B-6 depend on it.
+
+The specification is
+[ADR 0011](../adr/0011-negative-proof-corroboration.md): invariant V
+(§ 1), its predicates 2 ("Site A vs Site B is selected by
+`graph.nodes.some(n => identity(n).packageInstance ===
+finding.packageInstance)`, never by package name") and 3 ("`target.node`
+is a real graph node (not a phantom) for every family C"), the
+fail-closed table (§ 3), the modeled exceptions (§ 4), the reopened
+certified decision VT-301B (§ 6) and § 8's V-1 row, which names the
+existing tests that must re-state their expectation.
+
+Findings closed: PRM-101 (both variants of the round-2 reproduction, and
+task A-4's audit note on a protocol member reached through `export *`)
+and PRM-102 (`tests/validation/FINDINGS.md`).
+
+### Premises, checked against `main` at the base SHA (`AGENTS.md` § D)
+
+- **Measured (real Node v22.11.0, the oracle harness, 8 cases in
+  `tests/oracle/v1-site-b-corroboration.cases.ts`).**
+  - PRM-101: three programs that run `parse` through a package loaded
+    only by `export *` (the app's own barrel; a dependency's barrel; a
+    namespace whose re-exported `toString` the runtime calls) are
+    `NOT_AFFECTED`, family C, on the base. A fourth, whose library calls
+    nothing, is also family C; it is the cost ADR 0011 § 5 measured.
+  - PRM-102: an instance at `node_modules/vuln-lib` whose manifest says
+    `vuln-lib-fork`, with `parse` forwarded from `impl.js`, is
+    `NOT_AFFECTED`, family C, on the base -- for the case and for its
+    positive control (a direct `lib.parse("x")`). The same package under
+    its own name is `AFFECTED`, and so is the mismatched name with `parse`
+    defined in `index.js` (Site B binds the real node there).
+  - The negative controls hold on the base: an unloaded package is family
+    A; `lib.safe("x")` is family C.
+- **True** (code read): `resolveTargetNodes` (`src/analysis/verdict.ts`)
+  selects Site A when `graphPackageInstances` -- every graph node whose
+  `identifyModule(...).packageName` equals the advisory's package name --
+  is non-empty. `identifyModule` takes the name from the installed
+  manifest. Site B, after VT-307d's family-A gate, returns a real node in
+  the resolved file or `phantomNode(...)`, which `checkReachability` hands
+  to `analyzeReachability`; an exhausted search sets family C's
+  `unreachableTarget`.
+- **True**: the production scan always passes a `packageInstance`
+  (`src/cli/scan.ts`, `candidate.packageInstance`, a required
+  `PackageInstanceId`). A finding without one comes only from a direct
+  `buildFinding` caller (tests).
+- **False, corrected by this task**: `phantomNode`'s and
+  `resolveTargetNodes`'s doc comments -- "if the target genuinely is
+  reachable, its file would already have been discovered and indexed",
+  and "A phantom fed into reachability search is correct and intentional
+  here". The call graph never follows a re-export declaration; the
+  module-load closure does (the comment at `checkReachability`'s family-B
+  branch already says so).
+- **To check while implementing**: ADR 0011 § 8's list of existing tests
+  that change, against today's test files (the ADR was written at
+  `62b52b9`, before lane A).
+
+## Task
+
+### Problem
+
+Site B is where `resolveTargetNodes` goes when the call graph holds no
+node of the advisory's package. It has two defects:
+
+1. **PRM-101.** When the package is loaded but has no graph node (only
+   `export *` reaches it), the module-load closure contains the instance,
+   so family A does not fire, and Site B hands reachability a phantom
+   target that no edge can reach. The exhausted search is family C: a
+   false `NOT_AFFECTED` for code real Node runs.
+2. **PRM-102.** "No node of this package" is decided by package NAME, read
+   from the installed manifest. An instance whose manifest name differs
+   from the advisory's is "absent" although its files are in the graph,
+   so Site B binds the resolved entry file only, and a forwarded `parse`
+   becomes a phantom -- family C again.
+
+### Why it matters
+
+Soundness: both are reproduced false `NOT_AFFECTED`s on ordinary code
+(`export *` barrels). PRM-101 is defect class C (a phantom stands for an
+unattributed target, and the closure that says "loaded" is ignored);
+PRM-102 is class A (a name stands in for the exact `PackageInstance`).
+
+### What to do
+
+1. Tests first: the oracle cases above, failing on the base, plus unit
+   tests at `resolveTargetNodes`'s seam where the oracle cannot reach
+   (a synthetic graph's phantom; a finding without an instance).
+2. **Instance-keyed selection (predicate 2).** When the finding has a
+   `packageInstance`, Site A is taken exactly when the call graph holds a
+   node of that instance, whatever its manifest name, and anchors at that
+   instance only. The F5 index answers it from its existing single pass;
+   without a usable index, the graph is walked as before.
+3. **No phantom (predicate 3).** Site B binds a real node or nothing: a
+   target with no real node is `unresolvedReason`
+   (`identity_unresolved` / `vulnerable_target_unresolved`, ADR 0011 § 3),
+   after VT-307d's family-A gate has had its chance. `phantomNode` is
+   deleted. No seventh category and no new reason token.
+4. Re-state the expectation of each existing test ADR 0011 § 8 names (and
+   any other the change moves): the verdict stays not-`NOT_AFFECTED`
+   wherever it was; only which blocker is reported changes. The
+   "nothing imports it" test asserts family A, not only the verdict.
+5. Correct the false comments; records (FINDINGS PRM-101 and PRM-102,
+   OPEN-DEBTS, plan § 5a "V-1 additions", backlog, progress, scorecard).
+
+## Boundaries
+
+### Do not touch
+
+- `invalidatesCallGraphNegativeProof` and `traversal_truncated` (V-2).
+- `entrypointSourceNodes` and the name-lookup census (V-3); the branded
+  proof-input types (V-4).
+- The export model (lane E): a module-evaluation edge through `export *`,
+  which would win back the precision this task costs, is lane E/A work
+  (ADR 0011 § 7).
+- Another task's worktree, including the locked
+  `rwf-046-require-binding-authority`.
+
+### STOP conditions
+
+- A change that moves any verdict to `NOT_AFFECTED`, or a corpus verdict
+  that moves anywhere other than to `UNKNOWN` or to the oracle-confirmed
+  correct verdict: stop and report.
+- An existing test whose re-statement would need a weaker verdict than
+  its base verdict.
+- Family B's name-keyed "another instance of this name is in the graph"
+  branch turning out to decide a verdict (not only which family is
+  reported): `NEEDS_DECISION`.
+
+## Acceptance criteria
+
+- [ ] Every case in `tests/oracle/v1-site-b-corroboration.cases.ts` fails
+      on the base and passes on the branch, against real Node, with both
+      controls; the family of each family-asserted negative is checked.
+- [ ] No graph node can be the subject of family C unless it is a real
+      node of the call graph: `phantomNode` no longer exists.
+- [ ] Site A vs Site B is decided by the finding's exact
+      `packageInstance` when it has one; the manifest name decides
+      nothing for such a finding.
+- [ ] A package that nothing loads is still `NOT_AFFECTED`, through
+      family A (asserted by family, not only by verdict).
+- [ ] Every existing test that changed states its new expectation
+      without pinning a wrong verdict; none moved toward `NOT_AFFECTED`.
+- [ ] The F5 performance structure is unchanged (no new graph walk per
+      finding when the index is usable); `npm run test:performance` green
+      unrelaxed.
+- [ ] Graph, proof and verdict differentials reported separately; every
+      moved verdict explained.
+- [ ] Records updated; independent audit `CERTIFIED`.
+
+## Gates
+
+The full set in `AGENTS.md` section I, unrelaxed. Expected:
+
+- Differentials: graph 0 (nothing here changes the call graph). Proof and
+  verdict: only moves from a phantom-backed family C to `UNKNOWN`, and
+  from a name-keyed Site B to Site A. ADR 0011 § 5 measured 0 / 122
+  adversarial and 0 / 17 validation verdict changes at `62b52b9`; this
+  task re-measures with `scripts/differential.mjs`.
+- `npm run test:validation`: the documented five known failures
+  (OPEN-DEBTS D-09), case by case and verdict by verdict.
+
+## Report
+
+In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5), in
+exactly that order.
