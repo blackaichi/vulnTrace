@@ -2,7 +2,7 @@
 
 ## Status
 
-- **Status**: BLOCKED (`NEEDS_DECISION`: see Corrections, item 4)
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: V-1
 - **Branch**: v-1-site-b-closure-corroboration
 - **Base SHA**: 62193c08b35f444e4389e83d0df230aa9a7cafb5
@@ -10,7 +10,9 @@
   - `7b3fc8c` docs(tasks): V-1 task file — Site B closure corroboration, instance-keyed selection
   - `12ba3a5` test(V-1): real-Node reproductions — export-star-only packages, manifest-name mismatch
   - `81302bc` fix(V-1): Site B proves only through family A; Site A chosen by exact instance
-  - (this commit) docs(V-1): records — findings, RWF-078, plan § 5a, debts, backlog, progress, scorecard
+  - `328f076` docs(V-1): records — findings, RWF-078, plan § 5a, debts, backlog, progress, scorecard (the interim BLOCKED state)
+  - `8e528b8` fix(V-1): family C's closure corroboration — every loaded module's top level reached (RWF-078)
+  - (this commit) docs(V-1): records — RWF-078 fixed, Amendment V-1, BL-052, plan, debts, backlog, progress
 - **Superseded by**: —
 
 ## Project context
@@ -258,3 +260,77 @@ Appended after work started (the sections above are not rewritten).
    records of an open defect (one with the same wrong verdict on the
    base, one with the base `UNKNOWN`). Every case whose `base` differs
    from its `expected` fails on the base.
+6. **The project owner's decision (2026-10-06): close RWF-078 inside V-1.**
+   The recommendation accepted: family C stands only when every module the
+   module-load closure loads has a node in the call graph, failing closed to
+   `UNKNOWN` (`loaded_module_not_evaluated`, a subtype of
+   `unmodeled_construct`), with ADR 0011 amended (Amendment V-1) and
+   SOUNDNESS-CONTRACT § 3's precondition table updated to match.
+   - **Premise corrected while measuring.** The recommendation proposed
+     checking only the target instance's modules. Probes against real Node
+     showed the gap is wider: a module of the application, or of another
+     package, loaded only through `export *` and calling the target, was
+     the same false `NOT_AFFECTED` on the base. The check covers every
+     loaded module; the narrower one is a mutation (M9, listed in the pull
+     request), and is caught.
+   - **A measurement slip, recorded.** One probe run used a scan script
+     whose advisory ID did not match the project's rule, so every finding
+     read `UNKNOWN`; it briefly looked as if the auditors' scan script were
+     unreliable. It was not; the mismatch was found and every number above
+     was re-measured with matching IDs, one analyzer per process.
+   - **Cost.** Corpus verdict differential 0 of 139. Oracle: a quiet
+     app-local barrel moves from a correct `NOT_AFFECTED` to `UNKNOWN`
+     (`export-star.app-module-barrel.quiet`). Backlog `BL-052` (P4) is the
+     precision follow-up.
+   - With it, item 4's regression is gone (`export-star.nested-fork.site-a`
+     is `UNKNOWN`), and so are the two RWF-078 open-soundness-defect
+     records, replaced by expectations as the records required.
+   - The F4 family-C control "a loaded file's identity rewritten in the
+     closure" is now an invalidating row: family C reads the closure's
+     loaded files.
+
+7. **The third independent audit blocked, in scope: named re-exports.**
+   Requiring only a NODE for every loaded module was not enough: a name
+   imported through `export { x } from "m"` makes the call graph build
+   `m`'s nodes with no edge into `m`'s top level, which real Node runs --
+   a family-C false `NOT_AFFECTED` at Site A, for an application module
+   and for another package's (reproduced again before acting). The check
+   now requires every loaded module's `<module>` node to be reachable from
+   an entrypoint source over resolved or `possible` edges (one walk per
+   scan, memoized in the scan caches); the module-set index added for the
+   weaker check was removed. Corpus verdict differential still 0; four
+   `named-reexport.*` oracle cases added, one of them a precision cost;
+   mutation M10 (the weaker check) is caught. The audit's notes: the
+   truncation argument is now stated as the counting argument it is
+   (`verdict.ts` and Amendment V-1); the oracle cases expect exactly
+   `UNKNOWN` where real Node calls the target, so a later sound `AFFECTED`
+   will need them re-stated (the harness compares verdicts exactly); the
+   F4 family-A rows all observe `vulnerable_target_unresolved`, while each
+   still asserts that family A is withdrawn.
+
+8. **The fourth independent audit certified the change** (no soundness
+   defect; it re-ran the corpus differential and attacked the reachability
+   check with chained barrels, cycles, `export * as ns`, TypeScript
+   re-exports and module-level static blocks, field initializers and
+   callbacks). Its two should-fix items are done: the "one walk per scan"
+   memo is asserted structurally (`scan-caches.f5-multiplier.test.ts`;
+   mutation M11, a memo that never hits, is caught), and the stale F5 line
+   below is corrected. Its notes are taken: the evidence names a re-export
+   declaration as an example, not the only cause, and the plan states the
+   truncation counting argument.
+
+### Acceptance criteria, answered
+
+- Reproductions (19 cases) against real Node with both controls: every
+  case whose `base` differs from `expected` fails on the base and passes on
+  the branch; the controls and family assertions hold (item 5's wording).
+- No phantom: yes. Site selection by exact instance: yes. Family A for an
+  unloaded package: yes.
+- Re-stated tests pin no wrong verdict, none toward `NOT_AFFECTED`: yes.
+- F5 structure: yes. The instance map comes from the F5 index's existing
+  single pass; the reachable-module set is one walk per scan, memoized in
+  the scan caches and asserted by
+  `scan-caches.f5-multiplier.test.ts` ("walks the graph once per scan for
+  family C's closure corroboration").
+- Differentials reported: yes. Records: yes. Independent audit: see the
+  pull request.

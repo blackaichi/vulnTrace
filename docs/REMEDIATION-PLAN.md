@@ -953,7 +953,8 @@ above).
 
 #### V-1 additions (task V-1, 2026-10-06)
 
-**Outcome of V-1** (ADR 0011 predicates 2 and 3; § 8's V-1 row).
+**Outcome of V-1** (ADR 0011 predicates 2 and 3, and Amendment V-1's
+predicate 5; § 8's V-1 row).
 
 - `phantomNode` is deleted. A Site B target with no real node is
   `unresolvedReason` (`vulnerable_target_unresolved`) once family A's gate
@@ -965,23 +966,37 @@ above).
   graph holds a file of that instance (`graphFilesOfInstance`, from the F5
   index's single pass). The name-keyed `graphPackageInstances` survives
   for a finding with no instance and for the family-B / Site-B choice.
+- **Family C's closure corroboration** (Amendment V-1, the project owner's
+  decision of 2026-10-06): family C stands only when the `<module>` node
+  of every module the closure loads is reachable from an entrypoint (one
+  walk per scan); otherwise `UNKNOWN` (`loaded_module_not_evaluated`,
+  `unmodeled_construct`). It closes `RWF-078` -- a module loaded only
+  through a re-export declaration (`export *`, or a name imported through
+  `export { x } from`) is never evaluated, so family C stood over a target
+  it calls -- at Site A and for the application's and other packages'
+  modules, and with it the false `NOT_AFFECTED` V-1's instance-keyed
+  selection had first extended to a nested fork-named instance.
 - The finding's `target` is no longer set for an unattributed Site B
   target, as for Site A's.
 
 **What V-1 binds.**
 
-- **V-2**: of § 8's V-2 row, `verdict.f4-proof-mutation.test.ts`'s
-  "a closure truncated on its OWN walk" audit and the
-  `scan-security.test.ts` VT-202 truncation test were both
-  phantom-backed: the first now asserts no takeover, the second runs over
-  a real, attributed target (a side-effect import of the package) and
-  still asserts VT-202's own reason; `verdict.negative-proof.test.ts` case
-  10b no longer pins the exclusion: it asserts only that a Site B target
-  is not family C. What remains for V-2 is the exclusion itself over a
-  real target (PRM-23): `invalidatesCallGraphNegativeProof`,
-  the family-C matrix's "closure_incomplete_traversal_truncated_only"
-  control and the F2 proof-guard test "is unchanged for a present,
-  incomplete closure".
+- **V-2**: of § 8's V-2 row, `verdict.f4-proof-mutation.test.ts`'s "a
+  closure truncated on its OWN walk" audit and the `scan-security.test.ts`
+  VT-202 truncation test were both phantom-backed: the first now asserts
+  no takeover, the second runs over a real, attributed target (a
+  side-effect import of the package) and still asserts VT-202's own
+  reason; `verdict.negative-proof.test.ts` case 10b no longer pins the
+  exclusion: it asserts only that a Site B target is not family C. What
+  remains for V-2 is the exclusion itself over a real target (PRM-23):
+  `invalidatesCallGraphNegativeProof`, the family-C matrix's
+  "closure_incomplete_traversal_truncated_only" control and the F2
+  proof-guard test "is unchanged for a present, incomplete closure". A
+  truncated closure lists fewer modules, but predicate 5 is still safe
+  there by a counting argument (Amendment V-1): it passes only if the
+  graph holds at least `maxFiles` files, which marks the graph truncated
+  and withdraws family C first. V-2's rule concerns `traversal_truncated`
+  over a real target in general.
 - **V-3**: the name-keyed lookups left in `verdict.ts` are
   `graphPackageInstances` and those V-3's census names.
   `graphPackageInstances` attributes no target any more, but it is not
@@ -994,32 +1009,20 @@ above).
   census direction is `refuse-only` in effect (either branch reaches
   `NOT_AFFECTED` only through a complete closure without the instance);
   V-3 should record it so, with this caveat.
-- **V-4**: `AttributedTarget` has one producer fewer to type; a Site B
-  real node (synthetic graphs, findings without an instance) is still
-  bound by `findExportNodeInFile`.
-- **Precision, and a soundness gap V-1 does not close**: at Site B a
-  package loaded only through `export *` and not called is `UNKNOWN`
-  (ADR 0011 § 5). At Site A the same mechanism is still a false
-  `NOT_AFFECTED`: when another file of the package is in the graph, the
-  module loaded only through `export *` is never evaluated, and family C
-  stands over the real target it calls (`RWF-078`, backlog `BL-052`). ADR
-  0011 § 4's "a loaded, attributed, unreached target keeps family C"
-  rests on a premise RWF-078 falsifies; § 7's module-evaluation edge
-  through `export *` is therefore a soundness fix at Site A, not only
-  precision. Which of the two fixes RWF-078 records is the project
-  owner's decision.
+- **V-4**: `ClosureCorroboration` should carry predicate 5 (every loaded
+  module's top level reached) beside predicate 1; `AttributedTarget` has
+  one producer fewer to type.
 - **Verdicts V-1 moves toward `NOT_AFFECTED`**: an instance whose
-  manifest name differs from the advisory's now takes Site A. Where the
-  base answered `UNKNOWN` through the name-keyed route, the branch answers
-  family C over the instance's real target -- the proof a same-named
-  instance already gets. That is oracle-correct when nothing reaches the
-  target (`name-mismatch.nested.safe`), and a **false** `NOT_AFFECTED` in
-  RWF-078's shape (`export-star.nested-fork.reached-by-v1`, measured by
-  task V-1's independent re-audit): V-1 extends RWF-078 to instances the
-  base answered `UNKNOWN`. **Decision pending** (the task's first STOP
-  condition): accept it as a disclosed regression until `BL-052`, order
-  `BL-052` before V-1, or keep name-equivalent selection for these
-  instances until RWF-078 is fixed.
+  manifest name differs from the advisory's now takes Site A, and where
+  the base answered `UNKNOWN` through the name-keyed route the branch
+  answers family C over the instance's real target -- the proof a
+  same-named instance already gets -- when, and only when, predicate 5
+  holds: oracle-confirmed `NOT_AFFECTED` (`name-mismatch.nested.safe`).
+- **Precision**: a package loaded only through `export *` and not called
+  is `UNKNOWN` at Site B (ADR 0011 § 5); a scan that loads any module only
+  through a re-export declaration -- including the ordinary named-barrel
+  pattern -- loses family C (predicate 5). A module-evaluation edge through
+  every re-export declaration (§ 7; backlog `BL-052`) wins both back.
 
 ## 6. Decisions for the user
 
