@@ -25,6 +25,7 @@ import {
 import type { Entrypoint } from "../domain/entrypoint.js";
 import {
   type ScanAnalysisCaches,
+  graphFilesOfPackageInstance,
   graphPackageInstancesByName,
 } from "./scan-caches.js";
 import {
@@ -241,7 +242,8 @@ function isNamedNode(node: GraphNode, file: string, name: string): boolean {
  * that function's real source location fixes this — this was previously a
  * real bug: a rule targeting `export: "default"` against a
  * `module.exports = zipObjectDeep;`-shaped file always fell through to a
- * phantom node and reported NOT_AFFECTED even when genuinely reachable.
+ * phantom node (removed by task V-1) and reported NOT_AFFECTED even when
+ * genuinely reachable.
  *
  * When `exportName` isn't a canonical module-level export at all (the
  * common shape for `kind: "method"`/`"constructor"` rule targets, e.g.
@@ -483,30 +485,6 @@ async function findExportNodeThroughForwarding(
 }
 
 /**
- * A phantom placeholder for a target that could not be matched to any real
- * graph node. Not a guess at reachability: nothing in the graph points to
- * it (its id can never collide with a real generated one — see
- * call-graph.ts's `${filePath}#${name}@${line}:${column}` scheme, which
- * this deliberately does not match), so handing it to
- * {@link analyzeReachability} still produces a correct answer. If the
- * target genuinely is reachable, its file would already have been
- * discovered and indexed while building the graph (TASK-018's on-demand
- * traversal discovers every file any resolved call chain passes through);
- * if it was never discovered, the only way it could still be reachable is
- * through a dynamic/unresolved construct somewhere in the searched
- * region — which the same reachability search already detects and reports
- * as `unknown` rather than `unreachable`.
- */
-function phantomNode(resolvedFile: string, exportName: string): GraphNode {
-  return {
-    id: `unresolved-target:${resolvedFile}#${exportName}`,
-    kind: "function",
-    module: resolvedFile,
-    name: exportName,
-  };
-}
-
-/**
  * Every distinct installed instance of `packageName` the call graph itself
  * already discovered via real resolved imports (see
  * docs/SDD.md § 18; SDD-v0.2.md § 4's `identifyModule`), grouped by
@@ -555,6 +533,45 @@ function graphPackageInstances(
     byInstance.set(identity.packageInstance, files);
   }
   return byInstance;
+}
+
+/**
+ * Every file of exactly `packageInstance` the call graph contains, whatever
+ * package name that instance's manifest declares (task V-1; ADR 0011
+ * predicate 2). This, never {@link graphPackageInstances}, is what decides
+ * whether a finding with an instance takes Site A: a name read from a
+ * manifest is not the instance, and an instance whose manifest name
+ * differs from the advisory's was otherwise "never in the graph" while its
+ * files were (PRM-102). Answered from the scan's index when it is usable,
+ * by the same single pass; otherwise by walking the graph, as
+ * {@link graphPackageInstances} does.
+ */
+function graphFilesOfInstance(
+  graph: CallGraph,
+  packageInstance: string,
+  knownPackageRoots: KnownPackageRoots | undefined,
+  caches: ScanAnalysisCaches | undefined,
+): ReadonlySet<string> {
+  const indexed = graphFilesOfPackageInstance(
+    caches,
+    graph,
+    knownPackageRoots,
+    packageInstance,
+  );
+  if (indexed !== undefined) {
+    return indexed;
+  }
+
+  const files = new Set<string>();
+  for (const node of graph.nodes) {
+    if (
+      identifyModule(node.module, knownPackageRoots, caches?.identity)
+        .packageInstance === packageInstance
+    ) {
+      files.add(node.module);
+    }
+  }
+  return files;
 }
 
 /** Reads `<packageInstance>/package.json`'s own declared version, or `undefined` if it can't be read/parsed. */
@@ -614,22 +631,27 @@ function readInstalledVersion(packageInstance: string): string | undefined {
  * Two structurally different "target not found" cases exist here (VT-301B;
  * see docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md § 3/§ 15's Site A/Site B):
  *
- * - **Site A** (`instances.size > 0`, below): the package instance genuinely
+ * - **Site A** (`selected.length > 0`, below): the package instance genuinely
  *   IS in the graph — something real touched it — but `target.export`
  *   could not be attributed to any node within it. The module loaded; only
  *   the symbol's own identity is unknown. Returns `unresolvedReason`
- *   directly rather than a phantom: SDD.md § 23's "vulnerable target
+ *   directly: SDD.md § 23's "vulnerable target
  *   known?" is answered NO here, so this must become UNKNOWN, never risk a
  *   reachability search concluding a confident (and false) NOT_AFFECTED
  *   against a target it never actually identified.
- * - **Site B** (`instances.size === 0`, below): the package was never
- *   discovered by the graph at all — genuinely unimported. A phantom fed
- *   into reachability search is correct and intentional here: if nothing
- *   in the entrypoint's reachable code even references this package,
- *   "unreachable" is a positively established conclusion (this is exactly
- *   what VT-212/VT-300 already rely on and guard — see
- *   `confirmedAbsentInstance` above and `hasReachableClosureWideningBlocker`
- *   in `checkReachability`). Deliberately left unchanged by VT-301B.
+ * - **Site B** (`selected.length === 0`, below): the call graph holds no
+ *   node of the package instance. That is NOT "genuinely unimported": the
+ *   graph follows no re-export declaration, so a package loaded only
+ *   through `export *` runs with no graph node at all (PRM-101). Site B
+ *   therefore proves non-reachability only through family A -- a complete
+ *   module-load closure that does not contain the instance -- or binds a
+ *   real node; otherwise it returns `unresolvedReason`. It used to hand
+ *   reachability a phantom node, certified as family C ("correct and
+ *   intentional", VT-301B); task V-1 removed it (ADR 0011 § 6).
+ *
+ * Which site applies is decided by the finding's exact `packageInstance`
+ * when it has one (task V-1, ADR 0011 predicate 2), never by the package
+ * name its manifest declares (PRM-102).
  *
  * **P1-A2 (RWF-030) changed WHERE Site A looks, and nothing else.** Site A
  * used to sweep every graph-discovered file of the instance, asking each
@@ -644,8 +666,8 @@ function readInstalledVersion(packageInstance: string): string | undefined {
  * ({@link resolveAuthoritativePackageEntries}), attributes there, and
  * follows only explicit P1-A1 forwarding from it. No path remains from
  * "some file in this package exports this name" to "this is the
- * advisory's target". Site B is unchanged — it already resolves the
- * package's public entry by construction.
+ * advisory's target". Site B resolves the package's public entry by
+ * construction.
  */
 async function resolveTargetNodes(
   graph: CallGraph,
@@ -673,6 +695,14 @@ async function resolveTargetNodes(
 ): Promise<{
   nodes: GraphNode[];
   unresolvedReason?: string;
+  /**
+   * Task V-1: set beside `unresolvedReason` when Site B found the package's
+   * module but no node of it in the call graph. The caller still reports
+   * the unknown edges reachable from the entrypoints -- what the phantom
+   * search used to report -- because one of them (a dynamic `require`,
+   * say) may be what loads the package.
+   */
+  unattributedSiteB?: true;
   confirmedAbsentInstance?: boolean;
   /**
    * VT-307d's positive module-load absence proof. Deliberately a SEPARATE
@@ -702,32 +732,57 @@ async function resolveTargetNodes(
     ? publicSubpathOf(specifierParts)
     : undefined;
 
-  const instances = graphPackageInstances(
-    graph,
-    targetPackageName,
-    knownPackageRoots,
-    caches,
-  );
-
-  if (instances.size > 0) {
-    let selected = [...instances.entries()];
-
-    if (packageInstance) {
-      const instanceMatched = selected.filter(
-        ([instance]) => instance === packageInstance,
-      );
-      if (instanceMatched.length === 0) {
-        // The graph discovered other instance(s) of this package name, but
-        // never traversed THIS finding's own instance -- not "traversed
-        // the wrong one", genuinely never visited. Under a non-truncated
-        // graph, TASK-018's on-demand discovery is complete, so this
-        // absence is itself positive evidence of non-reachability
-        // (SDD-v0.2.md § 3.3, § 4.3); it must not fall through to using a
-        // different instance's nodes.
-        return { nodes: [], confirmedAbsentInstance: true };
-      }
-      selected = instanceMatched;
-    } else if (packageVersion && instances.size > 1) {
+  // Task V-1 (ADR 0011 predicate 2) -- SITE SELECTION BY EXACT INSTANCE.
+  // A finding with an instance takes Site A exactly when the call graph
+  // holds a file of THAT instance, whatever name its manifest declares.
+  // This used to be decided by the advisory's package NAME, matched against
+  // each graph file's manifest name, so an instance whose manifest names it
+  // differently (a lock entry without `name`) was "never in the graph"
+  // while its files were, and fell to Site B (PRM-102).
+  //
+  // The name-keyed lookup survives in two places only, and attributes no
+  // target there: a finding with no instance at all (direct `buildFinding`
+  // callers; production always has one), and the choice between family B
+  // and Site B for an instance the graph never traversed. That choice CAN
+  // decide the verdict, not only which family reports it: family B needs
+  // VT-300's guard and a complete closure without the instance; Site B's
+  // family A needs the same closure AND the advisory's module, resolved
+  // from the project root, to land in the instance -- which fails for a
+  // nested install, so the same unloaded instance is family B when another
+  // same-named instance is in the graph and UNKNOWN when none is (measured
+  // by task V-1's independent audit, finding 4). Both answers are sound:
+  // either way NOT_AFFECTED needs a complete closure without the instance.
+  let selected: readonly (readonly [string, ReadonlySet<string>])[] = [];
+  if (packageInstance) {
+    const ownFiles = graphFilesOfInstance(
+      graph,
+      packageInstance,
+      knownPackageRoots,
+      caches,
+    );
+    if (ownFiles.size > 0) {
+      selected = [[packageInstance, ownFiles]];
+    } else if (
+      graphPackageInstances(graph, targetPackageName, knownPackageRoots, caches)
+        .size > 0
+    ) {
+      // The graph discovered other instance(s) of this package name, but
+      // never traversed THIS finding's own instance -- not "traversed the
+      // wrong one", genuinely never visited. That is family B's premise,
+      // which `checkReachability` accepts only behind VT-300's guard and a
+      // complete module-load closure that does not contain the instance;
+      // it must not fall through to using a different instance's nodes.
+      return { nodes: [], confirmedAbsentInstance: true };
+    }
+  } else {
+    const instances = graphPackageInstances(
+      graph,
+      targetPackageName,
+      knownPackageRoots,
+      caches,
+    );
+    selected = [...instances.entries()];
+    if (packageVersion && instances.size > 1) {
       const versionMatched = selected.filter(
         ([instance]) => readInstalledVersion(instance) === packageVersion,
       );
@@ -735,7 +790,9 @@ async function resolveTargetNodes(
         selected = versionMatched;
       }
     }
+  }
 
+  if (selected.length > 0) {
     // P1-A2 (RWF-030) -- AUTHORITATIVE PUBLIC ENTRY ANCHORING.
     //
     // This used to be a loop over every graph-discovered file of the
@@ -858,8 +915,8 @@ async function resolveTargetNodes(
 
     // Site A (VT-301B; see this function's own doc comment above): the
     // package instance is genuinely present in the graph, but
-    // target.export could not be attributed to any node within it. NOT a
-    // phantom -- an explicit unresolved target, so checkReachability's
+    // target.export could not be attributed to any node within it. An
+    // explicit unresolved target, so checkReachability's
     // existing "could not resolve module" handling degrades this straight
     // to UNKNOWN without ever running a reachability search against a
     // target whose own identity was never established.
@@ -886,7 +943,7 @@ async function resolveTargetNodes(
   // declaration file, never a runtime implementation -- there is no
   // concrete runtime target to bind, so this must become UNKNOWN
   // (`unresolvedReason`, unconditionally, same as an outright resolution
-  // failure above), never fall through and search a phantom/real node as
+  // failure above), never fall through and search a node as
   // though genuine runtime evidence were available.
   if (resolution.kind === "declaration") {
     return {
@@ -914,8 +971,8 @@ async function resolveTargetNodes(
   // before this for `not_affected`/`indeterminate`), a rule with targets
   // exists, and this target's module resolved to a real runtime file. Only
   // then is it meaningful to ask whether that file's package can load at
-  // all. Placed BEFORE the phantom construction and the reachability BFS
-  // below because the answer makes both unnecessary: if the package's code
+  // all. Placed BEFORE the target binding and the reachability BFS below
+  // because the answer makes both unnecessary: if the package's code
   // never runs, no search through the call graph can change that.
   //
   // Every conjunct is load-bearing:
@@ -1008,10 +1065,9 @@ async function resolveTargetNodes(
   //   never on disk, so path-derived identity is meaningless for them by
   //   construction.
   // - The ordinary negative this fallback exists for: a package that is
-  //   simply never imported. Its files are absent from the graph, the
-  //   advisory's module still resolves inside the finding's own instance,
-  //   and the phantom below still certifies non-reachability exactly as
-  //   before.
+  //   simply never imported. Its files are absent from the graph and the
+  //   advisory's module still resolves inside the finding's own instance;
+  //   family A, above, is what certifies its non-reachability (task V-1).
   const ownedByFinding =
     packageInstance === undefined ||
     allowSyntheticNameOnlyTargetBinding ||
@@ -1041,9 +1097,53 @@ async function resolveTargetNodes(
     return { nodes };
   }
 
+  // Task V-1 (ADR 0011 predicate 3) -- NO PHANTOM. Site B used to hand
+  // reachability a placeholder node no edge can reach, so an exhausted
+  // search over it was family C, on the premise that a reachable target's
+  // file "would already have been discovered". It need not be: the call
+  // graph follows no re-export declaration, so a package loaded only
+  // through `export *` runs (its top level, or a protocol member the
+  // runtime calls) with no graph node at all (PRM-101). Family C needs a
+  // resolved, ATTRIBUTED target (SOUNDNESS-CONTRACT § 3); a package with
+  // no real node is proven unreachable only by family A, just above, from
+  // a complete closure that shows it unloaded. Anything else is UNKNOWN.
   return {
-    nodes: [phantomNode(resolution.resolvedFileName, target.export)],
+    nodes: [],
+    unresolvedReason:
+      `export "${target.export}" could not be attributed to any function or class member in the resolved module` +
+      ` (module "${target.module}" resolved to "${resolution.resolvedFileName}", which has no node in the call graph;` +
+      ` only a complete module-load closure showing this package instance unloaded could prove it unreachable, and ${siteBClosureShortfall(moduleLoadClosure, packageInstance)})`,
+    unattributedSiteB: true,
   };
+}
+
+/**
+ * Why family A's gate did not prove a Site B instance unloaded, for the
+ * evidence a reader gets instead (task V-1). Prose only: the verdict is
+ * already `UNKNOWN`, and the typed reason is `vulnerable_target_unresolved`
+ * (ADR 0011 § 3).
+ */
+function siteBClosureShortfall(
+  closure: ModuleLoadClosure | undefined,
+  packageInstance: string | undefined,
+): string {
+  if (packageInstance === undefined) {
+    return "this finding names no package instance to prove absent";
+  }
+  if (closure === undefined) {
+    return "no module-load closure was available";
+  }
+  if (!closure.complete) {
+    const reasons = [...new Set(closure.incompleteness.map((i) => i.reason))];
+    return `the module-load closure is incomplete (${reasons.join(", ")})`;
+  }
+  if (closure.rootFiles.length === 0) {
+    return "the module-load closure has no roots";
+  }
+  if (closureContainsPackageInstance(closure, packageInstance)) {
+    return "the module-load closure shows this package instance loaded";
+  }
+  return "the module-load closure does not attribute the resolved module to this package instance";
 }
 
 /** One entrypoint's reachability roots plus this scan's ability to derive them (P0-Z). */
@@ -1424,6 +1524,7 @@ async function checkReachability(
     const {
       nodes: targetNodes,
       unresolvedReason,
+      unattributedSiteB,
       confirmedAbsentInstance,
       absentFromModuleLoadClosure: targetAbsenceProof,
     } = await resolveTargetNodes(
@@ -1452,6 +1553,29 @@ async function checkReachability(
       // above because it names WHICH of several resolution failures
       // occurred, and that detail has no token.
       uncertaintyReasons.push("vulnerable_target_unresolved");
+      if (unattributedSiteB) {
+        // Task V-1: the search over Site B's phantom target, now gone, ran
+        // to exhaustion and reported every unknown edge reachable from an
+        // entrypoint. Those blockers are kept, typed as before, because
+        // they are the actionable part of this UNKNOWN: a dynamic
+        // `require` the closure records may be what loads the package.
+        // Reasons only -- nothing here can move a verdict.
+        const seen = new Set<string>();
+        for (const entrypoint of entrypoints) {
+          for (const source of entrypointSourceNodes(graph, entrypoint)
+            .sources) {
+            for (const edge of collectReachableUnknownEdges(graph, source)) {
+              const blocker = `${edge.reason} at ${edge.from}`;
+              if (seen.has(blocker)) {
+                continue;
+              }
+              seen.add(blocker);
+              reasons.push(blocker);
+              uncertaintyReasons.push(edgeUncertaintyReason(edge.reason));
+            }
+          }
+        }
+      }
       continue;
     }
 

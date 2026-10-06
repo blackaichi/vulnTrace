@@ -116,6 +116,13 @@ export interface GraphPackageInstanceIndex {
    */
   readonly nodeCount: number;
   readonly byPackageName: ReadonlyMap<string, ReadonlyMap<string, Set<string>>>;
+  /**
+   * Task V-1 (ADR 0011 predicate 2): the same attributions keyed by the
+   * canonical `PackageInstanceId` alone, whatever package name the
+   * instance's manifest declares. Filled by the same pass, from the same
+   * identities, so it can never disagree with `byPackageName`.
+   */
+  readonly byPackageInstance: ReadonlyMap<string, Set<string>>;
 }
 
 /**
@@ -131,9 +138,22 @@ export function buildGraphPackageInstanceIndex(
   cache: ScanModuleIdentityCache | undefined,
 ): GraphPackageInstanceIndex {
   const byPackageName = new Map<string, Map<string, Set<string>>>();
+  const byPackageInstance = new Map<string, Set<string>>();
   for (const node of graph.nodes) {
     const identity = identifyModule(node.module, knownPackageRoots, cache);
-    if (identity.packageName === undefined || !identity.packageInstance) {
+    if (!identity.packageInstance) {
+      continue;
+    }
+    const instanceFiles = byPackageInstance.get(identity.packageInstance);
+    if (instanceFiles === undefined) {
+      byPackageInstance.set(
+        identity.packageInstance,
+        new Set<string>([node.module]),
+      );
+    } else {
+      instanceFiles.add(node.module);
+    }
+    if (identity.packageName === undefined) {
       continue;
     }
     let byInstance = byPackageName.get(identity.packageName);
@@ -153,6 +173,7 @@ export function buildGraphPackageInstanceIndex(
     knownPackageRoots,
     nodeCount: graph.nodes.length,
     byPackageName,
+    byPackageInstance,
   };
 }
 
@@ -180,6 +201,42 @@ export function graphPackageInstancesByName(
   knownPackageRoots: KnownPackageRoots | undefined,
   packageName: string,
 ): ReadonlyMap<string, Set<string>> | undefined {
+  const index = usableGraphPackageIndex(caches, graph, knownPackageRoots);
+  if (index === undefined) {
+    return undefined;
+  }
+  return index.byPackageName.get(packageName) ?? EMPTY_INSTANCES;
+}
+
+/**
+ * The files of exactly `packageInstance` the call graph contains, from
+ * `caches`'s index (task V-1) -- or `undefined` under exactly the
+ * conditions {@link graphPackageInstancesByName} documents, and with the
+ * same meaning: "walk the graph yourself", never "it has none".
+ */
+export function graphFilesOfPackageInstance(
+  caches: ScanAnalysisCaches | undefined,
+  graph: CallGraph,
+  knownPackageRoots: KnownPackageRoots | undefined,
+  packageInstance: string,
+): ReadonlySet<string> | undefined {
+  const index = usableGraphPackageIndex(caches, graph, knownPackageRoots);
+  if (index === undefined) {
+    return undefined;
+  }
+  return index.byPackageInstance.get(packageInstance) ?? EMPTY_FILES;
+}
+
+/**
+ * The scan's index, built on first use, when -- and only when -- it
+ * provably describes `graph` under `knownPackageRoots`; see
+ * {@link graphPackageInstancesByName} for each condition.
+ */
+function usableGraphPackageIndex(
+  caches: ScanAnalysisCaches | undefined,
+  graph: CallGraph,
+  knownPackageRoots: KnownPackageRoots | undefined,
+): GraphPackageInstanceIndex | undefined {
   if (
     !caches ||
     caches.graph !== graph ||
@@ -199,7 +256,7 @@ export function graphPackageInstancesByName(
   if (index.nodeCount !== graph.nodes.length) {
     return undefined;
   }
-  return index.byPackageName.get(packageName) ?? EMPTY_INSTANCES;
+  return index;
 }
 
 /**
@@ -214,6 +271,9 @@ const EMPTY_INSTANCES: ReadonlyMap<string, Set<string>> = new Map<
   string,
   Set<string>
 >();
+
+/** The answer for an instance the graph contains no file of; never written to. */
+const EMPTY_FILES: ReadonlySet<string> = new Set<string>();
 
 /** Creates the one {@link ScanAnalysisCaches} for one scan. */
 export function createScanAnalysisCaches(input: {

@@ -135,6 +135,21 @@ const siteB = (): CallGraph => ({
   edges: [],
 });
 
+/**
+ * fixture-lib's target IS a real, unreached graph node: the only shape a
+ * call-graph proof (family C) can stand on since task V-1. The guards
+ * below that withdraw family C are tested over it; over `siteB()` there is
+ * no family C left to withdraw (a target with no graph node is
+ * unresolved), so a guard tested there would pass vacuously.
+ */
+const attributed = (): CallGraph => ({
+  nodes: [
+    moduleNode("src#<module>", ENTRY),
+    fnNode("lib#vulnerable", LIB_FILE, "vulnerable", 1),
+  ],
+  edges: [],
+});
+
 /** fixture-lib IS in the graph, but only as a non-target function: Site A. */
 const siteA = (): CallGraph => ({
   nodes: [
@@ -257,6 +272,20 @@ describe("VT-307e case 5-7: coverage and target-establishment guards", () => {
       graphTruncated: true,
     });
     expect(f?.verdict).toBe("UNKNOWN");
+
+    // Over a real, attributed target (task V-1): truncation itself is the
+    // blocker.
+    const c = await verdictFor({
+      graph: attributed(),
+      moduleLoadClosure: closure([], [LIB]),
+      graphTruncated: true,
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+    expect(c?.verdict).toBe("UNKNOWN");
+    expect(familyOf(c)).toBe("-");
+    expect(c?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "call_graph_truncated",
+    ]);
   });
 
   it("case 6: target module unresolved -> UNKNOWN", async () => {
@@ -289,11 +318,25 @@ describe("VT-307e case 8-10, 16: legacy call-graph proofs vs closure conditions"
     // The call graph does NOT check hasSyntaxErrors; it builds nodes and
     // edges from TypeScript's error-recovered AST. A require and the call
     // that follows it can both be swallowed by one syntax error.
+    // Over a real, attributed target (task V-1; see `attributed`).
     const f = await verdictFor({
-      moduleLoadClosure: closure(["parse_failure"]),
+      graph: attributed(),
+      moduleLoadClosure: closure(["parse_failure"], [LIB]),
+      allowSyntheticNameOnlyTargetBinding: true,
     });
     expect(f?.verdict).toBe("UNKNOWN");
     expect(f?.evidence?.reasons?.[0]).toContain("parse_failure");
+
+    // Site B: no family C exists to block, and family A needs a complete
+    // closure; the shortfall is named in the evidence.
+    const siteBFinding = await verdictFor({
+      moduleLoadClosure: closure(["parse_failure"]),
+    });
+    expect(siteBFinding?.verdict).toBe("UNKNOWN");
+    expect(familyOf(siteBFinding)).toBe("-");
+    expect(siteBFinding?.evidence?.reasons?.[0]).toContain(
+      "the module-load closure is incomplete (parse_failure)",
+    );
   });
 
   it("case 9: loader_hook_mutation blocks every family", async () => {
@@ -307,6 +350,18 @@ describe("VT-307e case 8-10, 16: legacy call-graph proofs vs closure conditions"
       expect(f?.verdict).toBe("UNKNOWN");
       expect(familyOf(f)).toBe("-");
     }
+    // Over a real, attributed target (task V-1; see `attributed`), where
+    // family C is otherwise available, the mutation itself is the blocker.
+    const c = await verdictFor({
+      graph: attributed(),
+      moduleLoadClosure: closure(["loader_hook_mutation"], [LIB]),
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+    expect(c?.verdict).toBe("UNKNOWN");
+    expect(familyOf(c)).toBe("-");
+    expect(c?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "loader_hook_mutation",
+    ]);
   });
 
   it("case 10: traversal_truncated blocks family A", async () => {
@@ -318,20 +373,26 @@ describe("VT-307e case 8-10, 16: legacy call-graph proofs vs closure conditions"
     expect(familyOf(f)).toBe("-");
   });
 
-  it("case 10b: traversal_truncated ALONE does NOT block families B/C -- the one deliberate exclusion", async () => {
-    // The non-blanket half of the contract. traversal_truncated bounds the
-    // CLOSURE's own walk; the call graph's coverage is governed by
-    // graphTruncated, which is false here. In production both share
-    // analysis.limits.maxFiles, so a truncated closure comes with a
-    // truncated graph and the correct guard engages anyway.
+  it("case 10b: a Site B target under a truncated closure is not family C (task V-1)", async () => {
+    // This case asserted that `traversal_truncated` alone leaves a
+    // call-graph proof standing -- and the proof it observed was family C
+    // over Site B's PHANTOM target, which task V-1 removed (ADR 0011
+    // predicate 3): with no graph node of the package, only family A can
+    // prove it unreachable, and a truncated closure cannot. Whether
+    // `traversal_truncated` blocks family C over a REAL target is PRM-23,
+    // task V-2's (ADR 0011 § 8, which names this case); it is not
+    // re-asserted here over another graph, because that would pin a
+    // premise recorded as false.
     const f = await verdictFor({
       graph: siteB(),
       moduleLoadClosure: closure(["traversal_truncated"]),
       graphTruncated: false,
     });
-    expect(f?.verdict).toBe("NOT_AFFECTED");
-    // Family A is blocked (closure incomplete), so this is a call-graph proof.
-    expect(["B", "C"]).toContain(familyOf(f));
+    expect(f?.verdict).toBe("UNKNOWN");
+    expect(familyOf(f)).toBe("-");
+    expect(f?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "vulnerable_target_unresolved",
+    ]);
   });
 
   it("case 16: every closure-widening reason blocks the call-graph proofs", async () => {

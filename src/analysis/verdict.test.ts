@@ -516,7 +516,11 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
   it("produces NOT_AFFECTED when the target module resolves but was never discovered anywhere in a clean graph", async () => {
     // fixture-lib is a real, resolvable dependency, but nothing in the
     // analyzed (fully clean, no dynamic constructs) call graph ever
-    // imports it at all.
+    // imports it at all -- and the module-load closure confirms it is
+    // never loaded. Task V-1: that confirmation is the proof (family A);
+    // the graph's silence alone is not, because a package loaded only
+    // through `export *` has no graph node either (PRM-101). See the
+    // Site B describe block below for the same graph with no instance.
     const entryFile = "/project/src/index.ts";
     const libFile = "/node_modules/fixture-lib/index.js";
     const src = moduleNode("src#<module>", entryFile);
@@ -527,15 +531,23 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
       packageVersion: "1.0.0",
+      packageInstance: "/node_modules/fixture-lib",
       matchResult: "affected",
       rule,
       graph,
       entrypoints: [entrypoint],
       resolver: fakeResolver({ "fixture-lib": libFile }),
       projectRoot: "/project",
-      // Every graph, path and resolver in this suite is synthetic; no real
-      // closure can be built over files that do not exist (F2-A).
-      syntheticGraphHasNoRealFiles: true,
+      // A truthful closure for this synthetic project: the entrypoint is
+      // its only member, so fixture-lib is not loaded (F4 § 24 requires
+      // stating it beside a `packageInstance`).
+      moduleLoadClosure: {
+        rootFiles: [entryFile],
+        loadedFiles: [entryFile],
+        loadedPackageInstances: [],
+        complete: true,
+        incompleteness: [],
+      },
       // VT-301B: this suite's graphs are entirely synthetic (fake paths
       // like "/node_modules/fixture-lib/index.js" that never exist on
       // disk) -- production real-file target attribution has no
@@ -548,6 +560,9 @@ describe("buildFinding: NOT_AFFECTED requires adequate coverage", () => {
     });
 
     expect(finding?.verdict).toBe("NOT_AFFECTED");
+    expect(
+      finding?.evidence?.confirmedAbsentFromModuleLoadClosure?.packageInstance,
+    ).toBe("/node_modules/fixture-lib");
   });
 });
 
@@ -629,9 +644,17 @@ describe("buildFinding: graphTruncated downgrades NOT_AFFECTED to UNKNOWN (VT-20
     const libFile = "/node_modules/fixture-lib/index.js";
     const src = moduleNode("src#<module>", entryFile);
     const other = fnNode("src#other@3:1", entryFile, "other", 3);
+    // The same real, unreached target as the truncated case above (task
+    // V-1: family C needs an attributed target, never a phantom).
+    const vulnerableNode = fnNode(
+      "lib#vulnerable@1:1",
+      libFile,
+      "vulnerable",
+      1,
+    );
 
     const graph: CallGraph = {
-      nodes: [src, other],
+      nodes: [src, other, vulnerableNode],
       edges: [resolvedEdge(src.id, other.id)],
     };
 
@@ -762,6 +785,14 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
     const libFile = "/node_modules/fixture-lib/index.js";
     const src = moduleNode("src#<module>", entryFile);
     const other = fnNode("src#other@3:1", entryFile, "other", 3);
+    // A real target the search cannot rule out (task V-1: a target with no
+    // graph node is unresolved before any search runs).
+    const vulnerableNode = fnNode(
+      "lib#vulnerable@1:1",
+      libFile,
+      "vulnerable",
+      1,
+    );
     const dynamicEdge: CallEdge = {
       from: other.id,
       type: "direct",
@@ -773,7 +804,7 @@ describe("buildFinding: UNKNOWN is preserved for unresolved cases", () => {
     };
 
     const graph: CallGraph = {
-      nodes: [src, other],
+      nodes: [src, other, vulnerableNode],
       edges: [resolvedEdge(src.id, other.id), dynamicEdge],
     };
 
@@ -1042,27 +1073,58 @@ describe("buildFinding: allowSyntheticNameOnlyTargetBinding gates the bare-name 
   });
 });
 
-describe("buildFinding: Site B (package never discovered by the graph at all) is unchanged by VT-301B", () => {
+describe("buildFinding: Site B (package never discovered by the graph at all) proves only through family A (task V-1)", () => {
   // Distinct from Site A above: here NOTHING in the graph touches
-  // fixture-lib at all (graphPackageInstances finds zero instances), so
-  // resolveTargetNodes takes the fresh-resolution branch and falls
-  // through to a phantom target -- a clean, fully-resolved reachability
-  // search then correctly and positively concludes "unreachable". This
-  // must remain NOT_AFFECTED regardless of
-  // allowSyntheticNameOnlyTargetBinding, since the package was never
-  // discovered in the first place -- there is no bare-name match to gate
-  // here at all (the file doesn't exist and the graph has no nodes for it
-  // either way). Explicitly passes flag: false (the production default)
-  // to prove this doesn't depend on the synthetic opt-in.
-  it("still produces NOT_AFFECTED with the flag explicitly false", async () => {
-    const entryFile = "/project/src/index.ts";
-    const libFile = "/node_modules/fixture-lib/index.js";
-    const src = moduleNode("src#<module>", entryFile);
+  // fixture-lib at all, so resolveTargetNodes takes the fresh-resolution
+  // branch. Until task V-1 it fell through to a phantom target, and a
+  // clean reachability search over it was family C. That was not a proof:
+  // the call graph follows no re-export declaration, so a package loaded
+  // only through `export *` has no graph node either, and runs (PRM-101;
+  // ADR 0011 § 6 reopens VT-301B). Site B now proves non-reachability only
+  // through family A -- a complete module-load closure that does not
+  // contain the finding's instance -- and is UNKNOWN otherwise. Both pass
+  // flag: false (the production default): neither depends on the
+  // synthetic opt-in.
+  const entryFile = "/project/src/index.ts";
+  const libFile = "/node_modules/fixture-lib/index.js";
+  // No node anywhere in this graph belongs to fixture-lib, matching Site B
+  // exactly.
+  const graph: CallGraph = {
+    nodes: [moduleNode("src#<module>", entryFile)],
+    edges: [],
+  };
 
-    // No node anywhere in this graph belongs to fixture-lib -- genuinely
-    // never discovered, matching Site B exactly.
-    const graph: CallGraph = { nodes: [src], edges: [] };
+  it("produces NOT_AFFECTED through family A when the closure shows the instance unloaded", async () => {
+    const finding = await buildFindingForTest({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      packageInstance: "/node_modules/fixture-lib",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      moduleLoadClosure: {
+        rootFiles: [entryFile],
+        loadedFiles: [entryFile],
+        loadedPackageInstances: [],
+        complete: true,
+        incompleteness: [],
+      },
+      allowSyntheticNameOnlyTargetBinding: false,
+    });
 
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
+    expect(
+      finding?.evidence?.confirmedAbsentFromModuleLoadClosure?.packageInstance,
+    ).toBe("/node_modules/fixture-lib");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
+  });
+
+  it("produces UNKNOWN, never a phantom-backed family C, when nothing proves the instance unloaded", async () => {
+    // No instance at all, so family A has nothing to prove absent.
     const finding = await buildFindingForTest({
       vulnerability: vulnerability("GHSA-fixture-0001"),
       packageName: "fixture-lib",
@@ -1079,6 +1141,87 @@ describe("buildFinding: Site B (package never discovered by the graph at all) is
       allowSyntheticNameOnlyTargetBinding: false,
     });
 
-    expect(finding?.verdict).toBe("NOT_AFFECTED");
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
+    expect(finding?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "vulnerable_target_unresolved",
+    ]);
+  });
+
+  it("keeps the reachable blockers the phantom search used to report", async () => {
+    // A dynamic `require` reachable from the entrypoint may be what loads
+    // fixture-lib. Until V-1 the search over the phantom reported it; it is
+    // still reported, typed, beside the unresolved target.
+    const finding = await buildFindingForTest({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      graph: {
+        nodes: graph.nodes,
+        edges: [
+          {
+            from: "src#<module>",
+            type: "direct",
+            resolution: {
+              kind: "unknown",
+              reason: "dynamic_require",
+              potentialTargets: [],
+            },
+          },
+        ],
+      },
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      syntheticGraphHasNoRealFiles: true,
+      allowSyntheticNameOnlyTargetBinding: false,
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.reasons).toContain(
+      "dynamic_require at src#<module>",
+    );
+    expect(finding?.unknownReasons?.map((reason) => reason.reason)).toEqual(
+      expect.arrayContaining([
+        "vulnerable_target_unresolved",
+        "dynamic_require",
+      ]),
+    );
+  });
+
+  it("produces UNKNOWN when the closure shows the instance LOADED with no graph node (PRM-101's shape)", async () => {
+    const finding = await buildFindingForTest({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      packageInstance: "/node_modules/fixture-lib",
+      matchResult: "affected",
+      rule,
+      graph,
+      entrypoints: [entrypoint],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      moduleLoadClosure: {
+        rootFiles: [entryFile],
+        loadedFiles: [entryFile, libFile],
+        loadedPackageInstances: ["/node_modules/fixture-lib"],
+        complete: true,
+        incompleteness: [],
+      },
+      allowSyntheticNameOnlyTargetBinding: false,
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
+    expect(finding?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "vulnerable_target_unresolved",
+    ]);
+    expect(
+      finding?.evidence?.reasons?.some((reason) =>
+        reason.includes("shows this package instance loaded"),
+      ),
+    ).toBe(true);
   });
 });
