@@ -223,6 +223,87 @@ describe("VT-307e case 1-2: module-load absence proof (family A)", () => {
   });
 });
 
+describe("task V-1: family C's closure corroboration (RWF-078)", () => {
+  it("withholds family C when the closure loads a module the call graph never evaluated", async () => {
+    // A module reached only through a re-export declaration runs, and the
+    // call graph has no node of it: its top level may call the target.
+    const side = "/project/src/side.mjs";
+    const f = await verdictFor({
+      graph: attributed(),
+      moduleLoadClosure: {
+        ...closure([], [LIB]),
+        loadedFiles: [ENTRY, LIB_FILE, side],
+      },
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+    expect(f?.verdict).toBe("UNKNOWN");
+    expect(familyOf(f)).toBe("-");
+    expect(f?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "loaded_module_not_evaluated",
+    ]);
+    expect(f?.evidence?.reasons?.[0]).toContain(side);
+  });
+
+  /** `attributed()`, with fixture-lib's top level evaluated by an import edge. */
+  const evaluated = (): CallGraph => ({
+    nodes: [...attributed().nodes, moduleNode("lib#<module>", LIB_FILE)],
+    edges: [
+      {
+        from: "src#<module>",
+        type: "import",
+        resolution: { kind: "resolved", target: "lib#<module>" },
+      },
+    ],
+  });
+
+  it("keeps family C when every module the closure loads is evaluated from an entrypoint", async () => {
+    const f = await verdictFor({
+      graph: evaluated(),
+      moduleLoadClosure: {
+        ...closure([], [LIB]),
+        loadedFiles: [ENTRY, LIB_FILE],
+      },
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+    expect(f?.verdict).toBe("NOT_AFFECTED");
+    expect(familyOf(f)).toBe("C");
+  });
+
+  it("withholds family C when a loaded module has nodes but its top level is never reached", async () => {
+    // A name imported through `export { x } from "m"`: the graph builds m's
+    // nodes, with no edge into m's top level, which real Node still runs.
+    const f = await verdictFor({
+      graph: {
+        nodes: evaluated().nodes,
+        edges: [],
+      },
+      moduleLoadClosure: {
+        ...closure([], [LIB]),
+        loadedFiles: [ENTRY, LIB_FILE],
+      },
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+    expect(f?.verdict).toBe("UNKNOWN");
+    expect(f?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "loaded_module_not_evaluated",
+    ]);
+    expect(f?.evidence?.reasons?.[0]).toContain(LIB_FILE);
+  });
+
+  it("does not touch family A, which proves the instance never loads", async () => {
+    // The unevaluated module is no reason to doubt a package the complete
+    // closure shows unloaded.
+    const f = await verdictFor({
+      moduleLoadClosure: {
+        ...closure(),
+        loadedFiles: [ENTRY, "/project/src/side.mjs"],
+      },
+    });
+    expect(f?.verdict).toBe("NOT_AFFECTED");
+    expect(familyOf(f)).toBe("A");
+  });
+});
+
 describe("VT-307e case 3-4: package IN (families B and C are the only options)", () => {
   it("case 3: package IN + unresolved target -> UNKNOWN, never any negative proof", async () => {
     const f = await verdictFor({

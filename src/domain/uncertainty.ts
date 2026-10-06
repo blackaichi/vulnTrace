@@ -172,6 +172,7 @@ export const UNCERTAINTY_REASONS = [
   "package_instance_absence_uncorroborated",
   "entrypoint_root_incomplete",
   "unreachability_not_positively_established",
+  "loaded_module_not_evaluated",
 
   // --- Scan-stage, package/workspace identity (cli/scan.ts) ---
   "installed_version_unavailable",
@@ -389,6 +390,15 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // so that if it ever is, it degrades to UNKNOWN with a named reason
   // rather than to a NOT_AFFECTED with no evidence.
   unreachability_not_positively_established: "analysis_precondition_unmet",
+  // Family C's closure corroboration (task V-1): the module-load closure
+  // loads a module whose top level the call graph never reached -- for
+  // example one reached only through a re-export declaration (`export *
+  // from`, or a name imported through `export { x } from`), which
+  // call-graph discovery does not evaluate (RWF-078). Its top level may call the target, so "no
+  // path" proves nothing. The analyzer saw the declaration and does
+  // not model the module's evaluation: closeable by frontend work (a
+  // module-evaluation edge), so `unmodeled_construct`.
+  loaded_module_not_evaluated: "unmodeled_construct",
 
   // -- budget_exceeded: a CONFIGURED bound stopped the work. --
   //

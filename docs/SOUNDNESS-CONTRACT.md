@@ -256,7 +256,7 @@ empty. The second is A-5's two reasons.)* While either remains, family C's compl
 them — which is what the implementation-status note at the top of this
 file says.
 
-**Two further preconditions are enforced by `buildFinding` before this
+**Three further preconditions are enforced by `buildFinding` before this
 proof is ever constructed**, and are therefore not restated as fields on
 the evidence object:
 
@@ -264,12 +264,16 @@ the evidence object:
 | --- | --- |
 | `graphTruncated === false` | Call-graph construction hit a configured resource limit (`analysis.limits`), so the untraversed region might have contained the very path being searched for. A truncated graph returns `UNKNOWN` and withdraws every proof that depends on graph completeness (VT-202). |
 | Entrypoint reachability roots fully derived | If a configured entrypoint's root could not be materialized, the subgraph was searched from an incomplete set of roots — "searched to exhaustion" would be true and useless. This returns `UNKNOWN` with `entrypoint_root_incomplete` (P0-Z). |
+| Every module the closure loads is reached from an entrypoint | Each module the `ModuleLoadClosure` loads must have its `<module>` node reachable from an entrypoint source over resolved or `possible` edges. A module reached only through a re-export declaration is not: `export * from` gives it no node, and a name imported through `export { x } from` gives it nodes with no edge into its top level. Real Node runs it, so a call it makes to the target is invisible to the search. This returns `UNKNOWN` with `loaded_module_not_evaluated` (task V-1, RWF-078; ADR 0011, Amendment V-1). |
 
 `graphTruncated === false` says only that the traversal did not hit a
 resource limit. **It is not a claim that the call graph is complete** — the
 same distinction family B's own field draws — and family C does not need
 one: nodes outside the enumerated reachable subgraph are never inspected
-and are irrelevant to the conclusion.
+and are irrelevant to the conclusion -- provided every module that runs
+has its top level inside that subgraph, which is what the third
+precondition above requires (task V-1). A module whose top level lies
+outside it may still run, and its nodes are then not irrelevant at all.
 
 ### No misleading whole-program completeness
 
