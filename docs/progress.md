@@ -80,12 +80,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   next: REMEDIATION-PLAN § 5a, "A-3a additions" through "A-6 additions".
 - Lane V has started. `V-1` (ADR 0011 predicates 2 and 3) deleted Site
   B's phantom target: a package with no node in the call graph is proved
-  unreachable only by family A, and is otherwise `UNKNOWN` -- a package
-  loaded only through `export *` was a family-C false `NOT_AFFECTED`
-  (PRM-101), and one that calls nothing is now `UNKNOWN` (the measured
-  precision cost). Site A vs Site B is chosen by the exact
-  `packageInstance`, never by the manifest's name (PRM-102). What binds
-  V-2..V-4: REMEDIATION-PLAN § 5a, "V-1 additions".
+  unreachable only by family A, and is otherwise `UNKNOWN` (PRM-101); Site
+  A vs Site B is chosen by the exact `packageInstance`, never by the
+  manifest's name (PRM-102). By the project owner's decision it also added
+  ADR 0011 Amendment V-1: family C stands only when every module the
+  closure loads has its top level reached from an entrypoint, closing
+  RWF-078 (a module loaded only through a re-export declaration is never
+  evaluated). What binds V-2..V-4:
+  REMEDIATION-PLAN § 5a, "V-1 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -117,26 +119,24 @@ by design regardless of network access (backlog `BL-030`).
 ## Current task
 
 `V-1` — closure corroboration for Site B; instance-keyed site selection
-([task file](tasks/V-1-site-b-closure-corroboration.md)): **`BLOCKED`,
-needing the project owner's decision** -- its instance-keyed selection
-extends RWF-078 to fork-named instances the base answered `UNKNOWN`
-(task file, Corrections 4). Branch pushed; no pull request yet. `A-6`
+([task file](tasks/V-1-site-b-closure-corroboration.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `A-6`
 merged as PR #85, completing lane A.
 
 ## Next
 
 The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-1`:
-`V-2`..`V-4`, then `C-1` and lane B. The P1 gaps `BL-052`
-(RWF-078, a decision first), `BL-048`
+`V-2`..`V-4`, then `C-1` and lane B. The P1 gaps `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
 
-From `V-1`: `BL-052` (**P1**, RWF-078: PRM-101's mechanism at Site A -- a
-module loaded only through `export *` is never evaluated, so family C
-stands over a real target it calls; needs the project owner's decision).
+From `V-1`: RWF-078 (found by its audits and fixed by it: a module loaded
+only through a re-export declaration is never evaluated, so family C stood
+over a target it calls) and `BL-052` (P4, precision: evaluate such modules
+in the call graph).
 From `A-6`: RWF-075 (fixed by A-6: ADR 0008's `.call` / `.apply`
 exception read literally), `BL-050` (**P1**, RWF-076: an ES module's
 default import read as CommonJS interop, a family-C false `NOT_AFFECTED`),

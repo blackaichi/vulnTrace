@@ -252,7 +252,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-075 | `vuln-lib` (synthetic fixture) | ADR 0008's A-6 row keeps a single trailing `.call` / `.apply` on an exact export resolved, with no condition: a write of a member named `call` / `apply` (on the function, or on `Function.prototype`), or a class export's own static `call`, makes the call reach another function | false NOT_AFFECTED — see below | **Fixed** (A-6) — see below |
 | RWF-076 | `vuln-lib` (synthetic fixture) | An ES module's default import is bound as the CommonJS interop object: `import d from "esm-pkg"; d.safe()` is attributed to the named export `safe`, though `d` is the module's separate `default` export | false NOT_AFFECTED — see below | Open (backlog `BL-050`) |
 | RWF-077 | `vuln-lib` (synthetic fixture) | A builtin loader bound by destructuring and called through `.call` / `.apply` (`const { fork } = require("child_process"); fork.call(null, w)`) is keyed `fork.call`, which no table names, and the loader classifier never sees the load | false NOT_AFFECTED (family A) — see below | Open (backlog `BL-051`) |
-| RWF-078 | `vuln-lib` (synthetic fixture) | A package whose module that calls the target is loaded only through `export *`, while another of its files is in the call graph, keeps a family-C proof over the real target at Site A: the graph never evaluates the re-exported module (PRM-101's mechanism at Site A) | false NOT_AFFECTED (family C) — see below | Open (backlog `BL-052`) |
+| RWF-078 | `vuln-lib` (synthetic fixture) | A module loaded only through a re-export declaration (`export *`, or a name imported through `export { x } from`) is never evaluated by the call graph, so family C stood over a target such a module calls (the target's own module at Site A, another package's, or the application's) | false NOT_AFFECTED (family C) — see below | **Fixed** (V-1) — see below |
 
 ---
 
@@ -17319,13 +17319,10 @@ stays `NOT_AFFECTED`, now asserted as family A (`unloaded.family-a`;
 
 Scope of the fix: this finding is Site B's phantom, and that is gone. The
 same mechanism -- a module loaded only through `export *` is never
-evaluated by the call graph -- also reaches Site A, when another file of
-the package is in the graph: family C then stands over the real target
-the unevaluated module calls. Task V-1's independent audit reproduced it
-(base and branch alike); it is recorded separately as `RWF-078` (backlog
-`BL-052`): after V-1, `export *` is a precision cost at Site B but still
-a soundness gap at Site A, although ADR 0011 § 7 treats it as precision
-only.
+evaluated by the call graph -- also reached family C where a real target
+exists (Site A, or a module of another package or of the application);
+task V-1's audits reproduced it, and it is recorded and fixed separately
+as `RWF-078` (family C's closure corroboration, ADR 0011 Amendment V-1).
 
 ---
 
@@ -19230,19 +19227,18 @@ certifies the package unloaded. Oracle record:
 
 ---
 
-## RWF-078 — A module loaded only through `export *` is never evaluated by the call graph, so family C stands at Site A over a target it calls
+## RWF-078 — A module loaded only through `export *` is never evaluated by the call graph, so family C stood over a target it calls
 
-**Status:** Open (backlog `BL-052`)
+**Status:** Fixed (task V-1)
 **Failure class:** false NOT_AFFECTED (family C)
 **Defect class:** C (the closure records the module as loaded; the call
 graph, which follows no re-export declaration, treats it as never run)
 **Proof family affected:** C
 **Severity:** High — P1 (a false `NOT_AFFECTED`)
-**Fix lane:** V or A/E — needs the project owner's decision (below)
+**Fix lane:** V (ADR 0011, Amendment V-1)
 
 **Discovered:** by task V-1's independent audit (finding 1), measured
-against real Node v22.11.0 on the base `62193c0` and on the V-1 branch
-(the same verdict on both):
+against real Node v22.11.0 on the base `62193c0` and on the V-1 branch:
 
 ```js
 // node_modules/vuln-lib/index.js (CommonJS)
@@ -19259,38 +19255,48 @@ Real Node calls `parse`. `impl.js` is in the call graph, so Site A
 attributes the real `impl.js#parse` node; `index.js`, whose top level calls
 it, is loaded only through the `export *` declaration, which call-graph
 discovery does not follow, so nothing reaches `parse` and family C
-certifies it unreachable. The module-load closure does walk the
-declaration and records the instance as loaded, but family C does not
-consult which of the instance's modules the closure loaded. Without the
-side-effect import (no file of the package in the graph) the same program
-is Site B, which task V-1 made `UNKNOWN` (PRM-101).
+certified it unreachable. The module-load closure does walk the
+declaration; family C did not consult it.
 
-**What it falsifies.** ADR 0011 § 4's modeled exception -- "a loaded,
+**Wider than Site A** (measured by task V-1 while fixing it): the module
+need not be the target's. An application module (`src/re.mjs: export *
+from "./side.mjs"`, whose top level calls `lib.parse`) or another
+package's module (`node_modules/other/index.js: export * from
+"./side.js"`) loaded only through `export *` is the same false
+`NOT_AFFECTED`, on the base and before the fix alike. And task V-1's
+instance-keyed selection (ADR 0011 predicate 2) had extended it, before
+the fix, to a nested fork-named instance the base answered `UNKNOWN`
+(V-1's re-audit, finding 1).
+
+**What it falsified.** ADR 0011 § 4's modeled exception -- "a loaded,
 attributed, unreached target keeps family C … corroboration is only
-predicate 1" -- rests on the call graph having evaluated every module the
-closure loads. It has not, for a module reached only through a re-export
-declaration. ADR 0011 § 7 places the cure for the `export *` shape in lane
-A/E ("a module-evaluation edge through `export *`") as a precision
-matter; at Site A it is a soundness one.
+predicate 1" -- and SOUNDNESS-CONTRACT § 3's "nodes outside the enumerated
+reachable subgraph … are irrelevant to the conclusion", for a module with
+no node at all. Both are amended (ADR 0011, Amendment V-1, accepted by the
+project owner on 2026-10-06).
 
-**The fix (a decision):** either family C requires that every module of
-the target's instance the closure loads is a module the call graph
-walked (a lane-V corroboration predicate, failing closed to `UNKNOWN`), or
-the call graph evaluates a module reached through a re-export declaration
-(a module-evaluation edge, lanes A/E), which also wins back PRM-101's
-precision. Oracle record: `tests/oracle/v1-site-b-corroboration.test.ts`,
-`export-star.site-a.side-effect-import` (an open-soundness-defect record).
+**Also through a named re-export** (task V-1's third audit): a name
+imported through `export { x } from "m"` makes the call graph build `m`'s
+nodes with no edge into `m`'s top level, which real Node runs -- the same
+false `NOT_AFFECTED` at Site A, for an application module and for another
+package's, on the base. A first fix that required only a NODE for every
+loaded module missed it.
 
-**Task V-1 extends its reach (measured by V-1's independent re-audit,
-finding 1).** V-1 selects Site A by the exact instance. An instance whose
-manifest name differs from the advisory's used to take the name-keyed
-route instead, which answered `UNKNOWN` here (Site B could not resolve
-it, or the family-B branch was refused by a closure that loads it). Under
-V-1 it takes Site A and inherits this gap: a nested fork-named instance
-re-exported with `export *` by a dependency that also side-effect-imports
-one of its files is `UNKNOWN` on the base `62193c0` and a false
-`NOT_AFFECTED` (family C) on the V-1 branch, with real Node calling
-`parse` -- the answer the base already gives when the manifest name
-matches. Oracle record: `export-star.nested-fork.reached-by-v1`. Whether
-V-1 may merge before this finding is fixed is the project owner's
-decision (`docs/tasks/V-1-site-b-closure-corroboration.md`, Corrections).
+**The fix (task V-1).** Family C stands only when the `<module>` node of
+every module the module-load closure loads is reachable from an
+entrypoint source over resolved or `possible` edges; otherwise the finding
+is `UNKNOWN` (`loaded_module_not_evaluated`, category
+`unmodeled_construct`). `buildFinding` checks it, with one reachability
+walk per scan (memoized in the scan caches). Against real Node
+(`tests/oracle/v1-site-b-corroboration.test.ts`): `export-star.site-a.side-effect-import`,
+`export-star.app-module-barrel` and `export-star.other-package-barrel`
+were family-C `NOT_AFFECTED` on the base and are `UNKNOWN`;
+`export-star.nested-fork.site-a` is `UNKNOWN` (as on the base); and
+`named-reexport.site-a`, `named-reexport.app-module` and
+`named-reexport.other-package` were family-C `NOT_AFFECTED` on the base
+and are `UNKNOWN`. The cost: a scan that loads any module only through a
+re-export declaration loses family C for every finding
+(`export-star.app-module-barrel.quiet`, `named-reexport.app-module.quiet`);
+the corpora show none (verdict differential 0). Winning it back is a
+module-evaluation edge through every re-export declaration (backlog
+`BL-052`, precision).

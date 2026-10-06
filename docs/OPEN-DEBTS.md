@@ -954,32 +954,29 @@ phantom target is deleted, so a package with no node in the call graph is
 proved unreachable only by family A (a complete module-load closure
 without the instance) and is otherwise `UNKNOWN`; and Site A vs Site B is
 chosen by the finding's exact `packageInstance`, never by the name its
-manifest declares. Eleven real-Node cases: four family-C false
-`NOT_AFFECTED`s on the base (a package loaded only through `export *`,
-three ways; a manifest-name mismatch with a forwarded target) are
-`UNKNOWN` or `AFFECTED` on the branch; one more `export *` case, whose
-library calls nothing, moves from a correct `NOT_AFFECTED` to `UNKNOWN` --
-the precision cost ADR 0011 § 5 measured; and, found by the independent
-audit, a nested fork-named instance moves from `UNKNOWN` to an
-oracle-confirmed `NOT_AFFECTED` (family C over its real target: the proof
-a same-named instance already gets) and its called twin to `AFFECTED`.
-The twenty existing tests the change failed were all built on the phantom
-and are re-stated, none toward `NOT_AFFECTED`; the guards they no longer
-reached are also tested over a real target, so none passes vacuously.
-Seven mutations, each caught by a named test, one of them a sibling
-borrow. The audit also found `RWF-078` (backlog `BL-052`, **P1**,
-pre-existing): PRM-101's mechanism at Site A -- a module loaded only
-through `export *` is never evaluated by the call graph, so family C
-stands over a real target it calls when another file of the package is
-in the graph; it falsifies ADR 0011 § 4's "a loaded, attributed,
-unreached target keeps family C". Its re-audit then measured that V-1
-extends RWF-078: a nested fork-named instance in RWF-078's shape is
-`UNKNOWN` on the base and a false `NOT_AFFECTED` on the branch
-(`export-star.nested-fork.reached-by-v1`). **V-1 is `BLOCKED` on the
-project owner's decision** (the task file's Corrections).
-Over the 139 corpus cases: verdict differential 0, proof 5 (all
-`UNKNOWN`: the unresolved-target reason added beside the same blockers,
-and the finding's `target` dropped), graph 0. This entry still stands.
+manifest declares. Its independent audits found `RWF-078` -- a module
+loaded only through a re-export declaration (`export *`, or a name
+imported through `export { x } from`) is never evaluated by the call
+graph, so family C stood over a target it calls, whether the module is
+the target's, another package's or the application's (pre-existing) --
+and that V-1's instance-keyed selection had extended it to a nested
+fork-named instance the base answered `UNKNOWN`. By the project owner's
+decision of 2026-10-06, V-1 also closes it: family C stands only when the
+`<module>` node of every module the closure loads is reachable from an
+entrypoint (ADR 0011, Amendment V-1; SOUNDNESS-CONTRACT § 3; reason
+`loaded_module_not_evaluated`). Nineteen real-Node cases: ten family-C
+false `NOT_AFFECTED`s on the base are `UNKNOWN` or `AFFECTED` on the
+branch; three correct `NOT_AFFECTED`s become `UNKNOWN` (the precision
+costs: a re-exported module that calls nothing); a nested fork-named
+instance moves from `UNKNOWN` to an oracle-confirmed `NOT_AFFECTED`, and
+its called twin to `AFFECTED`. The twenty existing tests the change
+failed were all built on the phantom and are re-stated, none toward
+`NOT_AFFECTED`; one F4 control row became an invalidating mutation
+(family C now reads the closure's loaded files). Eleven mutations, each
+caught by a named test, one of them a sibling borrow. Over the 139 corpus
+cases: verdict differential 0, proof 5 (all `UNKNOWN`: the
+unresolved-target reason added beside the same blockers, and the
+finding's `target` dropped), graph 0. This entry still stands.
 
 ## 2. Target intelligence is not analyzer uncertainty
 
