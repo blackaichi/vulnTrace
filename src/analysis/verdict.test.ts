@@ -1,4 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
 import type {
   ModuleResolutionResult,
   ModuleResolver,
@@ -878,7 +881,27 @@ describe("buildFinding: {file, symbol} entrypoints scope reachability to only th
   // backward-compatible default); with {file, symbol: "main"}, unused()'s
   // own edge to vulnerable() must not make this AFFECTED merely because
   // unused() happens to live in the same file.
-  const entryFile = "/project/src/index.ts";
+  //
+  // Task V-3 (ADR 0011 predicate 4): a configured symbol is rooted at the
+  // node of the DECLARATION its export binds to, found by position in the
+  // real entrypoint file -- never at a node merely named like it. So the
+  // entrypoint is a real file (the graph and the library stay synthetic),
+  // whose declarations sit exactly where the synthetic nodes say: `main`
+  // at 3:1, `unused` at 7:1. Without a file there is nothing to look the
+  // symbol up in, which is root incompleteness (ADR 0011 § 3).
+  const projectDir = mkdtempSync(path.join(tmpdir(), "vulntrace-vt205-"));
+  mkdirSync(path.join(projectDir, "src"));
+  const entryFile = path.join(projectDir, "src/index.ts");
+  writeFileSync(
+    entryFile,
+    "declare function safe(): string;\n" +
+      "declare function vulnerable(): string;\n" +
+      "export function main() {\n  return safe();\n}\n\n" +
+      "export function unused() {\n  return vulnerable();\n}\n",
+  );
+  afterAll(() => {
+    rmSync(projectDir, { recursive: true, force: true });
+  });
   const libFile = "/node_modules/fixture-lib/index.js";
 
   function buildGraph(): CallGraph {
@@ -936,13 +959,56 @@ describe("buildFinding: {file, symbol} entrypoints scope reachability to only th
     expect(finding?.verdict).toBe("NOT_AFFECTED");
   });
 
-  // The no-symbol default path enumerates every export by reading the
-  // entrypoint file from disk (unchanged, pre-VT-205 behavior) -- unlike
-  // the symbol-scoped path above, which needs no file I/O at all. That
-  // makes it untestable against these synthetic, non-existent file paths;
-  // see verdict.integration.test.ts's VT-205 block for the real-file
-  // equivalent of "no symbol configured still reaches AFFECTED via the
-  // sibling export."
+  it("is UNKNOWN (entrypoint_root_incomplete) when the configured symbol's file cannot be read (task V-3, ADR 0011 § 3)", async () => {
+    const finding = await buildFindingForTest({
+      vulnerability: vulnerability("GHSA-fixture-0001"),
+      packageName: "fixture-lib",
+      packageVersion: "1.0.0",
+      matchResult: "affected",
+      rule,
+      // The same graph, rooted in a file that does not exist: no symbol
+      // can be looked up in it, so none materializes.
+      graph: {
+        nodes: buildGraph().nodes.map((n) =>
+          n.module === entryFile
+            ? {
+                ...n,
+                module: "/project/missing/index.ts",
+                ...(n.location
+                  ? {
+                      location: {
+                        ...n.location,
+                        file: "/project/missing/index.ts",
+                      },
+                    }
+                  : {}),
+              }
+            : n,
+        ),
+        edges: buildGraph().edges,
+      },
+      entrypoints: [
+        {
+          ...entrypoint,
+          filePath: "/project/missing/index.ts",
+          symbol: "main",
+        },
+      ],
+      resolver: fakeResolver({ "fixture-lib": libFile }),
+      projectRoot: "/project",
+      syntheticGraphHasNoRealFiles: true,
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.unknownReasons?.map((r) => r.reason)).toContain(
+      "entrypoint_root_incomplete",
+    );
+  });
+
+  // The no-symbol default path roots every export of the same file; see
+  // verdict.integration.test.ts's VT-205 block for "no symbol configured
+  // still reaches AFFECTED via the sibling export", over a real call graph.
 
   it("finds AFFECTED when the configured symbol itself is the one that reaches the target", async () => {
     const symbolScopedEntrypoint: Entrypoint = {
