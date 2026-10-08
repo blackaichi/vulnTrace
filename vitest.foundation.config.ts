@@ -93,6 +93,9 @@ export default defineConfig({
 
       "src/testing/name-lookup-census.test.ts",
       "src/analysis/verdict.identity-keyed-roots.integration.test.ts",
+      "src/analysis/verdict.proof-inputs.test.ts",
+      "src/testing/proof-input-casts.test.ts",
+      "src/analysis/verdict.site-b-target-authority.integration.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take

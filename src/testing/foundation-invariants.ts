@@ -464,18 +464,35 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
     id: "VT-INV-V-corroboration",
     invariant:
       "A negative proof is built only from facts keyed by exact identity " +
-      "(ADR 0011 invariant V). Every entrypoint root is materialized by " +
-      "declaration position, never by a name, and a configured symbol " +
-      "that does not materialize is root incompleteness (predicate 4). " +
-      "Every expression in src/analysis and src/code-intelligence that " +
-      "finds a graph node or an indexed function by its name, or a package " +
-      "instance by its package name, is listed in the census with its " +
-      "declared direction (widen-only, refuse-only, test-flag-only, or " +
-      "open with its finding and task); a new, removed or moved one fails.",
+      "(ADR 0011 invariant V). Families B and C are built only from " +
+      "branded proof inputs, each produced by one function that checks it: " +
+      "a closure corroboration (predicate 1: the closure is present, has " +
+      "roots, is complete and records no incompleteness reason, both " +
+      "halves read together, with whether the exact instance is loaded " +
+      "recorded), for family C every loaded module's top level reached " +
+      "beside it (predicate 5), and a target attributed to a node of the " +
+      "analyzed graph (predicate 3); an object literal of a branded type is " +
+      "a compile error, a production type assertion to one outside its " +
+      "producer fails the cast census, and an input no producer made is " +
+      "refused at runtime. Site A or B is chosen by the exact package " +
+      "instance, never by a package name (predicate 2). Every entrypoint " +
+      "root is materialized by declaration position, never by a name, and " +
+      "a configured symbol that does not materialize is root " +
+      "incompleteness (predicate 4). Every expression in src/analysis and " +
+      "src/code-intelligence that finds a graph node or an indexed function " +
+      "by its name, or a package instance by its package name, is listed in " +
+      "the census with its declared direction (widen-only, refuse-only, " +
+      "test-flag-only, or open with its finding and task); a new, removed " +
+      "or moved one fails.",
     foundation: "ADR-0011",
     owners: [
       "src/testing/name-lookup-census.test.ts",
       "src/analysis/verdict.identity-keyed-roots.integration.test.ts",
+      "src/analysis/verdict.proof-inputs.test.ts",
+      "src/testing/proof-input-casts.test.ts",
+      "src/analysis/verdict.f2-proof-guards.test.ts",
+      "src/analysis/verdict.f4-proof-mutation.test.ts",
+      "src/analysis/verdict.site-b-target-authority.integration.test.ts",
     ],
     note:
       "Task V-3 (PRM-25, PRM-31). The census owns ADR 0011 § 2's " +
@@ -486,8 +503,20 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "production buildFinding over real files; its real-Node ground " +
       "truth is tests/oracle/v3-identity-keyed-roots.test.ts, run in CI " +
       "by `npm run test:oracle` (it spawns real Node, so it is not a " +
-      "Foundation-gate owner). Predicates 1-3 (tasks V-1, V-2) and the " +
-      "branded proof-input types are registered here by task V-4.",
+      "Foundation-gate owner). Task V-4 registered predicates 1-3 and 5 " +
+      "(tasks V-1, V-2) and the branded proof-input types: " +
+      "verdict.proof-inputs.test.ts owns the producers, the evidence " +
+      "constructors' runtime refusals and (through npm run typecheck, " +
+      "which checks its @ts-expect-error lines) the brands; " +
+      "proof-input-casts.test.ts owns the cast census, with a self-test; " +
+      "the F2 and F4 suites own, through the production buildFinding, " +
+      "predicate 1's two halves, predicate 5 and family B's own read of the " +
+      "closure (the roots check, graph membership and the runtime marks are " +
+      "reached by no production input and are owned by the unit tests " +
+      "only); the Site B integration test owns predicate 3 end to end (no " +
+      "phantom target). Predicate 2's " +
+      "real-Node ground truth is tests/oracle/v1-site-b-corroboration.test.ts, " +
+      "run in CI by `npm run test:oracle`.",
   },
 ];
 
