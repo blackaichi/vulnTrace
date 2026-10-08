@@ -14,7 +14,7 @@ import { canonicalizePackageInstancePath } from "../domain/resolved-target.js";
 import type { VulnerableSymbolRule } from "../domain/target.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import {
-  invalidatesCallGraphNegativeProof,
+  callGraphNegativeProofBlockers,
   type ClosureIncompletenessReason,
   type ModuleLoadClosure,
 } from "./module-load-closure.js";
@@ -454,16 +454,45 @@ describe("VT-307e case 8-10, 16: legacy call-graph proofs vs closure conditions"
     expect(familyOf(f)).toBe("-");
   });
 
-  it("case 10b: a Site B target under a truncated closure is not family C (task V-1)", async () => {
-    // This case asserted that `traversal_truncated` alone leaves a
-    // call-graph proof standing -- and the proof it observed was family C
-    // over Site B's PHANTOM target, which task V-1 removed (ADR 0011
-    // predicate 3): with no graph node of the package, only family A can
-    // prove it unreachable, and a truncated closure cannot. Whether
-    // `traversal_truncated` blocks family C over a REAL target is PRM-23,
-    // task V-2's (ADR 0011 § 8, which names this case); it is not
-    // re-asserted here over another graph, because that would pin a
-    // premise recorded as false.
+  it("case 10b: traversal_truncated blocks family C over a real, attributed target (task V-2, PRM-23)", async () => {
+    // Until task V-2 this case pinned the false premise that a closure
+    // truncated on its own walk leaves families B and C standing, because
+    // `graphTruncated` guards the call graph's coverage. It does not guard
+    // the closure's: the two walks visit different files, and a file the
+    // closure never examined may hold a non-call loader mutation the call
+    // graph cannot see (ADR 0011 predicate 1).
+    const f = await verdictFor({
+      graph: attributed(),
+      moduleLoadClosure: closure(["traversal_truncated"], [LIB]),
+      graphTruncated: false,
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+    expect(f?.verdict).toBe("UNKNOWN");
+    expect(familyOf(f)).toBe("-");
+    expect(f?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "traversal_truncated",
+    ]);
+    expect(f?.unknownReasons?.map((reason) => reason.category)).toEqual([
+      "budget_exceeded",
+    ]);
+  });
+
+  it("case 10b control: the same attributed target under a complete closure is family C", async () => {
+    // Without this, case 10b could pass because the graph proves nothing.
+    const f = await verdictFor({
+      graph: attributed(),
+      moduleLoadClosure: closure([], [LIB]),
+      graphTruncated: false,
+      allowSyntheticNameOnlyTargetBinding: true,
+    });
+    expect(f?.verdict).toBe("NOT_AFFECTED");
+    expect(familyOf(f)).toBe("C");
+  });
+
+  it("case 10c: a Site B target under a truncated closure is not family C (task V-1)", async () => {
+    // A phantom never supports family C (ADR 0011 predicate 3): with no
+    // graph node of the package only family A can prove it unreachable,
+    // and a truncated closure cannot.
     const f = await verdictFor({
       graph: siteB(),
       moduleLoadClosure: closure(["traversal_truncated"]),
@@ -476,7 +505,7 @@ describe("VT-307e case 8-10, 16: legacy call-graph proofs vs closure conditions"
     ]);
   });
 
-  it("case 16: every closure-widening reason blocks the call-graph proofs", async () => {
+  it("case 16: every closure incompleteness reason blocks the call-graph proofs", async () => {
     const reasons: ClosureIncompletenessReason[] = [
       "dynamic_require",
       "dynamic_import",
@@ -495,22 +524,28 @@ describe("VT-307e case 8-10, 16: legacy call-graph proofs vs closure conditions"
       "unresolved_module",
       "declaration_only_resolution",
       "parse_failure",
+      // Task V-2 (PRM-23): the one exclusion until then.
+      "traversal_truncated",
     ];
     for (const reason of reasons) {
       expect(
-        invalidatesCallGraphNegativeProof(reason),
+        callGraphNegativeProofBlockers(closure([reason])),
         `${reason} must invalidate a call-graph-derived negative proof`,
-      ).toBe(true);
+      ).toEqual([reason]);
+      // Over a real, attributed target: over `siteB()` family C is gone
+      // already (task V-1), and the assertion would pass vacuously.
       const f = await verdictFor({
-        graph: siteB(),
-        moduleLoadClosure: closure([reason]),
+        graph: attributed(),
+        moduleLoadClosure: closure([reason], [LIB]),
         graphTruncated: false,
+        allowSyntheticNameOnlyTargetBinding: true,
       });
       expect(f?.verdict, `${reason} must force UNKNOWN`).toBe("UNKNOWN");
+      expect(
+        f?.unknownReasons?.map((r) => r.reason),
+        `${reason} must be the reason reported`,
+      ).toContain(reason);
     }
-    expect(invalidatesCallGraphNegativeProof("traversal_truncated")).toBe(
-      false,
-    );
   });
 });
 
@@ -695,7 +730,7 @@ describe("VT-307e: proof family B requires ModuleLoadClosure corroboration", () 
     expect(f?.verdict).toBe("UNKNOWN");
   });
 
-  it("matrix item 7: every invalidatesCallGraphNegativeProof reason blocks family B", async () => {
+  it("matrix item 7: every closure incompleteness reason blocks family B", async () => {
     // Exhaustive per Section 8 of the audit -- every reason the partition
     // says blocks a call-graph-derived proof must also block family B's
     // NEW corroboration check, not just its old graph-only check.
@@ -717,6 +752,7 @@ describe("VT-307e: proof family B requires ModuleLoadClosure corroboration", () 
       "unresolved_module",
       "declaration_only_resolution",
       "parse_failure",
+      "traversal_truncated",
     ];
     for (const reason of reasons) {
       const f = await verdictFor({

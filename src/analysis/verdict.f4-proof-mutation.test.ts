@@ -652,8 +652,9 @@ describe("F4 family A mutations: the module-load absence proof", () => {
     // Family A needs `complete` and loses it. Until task V-1 family C took
     // over, over a phantom target (the call graph has no node of this
     // package); a phantom never supports family C (ADR 0011 predicate 3),
-    // so the finding is UNKNOWN for that reason, whatever V-2 later
-    // decides about `traversal_truncated` itself (ADR 0011 § 8).
+    // so the finding is UNKNOWN for that reason. That `traversal_truncated`
+    // itself withdraws family C over a REAL target is the family-C row
+    // "closure_incomplete_traversal_truncated" (task V-2).
     const outcome = await runProof(
       mutate(familyA.inputs, {
         moduleLoadClosure: closureIncomplete(
@@ -673,8 +674,8 @@ describe("F4 family A mutations: the module-load absence proof", () => {
     ).toBeUndefined();
     expectExactlyOneProof(outcome);
 
-    // And the exclusion is not a blanket one: the SAME closure, truncated
-    // AND carrying any other reason, blocks family C as well.
+    // The SAME closure, truncated AND carrying another reason, is no
+    // proof either.
     const alsoBlocked = await runProof(
       mutate(familyA.inputs, {
         moduleLoadClosure: closureIncomplete(
@@ -715,10 +716,10 @@ describe("F4 family B mutations: the call-graph absence proof", () => {
     {
       mutation: "closure_incomplete_traversal_truncated",
       invalidates: true,
-      // Family B's corroboration requires `complete === true` outright --
-      // unlike the call-graph BLOCKER partition, which excludes this
-      // reason. Two different reads of the closure, and this row pins
-      // that they genuinely differ.
+      // Family B's corroboration requires `complete === true` outright,
+      // and answers first. Since task V-2 the call-graph blocker list
+      // carries this reason too (ADR 0011 predicate 1), so the two reads
+      // of the closure no longer differ.
       apply: (inputs) =>
         mutate(inputs, {
           moduleLoadClosure: closureIncomplete(
@@ -1010,11 +1011,15 @@ describe("F4 family C mutations: the target-unreachability proof", () => {
       // discovered later.
       apply: (inputs) => mutate(inputs, { packageInstance: undefined }),
     },
-    // ------------------------------------------------------- CONTROLS
     {
-      // The one documented exclusion, from family C's side.
-      mutation: "closure_incomplete_traversal_truncated_only",
-      invalidates: false,
+      // Task V-2 (PRM-23; ADR 0011 predicate 1). Until V-2 this row was a
+      // CONTROL, "the one documented exclusion": a closure stopped by its
+      // own `maxFiles` left family C standing, on the premise that the
+      // call graph's `graphTruncated` guards the same ground. It does not:
+      // the two walks visit different files, and the files the closure
+      // never examined are exactly where a non-call loader mutation hides.
+      mutation: "closure_incomplete_traversal_truncated",
+      invalidates: true,
       apply: (inputs) =>
         mutate(inputs, {
           moduleLoadClosure: closureIncomplete(
@@ -1022,7 +1027,9 @@ describe("F4 family C mutations: the target-unreachability proof", () => {
             "traversal_truncated",
           ),
         }),
+      expectUncertaintyReason: "traversal_truncated",
     },
+    // ------------------------------------------------------- CONTROLS
     {
       // Family C never claims the package is unloaded, so closure
       // MEMBERSHIP is not one of its prerequisites. If this ever starts

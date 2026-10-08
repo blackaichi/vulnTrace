@@ -336,7 +336,7 @@ describe("F2-A: the blocker helper itself", () => {
     expect(callGraphNegativeProofBlockers(complete)).toEqual([]);
   });
 
-  it("is unchanged for a present, incomplete closure", async () => {
+  it("reports every reason of a present, incomplete closure, traversal_truncated included", async () => {
     const incomplete: ModuleLoadClosure = {
       rootFiles: ["/project/src/index.js"],
       loadedFiles: ["/project/src/index.js"],
@@ -345,15 +345,17 @@ describe("F2-A: the blocker helper itself", () => {
       incompleteness: [
         { reason: "dynamic_require", importer: "/project/src/index.js" },
         { reason: "parse_failure", importer: "/project/src/broken.js" },
-        // Excluded by `invalidatesCallGraphNegativeProof` -- the closure's
-        // own bound says nothing about how far the call graph got, which
-        // `graphTruncated` guards independently.
+        // Excluded until task V-2 (PRM-23): the closure's own bound was
+        // said to be guarded by `graphTruncated`, but the files a
+        // truncated closure never examined are not the call graph's to
+        // vouch for (ADR 0011 predicate 1).
         { reason: "traversal_truncated", importer: "/project/src/deep.js" },
       ],
     };
     expect(callGraphNegativeProofBlockers(incomplete)).toEqual([
       "dynamic_require",
       "parse_failure",
+      "traversal_truncated",
     ]);
   });
 });
