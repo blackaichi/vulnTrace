@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: V-2
 - **Branch**: v-2-traversal-truncated-blocks-negative-proof
 - **Base SHA**: b7daa950f4fa2376ab75b9717aab2f3566d07973
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `3eaba4e` docs(tasks): V-2 task file — traversal_truncated blocks families B and C
+  - `9660c6b` test(V-2): a truncated closure withdraws families B and C — unit and real-Node cases
+  - `17b1f9a` fix(V-2): traversal_truncated blocks families B and C (PRM-23)
+  - (this commit) docs(V-2): records — PRM-23 fixed, plan § 5a, debts, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -113,17 +117,17 @@ run is treated as the whole.
 
 ## Acceptance criteria
 
-- [ ] A closure carrying `traversal_truncated` withdraws families B and C
+- [x] A closure carrying `traversal_truncated` withdraws families B and C
       (`UNKNOWN`, `traversal_truncated`, `budget_exceeded`), over a real,
       attributed target, with `graphTruncated: false`.
-- [ ] `invalidatesCallGraphNegativeProof` is gone; no test or comment
+- [x] `invalidatesCallGraphNegativeProof` is gone; no test or comment
       asserts the exclusion.
-- [ ] The tests that pinned the exclusion assert the new rule, and fail on
+- [x] The tests that pinned the exclusion assert the new rule, and fail on
       the base.
-- [ ] Real-Node cases for the PRM-23 shape, with controls.
-- [ ] A mutation restoring the exclusion is caught by named tests.
-- [ ] Differentials reported; validation baseline unchanged.
-- [ ] Records updated.
+- [x] Real-Node cases for the PRM-23 shape, with controls.
+- [x] A mutation restoring the exclusion is caught by named tests.
+- [x] Differentials reported; validation baseline unchanged.
+- [x] Records updated.
 
 ## Gates
 
@@ -135,3 +139,34 @@ validation baseline (`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`,
 ## Report
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
+
+## Corrections (task V-2, 2026-10-08)
+
+Measured while implementing, and from the independent audit
+(`CERTIFIED`, no blocking finding):
+
+1. **Real-Node cases: 5, not 4.** The premises above say "4 cases"; the
+   final file holds five: a `require.cache` hook truncated and untruncated,
+   an inert hook truncated, and the round-1 reproduction's own
+   `Module.prototype.require` hook truncated and untruncated (added on the
+   audit's finding 7). A fourth case drafted first (`maxFiles: 2`, no
+   barrel) was dropped: it stopped before `vuln-lib` entered the graph, so
+   it measured Site B's `unresolved_target`, not this guard.
+2. **Matrix item 7 is not failing-first.** Its new `traversal_truncated`
+   entry (family B) passes on the base: family B's own `complete` check
+   answers first. It is a regression lock. The failing-first tests are
+   case 10b, case 16, the F2 blocker helper and the F4 family-C row.
+3. **Family B's reason.** A withdrawn family B reports
+   `package_instance_absence_uncorroborated` (its `complete` check), never
+   `traversal_truncated`; the first acceptance criterion's reason holds for
+   family C.
+4. **ADR 0011 § 8's VT-202 note is false.** The `scan-security.test.ts`
+   VT-202 truncation test does not change reason: the `graphTruncated`
+   branch answers before the closure guard. Recorded in REMEDIATION-PLAN
+   § 5a, "V-2 additions".
+5. **`invalidatesCallGraphNegativeProof` deleted, not kept returning
+   `true`.** ADR 0011 § 5 describes the measured prototype that way; the
+   behaviour is the same.
+6. **Predicate 1's `complete` half** is not read by the guard (audit
+   finding 2): a closure with `complete: false` and an empty list would
+   pass. No production closure has that shape; bound to V-4.

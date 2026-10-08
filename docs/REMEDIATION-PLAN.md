@@ -1024,6 +1024,36 @@ predicate 5; § 8's V-1 row).
   pattern -- loses family C (predicate 5). A module-evaluation edge through
   every re-export declaration (§ 7; backlog `BL-052`) wins both back.
 
+#### V-2 additions (task V-2, 2026-10-08)
+
+**Outcome of V-2** (ADR 0011 predicate 1; § 8's V-2 row).
+
+- `callGraphNegativeProofBlockers` reports every reason a present closure
+  recorded; `invalidatesCallGraphNegativeProof` and its one exclusion,
+  `traversal_truncated`, are deleted. A family-C candidate under a
+  truncated closure is `UNKNOWN` (`traversal_truncated`,
+  `budget_exceeded`). Family B was already blocked by its own `complete`
+  check, which answers first (`package_instance_absence_uncorroborated`).
+- PRM-23 was live at `buildFinding` and no longer end to end: lane A's
+  call graph withdraws family C on the round-1 hook itself, and V-1's
+  predicate 5 covered a truncated closure in production by a counting
+  argument (both walks get `scan.ts`'s one `maxFiles`). V-2 makes
+  predicate 1 hold without that argument.
+- § 8's V-2 row, checked: the `scan-security.test.ts` VT-202 truncation
+  test does NOT change reason -- the `graphTruncated` branch answers
+  before the closure guard; matrix item 7's new `traversal_truncated`
+  entry (family B) is a regression lock, passing on the base.
+
+**What V-2 binds.**
+
+- **V-4**: the guard reads the incompleteness list only, not
+  `closure.complete` (V-2's independent audit, finding 2): a closure with
+  `complete: false` and an empty list would pass it. No production
+  closure has that shape -- the one builder sets `complete` exactly when
+  the list is empty -- so the branded `ClosureCorroboration` V-4 adds
+  should check both halves of predicate 1, and a mutation test should
+  build that shape.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

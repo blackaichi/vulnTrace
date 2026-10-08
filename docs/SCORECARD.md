@@ -306,9 +306,9 @@ field and the vocabulary are documented next to the table.
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
 | Findings recorded | 148 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 65 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-05, AUD-06, AUD-07, AUD-08, AUD-09, AUD-10, AUD-11, AUD-12, AUD-13, AUD-14, AUD-15, AUD-16, PRM-21, PRM-22, PRM-23, PRM-24, PRM-25, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-31, PRM-32, PRM-33, PRM-34, PRM-35, PRM-36, PRM-60, PRM-61, PRM-62, PRM-63, PRM-64, PRM-65, PRM-66, PRM-67, PRM-103, PRM-105, PRM-106, PRM-107, PRM-109, PRM-110, PRM-111, RWF-050, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-070, RWF-074, RWF-076, RWF-077 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Still open | 64 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-05, AUD-06, AUD-07, AUD-08, AUD-09, AUD-10, AUD-11, AUD-12, AUD-13, AUD-14, AUD-15, AUD-16, PRM-21, PRM-22, PRM-24, PRM-25, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-31, PRM-32, PRM-33, PRM-34, PRM-35, PRM-36, PRM-60, PRM-61, PRM-62, PRM-63, PRM-64, PRM-65, PRM-66, PRM-67, PRM-103, PRM-105, PRM-106, PRM-107, PRM-109, PRM-110, PRM-111, RWF-050, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-070, RWF-074, RWF-076, RWF-077 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 4 — RWF-002, PRM-108, RWF-063, RWF-064 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
-| Recorded as fixed | 79 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
+| Recorded as fixed | 80 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
 
 ### 8.1 Outstanding findings, in their own words
 
@@ -340,7 +340,6 @@ this table except the category.
 | AUD-16 | open | Open | disclosure — see below |
 | PRM-21 | open | Open | false NOT_AFFECTED — see below |
 | PRM-22 | open | Open | false NOT_AFFECTED — see below |
-| PRM-23 | open | Open | false NOT_AFFECTED — see below |
 | PRM-24 | open | Open | false NOT_AFFECTED — see below |
 | PRM-25 | open | Open | false NOT_AFFECTED and false AFFECTED — see below |
 | PRM-26 | open | Open | false NOT_AFFECTED — see below |
