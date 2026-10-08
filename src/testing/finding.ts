@@ -4,6 +4,10 @@ import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
 import type { CallGraph } from "../domain/graph.js";
 import type { KnownPackageRoots } from "../domain/resolved-target.js";
+import type {
+  ConfirmedAbsentInstance,
+  ConfirmedUnreachableTarget,
+} from "../domain/evidence.js";
 import type { Finding } from "../domain/verdict.js";
 import {
   buildGateEligibleModuleLoadClosure,
@@ -231,4 +235,34 @@ async function defaultTestClosure(input: {
   } catch {
     return undefined;
   }
+}
+
+/**
+ * A serialized family-B evidence object for a renderer, output or schema
+ * FIXTURE -- never a proof (task V-4). `ConfirmedAbsentInstance` carries a
+ * nominal brand, so production builds one only from a branded
+ * `ClosureCorroboration` (analysis/verdict.ts); a test that needs the
+ * serialized shape to render or validate states that it is a fixture here,
+ * in one place, instead of casting at each use.
+ */
+export function confirmedAbsentInstanceFixture(
+  fields: Pick<
+    ConfirmedAbsentInstance,
+    | "packageInstance"
+    | "entrypointRoots"
+    | "graphTruncated"
+    | "moduleLoadClosureComplete"
+  >,
+): ConfirmedAbsentInstance {
+  return { ...fields } as unknown as ConfirmedAbsentInstance;
+}
+
+/** The family-C counterpart of {@link confirmedAbsentInstanceFixture}. */
+export function confirmedUnreachableTargetFixture(
+  fields: Pick<
+    ConfirmedUnreachableTarget,
+    "target" | "entrypointRoots" | "reachableSubgraphComplete"
+  >,
+): ConfirmedUnreachableTarget {
+  return { ...fields } as unknown as ConfirmedUnreachableTarget;
 }

@@ -46,12 +46,17 @@ import {
   type AnalysisProofContext,
   isAnalysisProofContext,
 } from "./analysis-context.js";
-import type { ConfirmedAbsentFromModuleLoadClosure } from "../domain/evidence.js";
+import type {
+  ConfirmedAbsentFromModuleLoadClosure,
+  ConfirmedAbsentInstance,
+  ConfirmedUnreachableTarget,
+} from "../domain/evidence.js";
 import type { Vulnerability } from "../domain/vulnerability.js";
 import type { VersionMatchResult } from "../vulnerabilities/version-matching.js";
 import {
   callGraphNegativeProofBlockers,
   closureContainsPackageInstance,
+  type CallGraphNegativeProofBlocker,
   type ModuleLoadClosure,
 } from "./module-load-closure.js";
 import {
@@ -579,29 +584,266 @@ function graphFilesOfInstance(
   return files;
 }
 
+// --------------------------------------------------------------------
+// ADR 0011 § 2 -- THE PROOF INPUTS ARE UNFORGEABLE TYPES (task V-4).
+//
+// Families B and C conclude NOT_AFFECTED from what the call graph did not
+// contain, and invariant V says each such proof carries a closure
+// corroboration and, for family C, a target attributed to a real node.
+// Until V-4 those were checks scattered through `checkReachability` and
+// `buildFinding`, in front of evidence objects any code could write as a
+// literal. Now each fact is a value produced by exactly one function that
+// checks it, and the two evidence objects are built only from those
+// values:
+//
+//   ClosureCorroboration          predicate 1 (both halves, gate-eligible),
+//                                 `instanceLoaded` recorded
+//   EvaluatedClosureCorroboration predicate 5 beside predicate 1
+//   AttributedTarget              predicate 3: a node of the analyzed graph
+//
+//   ConfirmedAbsentInstance       <- ClosureCorroboration, instance unloaded
+//   ConfirmedUnreachableTarget    <- EvaluatedClosureCorroboration
+//                                    + AttributedTarget of the same graph
+//
+// The pattern of `AnalysisProofContext` (VT-CONTRACT-03). A nominal brand
+// on each type, and on the two evidence interfaces (`domain/evidence.ts`),
+// makes an object literal a compile error; the Foundation cast census
+// (`src/testing/proof-input-casts.ts`) fails on a type assertion to one
+// outside the functions below, and states the routes it cannot see (`any`,
+// a generic cast helper, a type predicate, ...). For the three proof
+// INPUTS a module-private runtime mark is a further layer: each evidence
+// constructor refuses an unmarked input, and `buildFinding` answers
+// UNKNOWN. The two EVIDENCE objects are serialized output and carry no
+// mark. Each refusal below is required by the type system: the value it
+// narrows is asserted with `satisfies` where it is used, so deleting the
+// refusal does not compile. That a corroboration describes this finding's
+// closure, graph and instance comes from the call sites in `buildFinding`
+// and the branded `AnalysisProofContext`, not from the types (the
+// producers accept any closure and graph). Predicates 2 (site selection by exact instance) and 4
+// (roots by declaration position) are not values here: each is enforced
+// where the instance and the roots are chosen (`resolveTargetNodes`,
+// `entrypointSourceNodes`) and owned by its tests (task V-1, task V-3).
+// --------------------------------------------------------------------
+
+/** Nominal brands. Declared, never values, so no literal satisfies the types below. */
+declare const closureCorroborationBrand: unique symbol;
+declare const evaluatedClosureCorroborationBrand: unique symbol;
+declare const attributedTargetBrand: unique symbol;
+
+/** Every proof input produced by a function below, and nothing else. */
+const PROOF_INPUT_MARKS = new WeakSet<object>();
+
+function markProofInput<T extends object>(value: T): T {
+  const frozen = Object.freeze(value);
+  PROOF_INPUT_MARKS.add(frozen);
+  return frozen;
+}
+
+function isProofInput(value: object): boolean {
+  return PROOF_INPUT_MARKS.has(value);
+}
+
 /**
- * The modules `closure` loads whose top level the call graph never put in
- * the searched region, in closure order (task V-1; family C's closure
- * corroboration): every loaded module's `<module>` node must be reachable
- * from an entrypoint source over resolved or `possible` edges -- the edges
- * family C's search follows. A module node merely EXISTING is not enough:
- * a name imported through `export { x } from "m"` makes the graph build
- * `m`'s nodes without an edge into `m`'s top level, which real Node still
- * runs (task V-1's third audit). An absent closure answers none: every
- * call-graph proof is already refused without one
- * (`callGraphNegativeProofBlockers`), so this is never the guard for it.
+ * ADR 0011 predicate 1, established: the scan's closure is present,
+ * gate-eligible (non-empty roots), `complete`, and records no
+ * incompleteness reason -- both halves, read together (V-2's independent
+ * audit, finding 2: the call-graph guard read only the list). Whether the
+ * finding's exact instance is loaded is recorded, never decided here: family
+ * B needs it unloaded, family C does not read it.
  */
-function modulesLoadedButNotEvaluated(
+export interface ClosureCorroboration {
+  readonly [closureCorroborationBrand]: true;
+  readonly closure: ModuleLoadClosure;
+  /** The finding's exact `PackageInstanceId`, or `undefined` when it names none. */
+  readonly packageInstance: string | undefined;
+  /** Whether the closure loads `packageInstance`; `undefined` exactly when it is. */
+  readonly instanceLoaded: boolean | undefined;
+}
+
+/** {@link corroborateClosure}'s answer: the corroboration, or the blockers that refuse it. */
+export type ClosureCorroborationResult =
+  | {
+      readonly corroboration: ClosureCorroboration;
+      readonly blockers?: undefined;
+    }
+  | {
+      readonly corroboration?: undefined;
+      readonly blockers: readonly CallGraphNegativeProofBlocker[];
+    };
+
+/**
+ * The one producer of a {@link ClosureCorroboration}. Refuses with every
+ * reason the closure recorded (`callGraphNegativeProofBlockers`), and with
+ * `module_load_closure_unavailable` for an absent closure or for one that
+ * is present but no corroboration: marked incomplete with no reason, or
+ * root-less. Neither of the last two is a builder's shape (the builder sets
+ * `complete` exactly when the list is empty;
+ * `buildGateEligibleModuleLoadClosure` and the proof context drop a
+ * root-less closure), so each answer is the existing token and no new one
+ * (ADR 0011 § 3).
+ */
+export function corroborateClosure(
   closure: ModuleLoadClosure | undefined,
+  packageInstance: string | undefined,
+): ClosureCorroborationResult {
+  const blockers = callGraphNegativeProofBlockers(closure);
+  if (blockers.length > 0) {
+    return { blockers };
+  }
+  if (
+    closure === undefined ||
+    !closure.complete ||
+    closure.rootFiles.length === 0
+  ) {
+    return { blockers: ["module_load_closure_unavailable"] };
+  }
+  return {
+    corroboration: markProofInput({
+      closure,
+      packageInstance,
+      instanceLoaded:
+        packageInstance === undefined
+          ? undefined
+          : closureContainsPackageInstance(closure, packageInstance),
+    }) as ClosureCorroboration,
+  };
+}
+
+/**
+ * ADR 0011 predicate 5 (Amendment V-1) beside predicate 1, the
+ * corroboration family C carries (task V-1's binding on V-4): every module
+ * the corroborated closure loads has its `<module>` node reachable from an
+ * entrypoint source of `graph` over resolved or `possible` edges -- the
+ * edges family C's search follows.
+ */
+export interface EvaluatedClosureCorroboration {
+  readonly [evaluatedClosureCorroborationBrand]: true;
+  readonly corroboration: ClosureCorroboration;
+  readonly graph: CallGraph;
+  readonly entrypoints: readonly Entrypoint[];
+}
+
+/**
+ * The one producer of an {@link EvaluatedClosureCorroboration}, or the
+ * modules the closure loads whose top level the call graph never put in
+ * the searched region, in closure order (task V-1). A module node merely
+ * EXISTING is not enough: a name imported through `export { x } from "m"`
+ * makes the graph build `m`'s nodes without an edge into `m`'s top level,
+ * which real Node still runs (task V-1's third audit).
+ */
+export function corroborateEvaluation(
+  corroboration: ClosureCorroboration,
   graph: CallGraph,
   entrypoints: readonly Entrypoint[],
   caches: ScanAnalysisCaches | undefined,
-): readonly string[] {
-  if (closure === undefined) {
-    return [];
+):
+  | { readonly evaluated: EvaluatedClosureCorroboration }
+  | {
+      readonly evaluated?: undefined;
+      readonly unevaluated: readonly string[];
+    } {
+  const reached = modulesEvaluatedFromEntrypoints(graph, entrypoints, caches);
+  const unevaluated = corroboration.closure.loadedFiles.filter(
+    (file) => !reached.has(file),
+  );
+  if (unevaluated.length > 0) {
+    return { unevaluated };
   }
-  const evaluated = modulesEvaluatedFromEntrypoints(graph, entrypoints, caches);
-  return closure.loadedFiles.filter((file) => !evaluated.has(file));
+  return {
+    evaluated: markProofInput({
+      corroboration,
+      graph,
+      entrypoints,
+    }) as EvaluatedClosureCorroboration,
+  };
+}
+
+/**
+ * ADR 0011 predicate 3: the rule target `target`, bound to `node`, a node
+ * of the analyzed graph `graph` -- never a placeholder no edge can reach
+ * (Site B's phantom, removed by task V-1). Family C's evidence is built
+ * only from one.
+ */
+export interface AttributedTarget {
+  readonly [attributedTargetBrand]: true;
+  readonly target: VulnerableSymbolTarget;
+  readonly node: GraphNode;
+  readonly graph: CallGraph;
+}
+
+/**
+ * The one producer of an {@link AttributedTarget}: `undefined` unless
+ * `node` is a member of `graph` (by reference, not by id or name).
+ */
+export function attributeTarget(
+  graph: CallGraph,
+  target: VulnerableSymbolTarget,
+  node: GraphNode,
+): AttributedTarget | undefined {
+  if (!graph.nodes.includes(node)) {
+    return undefined;
+  }
+  return markProofInput({ target, node, graph }) as AttributedTarget;
+}
+
+/**
+ * Family B's evidence, built only from a produced
+ * {@link ClosureCorroboration} of exactly `packageInstance` showing it
+ * unloaded; `undefined` otherwise. `graphTruncated` is typed `false`: the
+ * caller states, at the call, the VT-202 guard it has already checked.
+ */
+export function confirmedAbsentInstanceEvidence(
+  corroboration: ClosureCorroboration,
+  packageInstance: string,
+  entrypoints: readonly Entrypoint[],
+  graphTruncated: false,
+): ConfirmedAbsentInstance | undefined {
+  if (
+    !isProofInput(corroboration) ||
+    corroboration.packageInstance !== packageInstance ||
+    corroboration.instanceLoaded !== false
+  ) {
+    return undefined;
+  }
+  return {
+    packageInstance,
+    entrypointRoots: entrypoints.map((e) => e.filePath),
+    graphTruncated,
+    // The corroboration is a complete closure by construction.
+    moduleLoadClosureComplete: true,
+  } as unknown as ConfirmedAbsentInstance;
+}
+
+/**
+ * Family C's evidence, built only from a produced
+ * {@link EvaluatedClosureCorroboration} (predicates 1 and 5) and a produced
+ * {@link AttributedTarget} (predicate 3) of the same graph; `undefined`
+ * otherwise. The roots are the corroboration's own entrypoints, so the
+ * evidence cannot name roots the search did not start from.
+ */
+export function confirmedUnreachableTargetEvidence(
+  evaluated: EvaluatedClosureCorroboration,
+  attributed: AttributedTarget,
+): ConfirmedUnreachableTarget | undefined {
+  if (
+    !isProofInput(evaluated) ||
+    !isProofInput(evaluated.corroboration) ||
+    !isProofInput(attributed) ||
+    attributed.graph !== evaluated.graph
+  ) {
+    return undefined;
+  }
+  return {
+    target: {
+      module: attributed.target.module,
+      export: attributed.target.export,
+    },
+    entrypointRoots: evaluated.entrypoints.map((e) => e.filePath),
+    // VT-CONTRACT-02: names the reachable subgraph the search actually
+    // exhausted, not the whole call graph (see ConfirmedUnreachableTarget).
+    // Renamed from `callGraphComplete`, which overstated the claim.
+    reachableSubgraphComplete: true,
+  } as unknown as ConfirmedUnreachableTarget;
 }
 
 /**
@@ -1636,9 +1878,10 @@ async function checkReachability(
   /**
    * VT-307e, PROOF FAMILY C: at least one resolved, attributed target was
    * searched to exhaustion and found unreachable, with no unresolved edge
-   * anywhere in the reachable subgraph.
+   * anywhere in the reachable subgraph. An {@link AttributedTarget}: bound
+   * to a node of the analyzed graph (ADR 0011 predicate 3, task V-4).
    */
-  unreachableTarget?: VulnerableSymbolTarget;
+  unreachableTarget?: AttributedTarget;
   /**
    * Whether at least one reachability search actually ran. `false` means no
    * entrypoint produced a usable source node to search from (e.g. the
@@ -1685,7 +1928,7 @@ async function checkReachability(
   let absentFromModuleLoadClosure:
     ConfirmedAbsentFromModuleLoadClosure | undefined;
   let absentInstance: string | undefined;
-  let unreachableTarget: VulnerableSymbolTarget | undefined;
+  let unreachableTarget: AttributedTarget | undefined;
   // P0-Z: computed once for the whole entrypoint set, before any target is
   // searched. Family C's claim spans every configured entrypoint, so one
   // undrivable root surface withdraws the proof for all of them.
@@ -1864,6 +2107,22 @@ async function checkReachability(
     }
 
     for (const targetNode of targetNodes) {
+      // Task V-4 (ADR 0011 predicate 3): EVERY node family C's claim rests
+      // on is attributed before it is searched, never only the one that
+      // becomes the witness -- a search for a node outside the graph can
+      // only come back unreachable, adding no blocker of its own. Every
+      // producer of `targetNodes` returns graph nodes since V-1 removed Site
+      // B's phantom, so the refusal is a guard, not a path: should a
+      // placeholder ever return, for any target, the finding is UNKNOWN.
+      const attributed = attributeTarget(graph, target, targetNode);
+      if (!attributed) {
+        sawUnknown = true;
+        reasons.push(
+          `the target node bound for export "${target.export}" of module "${target.module}" is not a node of the analyzed call graph, so its unreachability attributes nothing`,
+        );
+        uncertaintyReasons.push("vulnerable_target_unresolved");
+        continue;
+      }
       for (const entrypoint of entrypoints) {
         for (const source of entrypointSourceNodes(graph, entrypoint).sources) {
           checkedAny = true;
@@ -1915,7 +2174,7 @@ async function checkReachability(
             // families A and B -- whose proofs do not rest on entrypoint
             // roots at all -- keep exactly their existing semantics.
             if (rootIncompleteness.length === 0) {
-              unreachableTarget ??= target;
+              unreachableTarget ??= attributed satisfies AttributedTarget;
             }
           }
         }
@@ -2246,9 +2505,14 @@ export async function buildFinding(
   // `module_load_closure_unavailable` for an absent closure, and it flows
   // through this same branch: one guard, one message shape, one place
   // where a call-graph-derived negative can be withdrawn.
-  const callGraphProofBlockers =
-    callGraphNegativeProofBlockers(moduleLoadClosure);
-  if (callGraphProofBlockers.length > 0) {
+  //
+  // Task V-4: the guard is the one producer of the closure corroboration
+  // both families are built from (ADR 0011 predicate 1, both halves). A
+  // closure marked incomplete with no recorded reason, or root-less, is no
+  // corroboration either, and reports `module_load_closure_unavailable`.
+  const corroborated = corroborateClosure(moduleLoadClosure, packageInstance);
+  if (corroborated.corroboration === undefined) {
+    const callGraphProofBlockers = corroborated.blockers;
     return {
       ...base,
       verdict: "UNKNOWN",
@@ -2258,7 +2522,9 @@ export async function buildFinding(
         reasons: [
           moduleLoadClosure === undefined
             ? "call-graph-derived non-reachability cannot be confirmed: no module-load closure was available for this scan (module_load_closure_unavailable), so the loader, syntax-validity and execution-capability preconditions it establishes are unverified -- a syntax error in a loaded member, or a loader mutation in a non-call position, would both be invisible to the call graph alone"
-            : `call-graph-derived non-reachability cannot be confirmed: the module-load closure recorded ${callGraphProofBlockers.join(", ")}, which can hide a call path to the target or the loading of this instance`,
+            : moduleLoadClosure.incompleteness.length === 0
+              ? "call-graph-derived non-reachability cannot be confirmed: the module-load closure is no corroboration (module_load_closure_unavailable) -- it is marked incomplete without recording why, or has no roots -- so the loader, syntax-validity and execution-capability preconditions it establishes are unverified"
+              : `call-graph-derived non-reachability cannot be confirmed: the module-load closure recorded ${callGraphProofBlockers.join(", ")}, which can hide a call path to the target or the loading of this instance`,
         ],
       },
       // F3 § 12/§ 14: each blocker classified individually, preserving the
@@ -2287,7 +2553,36 @@ export async function buildFinding(
   // more specific claim -- when it holds, no code of this instance was
   // ever analyzed, so "no path to the target" would be a weaker way of
   // saying the same thing.
+  //
+  // Task V-4: the evidence is built only from the corroboration the guard
+  // above produced, of this exact instance and showing it unloaded --
+  // which `checkReachability` already required of the same closure before
+  // `absentInstance` could be set, so a refusal here is a guard, not a
+  // path. `graphTruncated` was checked false above.
+  const corroboration = corroborated.corroboration;
   if (absentInstance !== undefined) {
+    const confirmedAbsentInstance = confirmedAbsentInstanceEvidence(
+      corroboration,
+      absentInstance,
+      entrypoints,
+      false,
+    );
+    if (confirmedAbsentInstance === undefined) {
+      return {
+        ...base,
+        verdict: "UNKNOWN",
+        target: representativeTarget,
+        evidence: {
+          path: [],
+          reasons: [
+            "the package instance was never traversed by the call graph, but the module-load closure corroboration does not show this exact instance unloaded",
+          ],
+        },
+        unknownReasons: aggregateUncertainty([
+          "package_instance_absence_uncorroborated",
+        ]),
+      };
+    }
     return {
       ...base,
       verdict: "NOT_AFFECTED",
@@ -2295,17 +2590,9 @@ export async function buildFinding(
       evidence: {
         path: [],
         reasons: [INSTANCE_ABSENT_FROM_CALL_GRAPH_REASON],
-        confirmedAbsentInstance: {
-          packageInstance: absentInstance,
-          entrypointRoots: entrypoints.map((e) => e.filePath),
-          // Both literally guaranteed at this point: `graphTruncated` was
-          // checked false above, and the corroboration check in
-          // `checkReachability` already required `moduleLoadClosure` to
-          // be defined with `complete === true` before `absentInstance`
-          // could ever be set.
-          graphTruncated: false,
-          moduleLoadClosureComplete: true,
-        },
+        // `satisfies`: without the refusal above this does not compile.
+        confirmedAbsentInstance:
+          confirmedAbsentInstance satisfies ConfirmedAbsentInstance,
       },
     };
   }
@@ -2396,13 +2683,14 @@ export async function buildFinding(
   // exactly `maxFiles` files, so a check that passes meant a graph of at
   // least `maxFiles` files, marked truncated because the scan passes both
   // walks the same limit.
-  const unevaluated = modulesLoadedButNotEvaluated(
-    moduleLoadClosure,
+  const evaluation = corroborateEvaluation(
+    corroboration,
     graph,
     entrypoints,
     caches,
   );
-  if (unevaluated.length > 0) {
+  if (evaluation.evaluated === undefined) {
+    const { unevaluated } = evaluation;
     return {
       ...base,
       verdict: "UNKNOWN",
@@ -2420,7 +2708,28 @@ export async function buildFinding(
   }
 
   // PROOF FAMILY C: a resolved, attributed target searched to exhaustion
-  // with no unresolved edge anywhere in the reachable subgraph.
+  // with no unresolved edge anywhere in the reachable subgraph -- built
+  // only from the corroboration (predicates 1 and 5) and the attributed
+  // target (predicate 3) of this graph (task V-4). Both were produced
+  // above from this graph, so a refusal here is a guard, not a path.
+  const confirmedUnreachableTarget = confirmedUnreachableTargetEvidence(
+    evaluation.evaluated,
+    unreachableTarget,
+  );
+  if (confirmedUnreachableTarget === undefined) {
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      target: representativeTarget,
+      evidence: {
+        path: [],
+        reasons: [
+          "the unreachable target is not attributed to a node of the call graph the closure corroboration was established over",
+        ],
+      },
+      unknownReasons: aggregateUncertainty(["vulnerable_target_unresolved"]),
+    };
+  }
   return {
     ...base,
     verdict: "NOT_AFFECTED",
@@ -2428,18 +2737,9 @@ export async function buildFinding(
     evidence: {
       path: [],
       reasons: [TARGET_UNREACHABLE_REASON],
-      confirmedUnreachableTarget: {
-        target: {
-          module: unreachableTarget.module,
-          export: unreachableTarget.export,
-        },
-        entrypointRoots: entrypoints.map((e) => e.filePath),
-        // VT-CONTRACT-02: names the reachable subgraph the search actually
-        // exhausted, not the whole call graph (see
-        // ConfirmedUnreachableTarget). Renamed from `callGraphComplete`,
-        // which overstated the claim.
-        reachableSubgraphComplete: true as const,
-      },
+      // `satisfies`: without the refusal above this does not compile.
+      confirmedUnreachableTarget:
+        confirmedUnreachableTarget satisfies ConfirmedUnreachableTarget,
     },
   };
 }

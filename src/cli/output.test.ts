@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { confirmedUnreachableTargetFixture } from "../testing/finding.js";
 import type { Finding } from "../domain/verdict.js";
 import {
   SCHEMA_VERSION,
@@ -164,11 +165,11 @@ describe("validateScanOutput", () => {
             reasons: [
               "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
             ],
-            confirmedUnreachableTarget: {
+            confirmedUnreachableTarget: confirmedUnreachableTargetFixture({
               target: { module: "fixture-lib", export: "vulnerable" },
               entrypointRoots: ["src/index.ts"],
               reachableSubgraphComplete: true,
-            },
+            }),
           },
         },
       ],
