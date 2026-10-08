@@ -12,6 +12,7 @@ import {
   closureForgets,
   closureIncomplete,
   closureLoads,
+  closureMarkedIncomplete,
   closureWithBlocker,
   closureWithFileRenamed,
   closureWithRoots,
@@ -730,6 +731,18 @@ describe("F4 family B mutations: the call-graph absence proof", () => {
       expectUncertaintyReason: "package_instance_absence_uncorroborated",
     },
     {
+      // Task V-4 (ADR 0011 predicate 1, the `complete` half): no reason
+      // recorded, so the call-graph blocker list is empty. Family B's
+      // corroboration reads `complete` and answers first.
+      mutation: "closure_marked_incomplete_without_recording_a_reason",
+      invalidates: true,
+      apply: (inputs) =>
+        mutate(inputs, {
+          moduleLoadClosure: closureMarkedIncomplete(closureOf(familyB)),
+        }),
+      expectUncertaintyReason: "package_instance_absence_uncorroborated",
+    },
+    {
       mutation: "graph_truncated",
       invalidates: true,
       apply: (inputs) => mutate(inputs, { graphTruncated: true }),
@@ -1028,6 +1041,20 @@ describe("F4 family C mutations: the target-unreachability proof", () => {
           ),
         }),
       expectUncertaintyReason: "traversal_truncated",
+    },
+    {
+      // Task V-4 (ADR 0011 predicate 1, the `complete` half; V-2's
+      // independent audit, finding 2). Until V-4 family C read only the
+      // incompleteness list, which is empty here, and stood. A closure that
+      // calls itself incomplete with no reason is no corroboration: the
+      // closure is unavailable as one.
+      mutation: "closure_marked_incomplete_without_recording_a_reason",
+      invalidates: true,
+      apply: (inputs) =>
+        mutate(inputs, {
+          moduleLoadClosure: closureMarkedIncomplete(closureOf(familyC)),
+        }),
+      expectUncertaintyReason: "module_load_closure_unavailable",
     },
     // ------------------------------------------------------- CONTROLS
     {
