@@ -1329,7 +1329,7 @@ function entrypointSourceNodes(
     // which IS root uncertainty -- but it is not this function's to
     // report. The same file is a ROOT of the ModuleLoadClosure, so failing
     // to parse it already records `parse_failure` there, and
-    // `invalidatesCallGraphNegativeProof` already blocks families B and C
+    // `callGraphNegativeProofBlockers` already blocks families B and C
     // on that reason before either can be issued. Reporting it a second
     // time here would duplicate an existing channel rather than close a
     // gap, and would conflate closure completeness with root-derivation
@@ -2146,11 +2146,12 @@ export async function buildFinding(
   // (ec7e0c5), so this is legacy-behavior hardening, not a VT-307d
   // regression -- see the VT-307d audit's own "pre-existing finding".
   //
-  // Deliberately NOT `closure.complete`: `traversal_truncated` is excluded
-  // by `invalidatesCallGraphNegativeProof`, because it bounds the
-  // CLOSURE's walk while these proofs' coverage is governed by
-  // `graphTruncated` just above. See that function for the per-reason
-  // justification.
+  // Every reason the closure recorded blocks, `traversal_truncated`
+  // included (ADR 0011 predicate 1; task V-2, PRM-23). Until V-2 that
+  // one was excluded, as a bound on the CLOSURE's walk said to be covered
+  // by `graphTruncated` just above; but the two walks visit different
+  // files, and what a truncated closure never scanned the graph cannot
+  // vouch for. See `callGraphNegativeProofBlockers` for each reason.
   //
   // An ABSENT closure now FAILS CLOSED here (FOUNDATION-F2/F2-A).
   //
@@ -2309,12 +2310,14 @@ export async function buildFinding(
   // node of every module the closure loads is reachable from an entrypoint;
   // otherwise UNKNOWN.
   //
-  // A truncated closure lists fewer modules, which is safe for a counting
-  // reason, not an inclusion one: the closure truncates only after loading
-  // exactly `maxFiles` files, so a check that passes means the graph holds
-  // at least `maxFiles` files too, which marks the graph truncated (the
-  // scan passes both the same limit) -- and `graphTruncated` withdrew
-  // family C above.
+  // A truncated closure lists fewer modules, so this check alone would
+  // not cover the modules past its budget; it never has to: since task
+  // V-2 a truncated closure withdraws family C above, by its own record
+  // (`traversal_truncated`, ADR 0011 predicate 1). Before V-2 that rested
+  // on a counting argument -- the closure truncates only after loading
+  // exactly `maxFiles` files, so a check that passes meant a graph of at
+  // least `maxFiles` files, marked truncated because the scan passes both
+  // walks the same limit.
   const unevaluated = modulesLoadedButNotEvaluated(
     moduleLoadClosure,
     graph,

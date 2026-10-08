@@ -5280,7 +5280,7 @@ export function buildModuleModel(index: SourceIndex): ModuleModel {
  *   perfectly well.
  * An entrypoint that cannot be PARSED is deliberately not a reason here:
  * that file is also a `ModuleLoadClosure` root, so the closure already
- * records `parse_failure` and `invalidatesCallGraphNegativeProof` already
+ * records `parse_failure` and `callGraphNegativeProofBlockers` already
  * blocks families B and C on it. Closure completeness and root-derivation
  * completeness are independent assumptions, and duplicating one inside the
  * other would blur which condition actually mattered.
