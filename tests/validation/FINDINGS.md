@@ -184,13 +184,13 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-22 | `vuln-lib` (synthetic fixture) | The loader classifier's alias lookup for module/eval/vm-style capabilities is first-match and scope-blind | false NOT_AFFECTED — see below | Open |
 | PRM-23 | `vuln-lib` (synthetic fixture) | A truncated module-load closure (`traversal_truncated`) does not block families B/C, missing a closure-widening hook outside the truncated file set | false NOT_AFFECTED — see below | **Fixed** (V-2) — see below |
 | PRM-24 | `vuln-lib` (synthetic fixture) | A builtin loader that starts new execution (`cluster.fork`/`setupPrimary`) is not classified as a loader | false NOT_AFFECTED — see below | Open |
-| PRM-25 | `vuln-lib` (synthetic fixture) | A configured `{file, symbol}` entrypoint is matched by node-name text; an unmatched symbol still reports the entrypoint root complete | false NOT_AFFECTED and false AFFECTED — see below | Open |
+| PRM-25 | `vuln-lib` (synthetic fixture) | A configured `{file, symbol}` entrypoint is matched by node-name text; an unmatched symbol still reports the entrypoint root complete | false NOT_AFFECTED and false AFFECTED — see below | **Fixed** (V-3) — see below |
 | PRM-26 | `vuln-lib` (synthetic fixture) | Export-to-function mapping takes the first same-named match in file-scan order, not the declaration the export site binds to | false NOT_AFFECTED — see below | Open |
 | PRM-27 | `vuln-lib` (synthetic fixture) | A later string-key or getter property in an object-literal export is ignored; the earlier plain-key value is still published | false NOT_AFFECTED — see below | Open |
 | PRM-28 | `vuln-lib` (synthetic fixture) | A computed export key (`[K]: danger`) is resolved against a same-file `const` binding chosen scope-blind | false NOT_AFFECTED — see below | Open |
 | PRM-29 | `vuln-lib` (synthetic fixture) | A property write inside a called `configure()` function is not seen as competing with the export map | false NOT_AFFECTED — see below | Open |
 | PRM-30 | `vuln-lib` (synthetic fixture) | A `module.exports = {...}` literal unpacking wins over a later `module.exports.run = danger` member write | false NOT_AFFECTED — see below | Open |
-| PRM-31 | `vuln-lib` (synthetic fixture) | Root-requirement materialization matches a candidate node by AST name text, so a same-named decoy elsewhere satisfies it | false NOT_AFFECTED — see below | Open |
+| PRM-31 | `vuln-lib` (synthetic fixture) | Root-requirement materialization matches a candidate node by AST name text, so a same-named decoy elsewhere satisfies it | false NOT_AFFECTED — see below | **Fixed** (V-3) — see below |
 | PRM-32 | `vuln-lib` (synthetic fixture) | `this.X = ...` at module scope and an aliased `const api = module.exports; api.run = ...` are invisible to root-requirement detection | false NOT_AFFECTED — see below | Open |
 | PRM-33 | `vuln-lib` (synthetic fixture), tsconfig | Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map | false NOT_AFFECTED — see below | Open |
 | PRM-34 | `lodash` (`file:`-vendored, real npm 10.9.0 lockfile) | A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely | silent drop — see below | Open |
@@ -253,6 +253,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-076 | `vuln-lib` (synthetic fixture) | An ES module's default import is bound as the CommonJS interop object: `import d from "esm-pkg"; d.safe()` is attributed to the named export `safe`, though `d` is the module's separate `default` export | false NOT_AFFECTED — see below | Open (backlog `BL-050`) |
 | RWF-077 | `vuln-lib` (synthetic fixture) | A builtin loader bound by destructuring and called through `.call` / `.apply` (`const { fork } = require("child_process"); fork.call(null, w)`) is keyed `fork.call`, which no table names, and the loader classifier never sees the load | false NOT_AFFECTED (family A) — see below | Open (backlog `BL-051`) |
 | RWF-078 | `vuln-lib` (synthetic fixture) | A module loaded only through a re-export declaration (`export *`, or a name imported through `export { x } from`) is never evaluated by the call graph, so family C stood over a target such a module calls (the target's own module at Site A, another package's, or the application's) | false NOT_AFFECTED (family C) — see below | **Fixed** (V-1) — see below |
+| RWF-079 | `vuln-lib` (synthetic fixture) | A whole-module CommonJS export of an opaque value (`module.exports = makeApi()`) emits no entrypoint root requirement, and a property export it overwrites (`exports.main = main` before it) still roots and witnesses `main` | false NOT_AFFECTED (family C) — see below | Open |
+| RWF-080 | `vuln-lib` (synthetic fixture) | An ESM destructured export (`export const { main } = api`) produces no export binding, so a plain file entrypoint's root set is complete with no root for `main` | false NOT_AFFECTED (family C) — see below | Open |
+| RWF-081 | `vuln-lib` (synthetic fixture) | An entrypoint's export written by ANOTHER module (`require("./index.js").main = fn` in a file the entrypoint loads) is no root and no root gap | false NOT_AFFECTED (family C) — see below | Open |
 
 ---
 
@@ -16912,6 +16915,62 @@ A `{file, symbol: "main"}` entrypoint is matched against AST node names as text 
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-25`) and § 4 (`symbol-entry-unmaterialized`, `symbol-entry-name-match`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task V-3, 2026-10-08): Fixed.** A configured symbol is
+rooted at the callables the export bindings whose canonical name is the
+symbol publish, materialized by DECLARATION POSITION (ADR 0011 predicate
+4): each binding's provenance names -- its local and the end of its alias
+chain, never the exported name -- are resolved lexically at the export's
+own site (`lexicalDeclarationOf`, `named-bindings.ts`) to the callable
+they declare, and `entrypointSourceNodes` looks nodes up by that position
+only. A symbol no binding publishes, a requirement that does not
+materialize, a gap that names no export (`export *`, an export-object
+mutation, a computed export name) and an entrypoint file that cannot be
+read are root incompleteness (`unresolved_entrypoint_root_candidate`;
+`identity_unresolved`, `entrypoint_root_incomplete`, ADR 0011 § 3).
+
+Measured on the base (`5302d02`) against real Node v22
+(`tests/oracle/v3-identity-keyed-roots.test.ts`): both round-1 shapes were
+live -- `symbol.unmaterialized-name` and `symbol.nested-decoy.safe`
+family-C `NOT_AFFECTED` over a target `main()` calls, and
+`symbol.nested-decoy.calls` `AFFECTED` through a decoy Node never calls --
+and so were five more the task added: a symbol published only through a
+call's result (`symbol.opaque-export.decoy`), copied over by an
+export-object mutation (`symbol.forwarded-over`), written inside a
+function (`symbol.nested-write`), or published as a member read under a
+name a module-scope function spells (`symbol.no-provenance-export`), all
+family-C `NOT_AFFECTED`. On the branch: `AFFECTED` for the first two,
+`NOT_AFFECTED` (family C) for the third, `UNKNOWN`
+(`entrypoint_root_incomplete`) for the other five. A TypeScript overload
+set is rooted at its implementation, which the name lookup missed (the
+first node named `main` was a signature). Over the 139 corpus cases the
+graph, proof and verdict differentials are all 0 (a zero corpus
+differential is not evidence of soundness, OPEN-DEBTS D-12).
+
+The certified decision this reopened (ADR 0011 § 6, VT-205 / P0-Z: "a
+`{file, symbol}` root has nothing to be incomplete about") is corrected at
+`entrypointSourceNodes`. ADR 0011 § 2's name-keyed-lookup census
+(`src/testing/name-lookup-census.ts`, Foundation invariant
+`VT-INV-V-corroboration`) keeps the entrypoint lookups by position.
+
+V-3's independent audit then found, and V-3 fixed: an ESM default export
+with no recorded local (`export default run`, an anonymous default
+function or arrow) required no root, so `{file, symbol: "default"}` was
+family-C `NOT_AFFECTED` over a target Node calls, on the base too; and a
+function value assigned only after the export reads it
+(`exports.main = run; var run = function () {}`, which publishes
+`undefined`) witnessed the symbol, a false `AFFECTED` the first fix
+introduced in symbol mode. Both are covered by
+`verdict.identity-keyed-roots.integration.test.ts`. Its second audit
+found three more, fixed by V-3: an ESM default identifier the file
+reassigns was witnessed by its stale declaration (a name the file assigns
+anywhere now declares no root); a CommonJS whole-module write that
+republishes the symbol (`exports.main = a; module.exports = { main: run }`)
+was dropped as the `default` export, family-C `NOT_AFFECTED` as on the
+base (it now makes the symbol's roots incomplete); and a withdrawn symbol
+binding rooted every other export's values, a false `AFFECTED` the first
+fix introduced (a withdrawn symbol is now a root gap). Real-Node cases:
+the "V-3 audit 2" cases of the oracle test.
+
 ---
 
 ## PRM-26 — Export-to-function mapping takes the first same-named match in file-scan order, not the declaration the export site binds to
@@ -17001,6 +17060,49 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-30`)
 A `class Cli { run() { return "decoy"; } }` (an unrelated method named `run`) satisfies the root-witness requirement for an `exports.run = registry.impl` entrypoint, because the witness check matches by name text rather than declaration identity. With the requirement satisfied by the decoy, the real `registry.impl` root is never registered and family C certifies it unreachable.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-31`) and § 4 (`entry-root-decoy`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task V-3, 2026-10-08): Fixed.** Assigned to lane E (task
+E-3) by the plan; ADR 0011 § 2 assigns the same lookup -- the
+root-requirement witness by node name, `verdict.ts`'s former `1190` -- to
+lane V, and predicate 4 ("every entrypoint root is materialized by
+declaration position") cannot hold while it stands, so task V-3 removed
+it. A root requirement is satisfied only by a node at one of its
+POSITIONS: a function value's own, or the callable a provenance name (the
+binding's local, the end of its alias chain) declares at the export's site,
+resolved lexically. The exported name is no provenance (RWF-011) and
+witnesses nothing; a name an export written inside a function body uses
+resolves nothing (the whole-file, name-keyed collection of such names
+need not agree with the write's scope). The roots themselves are found by
+position too: a plain file entrypoint used to root the FIRST node named
+like each candidate, so a nested function of the same spelling became the
+root and the real one was never searched.
+
+Measured on the base (`5302d02`) against real Node v22
+(`tests/oracle/v3-identity-keyed-roots.test.ts`, file entrypoints, the
+host calling `main`): the round-1 reproduction `file.entry-root-decoy`
+(a class method `main` witnessing `exports.main = registry.impl`), a
+module-scope function the exported name spells
+(`file.no-provenance-export`), a nested `run` rooted instead of the
+exported one (`file.nested-decoy.safe`) and an export written inside a
+function (`file.nested-write`) were family-C `NOT_AFFECTED` over a target
+Node calls; a nested `main` that calls the target and never leaves its
+function made `{ main }` `AFFECTED` (`file.nested-decoy.calls`). On the
+branch: `UNKNOWN` (`entrypoint_root_incomplete`), `UNKNOWN`, `AFFECTED`,
+`UNKNOWN` and family-C `NOT_AFFECTED`. What remains for E-3 is the write
+set itself (PRM-32, and RWF-079, found by this task).
+
+V-3's independent audit then found, and V-3 fixed, two more of the same
+kind. A whole-module export written at load inside a function or a class
+static block (`function setup() { module.exports = { main: run } }
+setup()`) has no requirement of its own; its root came from the withdrawn
+widening by spelling (`AFFECTED` on the base), and the first fix dropped it
+silently (family-C `NOT_AFFECTED`): every value the widening cannot name a
+callable for is now root incompleteness (`UNKNOWN`, a precision cost
+against the base). And a binding the file reassigns (`let main = a; main =
+b; exports.main = main`) was witnessed by its stale declaration, family-C
+`NOT_AFFECTED` on the base: a refused binding's names now witness nothing
+(`UNKNOWN`). Real-Node cases: the "V-3 audit" cases of the same oracle
+test.
 
 ---
 
@@ -19343,3 +19445,120 @@ re-export declaration loses family C for every finding
 the corpora show none (verdict differential 0). Winning it back is a
 module-evaluation edge through every re-export declaration (backlog
 `BL-052`, precision).
+
+---
+
+## RWF-079 — A whole-module export of an opaque value emits no entrypoint root requirement, and the property export it overwrites still witnesses the name
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (family C)
+**Defect class:** C (two writes to the export surface; the stale one is
+treated as the value)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** E (ADR 0009, the export write set; task E-3)
+
+**Discovered:** by task V-3 while implementing, measured against real Node
+v22 on the base `5302d02` and on the V-3 branch, identically:
+
+```js
+const lib = require("vuln-lib");
+function main() { return lib.safe("x"); }
+function danger() { return lib.parse("x"); }
+exports.main = main;
+function makeApi() { return { main: danger }; }
+module.exports = makeApi();        // replaces the exports object
+```
+
+Real Node, calling `require("./src/index.js").main()`, calls `parse`.
+VulnTrace answers family-C `NOT_AFFECTED` with the plain file entrypoint
+and with `{file, symbol: "main"}`. The module model records the
+whole-module write as a `default` binding with no local and no function
+position, so `entrypointRootCandidates` derives no root requirement for it
+(its value is neither a local nor a CommonJS property right-hand side,
+the two routes that reach `mayBeCallableValue`); the earlier
+`exports.main = main` binding survives the overwrite and roots and
+witnesses the module-scope `main`. Task V-3 did not change it: the root
+it materializes is the declaration that binding names, by position, as the
+binding says.
+
+A second shape of the same gap, measured by V-3's second independent
+audit (family-C `NOT_AFFECTED` on base and branch, file and symbol mode):
+`exports.main = safe; function make() { return { main: run }; }
+module.exports = make(); function run() { /* calls the target */ }` --
+here the model records no `default` binding for the whole-module write at
+all.
+
+A third, measured by V-3's third independent audit, for a plain file
+entrypoint only: `run.main = P; module.exports = run` and `class K {
+static main() { P } }; module.exports = K` -- the published value's own
+properties are not roots. In `{file, symbol: "main"}` mode V-3 makes them a
+root gap (any CommonJS whole-module binding does); whether a plain file
+entrypoint's host may call `require(f).main()` -- whether those properties
+are in its surface at all -- is a modelling question for the project
+owner.
+
+**Not fixed here** (task V-3's boundaries: which writes publish what is
+the export model's question, ADR 0009). Backlog `BL-053`; the write set's
+task `E-3` ("the write set gates root requirements") is its natural home.
+
+---
+
+## RWF-080 — An ESM destructured export produces no export binding, so the file entrypoint's roots are complete without it
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (family C)
+**Defect class:** not classified (an export form the model does not enumerate)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** E (ADR 0009, the export write set; task E-1)
+
+**Discovered:** by task V-3's third independent audit, measured against
+real Node v22 on the base `5302d02` and on the V-3 branch, identically:
+
+```js
+// src/index.mjs, a plain file entrypoint
+import lib from "vuln-lib";
+const api = { main() { return lib.parse("x"); } };
+export const { main } = api;
+```
+
+Node, calling `main()`, calls `parse`. The module model records no export
+binding for the destructured declaration, so `entrypointRootCandidates`
+derives no requirement and no incompleteness, and family C stands over
+the `<module>` root alone. With `{file, symbol: "main"}` V-3 answers
+`UNKNOWN` (no binding publishes the symbol); the base answered `AFFECTED`
+there, by a root found by spelling. Not fixed here (which forms publish
+what is the export model's question, ADR 0009). Backlog `BL-054`.
+
+---
+
+## RWF-081 — An entrypoint's export written by another module is neither a root nor a root gap
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (family C)
+**Defect class:** C (the export's value has a writer the entrypoint's own
+file does not show)
+**Proof family affected:** C
+**Severity:** High — P1 (a false `NOT_AFFECTED`)
+**Fix lane:** E (ADR 0009, writes by other modules; task E-4)
+
+**Discovered:** by task V-3's third independent audit, measured against
+real Node v22 on the base `5302d02` and on the V-3 branch, identically, in
+file and `{file, symbol: "main"}` mode:
+
+```js
+// src/index.js
+exports.main = function () { return lib.safe("x"); };
+require("./other.js");
+// src/other.js
+require("./index.js").main = function () { return lib.parse("x"); };
+```
+
+Node, calling `main()`, calls `parse`. Root derivation reads only the
+entrypoint's own file, so `main`'s requirement is satisfied by the
+function `index.js` wrote, and family C stands. ADR 0009's E-4 ("writes by
+other modules: member writes on module objects") is its natural home; it
+is recorded on its own because it reaches an entrypoint's ROOTS, not a
+target's attribution. Backlog: `E-4`'s notes.
+

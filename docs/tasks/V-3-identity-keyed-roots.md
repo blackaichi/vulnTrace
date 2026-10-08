@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: V-3
 - **Branch**: v-3-identity-keyed-roots
 - **Base SHA**: 5302d024f67f3965a9190358eaa7207819df0c58
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `055b94b` docs(tasks): V-3 task file — identity-keyed roots, unmaterialized symbol, name-lookup census
+  - `a95fdf3` test(V-3): identity-keyed roots and the name-lookup census — real-Node, integration and Foundation tests
+  - `9b30775` fix(V-3): materialize every entrypoint root by declaration position (PRM-25, PRM-31)
+  - (this commit) docs(V-3): records — PRM-25 and PRM-31 fixed, RWF-079..081, plan § 5a, debts, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -167,3 +171,168 @@ toward `NOT_AFFECTED` on the corpora; the validation baseline (`RWB-03`,
 ## Report
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
+
+## Corrections (task V-3, 2026-10-08)
+
+Measured while implementing:
+
+1. **"RWF-079, new" was false: it is PRM-31.** The file-entrypoint decoy
+   the premises call new is `PRM-31` (open; the round-1 reproduction
+   `entry-root-decoy`, a class method witnessing
+   `exports.run = registry.impl`), which the plan assigned to `E-3`. ADR
+   0011 § 2 assigns the same lookup (`1190`, the witness by node name) to
+   this lane, and predicate 4 cannot hold while it stands, so V-3 closes
+   PRM-31; `E-3` keeps PRM-32. `RWF-079` is used instead for a defect V-3
+   did find and did not fix: a whole-module export of an opaque value
+   emits no root requirement, and the property export it overwrites still
+   witnesses the name (backlog `BL-053`, P1). Acceptance criterion 2 reads
+   PRM-31.
+2. **The exported-name fallback is no longer a root or a witness.**
+   `exp.localName ?? exp.exportedName` rooted and witnessed by the public
+   name; RWF-011 already denies it provenance, and E-3's row says "may
+   widen but not witness". Under V-3 it does neither: a position is the
+   only root, and the exported name declares none. Measured cost: 0 on the
+   corpora; `exports.main = registry.impl` next to a `function main` is
+   `UNKNOWN` (it was a false `NOT_AFFECTED`).
+3. **An export written inside a function body resolves no name** (step 2
+   says so; the measurement behind it): the module model collects such a
+   write's names by a whole-file, name-keyed walk, so a name resolved at
+   the write's site may not be the one the walk read. Fail-closed. Cost:
+   `function setup() { function run() {...}; exports.main = run } setup()`
+   is `UNKNOWN` where Node does call `run` (the oracle case expects
+   `UNKNOWN`; resolving the nested write lexically gave the precise
+   `AFFECTED` there, measured, but the same rule would root the nested
+   `run` when nothing calls `setup` and the export is never written -- an
+   `AFFECTED` path Node need never take -- so it was not taken). The
+   withdrawn widening resolves its identifiers lexically from the
+   identifier itself, and only outside function bodies. AS FIRST WRITTEN
+   this item said such a write's binding "fails closed instead" -- false
+   for a whole-module binding, which has no requirement; see "Independent
+   audit" below, finding 1.
+4. **The census has a fourth direction, `open`.** ADR 0011 § 2 lists
+   three (`widen-only`, `refuse-only`, `test-flag-only`); PRM-26's
+   `mapExportsToFunctions` lookup and its callers are none of them, so
+   each is listed `open` with its finding and the task that removes it
+   (E-1), rather than called sound. ADR § 2's line list, checked against
+   today's code, is in REMEDIATION-PLAN § 5a, "V-3 additions".
+5. **The two VT-205 unit tests** in `verdict.test.ts` needed a real file,
+   as ADR § 8 said; they read a temporary one whose declarations sit where
+   the synthetic nodes say. A third test there pins the unreadable-file
+   rule.
+6. **A TypeScript overload set** was rooted at its first signature by the
+   name lookup (no body, so no edges); `lexicalDeclarationOf` treats the
+   set as its implementation.
+7. **Real-Node cases: twelve, then twenty-one with the audits', not seven**: the five PRM-25 shapes beyond
+   the two round-1 ones, PRM-31's round-1 reproduction and its variants,
+   each measured wrong on the base.
+
+## Independent audit (fresh context), and what changed
+
+First round, on 49320df: **BLOCKED**. Each finding, re-measured here
+against real Node (`tests/oracle/v3-identity-keyed-roots.test.ts`, the
+"V-3 audit" cases) and through `buildFinding`
+(`verdict.identity-keyed-roots.integration.test.ts`, "shapes its
+independent audit found"):
+
+1. **Blocking, a regression of the first fix: a deferred whole-module
+   write lost its root silently.** `function setup() { module.exports = {
+   main: run } } setup()` (and a class static block) was `AFFECTED` on the
+   base and family-C `NOT_AFFECTED` on 49320df: the withdrawn whole-module
+   binding has no requirement, and the widening dropped the identifier
+   inside a function body without a word. Fixed: whatever the widening
+   cannot name a callable for -- an identifier inside a function body, one
+   with no single callable declaration, a refused one, a non-identifier
+   value that may be callable, a spread or accessor property -- is root
+   incompleteness (`unresolved_entrypoint_root_candidate`, with its
+   location), never nothing; a method property is rooted at its position.
+   Those shapes are now `UNKNOWN` -- a precision cost against the base's
+   `AFFECTED` (the root it found by spelling), stated in the cases.
+2. **An ESM default export with no recorded local** (`export default run`,
+   `export default function () {}`, `export default () => ...`) emitted no
+   requirement, so `{file, symbol: "default"}` and a plain ESM file
+   entrypoint were family-C `NOT_AFFECTED` over a target Node calls, on the
+   base too. Fixed in `entrypointRootCandidates`: such a binding requires a
+   root, read off the `export default` statement itself (an identifier is a
+   provenance name; a function or class is its position).
+3. **A refused (reassigned) binding was witnessed by its stale
+   declaration**, on the base too (`let main = a; main = b; exports.main =
+   main`). Fixed: a refused binding's provenance names neither root nor
+   witness; the requirement fails closed. `lexicalDeclarationOf`'s doc no
+   longer calls a position "a starting point the search widens from" only.
+4. **The census detected one syntactic form.** The scanner now finds a
+   name read (`.name`, `?.name`, `["name"]`; `.className` of a class
+   owner) that is compared, switched on, handed to a key lookup or put in
+   an array, any destructuring of the key, calls of arrow and const
+   helpers, and files at any depth; the self-test plants each form. It
+   found one unlisted lookup, `findExportedClassMembers`'
+   `exportedClassNames.has(fn.memberOf.className)` (`widen-only`: a
+   target too many, a false-`AFFECTED` risk). `resolveAliasedValue`'s
+   `refuse-only` claim, checked: a match withholds the import-based answer
+   and leaves the same-file LEXICAL resolver, which reads no name. The
+   header says what is not caught.
+5. **`exports.main = run; var run = function () {}`** (Node: `main` is
+   `undefined`) became a false `AFFECTED` in symbol mode. Fixed: a
+   function value, the model's own position included, roots and witnesses
+   only when it is evaluated before the export reads it (a hoisted
+   function declaration always is).
+6. Documentation overclaims: corrected (items 1, 3 and 4 above; the
+   acceptance answers below).
+
+Second round, on 75fa833: **BLOCKED**, three findings, each re-measured
+here (the "V-3 audit 2" oracle cases; "shapes its second independent
+audit found" in the integration test):
+
+1. **An ESM `export default run` whose `run` the file reassigns** was
+   witnessed by the stale declaration -- the refused-binding rule did not
+   reach the new default path. Fixed generally: a name the file assigns
+   anywhere (over-approximate: any scope, any assignment form
+   `isNameAssignedWithin` covers) declares no root and witnesses nothing.
+2. **A CommonJS whole-module write republishing the symbol**
+   (`exports.main = a; module.exports = { main: run }` conditionally, or
+   `run.main = run; module.exports = run`, or through an alias) was
+   dropped by the symbol filter as the `default` export: family-C
+   `NOT_AFFECTED` over a target Node calls, as on the base. Fixed: in
+   symbol mode (any symbol but `default`), a CommonJS whole-module binding
+   makes the symbol's roots incomplete -- the symbol is `X[symbol]`, which
+   no binding of it attributes.
+3. **A withdrawn symbol binding rooted the file-wide widening**, every
+   other export's values included: a false `AFFECTED` the first fix
+   introduced (`if (c) exports.main = safe-caller; exports.other =
+   parse-caller`). Fixed: a withdrawn symbol binding is root
+   incompleteness; the widening roots nothing in symbol mode. A precision
+   cost against the base's (correct) `NOT_AFFECTED` there.
+
+Non-blocking, recorded: the second audit's finding 4 -- `exports.main =
+a; module.exports = make()` with no `default` binding recorded at all --
+is another RWF-079 shape (added there).
+
+Third round, on 9312350: **CERTIFIED**. 104 real-Node probes on the
+branch and the base: none worse on the branch, no false `AFFECTED`, no
+hole found in the three new rules. Its non-blocking findings, all the
+same on the base: `this.main =` / an alias of `exports` (PRM-32, open,
+E-3); a whole-module write through an alias of `module` (recorded); an
+export written by another module (registered as RWF-081, E-4); a later
+string key or getter in an export literal, and a spread in a whole-module
+literal (PRM-27, open, E-1); an ESM destructured export (registered as
+RWF-080, `BL-054`); the properties of a whole-module value for a plain
+file entrypoint (added to RWF-079, with the modelling question it raises,
+for the project owner). Its one comment point (the symbol branch's "an
+export-object mutation" means one the model detects) is corrected.
+
+## Acceptance criteria, answered
+
+- PRM-25, both directions, sound against real Node with controls: **yes**
+  (the `symbol.*` cases).
+- PRM-31 (correction 1): **yes** (the `file.*` cases).
+- `entrypointSourceNodes` performs no name-keyed lookup: **yes** (the
+  census asserts it).
+- An unmaterialized symbol is root incompleteness, on a real file and an
+  unreadable one: **yes** (for `default` since the audit's finding 2).
+- The census is a Foundation test, registered, failing on a new, removed
+  or moved lookup: **yes** (`VT-INV-V-corroboration`).
+- A mutation restoring a name-keyed root lookup is caught by named tests:
+  **yes** (fifteen mutations, each caught by a named test; listed in the pull request).
+- The VT-205 tests run over a real file: **yes**.
+- Differentials reported; validation baseline unchanged: **yes**.
+- Records updated: **yes**.
+

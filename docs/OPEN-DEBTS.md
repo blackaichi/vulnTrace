@@ -995,6 +995,25 @@ verdict. A mutation restoring the exclusion is caught by five named unit
 tests and one real-Node case. Over the 139 corpus cases: verdict
 differential 0, proof 0, graph 0. This entry still stands.
 
+**Progress, added by task `V-3` (2026-10-08).** Task V-3
+(`docs/tasks/V-3-identity-keyed-roots.md`) closed `PRM-25` and `PRM-31`
+(ADR 0011 predicate 4): every entrypoint root is materialized by
+declaration position -- a configured symbol through the export bindings
+that publish it, a file entrypoint's exports likewise -- and a root
+requirement is witnessed by a position only, never by a node name; a
+symbol that does not materialize is root incompleteness, and a value an
+export may publish that no position names is a root gap, never nothing.
+Against real Node, eighteen cases were wrong on the base (sixteen
+false `NOT_AFFECTED`, two false `AFFECTED`), and three were wrong on an
+earlier round of the task's own fix (found by its independent audits);
+all twenty-one are sound on the branch, three at a precision cost
+(`UNKNOWN` where the base was right). ADR 0011 § 2's
+name-keyed-lookup census is a Foundation test
+(`VT-INV-V-corroboration`); its `open` entries are PRM-26's (task E-1).
+The task found `RWF-079` (open, backlog `BL-053`: a whole-module export of
+an opaque value emits no root requirement). Over the 139 corpus cases:
+verdict differential 0, proof 0, graph 0. This entry still stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

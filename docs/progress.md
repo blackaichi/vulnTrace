@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-08, by `V-2`.
+**Last updated:** 2026-10-08, by `V-3`.
 
 ## Objective
 
@@ -89,8 +89,15 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   evaluated). `V-2` (predicate 1) made a closure truncated on its own walk
   (`traversal_truncated`) withdraw families B and C like every other
   closure reason (PRM-23; the exclusion and its false premise, "a truncated
-  closure is accompanied by a truncated graph", are gone). What binds V-3
-  and V-4: REMEDIATION-PLAN § 5a, "V-1 additions" and "V-2 additions".
+  closure is accompanied by a truncated graph", are gone). `V-3`
+  (predicate 4) materializes every entrypoint root by declaration
+  position: a configured symbol through the export bindings that publish
+  it, a root requirement witnessed by a position only, never a node name;
+  a symbol that does not materialize is root incompleteness (PRM-25, and
+  PRM-31, which ADR 0011 § 2 assigns to lane V). ADR 0011 § 2's
+  name-keyed-lookup census is a Foundation test (`VT-INV-V-corroboration`).
+  What binds V-4, E-1 and E-3: REMEDIATION-PLAN § 5a, "V-1 additions"
+  through "V-3 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -121,21 +128,27 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`V-2` — `traversal_truncated` blocks families B and C
-([task file](tasks/V-2-traversal-truncated-blocks-negative-proof.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `V-1`
-merged as PR #86.
+`V-3` — identity-keyed roots; an unmaterialized symbol is incompleteness;
+name-lookup census gate ([task file](tasks/V-3-identity-keyed-roots.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `V-2`
+merged as PR #87.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-2`:
-`V-3`, `V-4`, then `C-1` and lane B. The P1 gaps `BL-048`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-3`:
+`V-4`, then `C-1` and lane B. The P1 gaps `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
 
+From `V-3`: RWF-079 and `BL-053` (**P1**: a whole-module export of an
+opaque value emits no entrypoint root requirement, and the property export
+it overwrites still witnesses the name -- a family-C false `NOT_AFFECTED`,
+pre-existing; candidate to fold into `E-3`), RWF-080 and `BL-054` (**P1**:
+an ESM destructured export is no export binding), RWF-081 (**P1**, in
+`E-4`'s notes: an export written by another module is no root gap).
 From `V-2`: no new task; its audit's one open point (the guard reads the
 incompleteness list, not `closure.complete`) is bound to `V-4`
 (REMEDIATION-PLAN § 5a, "V-2 additions").

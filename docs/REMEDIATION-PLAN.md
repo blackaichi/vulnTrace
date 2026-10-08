@@ -1054,6 +1054,74 @@ predicate 5; § 8's V-1 row).
   should check both halves of predicate 1, and a mutation test should
   build that shape.
 
+#### V-3 additions (task V-3, 2026-10-08)
+
+**Outcome of V-3** (ADR 0011 predicate 4; § 2's census; § 8's V-3 row).
+
+- `entrypointSourceNodes` roots and witnesses by POSITION only. Every
+  candidate arrives from `entrypointRootCandidates` as a source position:
+  a function value's own, or the callable a provenance name declares at
+  the export's site, resolved lexically (`lexicalDeclarationOf`,
+  `named-bindings.ts`; an overload set is its implementation). A
+  configured symbol selects the requirements whose canonical export name
+  is the symbol; a symbol no binding publishes, a gap that names no
+  export, and an unreadable entrypoint file are root incompleteness
+  (`entrypoint_root_incomplete`).
+- The rules that keep the positions honest, each fail-closed: the
+  exported name is no provenance (RWF-011) and resolves nothing; a name
+  used by an export written inside a function body resolves nothing (the
+  model collects such names by a whole-file, name-keyed walk); a refused
+  (reassigned) binding's names neither root nor witness, nor does any
+  name the file assigns anywhere; a function value
+  witnesses only when evaluated before the export reads it; an ESM default
+  export with no recorded local requires a root read off its own
+  statement; in symbol mode a CommonJS whole-module binding and a
+  withdrawn symbol binding make the symbol's roots incomplete (the
+  file-wide widening roots nothing there). The withdrawn widening resolves its identifiers lexically
+  from their own reference, and whatever it cannot name a callable for is
+  root incompleteness, never nothing (V-3's independent audit, finding 1:
+  the first fix had dropped such a root silently).
+- PRM-31 (assigned to E-3) is closed by V-3: it is ADR 0011 § 2's `1190`,
+  which "this lane removes", and predicate 4 cannot hold while it stands.
+  This is part of E-3's row ("name fallback may widen but not witness"):
+  under V-3 the name fallback neither witnesses NOR widens. E-3 keeps
+  PRM-32 and gains RWF-079.
+- The census (`src/testing/name-lookup-census.ts`, found through the
+  TypeScript checker): ADR § 2's line list, checked -- `verdict.ts:303`
+  is today's `findExportNodeInFile` synthetic fallback (`test-flag-only`);
+  `1105`, `1149`, `1190` were the three `entrypointSourceNodes` lookups
+  (removed); `module-model.ts:6004` (`mapExportsToFunctions`, PRM-26) and
+  each of its callers are `open` (E-1); `6100`
+  (`findExportedClassMembers`' member name) is `widen-only`;
+  `call-graph.ts:1694` is today's `resolvesToUnrelatedConstructor`
+  (`refuse-only`, four call sites); `graphPackageInstancesByName` is
+  `refuse-only` with V-1's caveat. ADR § 2's three directions gained a
+  fourth, `open` (the finding and the task that removes it), so the census
+  can list a known-unsound lookup without calling it sound.
+- Measured: twenty-one real-Node cases whose replaced answer was wrong
+  (eighteen on the base, three more on earlier rounds of the fix, found by
+  the task's independent audits;
+  three are `UNKNOWN` now where the base was right -- two `AFFECTED` by a
+  root found by spelling, one `NOT_AFFECTED` for a withdrawn symbol -- a
+  precision cost), sound on the branch; the 139 corpus cases' graph, proof and verdict differentials all
+  0. ADR § 8's note on the two VT-205 unit tests held: they now read a real
+  entrypoint file.
+
+**What V-3 binds.**
+
+- **V-4**: register predicates 1-3 and the branded proof-input types under
+  `VT-INV-V-corroboration`, which V-3 registered with the census and
+  predicate 4's owners.
+- **E-1**: the census's `open` entries (PRM-26) are E-1's to remove; the
+  census fails until each removed one is deleted from it.
+- **E-3**: RWF-079 (a whole-module export of an opaque value emits no root
+  requirement; the property export it overwrites still witnesses the
+  name), backlog `BL-053`.
+- **E-1**: RWF-080 (an ESM destructured export is no export binding),
+  backlog `BL-054`.
+- **E-4**: RWF-081 (an entrypoint's export written by another module is no
+  root and no root gap).
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None
