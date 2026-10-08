@@ -43,7 +43,9 @@ export interface InvariantOwnership {
     | "VT-CONTRACT"
     | "P1-A"
     /** The soundness remediation's ADR 0008 (lane A; registered from task A-1). */
-    | "ADR-0008";
+    | "ADR-0008"
+    /** The soundness remediation's ADR 0011 (lane V; registered from task V-3). */
+    | "ADR-0011";
   /** Repo-relative test files that own it. Each must exist and be gated. */
   readonly owners: readonly string[];
   /** Why these owners, and what each one is responsible for. */
@@ -453,6 +455,39 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "an unknown edge behind a `possible` edge and kept by a clean one, " +
       "family B withdrawn by VT-300 through one). Its producers are tasks " +
       "A-3a, A-3b and A-4, each with production reproductions there.",
+  },
+
+  // ------------------------------------------------------------------
+  // The soundness remediation, lane V (ADR 0011)
+  // ------------------------------------------------------------------
+  {
+    id: "VT-INV-V-corroboration",
+    invariant:
+      "A negative proof is built only from facts keyed by exact identity " +
+      "(ADR 0011 invariant V). Every entrypoint root is materialized by " +
+      "declaration position, never by a name, and a configured symbol " +
+      "that does not materialize is root incompleteness (predicate 4). " +
+      "Every expression in src/analysis and src/code-intelligence that " +
+      "finds a graph node or an indexed function by its name, or a package " +
+      "instance by its package name, is listed in the census with its " +
+      "declared direction (widen-only, refuse-only, test-flag-only, or " +
+      "open with its finding and task); a new, removed or moved one fails.",
+    foundation: "ADR-0011",
+    owners: [
+      "src/testing/name-lookup-census.test.ts",
+      "src/analysis/verdict.identity-keyed-roots.integration.test.ts",
+    ],
+    note:
+      "Task V-3 (PRM-25, PRM-31). The census owns ADR 0011 § 2's " +
+      "name-keyed-lookup gate, found through the TypeScript checker (a " +
+      "self-test plants each kind of lookup in a scratch tree, so the " +
+      "scanner cannot go blind); its open entries are PRM-26's, removed " +
+      "by task E-1. The integration test owns predicate 4 through the " +
+      "production buildFinding over real files; its real-Node ground " +
+      "truth is tests/oracle/v3-identity-keyed-roots.test.ts, run in CI " +
+      "by `npm run test:oracle` (it spawns real Node, so it is not a " +
+      "Foundation-gate owner). Predicates 1-3 (tasks V-1, V-2) and the " +
+      "branded proof-input types are registered here by task V-4.",
   },
 ];
 

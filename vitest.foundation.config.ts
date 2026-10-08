@@ -90,6 +90,9 @@ export default defineConfig({
       "src/code-intelligence/call-graph.escape-row.test.ts",
       "src/analysis/reachability.affected-path.test.ts",
       "src/analysis/verdict.possible-edge.test.ts",
+
+      "src/testing/name-lookup-census.test.ts",
+      "src/analysis/verdict.identity-keyed-roots.integration.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take
