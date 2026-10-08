@@ -400,6 +400,19 @@ export function closureWithBlocker(
   };
 }
 
+/**
+ * Clears `complete` WITHOUT recording a reason -- the mirror of
+ * {@link closureWithBlocker}, and no more a builder's shape than it is.
+ * Task V-4: ADR 0011's predicate 1 has two halves, and until V-4 family C
+ * read only the incompleteness list (V-2's independent audit, finding 2),
+ * so this closure left family C standing.
+ */
+export function closureMarkedIncomplete(
+  closure: ModuleLoadClosure,
+): ModuleLoadClosure {
+  return { ...closure, complete: false };
+}
+
 /** Claims an instance IS loaded, withdrawing every absence claim about it. */
 export function closureLoads(
   closure: ModuleLoadClosure,

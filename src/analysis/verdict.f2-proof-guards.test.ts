@@ -132,6 +132,8 @@ describe("F2-A: an absent ModuleLoadClosure blocks call-graph-derived negatives"
     readonly entries: readonly string[];
     readonly withClosure: boolean;
     readonly instanceRelPath?: string;
+    /** Task V-4: reshapes the real closure (a state no builder produces) before the proof reads it. */
+    readonly reshapeClosure?: (closure: ModuleLoadClosure) => ModuleLoadClosure;
   }): Promise<Finding | undefined> {
     const root = mkdtempSync(path.join(os.tmpdir(), "vulntrace-f2a-"));
     tempDirs.push(root);
@@ -171,6 +173,15 @@ describe("F2-A: an absent ModuleLoadClosure blocks call-graph-derived negatives"
       project,
     });
 
+    const reshaped =
+      options.withClosure && options.reshapeClosure !== undefined
+        ? await buildGateEligibleModuleLoadClosure({
+            entrypoints,
+            resolver,
+            knownPackageRoots,
+          })
+        : undefined;
+
     return buildFindingForTest({
       vulnerability,
       packageName: "vuln-lib",
@@ -187,6 +198,9 @@ describe("F2-A: an absent ModuleLoadClosure blocks call-graph-derived negatives"
       knownPackageRoots,
       graphTruncated: false,
       moduleLoadClosureUnavailable: !options.withClosure,
+      ...(reshaped !== undefined && options.reshapeClosure !== undefined
+        ? { moduleLoadClosure: options.reshapeClosure(reshaped) }
+        : {}),
     });
   }
 
@@ -314,6 +328,115 @@ describe("F2-A: an absent ModuleLoadClosure blocks call-graph-derived negatives"
 
     expect(finding?.verdict).toBe("UNKNOWN");
     expect(familyOf(finding)).toBe("NONE");
+    expectExclusivity(finding);
+  });
+
+  // Task V-4 (ADR 0011 predicate 1: `closure.complete &&
+  // closure.incompleteness.length === 0`, both halves; V-2's independent
+  // audit, finding 2). The one builder sets `complete` exactly when the
+  // list is empty, so neither shape below is produced in production; each
+  // isolates one half of the predicate, which the branded
+  // `ClosureCorroboration` checks together for families B and C.
+  const CLEAN_FAMILY_C: Readonly<Record<string, string>> = {
+    ...INSTALLED_LIB,
+    "src/index.js":
+      'const { safe } = require("vuln-lib");\n' +
+      "function main(){ return safe(1); }\nmodule.exports = { main };\n",
+  };
+
+  it("V-4: withdraws family C for a closure marked incomplete with no recorded reason", async () => {
+    const finding = await run({
+      files: CLEAN_FAMILY_C,
+      entries: ["src/index.js"],
+      withClosure: true,
+      reshapeClosure: (closure) => ({ ...closure, complete: false }),
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(familyOf(finding)).toBe("NONE");
+    expect(finding?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "module_load_closure_unavailable",
+    ]);
+    expectExclusivity(finding);
+  });
+
+  it("V-4: withdraws family C for a closure marked complete beside a recorded reason", async () => {
+    const finding = await run({
+      files: CLEAN_FAMILY_C,
+      entries: ["src/index.js"],
+      withClosure: true,
+      reshapeClosure: (closure) => ({
+        ...closure,
+        incompleteness: [
+          { reason: "loader_hook_mutation", importer: closure.rootFiles[0]! },
+        ],
+      }),
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(familyOf(finding)).toBe("NONE");
+    expect(finding?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "loader_hook_mutation",
+    ]);
+    expectExclusivity(finding);
+  });
+
+  it("V-4: withdraws family B for a closure marked incomplete with no recorded reason", async () => {
+    const finding = await run({
+      files: {
+        ...INSTALLED_LIB,
+        "node_modules/other-lib/package.json": JSON.stringify({
+          name: "other-lib",
+          version: "1.0.0",
+        }),
+        "node_modules/other-lib/index.js": "module.exports = {};\n",
+        "node_modules/other-lib/node_modules/vuln-lib/package.json":
+          JSON.stringify({ name: "vuln-lib", version: "1.0.0" }),
+        "node_modules/other-lib/node_modules/vuln-lib/index.js":
+          INSTALLED_LIB["node_modules/vuln-lib/index.js"]!,
+        "src/index.js":
+          'const { safe } = require("vuln-lib");\n' +
+          "function main(){ return safe(1); }\nmodule.exports = { main };\n",
+      },
+      entries: ["src/index.js"],
+      withClosure: true,
+      instanceRelPath: "node_modules/other-lib/node_modules/vuln-lib",
+      reshapeClosure: (closure) => ({ ...closure, complete: false }),
+    });
+
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(familyOf(finding)).toBe("NONE");
+    expect(finding?.unknownReasons?.map((reason) => reason.reason)).toEqual([
+      "package_instance_absence_uncorroborated",
+    ]);
+    expectExclusivity(finding);
+  });
+
+  it("V-4 control: the same family-B project reaches family B with the real closure", async () => {
+    const finding = await run({
+      files: {
+        ...INSTALLED_LIB,
+        "node_modules/other-lib/package.json": JSON.stringify({
+          name: "other-lib",
+          version: "1.0.0",
+        }),
+        "node_modules/other-lib/index.js": "module.exports = {};\n",
+        "node_modules/other-lib/node_modules/vuln-lib/package.json":
+          JSON.stringify({ name: "vuln-lib", version: "1.0.0" }),
+        "node_modules/other-lib/node_modules/vuln-lib/index.js":
+          INSTALLED_LIB["node_modules/vuln-lib/index.js"]!,
+        "src/index.js":
+          'const { safe } = require("vuln-lib");\n' +
+          "function main(){ return safe(1); }\nmodule.exports = { main };\n",
+      },
+      entries: ["src/index.js"],
+      withClosure: true,
+      instanceRelPath: "node_modules/other-lib/node_modules/vuln-lib",
+      reshapeClosure: (closure) => closure,
+    });
+
+    expect(finding?.verdict).toBe("NOT_AFFECTED");
+    expect(familyOf(finding)).toBe("B");
     expectExclusivity(finding);
   });
 });
