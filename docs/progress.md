@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-06, by `V-1`.
+**Last updated:** 2026-10-08, by `V-2`.
 
 ## Objective
 
@@ -86,8 +86,11 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   ADR 0011 Amendment V-1: family C stands only when every module the
   closure loads has its top level reached from an entrypoint, closing
   RWF-078 (a module loaded only through a re-export declaration is never
-  evaluated). What binds V-2..V-4:
-  REMEDIATION-PLAN § 5a, "V-1 additions".
+  evaluated). `V-2` (predicate 1) made a closure truncated on its own walk
+  (`traversal_truncated`) withdraw families B and C like every other
+  closure reason (PRM-23; the exclusion and its false premise, "a truncated
+  closure is accompanied by a truncated graph", are gone). What binds V-3
+  and V-4: REMEDIATION-PLAN § 5a, "V-1 additions" and "V-2 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -118,21 +121,24 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`V-1` — closure corroboration for Site B; instance-keyed site selection
-([task file](tasks/V-1-site-b-closure-corroboration.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `A-6`
-merged as PR #85, completing lane A.
+`V-2` — `traversal_truncated` blocks families B and C
+([task file](tasks/V-2-traversal-truncated-blocks-negative-proof.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `V-1`
+merged as PR #86.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-1`:
-`V-2`..`V-4`, then `C-1` and lane B. The P1 gaps `BL-048`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-2`:
+`V-3`, `V-4`, then `C-1` and lane B. The P1 gaps `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
 
+From `V-2`: no new task; its audit's one open point (the guard reads the
+incompleteness list, not `closure.complete`) is bound to `V-4`
+(REMEDIATION-PLAN § 5a, "V-2 additions").
 From `V-1`: RWF-078 (found by its audits and fixed by it: a module loaded
 only through a re-export declaration is never evaluated, so family C stood
 over a target it calls) and `BL-052` (P4, precision: evaluate such modules

@@ -978,6 +978,23 @@ cases: verdict differential 0, proof 5 (all `UNKNOWN`: the
 unresolved-target reason added beside the same blockers, and the
 finding's `target` dropped), graph 0. This entry still stands.
 
+**Progress, added by task `V-2` (2026-10-08).** Task V-2
+(`docs/tasks/V-2-traversal-truncated-blocks-negative-proof.md`) closed
+`PRM-23` (ADR 0011 predicate 1): a module-load closure truncated on its
+own walk (`traversal_truncated`) now withdraws families B and C, as every
+other closure incompleteness reason does; the one exclusion is deleted.
+The defect was live at `buildFinding` (a real, attributed target was
+family C under a truncated closure with an untruncated graph) but no
+longer end to end: re-measured against real Node, the round-1
+reproduction was `UNKNOWN` on the base, through lane A's call graph
+(which sees the hook) and V-1's family-C closure corroboration (which
+covered a truncated closure by a counting argument over `scan.ts`'s one
+`maxFiles`). One real-Node case moves its reason
+(`loaded_module_not_evaluated` to `traversal_truncated`); none moves its
+verdict. A mutation restoring the exclusion is caught by five named unit
+tests and one real-Node case. Over the 139 corpus cases: verdict
+differential 0, proof 0, graph 0. This entry still stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
