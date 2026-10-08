@@ -606,7 +606,8 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // `traversal_truncated` and makes the closure incomplete. That is
   // deliberately independent of the call graph's `graphTruncated` below --
   // the two traversals visit different file sets and can be truncated
-  // independently.
+  // independently -- so a truncated closure withdraws every negative proof
+  // by itself (ADR 0011 predicate 1, task V-2).
   let moduleLoadClosure: ModuleLoadClosure | undefined;
   try {
     moduleLoadClosure = await buildGateEligibleModuleLoadClosure({

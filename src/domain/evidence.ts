@@ -26,14 +26,14 @@
  * | ------ | -------------------------------------- | -------------------------------------- | ------ |
  * | A      | the instance cannot be LOADED at all   | {@link ConfirmedAbsentFromModuleLoadClosure} | gate-eligible closure; `complete === true` (ALL reasons, `traversal_truncated` included); non-empty roots; exact instance OUT; resolved target belongs to that instance |
  * | B      | the graph never TRAVERSED the instance | {@link ConfirmedAbsentInstance}         | `graphTruncated === false`; VT-300's reachable closure-widening guard; no closure condition that could hide the instance's loading; AND a gate-eligible, complete `ModuleLoadClosure` independently corroborates the absence (VT-307e hardening -- see below) |
- * | C      | the resolved target is never CALLED    | {@link ConfirmedUnreachableTarget}      | target resolved AND attributed; exhaustive search with zero unresolved edges in the reachable subgraph; `graphTruncated === false`; no closure condition that could hide a call path |
+ * | C      | the resolved target is never CALLED    | {@link ConfirmedUnreachableTarget}      | target resolved AND attributed; exhaustive search with zero unresolved edges in the reachable subgraph; `graphTruncated === false`; a present closure with no incompleteness reason, `traversal_truncated` included (ADR 0011 predicate 1); every module the closure loads evaluated from an entrypoint (Amendment V-1) |
  *
  * Families B and C both reason from what the CALL GRAPH did not contain, so
- * they share one extra guard that family A does not need and family A's own
- * `complete` flag does not express -- see
- * `invalidatesCallGraphNegativeProof` in analysis/module-load-closure.ts for
- * the per-reason partition and, in particular, for why
- * `traversal_truncated` is the one condition that blocks A but NOT B or C.
+ * they share one extra guard: every reason a present closure recorded
+ * blocks them, and an absent closure does too -- see
+ * `callGraphNegativeProofBlockers` in analysis/module-load-closure.ts for
+ * why each reason matters. Until task V-2 `traversal_truncated` was
+ * excluded there (PRM-23); it now blocks all three families.
  *
  * Exactly one of the three evidence objects appears on any NOT_AFFECTED
  * finding, and each reason string maps 1:1 to one family.
