@@ -42,7 +42,23 @@
  * relative to VulnTrace's declared supported model -- see
  * {@link SUPPORTED_MODEL_EXCLUSIONS} for the enumerated exclusions, which
  * apply to all three families.
+ *
+ * FAMILIES B AND C ARE BUILT FROM BRANDED PROOF INPUTS (ADR 0011 § 2, task
+ * V-4). Their evidence types carry a nominal brand below, so an object
+ * literal of either is a compile error; production builds one only through
+ * `confirmedAbsentInstanceEvidence` and `confirmedUnreachableTargetEvidence`
+ * in analysis/verdict.ts (a type assertion elsewhere fails the cast census,
+ * src/testing/proof-input-casts.ts, which names the routes it cannot see),
+ * from a `ClosureCorroboration` (predicate 1) and,
+ * for family C, predicate 5 and an `AttributedTarget` (predicate 3). The
+ * brand is type-level only: it is never a runtime property, so the
+ * serialized result is unchanged.
  */
+
+/** Nominal brand of {@link ConfirmedAbsentInstance}. Declared, never a value. */
+declare const confirmedAbsentInstanceBrand: unique symbol;
+/** Nominal brand of {@link ConfirmedUnreachableTarget}. Declared, never a value. */
+declare const confirmedUnreachableTargetBrand: unique symbol;
 
 /**
  * Supporting evidence for a verdict: the resolved source-location path and
@@ -169,6 +185,8 @@ export interface ConfirmedAbsentFromModuleLoadClosure {
  * not need.
  */
 export interface ConfirmedAbsentInstance {
+  /** Nominal brand -- see {@link confirmedAbsentInstanceBrand}. */
+  readonly [confirmedAbsentInstanceBrand]: true;
   /** The exact canonical install LOCATION never traversed -- never a name or version. */
   readonly packageInstance: string;
   /** The configured entrypoint files the traversal started from. */
@@ -219,6 +237,8 @@ export interface ConfirmedAbsentInstance {
  * kept it until now.
  */
 export interface ConfirmedUnreachableTarget {
+  /** Nominal brand -- see {@link confirmedUnreachableTargetBrand}. */
+  readonly [confirmedUnreachableTargetBrand]: true;
   /** The vulnerable target this proof is about, restated so the evidence stands alone. */
   readonly target: { readonly module: string; readonly export: string };
   /** The configured entrypoint files the search started from. */

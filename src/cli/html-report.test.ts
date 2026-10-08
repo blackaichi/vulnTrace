@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
+  confirmedAbsentInstanceFixture,
+  confirmedUnreachableTargetFixture,
+} from "../testing/finding.js";
+import {
   SUPPORTED_MODEL_EXCLUSIONS,
   SUPPORTED_MODEL_STATEMENT,
 } from "../domain/evidence.js";
@@ -127,12 +131,12 @@ const FAMILY_B_FINDING: ScanOutput["findings"][number] = {
     reasons: [
       "package_instance_absent_from_call_graph_and_module_load_closure",
     ],
-    confirmedAbsentInstance: {
+    confirmedAbsentInstance: confirmedAbsentInstanceFixture({
       packageInstance: "/proj/node_modules/consumer/node_modules/nested-lib",
       entrypointRoots: ["/proj/src/index.ts", "/proj/src/cli.ts"],
       graphTruncated: false,
       moduleLoadClosureComplete: true,
-    },
+    }),
   },
 };
 
@@ -147,11 +151,11 @@ const FAMILY_C_FINDING: ScanOutput["findings"][number] = {
     reasons: [
       "vulnerable symbol confirmed unreachable from all analyzed entrypoints",
     ],
-    confirmedUnreachableTarget: {
+    confirmedUnreachableTarget: confirmedUnreachableTargetFixture({
       target: { module: "loaded-lib", export: "neverCalled" },
       entrypointRoots: ["/proj/src/index.ts"],
       reachableSubgraphComplete: true,
-    },
+    }),
   },
 };
 

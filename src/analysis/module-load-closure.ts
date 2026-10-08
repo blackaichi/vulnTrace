@@ -519,8 +519,10 @@ export type CallGraphNegativeProofBlocker =
  * family B or C proof stands only on a closure whose incompleteness list
  * is empty. The `complete` half is not read here: the one builder sets
  * `complete` exactly when that list is empty, so the two agree in
- * production, and task V-4's branded `ClosureCorroboration` is to check
- * both.
+ * production. Both halves, and the closure's roots, are checked together
+ * by `corroborateClosure` (analysis/verdict.ts, task V-4), the one producer
+ * of the `ClosureCorroboration` families B and C are built from; it calls
+ * this for the list half.
  *
  * Why each reason forbids those proofs, which conclude NOT_AFFECTED from
  * what the call graph did NOT contain (the "exact installed instance was

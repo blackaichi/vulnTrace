@@ -3,7 +3,11 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { buildGateEligibleModuleLoadClosure } from "../analysis/module-load-closure.js";
-import { buildFindingForTest } from "../testing/finding.js";
+import {
+  buildFindingForTest,
+  confirmedAbsentInstanceFixture,
+  confirmedUnreachableTargetFixture,
+} from "../testing/finding.js";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
 import { createModuleResolver } from "../code-intelligence/module-resolver.js";
 import { loadTsProject } from "../code-intelligence/ts-project.js";
@@ -111,18 +115,18 @@ const FAMILY_A: ConfirmedAbsentFromModuleLoadClosure = {
   closureComplete: true,
 };
 
-const FAMILY_B: ConfirmedAbsentInstance = {
+const FAMILY_B: ConfirmedAbsentInstance = confirmedAbsentInstanceFixture({
   packageInstance: "/project/node_modules/consumer/node_modules/vuln-lib",
   entrypointRoots: ["/project/src/index.js"],
   graphTruncated: false,
   moduleLoadClosureComplete: true,
-};
+});
 
-const FAMILY_C: ConfirmedUnreachableTarget = {
+const FAMILY_C: ConfirmedUnreachableTarget = confirmedUnreachableTargetFixture({
   target: { module: "vuln-lib", export: "vulnerable" },
   entrypointRoots: ["/project/src/index.js"],
   reachableSubgraphComplete: true,
-};
+});
 
 /** A finding carrying whichever proof objects the case is about. */
 function findingWith(
