@@ -847,6 +847,52 @@ export function bindsToOtherDeclaration(
 }
 
 /**
+ * The one declaration `name` denotes at `reference`'s position, or
+ * `undefined` when it denotes none this file declares (a global, an
+ * undeclared name) or no single one (two declarations in the owning
+ * scope). Task V-3 (ADR 0011 predicate 4): an entrypoint root is the node
+ * of the declaration a name BINDS to where the export is written, never a
+ * node that merely shares the spelling.
+ *
+ * Returns the declaration node itself -- a `FunctionDeclaration`, a
+ * `ClassDeclaration`, a `VariableDeclaration`, a named function or class
+ * expression for its own self-name, or a parameter, import or binding
+ * element -- and leaves to the caller which of those denotes a callable.
+ * It applies none of {@link resolveNamedBinding}'s value rules
+ * (reassignment, evaluation order). The caller does: a position found here
+ * also WITNESSES a root requirement, so the export model withholds it for a
+ * binding the file reassigns, and for a value not yet evaluated where the
+ * export reads it (task V-3's independent audit, findings 3 and 5).
+ *
+ * A TypeScript overload set is one declaration: its signatures without a
+ * body are erased, and the one implementation is what the name denotes.
+ */
+export function lexicalDeclarationOf(
+  reference: ts.Node,
+  name: string,
+): ts.Node | undefined {
+  for (const scope of scopeChainOf(reference)) {
+    const owned = declarationsOwnedBy(scope, name);
+    if (owned.length === 0) {
+      continue;
+    }
+    const implementations = owned.filter(
+      (declaration) =>
+        !(
+          ts.isFunctionDeclaration(declaration.node) &&
+          declaration.node.body === undefined
+        ),
+    );
+    const [declaration] = implementations;
+    if (implementations.length !== 1 || !declaration) {
+      return undefined;
+    }
+    return declaration.variable ?? declaration.node;
+  }
+  return undefined;
+}
+
+/**
  * The exact PARAMETER DECLARATION a reference binds to, or `undefined`
  * when the reference does not bind to a parameter at all (P1-B3b
  * remediation).

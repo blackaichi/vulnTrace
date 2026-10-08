@@ -15,6 +15,10 @@ import {
   type LocalValueProvenance,
 } from "./commonjs-reexports.js";
 import {
+  isNameAssignedWithin,
+  lexicalDeclarationOf,
+} from "./named-bindings.js";
+import {
   exactCommonJsExportPropertyName,
   type IndexedExport,
   type IndexedFunction,
@@ -372,6 +376,223 @@ function classConstructorNode(
     ts.isConstructorDeclaration(member),
   );
   return explicit ?? node.name ?? node;
+}
+
+/**
+ * The position of the callable a DECLARATION denotes, as source-index.ts
+ * positions its entry, or `undefined` when the declaration denotes no
+ * callable this file defines (a parameter, an import, a destructured
+ * element, a variable whose initializer is not a function or class value).
+ * Task V-3 (ADR 0011 predicate 4): an entrypoint root is materialized by
+ * this position, never by a name.
+ */
+function declaredCallableLocation(
+  sourceFile: ts.SourceFile,
+  declaration: ts.Node | undefined,
+): SourceLocation | undefined {
+  if (declaration === undefined) {
+    return undefined;
+  }
+  if (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isFunctionExpression(declaration)
+  ) {
+    return toSourceLocation(sourceFile, declaration);
+  }
+  if (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) {
+    return toSourceLocation(sourceFile, classConstructorNode(declaration));
+  }
+  if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
+    return directValueFunctionLocation(sourceFile, declaration.initializer);
+  }
+  return undefined;
+}
+
+/**
+ * What `name` denotes at `reference`, as a root (task V-3): the position of
+ * the callable its declaration defines (`callable`), a declaration that
+ * provably defines none (`none`: a variable initialized to a literal), or
+ * `unknown` -- no single declaration, a name the file assigns anywhere, a
+ * parameter, an import, a destructured element, an alias, or a variable
+ * whose initializer has not run yet where the reference reads it (`exports.main = run; var run =
+ * function () {}` publishes `undefined`). Only module-scope references are
+ * asked, so source order is evaluation order.
+ */
+type DeclaredRoot =
+  | { readonly kind: "callable"; readonly location: SourceLocation }
+  | { readonly kind: "none" }
+  | { readonly kind: "unknown" };
+
+function declaredRootAt(
+  sourceFile: ts.SourceFile,
+  reference: ts.Node,
+  name: string,
+): DeclaredRoot {
+  const declaration = lexicalDeclarationOf(reference, name);
+  if (declaration === undefined) {
+    return { kind: "unknown" };
+  }
+  // A name the file assigns anywhere -- `run = other`, in a loop, in a
+  // closure -- does not hold its declaration's value: the declaration is
+  // the stale one, and may neither root nor witness (task V-3's second
+  // independent audit, finding 1). Over-approximate: a same-named binding
+  // assigned in another scope also refuses, which costs precision only.
+  if (isNameAssignedWithin(sourceFile, name)) {
+    return { kind: "unknown" };
+  }
+  if (ts.isVariableDeclaration(declaration)) {
+    if (
+      declaration.getEnd() > reference.getStart(sourceFile) ||
+      declaration.initializer === undefined
+    ) {
+      return { kind: "unknown" };
+    }
+    const value = unwrapParentheses(declaration.initializer);
+    if (!mayBeCallableValue(value)) {
+      return { kind: "none" };
+    }
+  }
+  const location = declaredCallableLocation(sourceFile, declaration);
+  return location === undefined
+    ? { kind: "unknown" }
+    : { kind: "callable", location };
+}
+
+/**
+ * Whether `value` -- the end of an export's alias chain -- is evaluated
+ * before the export reads it: written earlier in the file than an export
+ * at module scope, or inside the export's own statement (task V-3). An export inside a function body is asked
+ * nothing here; its names resolve to nothing anyway.
+ */
+function evaluatedBeforeExport(
+  index: SourceIndex,
+  value: ts.Node,
+  exp: ExportBinding,
+): boolean {
+  if (ts.isFunctionDeclaration(value)) {
+    // Hoisted: initialized before any statement of its scope runs.
+    return true;
+  }
+  const site = nodeAtLocation(index.sourceFile, exp.location);
+  return (
+    site !== undefined &&
+    value.getSourceFile() === index.sourceFile &&
+    // Inside the export's own statement, or before it.
+    value.getStart(index.sourceFile) < site.getEnd()
+  );
+}
+
+/**
+ * The OUTERMOST node that begins at `location` -- the export statement,
+ * declaration or specifier a binding's location names, never a token
+ * inside it (whose scope chain would begin inside a declaration's own
+ * function scope). `undefined` when no node begins there.
+ */
+function nodeAtLocation(
+  sourceFile: ts.SourceFile,
+  location: SourceLocation,
+): ts.Node | undefined {
+  if (location.line === undefined || location.column === undefined) {
+    return undefined;
+  }
+  const position = sourceFile.getPositionOfLineAndCharacter(
+    location.line - 1,
+    location.column - 1,
+  );
+  let found: ts.Node | undefined;
+  const visit = (node: ts.Node): void => {
+    if (found !== undefined) {
+      return;
+    }
+    const start = node.getStart(sourceFile);
+    if (start === position) {
+      found = node;
+    } else if (start < position && position < node.getEnd()) {
+      ts.forEachChild(node, visit);
+    }
+  };
+  ts.forEachChild(sourceFile, visit);
+  return found;
+}
+
+/**
+ * Whether `node` runs inside a function's body or parameters, or a class
+ * element's initializer -- code whose bindings are not the module's, and
+ * that may run later or never. A function DECLARATION's own header (its
+ * `export` modifier, its name) is not inside it.
+ */
+function isInsideFunctionBody(node: ts.Node): boolean {
+  let child: ts.Node = node;
+  for (
+    let current = node.parent as ts.Node | undefined;
+    current;
+    child = current, current = current.parent
+  ) {
+    if (ts.isFunctionLike(current)) {
+      const inBody =
+        "body" in current && (current as { body?: ts.Node }).body === child;
+      const inParameters = current.parameters.some(
+        (parameter) => parameter === child,
+      );
+      if (inBody || inParameters) {
+        return true;
+      }
+    } else if (
+      ts.isClassStaticBlockDeclaration(current) ||
+      (ts.isPropertyDeclaration(current) && current.initializer === child)
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
+ * The name an importer binds `exp` by: `"default"` for a default or
+ * whole-module export, the exported name otherwise; `undefined` for an
+ * `export *` (task V-3, a `{file, symbol}` entrypoint's selector).
+ */
+export function canonicalExportName(exp: ExportBinding): string | undefined {
+  return exp.kind === "default" ? "default" : exp.exportedName;
+}
+
+/**
+ * The callable positions an export binding's PROVENANCE names declare at
+ * the export's own site (task V-3; PRM-25, PRM-31).
+ *
+ * Each name is resolved lexically from the site -- the declaration the
+ * site's scope chain owns -- so a nested function, a class method or a
+ * property function that merely shares the spelling is never one. An
+ * export written inside a function body resolves nothing: its names are
+ * collected by a whole-file, name-keyed walk that need not agree with the
+ * scope the write runs in, so no position is claimed for them and the
+ * requirement they would satisfy fails closed.
+ */
+function provenanceNameLocations(
+  index: SourceIndex,
+  exp: ExportBinding,
+  provenanceNames: readonly string[],
+): SourceLocation[] {
+  const site = nodeAtLocation(index.sourceFile, exp.location);
+  if (site === undefined || isInsideFunctionBody(site)) {
+    return [];
+  }
+  const found: SourceLocation[] = [];
+  for (const name of new Set(provenanceNames)) {
+    const declared = declaredRootAt(index.sourceFile, site, name);
+    const location =
+      declared.kind === "callable" ? declared.location : undefined;
+    if (
+      location !== undefined &&
+      !found.some(
+        (known) =>
+          known.line === location.line && known.column === location.column,
+      )
+    ) {
+      found.push(location);
+    }
+  }
+  return found;
 }
 
 /**
@@ -5308,6 +5529,11 @@ export interface EntrypointRootIncompleteness {
 }
 
 export interface EntrypointRootCandidates {
+  /**
+   * The names the candidates were written with -- for diagnostics only.
+   * No root is looked up by them since task V-3 (PRM-25, PRM-31): a root is
+   * a node at one of `locations`.
+   */
   readonly names: ReadonlySet<string>;
   readonly locations: readonly SourceLocation[];
   /**
@@ -5360,11 +5586,12 @@ export interface EntrypointRootCandidates {
    * over a sink Node executes. Modeling the export was never the missing
    * piece; materializing the candidate was.
    *
-   * A requirement is satisfied by ANY of its `names` or `locations`,
-   * because the same binding can materialize either way: `const alias =
-   * function inner(){}` materializes by POSITION while `const alias =
-   * (u) => ...` is indexed under the variable name and materializes by
-   * NAME. Requiring both would manufacture false incompleteness.
+   * A requirement is satisfied by ANY of its `locations`. Until task V-3
+   * a NAME satisfied it too, by spelling, and a nested function sharing
+   * the spelling of the exported local stood in for it (PRM-25, PRM-31):
+   * each name is now resolved to the declaration it binds to at the
+   * export's site, and that declaration's callable position is one of the
+   * `locations`.
    *
    * Bindings that provably publish no callable (`module.exports.x = 42`)
    * emit NO requirement -- "there is no root here" stays a complete
@@ -5377,7 +5604,21 @@ export interface EntrypointRootCandidates {
 export interface EntrypointRootRequirement {
   /** The exported name, for diagnostics. */
   readonly exportedName?: string;
+  /**
+   * The name an importer binds the export by -- `"default"` for a default
+   * or whole-module export, the exported name otherwise -- which a
+   * configured `{file, symbol}` entrypoint selects by (task V-3).
+   */
+  readonly canonicalName?: string;
+  /** The names the binding was written with, for diagnostics only. */
   readonly names: readonly string[];
+  /**
+   * The positions that materialize the binding: a function value's own,
+   * and the callable each provenance name DECLARES at the export's site
+   * (task V-3). The requirement is satisfied by a node at any of them, and
+   * by nothing else -- a node that merely shares a name's spelling
+   * satisfies nothing.
+   */
   readonly locations: readonly SourceLocation[];
 }
 
@@ -5512,6 +5753,7 @@ function collectExportWriteCandidates(
   rhs: ts.Expression,
   names: Set<string>,
   locations: SourceLocation[],
+  unresolved: SourceLocation[],
 ): void {
   const value = unwrapValue(rhs);
 
@@ -5529,15 +5771,34 @@ function collectExportWriteCandidates(
           property.initializer,
           names,
           locations,
+          unresolved,
         );
       } else if (ts.isShorthandPropertyAssignment(property)) {
-        collectExportWriteCandidates(index, property.name, names, locations);
+        collectExportWriteCandidates(
+          index,
+          property.name,
+          names,
+          locations,
+          unresolved,
+        );
+      } else if (ts.isMethodDeclaration(property)) {
+        locations.push(toSourceLocation(index.sourceFile, property));
+      } else {
+        // A spread, an accessor: a value the widening cannot name a root
+        // for (task V-3).
+        unresolved.push(toSourceLocation(index.sourceFile, property));
       }
     }
     return;
   }
 
   if (!ts.isIdentifier(value)) {
+    // Task V-3: a call's result, a member read, a conditional -- a value
+    // that may be callable and that no position names. Contributing
+    // nothing here was a silently dropped root.
+    if (mayBeCallableValue(value)) {
+      unresolved.push(toSourceLocation(index.sourceFile, value));
+    }
     return;
   }
 
@@ -5546,9 +5807,11 @@ function collectExportWriteCandidates(
   // stable alias for whatever it was declared as, so the DECLARATION is
   // not a plausible published value. Refusing rather than rooting the
   // stale node is what makes `main = safe; module.exports = main` stop
-  // reporting the original `main`'s body.
+  // reporting the original `main`'s body -- and, since task V-3, the
+  // refusal is a gap the root set reports, not a root it silently lacks.
   const resolved = resolveLocalValue(index, value);
   if (resolved.kind === "refused") {
+    unresolved.push(toSourceLocation(index.sourceFile, value));
     return;
   }
 
@@ -5560,7 +5823,37 @@ function collectExportWriteCandidates(
     );
     if (chased) {
       locations.push(chased);
+      return;
     }
+  }
+  // Task V-3: the identifier's own declaration -- or, for an alias, the
+  // declaration its chain ends on -- resolved lexically from this
+  // reference: the root a name used to reach by spelling. A write inside a
+  // function body may run later or never, and its names were collected by
+  // a whole-file walk; whatever this cannot name a callable for is root
+  // INCOMPLETENESS, never nothing: a whole-module binding has no
+  // requirement of its own to fail closed instead (task V-3's independent
+  // audit, finding 1).
+  if (isInsideFunctionBody(value)) {
+    unresolved.push(toSourceLocation(index.sourceFile, value));
+    return;
+  }
+  const candidates = [value.text];
+  if (resolved.kind === "unmodeled" && resolved.name !== undefined) {
+    candidates.push(resolved.name);
+  }
+  let named = false;
+  for (const candidate of candidates) {
+    const declared = declaredRootAt(index.sourceFile, value, candidate);
+    if (declared.kind === "callable") {
+      locations.push(declared.location);
+      named = true;
+    } else if (declared.kind === "none") {
+      named = true;
+    }
+  }
+  if (!named) {
+    unresolved.push(toSourceLocation(index.sourceFile, value));
   }
 }
 
@@ -5755,15 +6048,23 @@ export function entrypointRootCandidates(
     // P0-Z round 3: what this binding would have to materialize to.
     const requiredNames: string[] = [];
     const requiredLocations: SourceLocation[] = [];
+    // Task V-3: the names that carry provenance for this binding -- the
+    // local it was written with, and where its alias chain ends. NOT the
+    // `exportedName` fallback below: a public name is not provenance for a
+    // local (RWF-011), so it may widen nothing and satisfy nothing.
+    const provenanceNames: string[] = [];
+    if (exp.localName) {
+      provenanceNames.push(exp.localName);
+    }
     let requiresCallableRoot = false;
-    // Unchanged from before RWF-021, including the `exportedName`
-    // fallback. For a ROOT that fallback is sound in the direction that
-    // matters: landing on a same-name local that is not really the export
-    // adds a traversal start point, and an extra root can only make more
-    // code reachable. The same fallback was correctly REMOVED from
-    // attribution by RWF-011, where landing on the wrong function
-    // manufactures a false target — the asymmetry this function's doc
-    // comment exists to explain.
+    // The names the binding was written with, `exportedName` fallback
+    // included, kept in `names` and `requiredNames` for diagnostics only.
+    // Until task V-3 the fallback ROOTED and WITNESSED by spelling, on the
+    // premise that an extra root only makes more code reachable; it also
+    // satisfied the requirement, so a same-named decoy stood in for the
+    // export and the real one was never searched (PRM-31). A root is a
+    // position now (`provenanceNames` below), and the exported name, as
+    // RWF-011 already decided for attribution, is no provenance.
     const name = exp.localName ?? exp.exportedName;
     if (name) {
       names.add(name);
@@ -5774,8 +6075,16 @@ export function entrypointRootCandidates(
     // has an exact function IDENTITY and no name at all, so a name-only
     // root lookup lost it even when attribution was fully precise.
     if (exp.localFunctionLocation) {
-      locations.push(exp.localFunctionLocation);
-      requiredLocations.push(exp.localFunctionLocation);
+      // Task V-3: a callable the export publishes, so a requirement -- met
+      // by its position only when the function is evaluated before the
+      // export reads it (`exports.main = run; var run = function () {}`
+      // publishes `undefined`; its independent audit, finding 5).
+      requiresCallableRoot = true;
+      const fn = nodeAtLocation(index.sourceFile, exp.localFunctionLocation);
+      if (fn !== undefined && evaluatedBeforeExport(index, fn, exp)) {
+        locations.push(exp.localFunctionLocation);
+        requiredLocations.push(exp.localFunctionLocation);
+      }
     }
     if (exp.exportAttributionWithdrawn) {
       withdrawn = true;
@@ -5803,6 +6112,7 @@ export function entrypointRootCandidates(
           if (published.name !== undefined) {
             names.add(published.name);
             requiredNames.push(published.name);
+            provenanceNames.push(published.name);
           }
           requiresCallableRoot = true;
           break;
@@ -5812,13 +6122,17 @@ export function entrypointRootCandidates(
             index.sourceFile,
             published.value,
           );
-          if (chased) {
+          if (chased && evaluatedBeforeExport(index, published.value, exp)) {
             // An exact function/arrow/class expression: materialized by
             // POSITION, which needs no name at all (RWF-003's evidence).
             locations.push(chased);
             requiredLocations.push(chased);
             requiresCallableRoot = true;
-          } else if (mayBeCallableValue(published.value)) {
+          } else if (chased || mayBeCallableValue(published.value)) {
+            // Task V-3 (its independent audit, finding 5): a function
+            // value assigned only AFTER the export reads the binding --
+            // `exports.main = run; var run = function () {}` -- is not
+            // what the export publishes (it published `undefined`).
             // A conditional, a call, a property access: could publish a
             // callable and this analyzer cannot say which. Requiring it
             // is what turns the guess into an honest UNKNOWN.
@@ -5839,9 +6153,66 @@ export function entrypointRootCandidates(
       }
     }
 
+    // Task V-3 (its independent audit, finding 2): an ESM default export
+    // the model records with no local and no position -- `export default
+    // run`, `export default function () {}`, `export default () => ...`
+    // -- published a callable and required no root, so `{file, symbol:
+    // "default"}` and a plain file entrypoint called the root set
+    // complete without it.
+    if (
+      exp.kind === "default" &&
+      exp.syntax === "esm" &&
+      exp.localName === undefined &&
+      exp.localFunctionLocation === undefined
+    ) {
+      const site = nodeAtLocation(index.sourceFile, exp.location);
+      requiresCallableRoot = true;
+      if (site !== undefined && ts.isExportAssignment(site)) {
+        const value = unwrapParentheses(site.expression);
+        const direct = directValueFunctionLocation(index.sourceFile, value);
+        if (ts.isIdentifier(value)) {
+          provenanceNames.push(value.text);
+        } else if (direct !== undefined) {
+          locations.push(direct);
+          requiredLocations.push(direct);
+        } else if (!mayBeCallableValue(value)) {
+          requiresCallableRoot = false;
+        }
+      } else if (
+        site !== undefined &&
+        ts.isFunctionDeclaration(site) &&
+        site.body !== undefined
+      ) {
+        const location = toSourceLocation(index.sourceFile, site);
+        locations.push(location);
+        requiredLocations.push(location);
+      } else if (site !== undefined && ts.isClassDeclaration(site)) {
+        const location = toSourceLocation(
+          index.sourceFile,
+          classConstructorNode(site),
+        );
+        locations.push(location);
+        requiredLocations.push(location);
+      }
+    }
+
     if (requiresCallableRoot) {
+      // Task V-3: each provenance name materializes at the position of the
+      // callable it DECLARES at the export's site, and only there -- unless
+      // the binding is REFUSED (the file rewrites it): its declaration is
+      // then the stale value, which may neither root nor witness (task
+      // V-3's independent audit, finding 3).
+      const provenance =
+        published?.kind === "refused"
+          ? []
+          : provenanceNameLocations(index, exp, provenanceNames);
+      for (const location of provenance) {
+        locations.push(location);
+        requiredLocations.push(location);
+      }
       rootRequirements.push({
         exportedName: exp.exportedName,
+        canonicalName: canonicalExportName(exp),
         names: requiredNames,
         locations: requiredLocations,
       });
@@ -5876,13 +6247,21 @@ export function entrypointRootCandidates(
     });
   }
 
+  const wideningLocations: SourceLocation[] = [];
+  const wideningUnresolved: SourceLocation[] = [];
   if (withdrawn) {
     // Every value this file's own export writes could publish — and
     // nothing else. See {@link exportWriteRootCandidates}.
     for (const assignment of collectModuleExportsAssignments(
       index.sourceFile,
     )) {
-      collectExportWriteCandidates(index, assignment.rhs, names, locations);
+      collectExportWriteCandidates(
+        index,
+        assignment.rhs,
+        names,
+        wideningLocations,
+        wideningUnresolved,
+      );
     }
     for (const exp of model.exports) {
       if (exp.kind !== "named" || exp.syntax !== "commonjs") {
@@ -5893,8 +6272,23 @@ export function entrypointRootCandidates(
           ? undefined
           : commonJsPropertyExportRhs(index, exp.exportedName);
       if (rhs !== undefined) {
-        collectExportWriteCandidates(index, rhs, names, locations);
+        collectExportWriteCandidates(
+          index,
+          rhs,
+          names,
+          wideningLocations,
+          wideningUnresolved,
+        );
       }
+    }
+    locations.push(...wideningLocations);
+    // Task V-3: a value an export write may publish that no position
+    // names is a root gap, reported -- it used to contribute nothing.
+    for (const location of wideningUnresolved) {
+      incompleteness.push({
+        reason: "unresolved_entrypoint_root_candidate",
+        location,
+      });
     }
   }
 

@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import {
   buildModuleModel,
+  canonicalExportName,
   entrypointRootCandidates,
   findExportedClassMembers,
   mapExportsToFunctions,
@@ -22,6 +23,7 @@ import {
   type CallGraph,
   type GraphNode,
   type GraphNodeId,
+  type SourceLocation,
 } from "../domain/graph.js";
 import type { Entrypoint } from "../domain/entrypoint.js";
 import {
@@ -205,12 +207,14 @@ function moduleNode(graph: CallGraph, filePath: string): GraphNode | undefined {
 }
 
 /**
- * Whether `node` is the node named `name` in `file`, for the lookups below
- * that bind a node by NAME (an entrypoint's configured symbol, its root
- * candidates, the synthetic-graph fallback). An accessor node is never one
- * (task A-4): its name (`get x`) is a label, not a binding, and a string
- * export key can spell it (`module.exports["get x"] = 1`), which would root
- * a getter nobody runs -- a fabricated path (task A-4's independent audit).
+ * Whether `node` is the node named `name` in `file`, for the one lookup
+ * left that binds a node by NAME: the synthetic-graph target fallback,
+ * behind a test-only flag (see {@link findExportNodeInFile}). An
+ * entrypoint's configured symbol and its root candidates used it until
+ * task V-3, which materializes them by position (PRM-25, PRM-31); the
+ * name-lookup census (`src/testing/name-lookup-census.ts`) keeps it that way. An
+ * accessor node is never one (task A-4): its name (`get x`) is a label,
+ * not a binding, and a string export key can spell it.
  */
 function isNamedNode(node: GraphNode, file: string, name: string): boolean {
   return node.module === file && node.kind !== "accessor" && node.name === name;
@@ -1251,40 +1255,65 @@ interface ReachableEvidence {
 }
 
 /**
+ * The graph nodes at one source position of `file`: the identity a root is
+ * materialized by (task V-3, ADR 0011 predicate 4). An accessor is never
+ * one -- it is its own node, reached by a possible edge (task A-4).
+ */
+function nodesAtLocation(
+  graph: CallGraph,
+  file: string,
+  location: SourceLocation,
+): GraphNode[] {
+  return graph.nodes.filter(
+    (n) =>
+      n.module === file &&
+      n.kind !== "accessor" &&
+      n.location?.line === location.line &&
+      n.location?.column === location.column,
+  );
+}
+
+/**
  * The graph nodes that count as reachability starting points for one
  * entrypoint.
  *
- * When `entrypoint.symbol` is configured (SDD-v0.2.md § 6's `{file,
- * symbol}` form), sources are exactly the file's `<module>` node (loading
- * a module always runs its top-level code, regardless of which export
- * gets called afterwards -- that much is real JS/Node semantics, not a
- * VulnTrace liberty) plus that one named symbol's own node. Any other
- * export living in the same file is deliberately excluded: SDD-v0.2.md
- * § 6 requires that "only that symbol is an entrypoint source" and that
- * other exports "are not automatically reachable" (see VT-205).
+ * Sources are always the file's `<module>` node (loading a module always
+ * runs its top-level code, regardless of which export gets called
+ * afterwards -- real JS/Node semantics, not a VulnTrace liberty), plus the
+ * file's exported callables:
  *
- * Without a configured `symbol` (the pre-VT-205 form, kept for backward
- * compatibility), sources are the `<module>` node plus every one of the
- * file's own exported functions -- unchanged from before VT-205. An
- * entrypoint file's exports are, by definition of being an entrypoint,
- * invocable from outside the analyzed codebase (a CLI's default export, a
- * required module's callable surface, ...) even when the file itself
- * never calls them at module scope — e.g. `export function main() { ... }`
- * with no top-level `main()` call. Without this, `main`'s own body (and
- * anything it calls) would be invisible to reachability analysis purely
- * because nothing *inside the file* happens to invoke it. This is the
- * correct default only when no more precise `symbol` narrows it.
+ * - When `entrypoint.symbol` is configured (SDD-v0.2.md § 6's `{file,
+ *   symbol}` form), only the callables the export named `symbol`
+ *   publishes. Any other export of the same file is deliberately excluded:
+ *   SDD-v0.2.md § 6 requires that "only that symbol is an entrypoint
+ *   source" and that other exports "are not automatically reachable" (see
+ *   VT-205).
+ * - Without one (the pre-VT-205 form), every export's. An entrypoint
+ *   file's exports are, by definition of being an entrypoint, invocable
+ *   from outside the analyzed codebase (a CLI's default export, a required
+ *   module's callable surface, ...) even when the file itself never calls
+ *   them at module scope -- e.g. `export function main() { ... }` with no
+ *   top-level `main()` call.
  *
- * Which names those exports contribute is decided by
- * {@link entrypointRootCandidates} (RWF-021), NOT by reading export
- * attribution here. The distinction matters because the two fail in
- * opposite directions: attribution must refuse when it cannot name the
- * exported value, while root selection must widen. Answering both with
- * one expression meant every soundness cutoff that withdrew attribution
- * silently deleted the entrypoint's root as well, hiding the exported
- * function's body from reachability and yielding a COMPLETE Family C
- * proof for a target that is genuinely reachable — a false NOT_AFFECTED,
- * reproduced for all four merged cutoff families.
+ * Which callables those are is decided by {@link entrypointRootCandidates}
+ * (RWF-021), NOT by reading export attribution here. The distinction
+ * matters because the two fail in opposite directions: attribution must
+ * refuse when it cannot name the exported value, while root selection must
+ * widen. Answering both with one expression meant every soundness cutoff
+ * that withdrew attribution silently deleted the entrypoint's root as
+ * well, hiding the exported function's body from reachability and yielding
+ * a COMPLETE Family C proof for a target that is genuinely reachable — a
+ * false NOT_AFFECTED, reproduced for all four merged cutoff families.
+ *
+ * ROOTS ARE MATERIALIZED BY POSITION ONLY (task V-3, ADR 0011 predicate
+ * 4). Every candidate arrives as a source position -- a function value's
+ * own, or the callable a provenance name DECLARES at the export's site --
+ * and is looked up by it. Until V-3 a configured symbol was looked up as
+ * the first node NAMED like it, and an export's local likewise: a nested
+ * function sharing the spelling became the root, or no node did and the
+ * derivation was still called complete (PRM-25, both a false
+ * `NOT_AFFECTED` and a false `AFFECTED`; PRM-31, the same for a plain file
+ * entrypoint). A name reaches no root here.
  *
  * Re-indexes the entrypoint file directly (cheap: entrypoints are few)
  * rather than threading this through `buildCallGraph`'s internals.
@@ -1304,20 +1333,19 @@ function entrypointSourceNodes(
   if (module) {
     sources.push(module);
   }
-
-  if (entrypoint.symbol) {
-    const symbol = entrypoint.symbol;
-    const node = graph.nodes.find((n) =>
-      isNamedNode(n, entrypoint.filePath, symbol),
-    );
-    if (node) {
-      sources.push(node);
+  const addRoots = (locations: readonly SourceLocation[]): void => {
+    for (const location of locations) {
+      for (const node of nodesAtLocation(
+        graph,
+        entrypoint.filePath,
+        location,
+      )) {
+        if (!sources.includes(node)) {
+          sources.push(node);
+        }
+      }
     }
-    // A configured `symbol` narrows the root set by explicit instruction
-    // (SDD-v0.2.md § 6/VT-205), so there is no export surface left to
-    // derive and nothing to be incomplete about.
-    return { sources, incompleteness: [] };
-  }
+  };
 
   let index;
   let model;
@@ -1325,6 +1353,20 @@ function entrypointSourceNodes(
     index = indexSourceFileFromDisk(entrypoint.filePath);
     model = buildModuleModel(index);
   } catch {
+    if (entrypoint.symbol !== undefined) {
+      // A configured symbol that cannot be looked up in its file did not
+      // materialize: root incompleteness by ADR 0011 § 3, whatever else
+      // the closure records about the file (task V-3).
+      return {
+        sources,
+        incompleteness: [
+          {
+            reason: "unresolved_entrypoint_root_candidate",
+            exportedName: entrypoint.symbol,
+          },
+        ],
+      };
+    }
     // An entrypoint that cannot be indexed has an unknown export surface,
     // which IS root uncertainty -- but it is not this function's to
     // report. The same file is a ROOT of the ModuleLoadClosure, so failing
@@ -1350,31 +1392,73 @@ function entrypointSourceNodes(
   // hand an importer. See that function's doc comment for both invariants
   // and the false NOT_AFFECTED and false AFFECTED each one prevents.
   const candidates = entrypointRootCandidates(index, model);
-  for (const name of candidates.names) {
-    const node = graph.nodes.find((n) =>
-      isNamedNode(n, entrypoint.filePath, name),
+
+  let requirements = candidates.rootRequirements;
+  const incompleteness: EntrypointRootIncompleteness[] = [];
+  if (entrypoint.symbol === undefined) {
+    addRoots(candidates.locations);
+    incompleteness.push(...candidates.incompleteness);
+  } else {
+    // A configured symbol narrows the roots to what the export named
+    // `symbol` publishes -- by the same requirements, materialized the same
+    // way. Until task V-3 this branch looked the symbol up as a node NAME
+    // and returned "nothing to be incomplete about" (PRM-25).
+    const symbol = entrypoint.symbol;
+    const bindings = model.exports.filter(
+      (exp) => canonicalExportName(exp) === symbol,
     );
-    if (node) {
-      sources.push(node);
+    requirements = requirements.filter(
+      (requirement) => requirement.canonicalName === symbol,
+    );
+    for (const requirement of requirements) {
+      addRoots(requirement.locations);
     }
-  }
-  for (const location of candidates.locations) {
-    const node = graph.nodes.find(
-      (n) =>
-        n.module === entrypoint.filePath &&
-        n.location?.line === location.line &&
-        n.location?.column === location.column,
+    // A gap that names no export -- `export *`, an export-object mutation
+    // the model detects, a computed export name -- may publish the symbol
+    // (a write it does not detect, through `this`, an alias of `exports`
+    // or another module, is no gap here at all: PRM-32, RWF-081); one that names
+    // another export cannot, EXCEPT a CommonJS whole-module write
+    // (`module.exports = X`), which replaces the object every name is read
+    // from: the symbol is then `X[symbol]`, which no binding of the symbol
+    // attributes (task V-3's second independent audit, finding 2). And a
+    // symbol whose own attribution is withdrawn is not rooted by the
+    // file-wide widening, whose candidates include every OTHER export's
+    // values -- a root the host never calls for the symbol, and an
+    // AFFECTED path Node need never take (finding 3): it is a gap.
+    incompleteness.push(
+      ...candidates.incompleteness.filter(
+        (item) =>
+          item.exportedName === undefined || item.exportedName === symbol,
+      ),
     );
-    if (node && !sources.includes(node)) {
-      sources.push(node);
+    if (
+      bindings.some((binding) => binding.exportAttributionWithdrawn) ||
+      (symbol !== "default" &&
+        model.exports.some(
+          (exp) => exp.kind === "default" && exp.syntax === "commonjs",
+        ))
+    ) {
+      incompleteness.push({
+        reason: "unresolved_entrypoint_root_candidate",
+        exportedName: symbol,
+      });
+    }
+    if (bindings.length === 0) {
+      // ADR 0011 § 3: a configured symbol nothing in the file publishes
+      // did not materialize -- the file's exported value is opaque here,
+      // or the host calls a name the file never exports.
+      incompleteness.push({
+        reason: "unresolved_entrypoint_root_candidate",
+        exportedName: symbol,
+      });
     }
   }
 
   // P0-Z round 3 -- THE ROOT MATERIALIZATION CONTRACT.
   //
-  // A candidate NAME is not a root; a NODE is. Every check above can
-  // silently find nothing, and before this the derivation was still
-  // reported COMPLETE -- which is exactly how `const alias = bad;
+  // A candidate is not a root; a NODE is. Every lookup above can silently
+  // find nothing, and before P0-Z the derivation was still reported
+  // COMPLETE -- which is exactly how `const alias = bad;
   // module.exports.run = alias` certified `reachableSubgraphComplete:
   // true` over a live sink: `alias` names no callable, `bad` was never
   // contributed, and the entrypoint ended up rooted at `<module>` alone.
@@ -1384,30 +1468,24 @@ function entrypointSourceNodes(
   // cannot answer "did this materialize" without the graph, which is the
   // missing semantic dependency that justifies touching this file at all.
   //
-  // A requirement is satisfied by ANY of its alternatives: the same
-  // binding materializes by POSITION for `const alias = function(){}` and
-  // by NAME for an arrow indexed under its variable. Bindings that
-  // provably publish no callable emit no requirement, so "there is no
-  // root here" remains a complete answer and valid Family C survives.
-  const unmaterialized = candidates.rootRequirements.filter(
+  // A requirement is satisfied by ANY of its positions, and by nothing
+  // else (task V-3): a node that merely shares a name's spelling once
+  // satisfied it, and a nested decoy stood in for the export (PRM-31).
+  // Bindings that provably publish no callable emit no requirement, so
+  // "there is no root here" remains a complete answer and valid Family C
+  // survives.
+  const unmaterialized = requirements.filter(
     (requirement) =>
-      !requirement.names.some((name) =>
-        graph.nodes.some((n) => isNamedNode(n, entrypoint.filePath, name)),
-      ) &&
-      !requirement.locations.some((location) =>
-        graph.nodes.some(
-          (n) =>
-            n.module === entrypoint.filePath &&
-            n.location?.line === location.line &&
-            n.location?.column === location.column,
-        ),
+      !requirement.locations.some(
+        (location) =>
+          nodesAtLocation(graph, entrypoint.filePath, location).length > 0,
       ),
   );
 
   return {
     sources,
     incompleteness: [
-      ...candidates.incompleteness,
+      ...incompleteness,
       ...unmaterialized.map((requirement) => ({
         reason: "unresolved_entrypoint_root_candidate" as const,
         exportedName: requirement.exportedName,
