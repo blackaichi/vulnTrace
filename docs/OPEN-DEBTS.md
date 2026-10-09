@@ -1068,6 +1068,27 @@ cases: verdict differential 3 (those three, `AFFECTED` → `UNKNOWN`, 0 into
 `NOT_AFFECTED`), proof 3, graph 3; validation equals the D-09 baseline.
 This entry still stands: lanes E, C (C-2..C-5) and B remain.
 
+**Progress, added by task `B-1` (2026-10-10).** Task B-1
+(`docs/tasks/B-1-provider-completeness.md`) started lane B. It fixes
+PRM-65 (only OSV's first results page was read: the provider now follows
+`next_page_token` to the end, and a page it cannot read completely, a
+repeated token or more than 100 pages fails the scan as a provider
+failure; the OSV cache key gains an answer-format marker so a first page
+cached before the fix is never served again), AUD-10 (a record the
+normalizer cannot use, malformed or unmatched, is an `undetermined`
+`unreportedCandidates` entry per exact instance, reason
+`advisory_record_malformed` under `analysis_precondition_unmet`, not
+only a diagnostic), AUD-11 (an empty `id` is refused by the normalizer
+and accounted the same way, instead of failing the output schema and
+losing the report) and AUD-14 (a withdrawn advisory is the new
+`withdrawn` disposition, by decision 10; output schema `0.7`). Invariant
+`VT-INV-B-provider-completeness`. Found RWF-090 (the schema documents
+"category if and only if undetermined" and does not enforce it;
+`BL-059`). Over the 139 corpus cases: verdict differential 0, proof 0,
+graph 0, unreported candidates +0/−0 (no recorded OSV answer is
+paginated, withdrawn or unusable); validation equals the D-09 baseline.
+This entry still stands: lanes E, C (C-2..C-5) and B (B-2..B-6) remain.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

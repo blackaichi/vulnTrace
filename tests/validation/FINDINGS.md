@@ -164,11 +164,11 @@ A mismatch either way fails the generator, naming the ID.
 | AUD-07 | `vuln-lib` (synthetic fixture), cache | The default OSV cache directory lives inside the scanned project's own tree, and its contents are trusted unvalidated | silent drop — see below | Open |
 | AUD-08 | `vuln-lib` (synthetic fixture), lockfile/disk mismatch | A package really loaded from disk but missing from `package-lock.json` is never queried or reported | silent drop — see below | Open |
 | AUD-09 | `vuln-lib` (synthetic fixture) | A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected | silent drop (false "not applicable") — see below | Open |
-| AUD-10 | `vuln-lib` (synthetic fixture) | A malformed OSV record is dropped to diagnostics only, with no `unreportedCandidates` entry | silent drop (product/observability) — see below | Open |
-| AUD-11 | `vuln-lib` (synthetic fixture) | A single OSV record with an empty `id` string fails schema validation and discards the whole report | scan abort — see below | Open |
+| AUD-10 | `vuln-lib` (synthetic fixture) | A malformed OSV record is dropped to diagnostics only, with no `unreportedCandidates` entry | silent drop (product/observability) — see below | **Fixed** (B-1) — see below |
+| AUD-11 | `vuln-lib` (synthetic fixture) | A single OSV record with an empty `id` string fails schema validation and discards the whole report | scan abort — see below | **Fixed** (B-1) — see below |
 | AUD-12 | `vuln-lib` (synthetic fixture) | An all-UNKNOWN scan exits 0, identical to a clean scan, with no machine-readable signal that nothing was decided | false reason / product — see below | Open |
 | AUD-13 | `vuln-lib` (synthetic fixture) | Babel-style `__esModule` interop is not modeled for a default ESM import of a CommonJS module | false AFFECTED — see below | Open |
-| AUD-14 | `vuln-lib` (synthetic fixture) | An OSV record's `withdrawn` field is not parsed; a withdrawn advisory is still analyzed | false AFFECTED — see below | Open |
+| AUD-14 | `vuln-lib` (synthetic fixture) | An OSV record's `withdrawn` field is not parsed; a withdrawn advisory is still analyzed | false AFFECTED — see below | **Fixed** (B-1) — see below |
 | AUD-15 | `vuln-lib` (synthetic fixture) | An UNKNOWN's reason text falsely claims a package "was never traversed" when the true cause is that no rule names it | false reason — see below | Open |
 | AUD-16 | `vuln-lib` (synthetic fixture) | Two README sentences and two HTML-report sentences describe cache/no-finding behavior that AUD-05/06/07/08/09 show is false | disclosure — see below | Open |
 | PRM-12 | `vuln-lib` (synthetic fixture) | A call/`new` whose callee resolves to a Node builtin, but which receives a function-valued argument, emits no edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
@@ -203,7 +203,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-62 | `vuln-lib` (synthetic fixture) | An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value | false NOT_AFFECTED — see below | Open |
 | PRM-63 | `vuln-lib` (synthetic fixture) | Several ways of replacing/mutating `module.exports` (bracket member write, module-alias write, `Object.assign(module.exports, …)`) are not recognized as export writes | false NOT_AFFECTED (for the uncompensated shapes) — see below | Open |
 | PRM-64 | `foo` (synthetic workspace fixture) | A versionless package instance is evaluated only against advisories its own (missing) version would filter to | silent drop — see below | Open |
-| PRM-65 | `vuln-lib` (synthetic fixture), paginated OSV response | The real `OsvProvider` sends one request with no `page_token`, so a paginated OSV response's later pages are silently never seen | silent drop — see below | Open |
+| PRM-65 | `vuln-lib` (synthetic fixture), paginated OSV response | The real `OsvProvider` sends one request with no `page_token`, so a paginated OSV response's later pages are silently never seen | silent drop — see below | **Fixed** (B-1) — see below |
 | PRM-66 | `bad` (synthetic workspace fixture) | A workspace member with a malformed manifest is silently skipped only when its lockfile entry is versionless | silent drop (versionless lock entry only) — see below | Open |
 | PRM-67 | `vuln-lib` (synthetic fixture) | `SUPPORTED_MODEL_EXCLUSIONS` omits `--conditions` and `--import`/preload flags, so the model's stated scope is false | disclosure — see below | Open |
 | PRM-101 | `vuln-lib` (synthetic fixture) | Site B hands a phantom target to reachability with no closure corroboration, certifying export-*-only code unreachable although its top level runs | false NOT_AFFECTED — see below | **Fixed** (V-1) — see below |
@@ -264,6 +264,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-087 | `vuln-lib` (synthetic fixture) | TypeScript's NodeNext resolution matches the `types` export condition, which Node never does: a package whose `types` target is a runtime file was read through that file instead of the one Node loads | false NOT_AFFECTED (family A) — see below | **Fixed** (C-1) — see below |
 | RWF-088 | `vuln-lib` (synthetic fixture) | The declaration-only fallback took `main` or a stale sibling `.js` for a specifier Node resolves through an `exports` or `imports` map: a package without a `version`, a workspace symlink, a self-reference, a `#` specifier, a subpath proxy manifest with its own `name`, a declaration from a separate `@types` package | false NOT_AFFECTED (family A) — see below | **Fixed** (C-1) — see below |
 | RWF-089 | `vuln-lib` (synthetic fixture) | VT-304's declaration-only fallback prefers the package root's `main` for a SUBPATH specifier (`require("wrap/feature")` with only `feature.d.ts` resolvable to TypeScript): Node never uses the root `main` for a subpath, and loads `feature` | false NOT_AFFECTED (family A) — see below | Open |
+| RWF-090 | `schemas/result.schema.json` | The result schema states that an `unreportedCandidates` entry carries `category` "IF AND ONLY IF disposition is undetermined", and does not enforce it: an `undetermined` entry with no category and a `not_applicable` entry with one both validate | unenforced guarantee (output contract) — see below | Open |
 
 ---
 
@@ -16202,6 +16203,27 @@ Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-09"`. No
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-10"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task B-1, 2026-10-10): Fixed.** A record the
+normalizer cannot use is now an `unreportedCandidates` entry for every
+exact instance of the queried name: stage `advisory_applicability`,
+disposition `undetermined`, reason `advisory_record_malformed` (a new
+subtype of `analysis_precondition_unmet`, not a new category), naming
+the record's id when one can be read. The diagnostic and the stderr line
+are kept, with the same facts. Under `--cve`, such a record is filtered
+out only when its id and aliases can both be read and neither names the
+filter; one whose identity cannot be read may be the advisory asked for,
+and is accounted.
+
+Measured on the base (`a496141`), before the fix
+(`src/cli/scan.b1-provider-completeness.test.ts`, through the real
+`OsvProvider`): both of the audit's shapes -- `introduced: 0` (a
+number) and ecosystem `"NPM"` -- give no entry; after the fix, one
+`undetermined` entry each, per instance. Precision added to this record
+(AGENTS.md § C): the audit's own summary says "a malformed **or
+unmatched** OSV record"; the record above names only the first. Both
+reach the same `catch`, and both are fixed. Owner:
+`VT-INV-B-provider-completeness`.
+
 ---
 
 ## AUD-11 — A single OSV record with an empty `id` string fails schema validation and discards the whole report
@@ -16216,6 +16238,19 @@ Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-10"`. No
 The normalizer accepts `id: z.string()` without `.min(1)`. One record with `id: ""`, even for an unrelated package, fails `result.schema.json` validation at output time: exit 3, and the entire report — including real AFFECTED findings for other packages — is lost rather than that one record being skipped.
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-11"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task B-1, 2026-10-10): Fixed.** The normalizer requires
+a non-empty `id`, so a record with `id: ""` is refused there and
+accounted as one unusable record (AUD-10's channel, reason
+`advisory_record_malformed`, with no `vulnerability` field, since there
+is no usable id to name); it never reaches a finding. Measured on the
+base (`a496141`), before the fix: a real `AFFECTED` finding plus one
+`id: ""` record gave exit 3 and no report; after the fix, exit 1, the
+`AFFECTED` finding, and the record accounted
+(`src/cli/scan.b1-provider-completeness.test.ts`). The output schema's
+only advisory-derived field with a length constraint is the id
+(`findings[].vulnerability`, `unreportedCandidates[].vulnerability`);
+both are now produced only from a non-empty id.
 
 ---
 
@@ -16261,6 +16296,27 @@ Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-13"`. No
 The normalizer schema has no field for `withdrawn`; a record carrying `withdrawn: "2026-01-01…"` is analyzed exactly like a live advisory rather than being reported as an `unreportedCandidates` disposition.
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-14"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task B-1, 2026-10-10): Fixed, by the project owner's
+decision 10** (`docs/REMEDIATION-PLAN.md` § 6.1). The normalizer reads
+`withdrawn` (OSV: "an RFC3339-formatted timestamp in UTC", the time the
+entry "should be considered to have been withdrawn"). An advisory
+withdrawn by the time of the scan is not analyzed: it is an
+`unreportedCandidates` entry per exact instance with the new disposition
+`withdrawn`, reason `advisory_withdrawn` and no category (the provider's
+certain statement about the advisory, like `not_applicable`; never a
+`NOT_AFFECTED`). Output schema `0.6` → `0.7`; the schema refuses a
+`withdrawn` entry with a category, with another reason, or naming no
+advisory. Three choices this task made where decision 10 is silent, each
+in the fail-closed direction: a `withdrawn` time still in the future is
+not yet a withdrawal (analyzed); a `withdrawn` the normalizer cannot read
+makes the record unusable (`advisory_record_malformed`), neither
+withdrawn nor live; a live copy of an id displaces a withdrawn copy.
+Measured on the base (`a496141`), before the fix: a withdrawn advisory
+whose target the application calls was `AFFECTED`; after the fix, no
+finding and one `withdrawn` entry per instance; the not-withdrawn and
+future-withdrawn controls stay `AFFECTED`
+(`src/cli/scan.b1-provider-completeness.test.ts`).
 
 ---
 
@@ -17432,6 +17488,24 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-64 F
 `OsvProvider` never follows `next_page_token`, so an advisory on a second results page is never fetched. Reproduced with a synthetic paginated response; depends on OSV emitting `next_page_token` for large result sets, which OSV documents.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-65 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task B-1, 2026-10-10): Fixed, by the project owner's
+decision 5** (`docs/REMEDIATION-PLAN.md` § 6.1). `OsvProvider` follows
+`next_page_token`, repeating the query with a top-level `page_token`
+until no token is returned, and returns every page; OSV's documentation
+(`post-v1-query`, read 2026-10-09) confirms the protocol and that a page
+may carry a token and no records. A failed page, a repeated token, a
+token that is not a non-empty string, and an answer longer than the page
+cap (100) fail the query as `OsvResponseError` -- exit 4, never a
+shorter list. The OSV cache key gains an answer-format marker, so an
+entry cached before the fix (a first page only, under the same tool
+version, with no expiry until B-3) is never served again. Measured on
+the base (`a496141`), before the fix: an advisory on page 2 gave no
+finding; after the fix, `AFFECTED`, as the one-page control
+(`src/cli/scan.b1-provider-completeness.test.ts`,
+`src/vulnerabilities/osv-provider.pagination.test.ts`,
+`src/cache/osv-cache.test.ts`). Owner:
+`VT-INV-B-provider-completeness`.
 
 ---
 
@@ -19876,3 +19950,34 @@ C-1's guard and could take the same `main` preference.
 C-1's `exports` / `imports` guard (RWF-088) is sound for what it covers;
 VT-304's fallback as a whole is not, by this finding. Fix idea: take
 `main` only when the specifier is the bare package name.
+
+---
+
+## RWF-090 — The result schema documents "category if and only if undetermined" for unreported candidates and does not enforce it
+
+**Status:** Open
+**Failure class:** unenforced guarantee (output contract)
+**Defect class:** not applicable (no analyzer attribution involved)
+**Proof family affected:** none (no verdict, no proof)
+**Severity:** Low (the scan obeys the rule at every site that emits an entry; nothing checks it)
+**Fix lane:** B (output contract); backlog `BL-059`
+
+**Discovered:** by task B-1, adding the `withdrawn` disposition. The
+`category` property of `unreportedCandidates[]` in
+`schemas/result.schema.json` says "present IF AND ONLY IF disposition is
+undetermined", and `src/cli/output.ts` says the same of
+`UnreportedCandidate.category`; F3 made this the structural defence that
+keeps out-of-range packages out of every uncertainty count ("self-review
+attack C"). Neither the schema nor the type enforces it. Measured with
+the production schema and Ajv (strict, as `validateScanOutput` compiles
+it) at B-1's branch: an `undetermined` entry with no `category`
+validates, and a `not_applicable` entry with `category:
+"budget_exceeded"` validates. B-1 enforces the rule for its own new
+disposition only (a `withdrawn` entry with a category is refused),
+because no earlier result could carry that value; enforcing it for the
+two existing dispositions is a schema tightening that the additivity
+invariant (`schema-additivity`) has to weigh -- a result an external
+producer emitted against `0.6` could stop validating -- so it is left
+for its own task. Fix idea: an `if` / `then` per disposition in the
+schema, plus a discriminated union for `UnreportedCandidate` in
+`output.ts`, with the additivity test stating why it still holds.

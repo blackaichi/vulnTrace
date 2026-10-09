@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: B-1
 - **Branch**: b-1-provider-completeness
 - **Base SHA**: a4961416f29b2984dbf6e4d8bfd1b7ce01a60259
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `b226715` docs(tasks): B-1 task file — provider completeness
+  - `945f9e8` test(B-1): provider completeness — PRM-65, AUD-10, AUD-11, AUD-14
+  - `a1d0467` fix(B-1): every OSV advisory ends in a finding or an accounted entry
+  - (this commit) docs(B-1): records — PRM-65, AUD-10, AUD-11, AUD-14 fixed, RWF-090, plan § 5a, debts, architecture, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -185,3 +189,37 @@ differential; validation exactly the five D-09 known failures (`RWB-03`,
 ## Report
 
 In the format of `AGENTS.md` § J.
+
+## Corrections (appended during the task)
+
+- **Choices decision 10 does not make**, each taken in the fail-closed
+  direction and recorded in FINDINGS AUD-14's status update: a
+  `withdrawn` time still in the future is not a withdrawal yet (the
+  advisory is analyzed); a `withdrawn` the normalizer cannot read makes
+  the record unusable (`advisory_record_malformed`), neither withdrawn
+  nor live; a live copy of an id displaces a withdrawn copy. None of them
+  is a STOP condition: none needs a judgement about a rule or a verdict.
+- **`--cve` and unusable records** (code read): `--cve` filtered a usable
+  advisory by its id and aliases; an unusable record has none it can be
+  trusted for. Taken: filtered out only when both are readable and
+  neither names the filter. B-5 keeps the rest of `--cve`.
+- **The acceptance criterion "still rejects a `withdrawn` entry with a
+  category"** assumed the schema enforced "category if and only if
+  undetermined". It does not, for any disposition (measured with the
+  production schema and Ajv): registered as RWF-090 (`BL-059`). B-1
+  enforces it for `withdrawn`, which no earlier result could carry, so
+  the change stays additive.
+- **The SOUNDNESS-CONTRACT examples** carry the schema version; they are
+  compared byte for byte with fresh scans (`src/testing/docs-contract.test.ts`),
+  so `0.6` → `0.7` there too.
+- **Backlog § 2** lacked rows for C-1's RWF-085, RWF-086 and RWF-089
+  (the table asks the registering task to add them); added by B-1.
+- **Independent audit: CERTIFIED**, with non-blocking findings fixed on
+  the branch (a `null` record crashing the identity reader; tests for a
+  later page's failure and for cross-query de-duplication; the
+  invariant's "exactly one" wording) and notes recorded in
+  REMEDIATION-PLAN § 5a, "B-1 additions". The full verdict is in the pull
+  request.
+- **Acceptance criteria**, answered: every box above is yes. The
+  `withdrawn`-with-a-category criterion holds for `withdrawn`; the same
+  rule for the other dispositions is RWF-090.

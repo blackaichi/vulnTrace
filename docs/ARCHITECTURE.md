@@ -260,11 +260,13 @@ no code path converts one into a finding.
 | Disposition | Meaning |
 | --- | --- |
 | `not_applicable` | The installed version is outside every affected range. Real information, arrived at with certainty. Carries **no category at all**, structurally, so a consumer summing categories cannot count patched packages as analysis gaps. |
-| `undetermined` | Applicability could not be established. Carries a category. |
+| `undetermined` | Applicability could not be established. Carries a category. Since task B-1 this includes an advisory record the provider returned and the normalizer could not use (`advisory_record_malformed`). |
+| `withdrawn` | The provider withdrew the advisory, so it was not analyzed (task B-1, decision 10; schema `0.7`). The provider's statement about the advisory, made with certainty: like `not_applicable`, **no category**. |
 
-**Neither is a `NOT_AFFECTED`.** A `not_applicable` entry is a statement
-about version ranges and nothing else: no reachability analysis ran, so no
-negative proof exists and nothing may promote it to one.
+**None is a `NOT_AFFECTED`.** A `not_applicable` entry is a statement
+about version ranges and nothing else, and a `withdrawn` entry a statement
+about the advisory: no reachability analysis ran for either, so no
+negative proof exists and nothing may promote one to it.
 
 Two consequences worth stating plainly:
 
@@ -275,7 +277,10 @@ Two consequences worth stating plainly:
   to query or resolve metadata. There is no advisory to name, so naming one
   would be fabrication.
 
-Owned by `src/cli/scan.f3-no-finding.test.ts`.
+Owned by `src/cli/scan.f3-no-finding.test.ts`; the `withdrawn` and
+`advisory_record_malformed` entries by
+`src/cli/scan.b1-provider-completeness.test.ts`
+(`VT-INV-B-provider-completeness`).
 
 ## 7. Target authority (P1-A)
 
