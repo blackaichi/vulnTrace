@@ -952,12 +952,23 @@ function renderCoverage(coverage: Coverage): string {
  *  - No verdict badge, no severity, no confidence, no evidence path --
  *    none of which exist on these entries, and any of which would invite
  *    the reading.
- *  - The two dispositions are labelled in WORDS, not tokens, and the
+ *  - Every disposition is labelled in WORDS, not tokens, and the
  *    not-applicable label says what it actually means ("does not apply")
  *    rather than anything that could be mistaken for a proof of safety.
  *  - The lead paragraph states the negative directly, because a reader
  *    skimming headings is exactly who would otherwise get this wrong.
  */
+/**
+ * One label per disposition, in a `Record` so a new disposition is a
+ * compile error here rather than a fallthrough to another's label (task
+ * B-1: `withdrawn` would otherwise have read "Undetermined").
+ */
+const DISPOSITION_LABEL: Record<UnreportedCandidate["disposition"], string> = {
+  not_applicable: `<span class="disposition-na">Does not apply</span>`,
+  undetermined: `<span class="disposition-undetermined">Undetermined</span>`,
+  withdrawn: `<span class="disposition-na">Withdrawn by the provider</span>`,
+};
+
 function renderUnreportedCandidates(
   candidates: readonly UnreportedCandidate[],
 ): string {
@@ -970,10 +981,7 @@ function renderUnreportedCandidates(
       const identity =
         candidate.packageInstance ?? candidate.package ?? "(whole project)";
       const advisory = candidate.vulnerability ?? "—";
-      const disposition =
-        candidate.disposition === "not_applicable"
-          ? `<span class="disposition-na">Does not apply</span>`
-          : `<span class="disposition-undetermined">Undetermined</span>`;
+      const disposition = DISPOSITION_LABEL[candidate.disposition];
       const classification =
         candidate.category === undefined
           ? ""
@@ -993,7 +1001,7 @@ function renderUnreportedCandidates(
     `<section id="unreported-candidates" class="panel">` +
     `<h2>Candidates with no finding</h2>` +
     `<p><strong>Nothing in this section is a reported vulnerability.</strong> These are advisory/package pairs that produced no finding row, listed so that a missing row can be told apart from a row nobody could produce.</p>` +
-    `<p>“Does not apply” means the installed version is outside every affected range the advisory declares — a conclusion about version ranges only. No reachability analysis was performed for those rows, so they are <em>not</em> proofs of non-reachability and are not NOT_AFFECTED verdicts. “Undetermined” means VulnTrace could not establish whether the advisory applies, and claims nothing either way.</p>` +
+    `<p>“Does not apply” means the installed version is outside every affected range the advisory declares — a conclusion about version ranges only. No reachability analysis was performed for those rows, so they are <em>not</em> proofs of non-reachability and are not NOT_AFFECTED verdicts. “Undetermined” means VulnTrace could not establish whether the advisory applies, and claims nothing either way. “Withdrawn by the provider” means the advisory database withdrew the advisory, so it was not analyzed; that is the database’s statement about the advisory, not a proof about this package.</p>` +
     `<div class="table-scroll"><table class="kv">` +
     `<thead><tr><th scope="col">Disposition</th><th scope="col">Advisory</th><th scope="col">Instance</th><th scope="col">Reason</th></tr></thead>` +
     `<tbody>${rows}</tbody>` +

@@ -183,6 +183,9 @@ export const UNCERTAINTY_REASONS = [
   "workspace_enumeration_truncated",
   "workspace_layout_unsupported",
 
+  // --- Scan-stage, advisory intake (cli/scan.ts, task B-1) ---
+  "advisory_record_malformed",
+
   // --- The runtime floor; see `classifyUncertaintyReason` ---
   "unclassified_uncertainty_reason",
 ] as const;
@@ -390,6 +393,13 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // so that if it ever is, it degrades to UNKNOWN with a named reason
   // rather than to a NOT_AFFECTED with no evidence.
   unreachability_not_positively_established: "analysis_precondition_unmet",
+  // Task B-1 (AUD-10, AUD-11): the provider returned an advisory record
+  // the normalizer cannot use -- a shape it refuses, an empty id, an
+  // unreadable `withdrawn`, or no `affected` entry for the package the
+  // query named. The advisory itself, the input every later stage
+  // depends on, was never obtained in usable form: a missing precondition,
+  // not an ambiguous identity and not a syntax the frontend could learn.
+  advisory_record_malformed: "analysis_precondition_unmet",
   // Family C's closure corroboration (task V-1): the module-load closure
   // loads a module whose top level the call graph never reached -- for
   // example one reached only through a re-export declaration (`export *

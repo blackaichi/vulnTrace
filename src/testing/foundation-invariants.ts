@@ -47,7 +47,9 @@ export interface InvariantOwnership {
     /** The soundness remediation's ADR 0010 (lane C; registered from task C-1). */
     | "ADR-0010"
     /** The soundness remediation's ADR 0011 (lane V; registered from task V-3). */
-    | "ADR-0011";
+    | "ADR-0011"
+    /** The soundness remediation's lane B point fixes (REMEDIATION-PLAN § 7; from task B-1). */
+    | "LANE-B";
   /** Repo-relative test files that own it. Each must exist and be gated. */
   readonly owners: readonly string[];
   /** Why these owners, and what each one is responsible for. */
@@ -555,6 +557,37 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "fallback for a package with exports. The end-to-end verdicts are " +
       "tests/oracle/c1-runtime-resolution.test.ts, run in CI by " +
       "`npm run test:oracle`.",
+  },
+
+  // ------------------------------------------------------------------
+  // Lane B: intake, cache, output (REMEDIATION-PLAN § 7)
+  // ------------------------------------------------------------------
+  {
+    id: "VT-INV-B-provider-completeness",
+    invariant:
+      "Every advisory record the vulnerability provider answers for an " +
+      "installed package is accounted: by a finding, or by an " +
+      "unreportedCandidates entry per exact instance saying why there is " +
+      "none (both, when a usable and an unusable copy share an id). The provider's answer is every OSV results page; an answer " +
+      "it cannot read completely (a failed page, a repeated or malformed " +
+      "token, more pages than the cap) fails the scan as a provider " +
+      "failure, never as a shorter list. A record the normalizer cannot use " +
+      "is an `undetermined` entry (`advisory_record_malformed`, " +
+      "analysis_precondition_unmet), never only a diagnostic, and never a " +
+      "finding that fails the output schema. A withdrawn advisory is a " +
+      "`withdrawn` entry with no category, never analyzed.",
+    foundation: "LANE-B",
+    owners: [
+      "src/cli/scan.b1-provider-completeness.test.ts",
+      "src/vulnerabilities/osv-provider.pagination.test.ts",
+    ],
+    note:
+      "Task B-1 (PRM-65, AUD-10, AUD-11, AUD-14). The provider test owns " +
+      "pagination and its failure modes against a stubbed fetch; the scan " +
+      "test owns the accounting end to end through the real OsvProvider, " +
+      "the result schema's withdrawn rule and the HTML label. Loud fixture: " +
+      "every rule targets an export the application calls, so an advisory " +
+      "that disappears is a missing AFFECTED, never a quiet UNKNOWN.",
   },
 ];
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vulntrace.dev/schema/result-0.6.json",
+  "$id": "https://vulntrace.dev/schema/result-0.7.json",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -296,6 +296,7 @@
                     "workspace_pattern_unsupported",
                     "workspace_enumeration_truncated",
                     "workspace_layout_unsupported",
+                    "advisory_record_malformed",
                     "unclassified_uncertainty_reason"
                   ],
                   "description": "The specific reason, one level below category. Every DynamicCallReason appears verbatim, so a token here is the same string the diagnostics prose names. This enum grows ADDITIVELY: P1-B1 added the eight unsupported_* subtypes that decompose unsupported_construct into the specific frontend modeling gap behind each occurrence, and retained unsupported_construct itself as their runtime floor, so no previously emitted token was removed or given a new meaning. All nine share the unmodeled_construct category, so a consumer aggregating by category is unaffected; a consumer matching the exact string unsupported_construct will now see fewer of them and should match the unsupported_ prefix, or aggregate by category, instead."
@@ -491,6 +492,32 @@
           "reason",
           "detail"
         ],
+        "if": {
+          "properties": {
+            "disposition": {
+              "const": "withdrawn"
+            }
+          },
+          "required": [
+            "disposition"
+          ]
+        },
+        "then": {
+          "description": "0.7, task B-1: a withdrawn entry names the advisory the provider withdrew, says so with its own reason, and carries no uncertainty category, structurally. Enforced for this disposition only, which no earlier result could carry, so the rule is additive.",
+          "required": [
+            "vulnerability"
+          ],
+          "properties": {
+            "vulnerability": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reason": {
+              "const": "advisory_withdrawn"
+            },
+            "category": false
+          }
+        },
         "properties": {
           "stage": {
             "enum": [
@@ -503,9 +530,10 @@
           "disposition": {
             "enum": [
               "not_applicable",
-              "undetermined"
+              "undetermined",
+              "withdrawn"
             ],
-            "description": "Whether the absence of a finding is a CONCLUSION or a GAP, and the most important field here. not_applicable: VulnTrace positively established that the advisory does not apply -- the installed version is outside every affected range. That is real information arrived at with certainty and is NOT uncertainty; it carries no category and must never be counted as an analysis gap. It is equally NOT a NOT_AFFECTED verdict: it is a statement about version ranges only, no reachability analysis ran, and no negative proof exists. undetermined: applicability could not be established, so nothing is claimed either way."
+            "description": "Whether the absence of a finding is a CONCLUSION or a GAP, and the most important field here. not_applicable: VulnTrace positively established that the advisory does not apply -- the installed version is outside every affected range. That is real information arrived at with certainty and is NOT uncertainty; it carries no category and must never be counted as an analysis gap. It is equally NOT a NOT_AFFECTED verdict: it is a statement about version ranges only, no reachability analysis ran, and no negative proof exists. undetermined: applicability could not be established, so nothing is claimed either way. withdrawn (0.7): the provider withdrew the advisory, so it was not analyzed; a statement about the advisory, made by the provider with certainty, so it carries no category; equally NOT a NOT_AFFECTED verdict."
           },
           "vulnerability": {
             "type": "string",
@@ -583,10 +611,12 @@
               "workspace_pattern_unsupported",
               "workspace_enumeration_truncated",
               "workspace_layout_unsupported",
+              "advisory_record_malformed",
               "unclassified_uncertainty_reason",
-              "advisory_not_applicable_to_installed_version"
+              "advisory_not_applicable_to_installed_version",
+              "advisory_withdrawn"
             ],
-            "description": "The specific reason, from the same vocabulary unknownReasons uses -- one token namespace, not two -- plus advisory_not_applicable_to_installed_version, which is deliberately NOT an uncertainty reason: it has no category, can never appear in unknownReasons, and so cannot be aggregated into an uncertainty count by mistake."
+            "description": "The specific reason, from the same vocabulary unknownReasons uses -- one token namespace, not two -- plus advisory_not_applicable_to_installed_version and advisory_withdrawn (0.7), which are deliberately NOT uncertainty reasons: they have no category, can never appear in unknownReasons, and so cannot be aggregated into an uncertainty count by mistake."
           },
           "category": {
             "enum": [

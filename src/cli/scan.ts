@@ -33,7 +33,10 @@ import {
   createScanModuleIdentityCache,
 } from "../domain/resolved-target.js";
 import type { Finding } from "../domain/verdict.js";
-import type { Vulnerability } from "../domain/vulnerability.js";
+import type {
+  RawVulnerability,
+  Vulnerability,
+} from "../domain/vulnerability.js";
 import { indexRulesByVulnerabilityId, loadRuleFile } from "../rules/index.js";
 import type { VulnerableSymbolRule } from "../domain/target.js";
 import { discoverEntrypoints } from "../analysis/entrypoints.js";
@@ -175,6 +178,77 @@ function loadRules(
     rules.push(...loadRuleFile(path.resolve(projectRoot, file)));
   }
   return rules;
+}
+
+/**
+ * What can be read of an advisory record's identity WITHOUT trusting the
+ * record (task B-1): a non-empty string `id`, and `aliases` when it is
+ * absent (OSV's default, none) or an array of strings. `aliases:
+ * undefined` here means "could not be read", not "none".
+ */
+interface ReadableRecordIdentity {
+  readonly id?: string;
+  readonly aliases?: readonly string[];
+}
+
+/** An advisory record the normalizer refused, and why (task B-1). */
+interface UnusableAdvisoryRecord {
+  readonly identity: ReadableRecordIdentity;
+  readonly problem: string;
+}
+
+function readableRecordIdentity(raw: RawVulnerability): ReadableRecordIdentity {
+  // The type says a record; a cached answer is read back unchecked (B-3),
+  // so a `null` or non-object entry can reach here, and it must be
+  // accounted, not crash the scan (B-1's independent audit, finding 1).
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return {};
+  }
+  const id = typeof raw.id === "string" && raw.id !== "" ? raw.id : undefined;
+  const aliases =
+    raw.aliases === undefined
+      ? []
+      : Array.isArray(raw.aliases) &&
+          raw.aliases.every((alias) => typeof alias === "string")
+        ? (raw.aliases as readonly string[])
+        : undefined;
+  return {
+    ...(id !== undefined ? { id } : {}),
+    ...(aliases !== undefined ? { aliases } : {}),
+  };
+}
+
+/**
+ * Whether `--cve` may select an unusable record (task B-1). Only a record
+ * whose id AND aliases were both read, and neither names the filter, is
+ * provably another advisory; any record whose identity could not be read
+ * may be the one asked for, and is kept (fail closed: kept is accounted,
+ * dropped is silent).
+ */
+function mayMatchCveFilter(
+  identity: ReadableRecordIdentity,
+  cveFilter: string | undefined,
+): boolean {
+  if (cveFilter === undefined || identity.id === cveFilter) {
+    return true;
+  }
+  if (identity.aliases?.includes(cveFilter) === true) {
+    return true;
+  }
+  return identity.id === undefined || identity.aliases === undefined;
+}
+
+/**
+ * Whether the provider had withdrawn `vulnerability` by `at` (task B-1,
+ * AUD-14). OSV's `withdrawn` is the time the entry "should be considered
+ * to have been withdrawn": a time still in the future is not a withdrawal
+ * yet. The normalizer admits only a timestamp `Date.parse` reads.
+ */
+function isWithdrawnBy(vulnerability: Vulnerability, at: number): boolean {
+  return (
+    vulnerability.withdrawn !== undefined &&
+    Date.parse(vulnerability.withdrawn) <= at
+  );
 }
 
 /**
@@ -844,6 +918,11 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     // advisory. Same query set as before this change; only the pairing of
     // answers to instances widened.
     const vulnerabilitiesById = new Map<string, Vulnerability>();
+    // Task B-1 (AUD-10, AUD-11): every record the provider returned that
+    // the normalizer could not use. Each is accounted below against every
+    // instance of this name, exactly as a usable advisory is evaluated
+    // against every instance -- never only a line in `diagnostics`.
+    const unusableRecords = new Map<string, UnusableAdvisoryRecord>();
 
     for (const version of advisoryQueryVersions(candidates)) {
       let rawVulnerabilities;
@@ -873,14 +952,33 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
           // versions' queries is ONE advisory evaluated once per instance,
           // not one duplicate finding per query that happened to return
           // it. First write wins under a sorted version order, so which
-          // copy is kept does not depend on enumeration order.
-          if (!vulnerabilitiesById.has(vulnerability.id)) {
+          // copy is kept does not depend on enumeration order -- except
+          // that a live copy always displaces a withdrawn one (task B-1):
+          // dropping a live advisory is the direction that hides a
+          // finding, so it never depends on which copy came first.
+          const kept = vulnerabilitiesById.get(vulnerability.id);
+          if (
+            kept === undefined ||
+            (isWithdrawnBy(kept, scanStart) &&
+              !isWithdrawnBy(vulnerability, scanStart))
+          ) {
             vulnerabilitiesById.set(vulnerability.id, vulnerability);
           }
         } catch (error) {
           const message = `skipping malformed vulnerability record for ${packageName}@${version}: ${errorMessage(error)}`;
           io.stderr(`vulntrace: ${message}\n`);
           diagnostics.push({ source: "vulnerabilities", message });
+          // One entry per distinct record: the same record returned by
+          // two versions' queries is one unusable advisory, as one usable
+          // advisory is one advisory. The first query's reason is kept,
+          // under the same sorted version order.
+          const key = JSON.stringify(raw);
+          if (!unusableRecords.has(key)) {
+            unusableRecords.set(key, {
+              identity: readableRecordIdentity(raw),
+              problem: errorMessage(error),
+            });
+          }
         }
       }
     }
@@ -893,6 +991,12 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
           vulnerability.aliases.includes(cveFilter),
       )
       .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    // An unusable record is filtered out by `--cve` only when its own id
+    // and aliases can be read and provably name another advisory; one
+    // whose identity cannot be read may be the advisory asked for.
+    const relevantUnusable = [...unusableRecords.values()].filter((record) =>
+      mayMatchCveFilter(record.identity, cveFilter),
+    );
 
     // FAN OUT PER EXACT INSTANCE. Each one is resolved, evaluated and
     // proved entirely on its own: `buildFinding` still reasons about
@@ -924,11 +1028,11 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
       // There is no advisory to name, so there is no finding to make --
       // only a candidate that was never resolvable, which is what this
       // entry says.
+      const instance = describePackageInstance(
+        candidate.packageInstance,
+        projectRoot,
+      );
       if (candidate.version === undefined && relevant.length === 0) {
-        const instance = describePackageInstance(
-          candidate.packageInstance,
-          projectRoot,
-        );
         unreportedCandidates.push({
           stage: "package_identity",
           disposition: "undetermined",
@@ -938,13 +1042,72 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
           category: UNCERTAINTY_REASON_CATEGORY.installed_version_unavailable,
           detail:
             `package instance "${instance}" (${packageName}) has no established ` +
-            `version, and no advisory was discovered for any sibling instance of ` +
+            `version, and no ${relevantUnusable.length > 0 ? "usable " : ""}advisory ` +
+            `was discovered for any sibling instance of ` +
             `this name, so no advisory was ever evaluated against it; whether any ` +
             `vulnerability applies to this instance is undetermined`,
         });
       }
 
+      // Task B-1 (AUD-10, AUD-11). An advisory record the provider returned
+      // and the normalizer could not use was, before B-1, a diagnostic
+      // only -- or, with an empty id, a finding that failed the output
+      // schema and lost the whole report. It is a candidate this scan
+      // could not evaluate against this instance: `undetermined`, never a
+      // finding (there is no usable advisory to give one) and never
+      // silence. Its id is named only when one could be read.
+      for (const record of relevantUnusable) {
+        unreportedCandidates.push({
+          stage: "advisory_applicability",
+          disposition: "undetermined",
+          ...(record.identity.id !== undefined
+            ? { vulnerability: record.identity.id }
+            : {}),
+          package: packageName,
+          packageInstance: instance,
+          ...(candidate.version !== undefined
+            ? { version: candidate.version }
+            : {}),
+          reason: "advisory_record_malformed",
+          category: UNCERTAINTY_REASON_CATEGORY.advisory_record_malformed,
+          detail:
+            `the vulnerability provider returned an advisory record ` +
+            `${record.identity.id !== undefined ? `${record.identity.id} ` : "with no usable id "}` +
+            `for ${packageName} that could not be used (${record.problem}); ` +
+            `it was not evaluated against package instance "${instance}", so ` +
+            `whether it applies to this instance is undetermined`,
+        });
+      }
+
       for (const vulnerability of relevant) {
+        // Task B-1 (AUD-14, decision 10). An advisory the provider has
+        // withdrawn is not analyzed: before B-1 it was, and could be
+        // reported AFFECTED. Recorded per exact instance, as a certain
+        // disposition with no category -- the provider's statement about
+        // the advisory, not uncertainty, and not a NOT_AFFECTED (no
+        // analysis ran). A `withdrawn` time still in the future is not a
+        // withdrawal yet (OSV: the time the entry "should be considered to
+        // have been withdrawn"), so that advisory is analyzed below.
+        if (isWithdrawnBy(vulnerability, scanStart)) {
+          unreportedCandidates.push({
+            stage: "advisory_applicability",
+            disposition: "withdrawn",
+            vulnerability: vulnerability.id,
+            package: packageName,
+            packageInstance: instance,
+            ...(candidate.version !== undefined
+              ? { version: candidate.version }
+              : {}),
+            reason: "advisory_withdrawn",
+            detail:
+              `the vulnerability provider withdrew ${vulnerability.id} ` +
+              `(withdrawn ${vulnerability.withdrawn}), so it was not analyzed ` +
+              `against package instance "${instance}"; this is the provider's ` +
+              `statement about the advisory, not a proof of non-reachability`,
+          });
+          continue;
+        }
+
         // Version applicability, evaluated PER INSTANCE against this
         // instance's own version and nothing else. An instance with no
         // established version is `indeterminate` -- it does not borrow a
