@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -188,6 +189,41 @@ describe("createCachingProvider", () => {
     await createCachingProvider(provider, store, "1.0.1").queryPackage(query);
 
     expect(callCount()).toBe(2);
+  });
+
+  // Task B-1, PRM-65. Before B-1 the provider returned OSV's FIRST PAGE as
+  // the whole answer, and this cache stored it under a key of tool version
+  // and query only, with no expiry. A cache warmed before the fix would
+  // otherwise keep serving that first page forever, and the fix would never
+  // reach it: an entry written under the pre-B-1 key is never reused.
+  it("never serves an entry written under the pre-pagination key (B-1)", async () => {
+    const dir = mkdtempSync(path.join(tmpdir(), "vulntrace-osv-cache-"));
+    const store = new FileOsvCacheStore(dir);
+    const prePaginationKey = createHash("sha256")
+      .update(
+        JSON.stringify({
+          toolVersion: "1.0.0",
+          ecosystem: query.ecosystem,
+          name: query.name,
+          version: query.version ?? null,
+        }),
+      )
+      .digest("hex");
+    store.set(prePaginationKey, [{ id: "GHSA-first-page-only" }]);
+
+    const results: RawVulnerability[] = [
+      { id: "GHSA-first-page-only" },
+      { id: "GHSA-second-page" },
+    ];
+    const { provider, callCount } = countingProvider(results);
+    const answer = await createCachingProvider(
+      provider,
+      store,
+      "1.0.0",
+    ).queryPackage(query);
+
+    expect(callCount()).toBe(1);
+    expect(answer).toEqual(results);
   });
 
   it("records a miss then a hit in the optional stats accumulator (docs/SDD.md § 30)", async () => {
