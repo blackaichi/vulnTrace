@@ -52,8 +52,27 @@ const OsvSeverityEntrySchema = z.object({
   score: z.string().optional(),
 });
 
+/**
+ * `id` is non-empty (task B-1, AUD-11): an empty id normalized, then
+ * failed `result.schema.json`'s `minLength: 1` at output time, which lost
+ * the whole report. Refused here, it is one unusable record the scan
+ * accounts.
+ *
+ * `withdrawn` (task B-1, AUD-14): OSV's "RFC3339-formatted timestamp in
+ * UTC (ending in 'Z')", the time the entry should be considered withdrawn.
+ * One this schema cannot read makes the record unusable -- never
+ * "withdrawn" (that would hide the advisory) and never "live" (that would
+ * ignore what the database said).
+ */
 const OsvRecordSchema = z.object({
-  id: z.string(),
+  id: z.string().min(1),
+  withdrawn: z
+    .string()
+    .datetime()
+    .refine((value) => !Number.isNaN(Date.parse(value)), {
+      message: "withdrawn is not a timestamp this runtime can compare",
+    })
+    .optional(),
   aliases: z.array(z.string()).default([]),
   affected: z.array(OsvAffectedSchema).default([]),
   references: z.array(OsvReferenceSchema).default([]),
@@ -189,5 +208,6 @@ export function normalizeOsvVulnerability(
     fixedVersions,
     references,
     severity: extractSeverity(record),
+    ...(record.withdrawn === undefined ? {} : { withdrawn: record.withdrawn }),
   };
 }

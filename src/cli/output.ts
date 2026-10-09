@@ -23,8 +23,11 @@ const schema = JSON.parse(readFileSync(schemaPath, "utf-8")) as AnySchemaObject;
 const ajv = new Ajv2020({ allErrors: true, strict: true });
 const validate = ajv.compile(schema);
 
-/** docs/SDD.md § 24's example output; matches schemas/result.schema.json's `$id`. */
-export const SCHEMA_VERSION = "0.6";
+/**
+ * docs/SDD.md § 24's example output; matches schemas/result.schema.json's
+ * `$id`. `0.7`: the `withdrawn` disposition (task B-1, decision 10).
+ */
+export const SCHEMA_VERSION = "0.7";
 
 export interface JsonTarget {
   readonly module: string;
@@ -84,8 +87,13 @@ export type UnreportedCandidateStage =
  *   because a taxonomy now exists to hold one.
  * - `undetermined`: VulnTrace could not establish whether the advisory
  *   applies, so nothing is claimed either way.
+ * - `withdrawn` (task B-1, AUD-14, decision 10): the provider withdrew the
+ *   advisory, so it was not analyzed. Like `not_applicable`, a statement
+ *   the provider made with certainty, not uncertainty, and it carries no
+ *   category; unlike it, a statement about the ADVISORY, not about this
+ *   instance's version.
  *
- * What neither value means is NOT_AFFECTED. A `not_applicable` entry is a
+ * What none of these values means is NOT_AFFECTED. A `not_applicable` entry is a
  * statement about VERSION RANGES and nothing else -- no reachability
  * analysis ran, no negative proof exists, and promoting one to a verdict
  * would be precisely the unproven negative AGENTS.md forbids (F3 § 25).
@@ -93,7 +101,8 @@ export type UnreportedCandidateStage =
  * rendered in different sections, so that promotion cannot happen by
  * accident.
  */
-export type UnreportedCandidateDisposition = "not_applicable" | "undetermined";
+export type UnreportedCandidateDisposition =
+  "not_applicable" | "undetermined" | "withdrawn";
 
 /**
  * FOUNDATION F3 -- one vulnerability candidate that produced NO finding
@@ -150,14 +159,17 @@ export interface UnreportedCandidate {
 /**
  * The reason vocabulary for {@link UnreportedCandidate}.
  *
- * Every uncertainty reason, plus the one token that is NOT an uncertainty:
- * `advisory_not_applicable_to_installed_version`. That token is
- * deliberately excluded from {@link UncertaintyReason} -- it has no
- * category, it can never appear in `unknownReasons`, and nothing can
- * aggregate it into an uncertainty count by mistake.
+ * Every uncertainty reason, plus the two tokens that are NOT uncertainty:
+ * `advisory_not_applicable_to_installed_version` and `advisory_withdrawn`
+ * (task B-1), one for each certain disposition. Both are deliberately
+ * excluded from {@link UncertaintyReason} -- they have no category, they
+ * can never appear in `unknownReasons`, and nothing can aggregate them
+ * into an uncertainty count by mistake.
  */
 export type UnreportedCandidateReason =
-  UncertaintyReason | "advisory_not_applicable_to_installed_version";
+  | UncertaintyReason
+  | "advisory_not_applicable_to_installed_version"
+  | "advisory_withdrawn";
 
 export interface ScanOutput {
   readonly schemaVersion: string;

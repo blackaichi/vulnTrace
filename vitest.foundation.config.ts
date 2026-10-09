@@ -99,6 +99,9 @@ export default defineConfig({
 
       "src/testing/runtime-resolution-census.test.ts",
       "src/code-intelligence/module-resolver.runtime-resolution.test.ts",
+
+      "src/cli/scan.b1-provider-completeness.test.ts",
+      "src/vulnerabilities/osv-provider.pagination.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take

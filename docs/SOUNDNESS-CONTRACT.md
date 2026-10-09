@@ -443,7 +443,7 @@ module.exports = { main };
 
 ```json
 {
-  "schemaVersion": "0.6",
+  "schemaVersion": "0.7",
   "scan": {
     "id": "00000000-0000-0000-0000-000000000000",
     "project": "<project>"
@@ -520,7 +520,7 @@ module.exports = { main };
 
 ```json
 {
-  "schemaVersion": "0.6",
+  "schemaVersion": "0.7",
   "scan": {
     "id": "00000000-0000-0000-0000-000000000000",
     "project": "<project>"
@@ -603,7 +603,7 @@ module.exports = { main };
 
 ```json
 {
-  "schemaVersion": "0.6",
+  "schemaVersion": "0.7",
   "scan": {
     "id": "00000000-0000-0000-0000-000000000000",
     "project": "<project>"

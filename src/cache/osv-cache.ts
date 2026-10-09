@@ -7,6 +7,16 @@ import type {
   VulnerabilityProvider,
 } from "../domain/vulnerability.js";
 
+/**
+ * What a cached answer IS, in the key (task B-1, PRM-65). Before B-1 the
+ * provider returned OSV's first results page as the whole answer, and
+ * entries never expire (AUD-06, task B-3): without this, a cache warmed
+ * before the fix would serve a first page forever, under the same tool
+ * version, and the fix would never reach it. Change it whenever what a
+ * provider answer contains changes.
+ */
+const CACHED_ANSWER_FORMAT = "osv-query-all-pages";
+
 export interface OsvCacheKeyInput {
   readonly toolVersion: string;
   readonly query: PackageQuery;
@@ -24,10 +34,13 @@ export interface OsvCacheKeyInput {
  * containing `/`) and must never be interpolated into a file path
  * directly (see docs/SDD.md § 29: "All external data must be parsed
  * defensively").
+ *
+ * {@link CACHED_ANSWER_FORMAT} is the third half (task B-1, PRM-65).
  */
 export function computeOsvCacheKey(input: OsvCacheKeyInput): string {
   const { toolVersion, query } = input;
   const canonical = JSON.stringify({
+    answerFormat: CACHED_ANSWER_FORMAT,
     toolVersion,
     ecosystem: query.ecosystem,
     name: query.name,

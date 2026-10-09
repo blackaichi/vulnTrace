@@ -31,9 +31,9 @@ cannot be averaged into one number without destroying both. Read the
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Foundation invariants with a named owner | 27 | structural — `src/testing/foundation-invariants.ts` | Every soundness property F1–F6 established has exactly one deterministic test that fails when it breaks. | Membership only. The map proves an owner exists and is executed; it cannot prove the owner's assertions are semantically adequate. |
-| Distinct owner test files | 42 | structural — the same map | The invariants are spread across independent suites rather than concentrated in one fragile file. | An owner may own more than one invariant; this is not a coverage percentage. |
-| Test files the gate executes | 42 | structural — `vitest.foundation.config.ts` | `npm run test:foundation` is a subset of `npm test`, never a second suite. | Gate files may contain assertions beyond the invariant they own. |
+| Foundation invariants with a named owner | 28 | structural — `src/testing/foundation-invariants.ts` | Every soundness property F1–F6 established has exactly one deterministic test that fails when it breaks. | Membership only. The map proves an owner exists and is executed; it cannot prove the owner's assertions are semantically adequate. |
+| Distinct owner test files | 44 | structural — the same map | The invariants are spread across independent suites rather than concentrated in one fragile file. | An owner may own more than one invariant; this is not a coverage percentage. |
+| Test files the gate executes | 44 | structural — `vitest.foundation.config.ts` | `npm run test:foundation` is a subset of `npm test`, never a second suite. | Gate files may contain assertions beyond the invariant they own. |
 | Invariants by originating task | F1 1, F2 3, F3 4, F4 4, F5 3, F6 5, VT-CONTRACT 1, P1-A 1 | structural — the same map | Shows which Foundation task each guarantee came from. | A task with fewer invariants did not necessarily do less work. |
 | Gate result | PASS (1356 tests, 29 files) | measured (deterministic) — `npm run test:foundation` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | The Foundation block's hard gate. It is offline and contains no network access at all. | Green means no listed invariant broke — not that the analyzer is sound. |
 
@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4830 tests, 198 files | measured (deterministic) — `npm test` at `a-2-possible-edge (base b7c8f57)`, 2026-09-29 | 211 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4830 tests, 198 files | measured (deterministic) — `npm test` at `a-2-possible-edge (base b7c8f57)`, 2026-09-29 | 213 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (deterministic) — `npm run test:validation` at `d-03-hermetic-osv-validation (base a87faa2)`, 2026-09-27 | Real npm-installed packages against real advisories, replayed from a recorded OSV snapshot since D-03 (was live). | Integration evidence and a provider-movement detector across re-recordings, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -69,7 +69,7 @@ cannot be averaged into one number without destroying both. Read the
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
 | Categories | 6 — unmodeled_construct, value_uncertainty, capability_escape, identity_unresolved, analysis_precondition_unmet, budget_exceeded | structural — `src/domain/uncertainty.ts` | Each category names a different KIND of work, which is the only property that makes a taxonomy worth having. | **Observational.** Nothing in the taxonomy authorizes a proof or is read by any branch that decides a verdict. |
-| Specific reasons classified | 55 | structural — the same file, exhaustiveness compile-enforced | Every `DynamicCallReason` appears verbatim and every reason has exactly one category. | Eight of them are the P1-B1 frontend-gap subtypes; `unsupported_construct` survives as their runtime floor, not as a bucket — see §7.1. |
+| Specific reasons classified | 56 | structural — the same file, exhaustiveness compile-enforced | Every `DynamicCallReason` appears verbatim and every reason has exactly one category. | Eight of them are the P1-B1 frontend-gap subtypes; `unsupported_construct` survives as their runtime floor, not as a bucket — see §7.1. |
 
 Reasons per category:
 
@@ -79,7 +79,7 @@ Reasons per category:
 | `value_uncertainty` | 3 |
 | `capability_escape` | 17 |
 | `identity_unresolved` | 9 |
-| `analysis_precondition_unmet` | 7 |
+| `analysis_precondition_unmet` | 8 |
 | `budget_exceeded` | 3 |
 
 ## 6. Real-world benchmark
