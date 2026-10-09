@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-09, by `C-1`.
+**Last updated:** 2026-10-10, by `B-1`.
 
 ## Objective
 
@@ -118,6 +118,17 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   declaration fallback's `exports` guard (RWF-088). The
   census `VT-INV-C-runtime-resolution` guards the authority. What binds
   C-2..C-5: REMEDIATION-PLAN § 5a, "C-1 additions".
+- Lane B has started. `B-1` made every advisory OSV returns end in a
+  finding or an accounted `unreportedCandidates` entry: the provider
+  follows `next_page_token` to the end (a page cap, a repeated token or a
+  failed page is a provider failure, exit 4), and the OSV cache key marks
+  the paginated answer format (PRM-65); a record the normalizer cannot use,
+  an empty `id` included, is an `undetermined` entry per instance
+  (`advisory_record_malformed`), never only a diagnostic or a lost report
+  (AUD-10, AUD-11); a withdrawn advisory is the new `withdrawn`
+  disposition, output schema `0.7` (AUD-14, decision 10). Invariant
+  `VT-INV-B-provider-completeness`. What binds B-2..B-6: REMEDIATION-PLAN
+  § 5a, "B-1 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -148,19 +159,26 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`C-1` — runtime resolution mode independent of tsconfig
-([task file](tasks/C-1-runtime-resolution-mode.md)): `READY_FOR_REVIEW`,
-its pull request awaiting the project owner. `V-4` merged as PR #89.
+`B-1` — provider completeness
+([task file](tasks/B-1-provider-completeness.md)): `READY_FOR_REVIEW`,
+its pull request awaiting the project owner. `C-1` merged as PR #90.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `C-1`:
-lane B (`B-1`..`B-6`). The P1 gaps `BL-048`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-1`:
+the rest of lane B (`B-2`..`B-6`). The P1 gaps `BL-057` and `BL-058`
+(small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
+
+From `B-1`: RWF-090 and `BL-059` (P3: the result schema documents
+"category if and only if undetermined" for unreported candidates and does
+not enforce it; B-1 enforces it for `withdrawn` only, because tightening
+the other dispositions weighs against schema additivity). B-1 also added
+the missing backlog § 2 rows for C-1's RWF-085, RWF-086 and RWF-089.
 
 From `C-1`: RWF-083 (fixed by it: a tsconfig `paths` / `baseUrl` mapping
 followed where Node loads an installed package), RWF-084 (ADR 0010 § 5's

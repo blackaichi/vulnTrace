@@ -1287,6 +1287,89 @@ started.
   and order inside `node_modules` are still not Node's.
 - **BL-058** (RWF-089): VT-304's fallback, `main` for a subpath.
 
+#### B-1 additions (task B-1, 2026-10-10)
+
+**Outcome of B-1** (§ 7's B-1 row; decisions 5 and 10). Lane B has
+started.
+
+- `OsvProvider` follows `next_page_token` until none is returned,
+  repeating the query with a top-level `page_token` (OSV's documented
+  protocol; a page may carry a token and no records). A failed page, a
+  repeated token, a token that is not a non-empty string, and more than
+  100 pages fail the query as `OsvResponseError` (exit 4). Fixed PRM-65.
+- The OSV cache key carries an answer-format marker, so an entry cached
+  before B-1 (a first page only, under the same tool version, with no
+  expiry) is never served again. Not in § 7's B-1 row: required for PRM-65
+  to reach a user with a warm cache. B-3 keeps the cache's location,
+  validation and expiry.
+- A record the normalizer cannot use (a refused shape, an empty `id`, an
+  unreadable `withdrawn`, no `affected` entry for the queried package) is
+  an `unreportedCandidates` entry for every exact instance of the name:
+  `advisory_applicability`, `undetermined`, reason
+  `advisory_record_malformed` (a subtype of `analysis_precondition_unmet`;
+  no seventh category), its id named only when one can be read. The
+  diagnostic is kept. Under `--cve`, it is filtered out only when its id
+  and aliases are both readable and neither names the filter. Fixed AUD-10
+  (malformed and unmatched) and AUD-11.
+- An advisory withdrawn by the scan's start is not analyzed: a
+  `withdrawn` entry per exact instance, reason `advisory_withdrawn`, no
+  category. A `withdrawn` time in the future is not a withdrawal yet; a
+  live copy of an id displaces a withdrawn copy. Output schema `0.7`; the
+  schema refuses a `withdrawn` entry with a category, another reason, or
+  no advisory. The HTML report labels it "Withdrawn by the provider".
+  Fixed AUD-14.
+- Foundation invariant `VT-INV-B-provider-completeness` (owners
+  `src/cli/scan.b1-provider-completeness.test.ts`,
+  `src/vulnerabilities/osv-provider.pagination.test.ts`).
+- Twenty mutations, each caught by a named test: first page only; the
+  cap returning a short list; the repeated-token check; an empty token
+  accepted; `page_token` not sent; a later page's failure returning the
+  pages before it; an empty id accepted; `withdrawn` not read;
+  `withdrawn` honoured whatever its time; the withdrawn branch removed;
+  unusable records not accounted; unusable records not de-duplicated
+  across version queries; the `null`-record guard removed; two sibling
+  borrows (every unusable entry, and every withdrawn entry, naming the
+  first instance); `--cve` dropping an unreadable record; the first copy
+  winning when withdrawn; the cache marker removed; the schema's
+  `withdrawn` rule relaxed; the HTML label.
+- **The independent audit CERTIFIED the change**, with non-blocking
+  findings, fixed on the branch: a `null` record (reachable from a
+  corrupted cache file, whose shape is unchecked until B-3) crashed the
+  new identity reader (finding 1); untested later-page failure and
+  cross-query de-duplication (2a, 2b); the invariant's "exactly one
+  accounted place" overclaimed (a usable and an unusable copy of one id
+  give both a finding and an entry; finding 4). Recorded, not changed:
+  a later live copy of an id never displaces the first live copy (2c),
+  and two live copies with different contents collapse to the first in
+  sorted version order (note 5), both pre-existing class-C behaviour no
+  test can pin without pinning a possibly wrong answer; the timestamp
+  refine is unreachable under zod 3.25 (2d, kept as a guard); a
+  `withdrawn` written with an offset (`+00:00`) instead of OSV's
+  required `Z` makes the record unusable rather than live (note 3, for
+  the project owner); a withdrawn advisory outside an instance's range is
+  reported `withdrawn`, not `not_applicable` (note 6).
+- Over the 139 corpus cases: verdict differential 0, proof 0, graph 0,
+  unreported candidates +0/−0 (no recorded OSV answer is paginated,
+  withdrawn or unusable, so the corpora do not reach this change; the
+  task's own tests do). Validation equals the D-09 baseline.
+
+**What B-1 binds.**
+
+- **B-2..B-6, and every later task**: an advisory the provider returns
+  ends in a finding or an `unreportedCandidates` entry per exact
+  instance. A new way for the scan to skip one adds an entry, never only
+  a diagnostic.
+- **B-3**: the cache stores whole paginated answers; a change to what a
+  provider answer contains changes `CACHED_ANSWER_FORMAT`
+  (`src/cache/osv-cache.ts`).
+- **B-5**: decision 3's exit codes count `advisory_record_malformed` as
+  an undetermined candidate (its disposition is `undetermined`). Whether a
+  `withdrawn` entry counts as "decided", like `not_applicable`, is for B-5
+  to settle against decision 3's wording ("a determinate not-applicable
+  disposition"); B-1 does not decide it.
+- **BL-059** (RWF-090): the schema enforces "category if and only if
+  undetermined" for `withdrawn` only.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None
