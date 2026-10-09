@@ -1207,6 +1207,86 @@ is complete.
   F4 control above flips to an invalidating mutation, which reopens a
   certified decision and needs the project owner's.
 
+#### C-1 additions (task C-1, 2026-10-09)
+
+**Outcome of C-1** (ADR 0010 invariant C2; § 8's C-1 row). Lane C has
+started.
+
+- Module resolution never reads the project's tsconfig.
+  `src/code-intelligence/module-resolver.ts` resolves under one fixed set
+  of options, `NodeResolutionOptions` (`module` and `moduleResolution`
+  NodeNext, `allowJs`), branded, with one producer
+  (`nodeResolutionOptions`). Fixed PRM-33, which was wider than recorded:
+  22 of ADR 0010 § 1's 40 tsconfigs named `main` where Node loads the
+  `exports` target.
+- A tsconfig `baseUrl` / `paths` mapping is consulted only as a
+  cross-check: when it gives a different outcome than Node's resolution,
+  the specifier is `unresolved_module`, naming both answers. Fixed RWF-083
+  (a mapping shadowing an installed package, or naming a sibling installed
+  instance), found by this task.
+- The noDts resolution runs first, so TypeScript's `types` export
+  condition, which Node never matches, no longer names the loaded file
+  (RWF-087). A bare specifier governed by an `exports` or `imports` map no
+  longer falls back to `main` or a sibling file when only a declaration
+  resolves, decided from the package the specifier names, located as Node
+  locates it, rather than TypeScript's `packageId` or the manifests above
+  the declaration (RWF-088).
+- Foundation invariant `VT-INV-C-runtime-resolution`: a census through the
+  TypeScript checker of every production call into TypeScript's module
+  resolution (each must receive the brand; only the producer may assert
+  it), with a scratch-tree self-test; and the 40-row table against real
+  `node`. End-to-end: `tests/oracle/c1-runtime-resolution.test.ts`.
+- The project owner's decision of 2026-10-09 (strict C2; ADR 0010's
+  appended decision record): ADV-023, ADV2-015, ADV2-016 and the fixture
+  suite's `typescript-paths` case move `AFFECTED` → `UNKNOWN`, their
+  expected verdicts corrected with the reason (real `node` throws on their
+  aliased imports). § 5's "0 / 122" had not measured the `paths` clause
+  (RWF-084).
+- Mutations, each caught by a named test: the runtime path handed the
+  tsconfig's options (22 table rows, the census, the cross-check cases);
+  the cross-check dropped; the mapping followed when Node cannot resolve;
+  the mapping followed always (the sibling-instance borrow test); the
+  `exports` guard on the fallback dropped; and the first version's
+  resolver itself (four oracle cases and four resolver tests fail on it:
+  RWF-087, RWF-088), and the second version's resolver (the two re-audit
+  oracle cases fail on it).
+- **The independent audit BLOCKED the first version, and its re-audit
+  the second**, each on in-scope findings fixed on the branch. First: the `types` condition (finding 1,
+  which C-1 had turned from the base's `UNKNOWN` into a false
+  `NOT_AFFECTED` for node10 projects) and the fallback guard's bypass
+  (finding 2). Then two more bypasses of that guard (a subpath proxy
+  manifest with its own `name`; a declaration from a separate `@types`
+  package), fixed by locating the named package as Node does. Its notes
+  are recorded: the census's brand cannot tell the
+  cross-check's options from the runtime ones, and it does not see
+  resolution written by hand (its header says so); the PRM-33 table is
+  for a `.js` importer; RWF-086 (out of scope, open). The second
+  re-audit CERTIFIED the change, with one non-blocking, pre-existing
+  finding recorded as RWF-089 (`BL-058`): VT-304's fallback still takes
+  a package root's `main` for a subpath specifier. C-1's `exports` /
+  `imports` guard is sound for what it covers; the fallback as a whole is
+  not.
+- Cost: with a tsconfig `baseUrl` / `paths`, every specifier is resolved
+  twice (Node's and the cross-check), with no cache and no structural
+  operation-count test recording it. The performance gate is green; a
+  project with no mapping resolves once, as before.
+
+**What C-1 binds.**
+
+- **C-2..C-5, and every later task**: a resolution that decides which file
+  loads goes through `createModuleResolver`; the census fails on any other
+  call into TypeScript's module resolution in production, and its header
+  lists the routes it cannot see.
+- **D-1** (disclosure): RWF-085, `module-sync` -- which file loads depends
+  on the Node version and on require(esm), which the analyzer does not
+  know (backlog `BL-056`). Same class as PRM-67's runtime flags.
+- **BL-055**: ADR 0010's own "nothing here is implemented" status line is
+  now false as well (RWF-082's status update).
+- **BL-057** (RWF-086): C2 is implemented for the resolution mode, the
+  mapping and the `types` condition; TypeScript's extension substitution
+  and order inside `node_modules` are still not Node's.
+- **BL-058** (RWF-089): VT-304's fallback, `main` for a subpath.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

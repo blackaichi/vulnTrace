@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: C-1
 - **Branch**: c-1-runtime-resolution-mode
 - **Base SHA**: ab8b278c3ea112e575802e2ad2b5dec12b8c91f6
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `fdaa6d3` docs(tasks): C-1 task file — runtime resolution mode independent of tsconfig
+  - `b3743d0` test(C-1): runtime resolution against real Node — PRM-33, RWF-083, the C2 table
+  - `a0a12e1` fix(C-1): module resolution is Node's, whatever the tsconfig says (PRM-33, RWF-083)
+  - (this commit) docs(C-1): records — PRM-33 fixed, RWF-083..089, ADR 0010 decision record, plan § 5a, debts, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -190,3 +194,33 @@ five D-09 known failures (`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`,
 ## Report
 
 In the format of `AGENTS.md` § J.
+
+## Corrections (appended during the task)
+
+- **False premise in "Premises" above** (found by the independent audit,
+  finding 1): "under Node-only options, the `types` … conditions … all
+  name the file real `node` v22.11.0 loads" held only for a `types`
+  target that is a declaration file. TypeScript's NodeNext resolution
+  always matches `types`; Node never does. With a runtime `types` target,
+  C-1's first version followed it, and for node10 projects turned the
+  base's `UNKNOWN` into a false `NOT_AFFECTED` -- this task's own STOP
+  condition. Fixed on the branch (the noDts resolution runs first;
+  RWF-087), with oracle and resolver tests.
+- **The "Gap in scope" above was closed only in part by the first
+  version** (audit, finding 2): the `exports` guard on the declaration
+  fallback relied on TypeScript's `packageId`, which a package without a
+  `version`, a workspace symlink, a self-reference and a `#` specifier
+  lack; the re-audit then found two more bypasses (a subpath proxy
+  manifest with its own `name`; a declaration from a separate `@types`
+  package). Fixed on the branch: decided from the package the specifier
+  names, located as Node locates it (RWF-088).
+- **Out of scope, recorded** (audit, finding 3): TypeScript's `.js` →
+  `.ts` substitution inside `node_modules` (RWF-086, `BL-057`). C2 is
+  implemented for the resolution mode, the mapping and the `types`
+  condition, not for every detail of Node's algorithm.
+- **Acceptance criteria**, answered: every box above is yes, with the
+  sibling-fallback criterion holding for every shape the audit found
+  (workspace symlink, self-reference, versionless package, `#`
+  specifier, nested named manifest, separate `@types` package) since the
+  fix; the independent audit's verdict is recorded
+  in the pull request.

@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-09, by `V-4`.
+**Last updated:** 2026-10-09, by `C-1`.
 
 ## Objective
 
@@ -105,6 +105,19 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   and an input no producer made is refused at runtime. What binds every
   later lane: REMEDIATION-PLAN § 5a, "V-1 additions" through "V-4
   additions".
+- Lane C has started. `C-1` (ADR 0010 invariant C2) made module
+  resolution run in Node's resolution mode whatever the tsconfig says: one fixed, branded set of
+  NodeNext options (`NodeResolutionOptions`, module-resolver.ts), and a
+  tsconfig `baseUrl` / `paths` mapping consulted only as a cross-check --
+  one that disagrees with Node is `unresolved_module`. Fixed PRM-33 (22 of
+  40 tsconfig shapes named `main` where Node loads `exports`) and RWF-083
+  (a mapping shadowing an installed package or a sibling instance). By the
+  project owner's decision (strict C2), ADV-023, ADV2-015 and ADV2-016 are
+  `UNKNOWN`: real Node cannot load their aliased imports (RWF-084). Its
+  audit's findings, fixed: the `types` export condition (RWF-087) and the
+  declaration fallback's `exports` guard (RWF-088). The
+  census `VT-INV-C-runtime-resolution` guards the authority. What binds
+  C-2..C-5: REMEDIATION-PLAN § 5a, "C-1 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -135,20 +148,32 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`V-4` — proof-input types (`ClosureCorroboration`, `AttributedTarget`)
-and mutation tests ([task file](tasks/V-4-proof-input-types.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `V-3`
-merged as PR #88.
+`C-1` — runtime resolution mode independent of tsconfig
+([task file](tasks/C-1-runtime-resolution-mode.md)): `READY_FOR_REVIEW`,
+its pull request awaiting the project owner. `V-4` merged as PR #89.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-4`:
-`C-1`, then lane B. The P1 gaps `BL-048`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `C-1`:
+lane B (`B-1`..`B-6`). The P1 gaps `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
+
+From `C-1`: RWF-083 (fixed by it: a tsconfig `paths` / `baseUrl` mapping
+followed where Node loads an installed package), RWF-084 (ADR 0010 § 5's
+measurement omitted the `paths` clause; corrected with the owner's
+decision), RWF-085 and `BL-056` (**P1**: which file a `module-sync` export
+loads depends on the Node version; disclose or fail closed -- needs the
+project owner's choice), RWF-086 and `BL-057` (**P1**, from its audit:
+TypeScript's `.js` → `.ts` substitution inside `node_modules`), RWF-089
+and `BL-058` (**P1**, from its re-audit: VT-304's fallback takes the root
+`main` for a subpath specifier), RWF-087
+and RWF-088 (from its audit, fixed by it: the `types` export condition;
+the declaration fallback's `exports` guard), and RWF-082's update (ADR
+0010's status line is now false too, `BL-055`).
 
 From `V-4`: RWF-082 and `BL-055` (P6, records: ADR 0008 and ADR 0011
 still say "nothing here is implemented"). Its one newly refused shape (a

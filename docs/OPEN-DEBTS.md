@@ -1033,6 +1033,41 @@ mark. Over the 139 corpus cases: verdict differential 0, proof 0,
 graph 0. This entry still stands: lane V is done, and lanes E, C and B
 remain.
 
+**Progress, added by task `C-1` (2026-10-09).** Task C-1
+(`docs/tasks/C-1-runtime-resolution-mode.md`) started lane C with ADR
+0010 invariant C2: module resolution runs in Node's resolution mode
+whatever the project's tsconfig says. It fixes PRM-33 (under
+`module: commonjs`, an unset `moduleResolution` with a non-node `module`,
+`node10` or `bundler`, TypeScript named a package's `main` where Node
+loads its `exports` target -- 22 of ADR 0010's 40 tsconfig shapes from a
+`.js` importer, measured against real `node`) and RWF-083, found by the
+task (a tsconfig `paths` / `baseUrl` entry that shadows an installed
+package or names a sibling installed instance, under every
+`moduleResolution`). Its independent audit blocked the first version and
+the task fixed both blocking findings: RWF-087 (TypeScript matches the
+`types` export condition, which Node never does; the first version had
+extended that false `NOT_AFFECTED` to node10 projects) and RWF-088 (the
+declaration-only fallback took a stale sibling for an `exports` /
+`imports`-governed specifier; its re-audit found two more shapes of it,
+also fixed), both pre-existing for NodeNext projects. A mapping that disagrees with Node is
+now `unresolved_module`, never either answer. A Foundation census
+(`VT-INV-C-runtime-resolution`) checks that every production call into
+TypeScript's module resolution receives the branded options; it names
+the routes it cannot see. By the project owner's decision of 2026-10-09
+(strict C2), three adversarial cases whose only path runs through a
+tsconfig alias real Node cannot load are corrected from `AFFECTED` to
+`UNKNOWN` (ADV-023, ADV2-015, ADV2-016); ADR 0010 § 5 had measured
+"0 / 122" without the `paths` clause (RWF-084). Still open, and recorded:
+RWF-085 (`module-sync` depends on the Node version, `BL-056`) and RWF-086
+(TypeScript extensions preferred inside `node_modules`, `BL-057`) and
+RWF-089 (VT-304's fallback takes the root `main` for a subpath,
+`BL-058`): C2 is
+implemented for the resolution mode, the mapping and the `types`
+condition, not for every detail of Node's algorithm. Over the 139 corpus
+cases: verdict differential 3 (those three, `AFFECTED` → `UNKNOWN`, 0 into
+`NOT_AFFECTED`), proof 3, graph 3; validation equals the D-09 baseline.
+This entry still stands: lanes E, C (C-2..C-5) and B remain.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
