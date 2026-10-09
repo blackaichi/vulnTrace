@@ -1014,6 +1014,25 @@ The task found `RWF-079` (open, backlog `BL-053`: a whole-module export of
 an opaque value emits no root requirement). Over the 139 corpus cases:
 verdict differential 0, proof 0, graph 0. This entry still stands.
 
+**Progress, added by task `V-4` (2026-10-09).** Task V-4
+(`docs/tasks/V-4-proof-input-types.md`) completed lane V by making ADR
+0011's corroboration structural: families B and C are built only from
+branded proof inputs, each produced by one function that checks it (a
+closure corroboration for predicate 1, both halves; predicate 5 beside it
+for family C; a target attributed to a node of the analyzed graph,
+predicate 3). An object literal of a branded type is a compile error, a
+production type assertion to one outside its producer fails a Foundation
+cast census, and an input no producer made is refused at runtime. It
+closes no reproduced defect: the one shape it newly refuses at
+`buildFinding` -- a closure marked incomplete with no recorded reason,
+under which family C stood (V-2's audit, finding 2) -- is not produced in
+production. Twenty-five mutations, each caught by a named test or the
+typecheck. The cast census is a strong net, not a proof: it names the
+routes it cannot see, and the evidence objects themselves carry no runtime
+mark. Over the 139 corpus cases: verdict differential 0, proof 0,
+graph 0. This entry still stands: lane V is done, and lanes E, C and B
+remain.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
