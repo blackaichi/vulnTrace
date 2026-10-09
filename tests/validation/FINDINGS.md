@@ -192,7 +192,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-30 | `vuln-lib` (synthetic fixture) | A `module.exports = {...}` literal unpacking wins over a later `module.exports.run = danger` member write | false NOT_AFFECTED — see below | Open |
 | PRM-31 | `vuln-lib` (synthetic fixture) | Root-requirement materialization matches a candidate node by AST name text, so a same-named decoy elsewhere satisfies it | false NOT_AFFECTED — see below | **Fixed** (V-3) — see below |
 | PRM-32 | `vuln-lib` (synthetic fixture) | `this.X = ...` at module scope and an aliased `const api = module.exports; api.run = ...` are invisible to root-requirement detection | false NOT_AFFECTED — see below | Open |
-| PRM-33 | `vuln-lib` (synthetic fixture), tsconfig | Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map | false NOT_AFFECTED — see below | Open |
+| PRM-33 | `vuln-lib` (synthetic fixture), tsconfig | Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map | false NOT_AFFECTED — see below | **Fixed** (C-1) — see below |
 | PRM-34 | `lodash` (`file:`-vendored, real npm 10.9.0 lockfile) | A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely | silent drop — see below | Open |
 | PRM-35 | `vuln-lib` (synthetic fixture), cache | A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic | scan abort — see below | Open |
 | PRM-36 | `vuln-lib` (synthetic fixture), workspaces | The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set | false reason — see below | Open |
@@ -257,6 +257,13 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-080 | `vuln-lib` (synthetic fixture) | An ESM destructured export (`export const { main } = api`) produces no export binding, so a plain file entrypoint's root set is complete with no root for `main` | false NOT_AFFECTED (family C) — see below | Open |
 | RWF-081 | `vuln-lib` (synthetic fixture) | An entrypoint's export written by ANOTHER module (`require("./index.js").main = fn` in a file the entrypoint loads) is no root and no root gap | false NOT_AFFECTED (family C) — see below | Open |
 | RWF-082 | n/a — the repository's own design records | ADR 0008 and ADR 0011 still open with "Status: **proposed** (design only; nothing here is implemented)", although lane A (ADR 0008) is merged through A-6 and lane V (ADR 0011) through V-3, with V-4 its last task | record — two ADRs understate their own implementation — see below | Open |
+| RWF-083 | `vuln-lib` (synthetic fixture), tsconfig | A tsconfig `paths` entry or a bare `baseUrl` that shadows an installed package (or names a sibling installed instance) made the analyzer follow the mapped file while Node loads `node_modules/<pkg>`, under every `moduleResolution` | false NOT_AFFECTED (family A) and a sibling-instance attribution — see below | **Fixed** (C-1) — see below |
+| RWF-084 | n/a — ADR 0010 § 5's precision measurement | "Adversarial scenarios 0 / 122 verdicts changed" was measured with NodeNext forced but tsconfig `paths` / `baseUrl` still applied, so C2's mapping clause was never measured; implemented as written it moves ADV-023, ADV2-015, ADV2-016 `AFFECTED` → `UNKNOWN` | record — a design measurement omitted part of the invariant — see below | **Fixed** (C-1: measurement re-taken, owner decided) — see below |
+| RWF-085 | `vuln-lib` (synthetic fixture) | A package whose `exports` map lists the `module-sync` condition before `require`: with require(esm) enabled Node loads the `module-sync` target, without it (and in TypeScript's resolution) the `require` target, so which file loads depends on the Node version and flags, which the analyzer does not know | false NOT_AFFECTED (family A) wherever require(esm) is on — see below | Open |
+| RWF-086 | `vuln-lib` (synthetic fixture) | TypeScript's resolution substitutes and prefers TypeScript extensions also inside `node_modules` and for a JavaScript importer: with `impl.js` and `impl.ts` side by side, `require("./impl.js")` is read as `impl.ts`, `main: "index.js"` as `index.ts`; Node loads the `.js` | false NOT_AFFECTED (family A) — see below | Open |
+| RWF-087 | `vuln-lib` (synthetic fixture) | TypeScript's NodeNext resolution matches the `types` export condition, which Node never does: a package whose `types` target is a runtime file was read through that file instead of the one Node loads | false NOT_AFFECTED (family A) — see below | **Fixed** (C-1) — see below |
+| RWF-088 | `vuln-lib` (synthetic fixture) | The declaration-only fallback took `main` or a stale sibling `.js` for a specifier Node resolves through an `exports` or `imports` map: a package without a `version`, a workspace symlink, a self-reference, a `#` specifier, a subpath proxy manifest with its own `name`, a declaration from a separate `@types` package | false NOT_AFFECTED (family A) — see below | **Fixed** (C-1) — see below |
+| RWF-089 | `vuln-lib` (synthetic fixture) | VT-304's declaration-only fallback prefers the package root's `main` for a SUBPATH specifier (`require("wrap/feature")` with only `feature.d.ts` resolvable to TypeScript): Node never uses the root `main` for a subpath, and loads `feature` | false NOT_AFFECTED (family A) — see below | Open |
 
 ---
 
@@ -17135,6 +17142,39 @@ With a project `tsconfig.json` specifying `module: commonjs`, `module-resolver.t
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-33`) and § 4 (`tsconfig-commonjs-ignores-exports`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task C-1, 2026-10-09): Fixed.** Module resolution no
+longer reads the project's tsconfig (ADR 0010 invariant C2):
+`module-resolver.ts` resolves every specifier under one fixed set of
+options, `NodeResolutionOptions` (`module` and `moduleResolution` NodeNext,
+`allowJs`), branded with one producer, and a Foundation census
+(`src/testing/runtime-resolution-census.ts`, invariant
+`VT-INV-C-runtime-resolution`) checks that every production call into
+TypeScript's module resolution receives them.
+
+Measured on the base (`ab8b278`), before the fix, against real `node`
+v22.11.0: the reproduction is a family-A false `NOT_AFFECTED`
+(`tests/oracle/c1-runtime-resolution.test.ts`,
+`prm33.module-commonjs.exports-require` and
+`prm33.module-resolution-node10.exports-require`); after the fix both are
+`AFFECTED`, as real Node calls the target. The defect was wider than this
+record states: of ADR 0010 § 1's 40 `module` × `moduleResolution`
+tsconfigs, 22 resolved the package to `legacy.js` from a `.js` importer
+-- every `node10` row, every `bundler` row, and an unset
+`moduleResolution` under a non-node `module`
+(`src/code-intelligence/module-resolver.runtime-resolution.test.ts`);
+only the `node16` / `nodenext` rows were right. A `.cjs` / `.mjs` importer
+was already resolved through `exports` on the base, because its file
+extension gives TypeScript an explicit format (C-1's independent audit,
+note 7, measured with `ts.resolveModuleName`): the defect was for `.js`
+and `.ts` importers, whose format node10 leaves undetermined.
+
+Correction to this record's mechanism (AGENTS.md § C): it says
+"`module-resolver.ts`'s `noDts` resolution falls back to legacy
+main-field/node10 resolution". In the reproduction the package ships no
+declaration file, so the `noDts` re-resolution is never reached: the
+first `ts.resolveModuleName`, under the project's own node10 options,
+returns `legacy.js`. The fault was the options, not the `noDts` step.
+
 ---
 
 ## PRM-34 — A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely
@@ -19589,3 +19629,250 @@ are still true: lanes E and C have not started. Not corrected by V-4: an
 ADR's text is outside its scope, and the wording of an implemented status
 is the project owner's to choose.
 
+
+**Status update (task C-1, 2026-10-09).** The last sentence's exception
+no longer holds for ADR 0010: task C-1 implemented its invariant C2, so
+ADR 0010's own "nothing here is implemented" is now false too (its
+appended decision record of 2026-10-09 says what C-1 did). Still open, and
+still the project owner's wording to choose; backlog `BL-055` now covers
+ADR 0010 as well. ADR 0009 (lane E) is still unimplemented.
+
+---
+
+## RWF-083 — A tsconfig `paths` / `baseUrl` mapping that shadows an installed package was followed, not Node's resolution
+
+**Status:** Fixed (task C-1)
+**Failure class:** false NOT_AFFECTED (family A), and a sibling-instance attribution
+**Defect class:** B (the specifier is the right binding; the file assumed to load for it is not what real `node` loads)
+**Proof family affected:** A (and B / C through the loaded set)
+**Severity:** High (a live false `NOT_AFFECTED` in an ordinary TypeScript project shape)
+**Fix lane:** C — capability flow and resolution (ADR 0010 C2)
+
+**Discovered:** by task `C-1`, measuring ADR 0010 § 5's claim before
+implementing (AGENTS.md § D). Not PRM-33: PRM-33 is the resolution
+*mode*; this is the mapping, and it holds under every `moduleResolution`,
+NodeNext included, because TypeScript applies `paths` and `baseUrl` in
+every mode while Node never reads tsconfig.
+
+Reproduced against real `node` v22.11.0
+(`tests/oracle/c1-runtime-resolution.test.ts`):
+
+- `rwf083.paths-shadows-installed-package`: `paths: { wrap:
+  ["src/shim/wrap.js"] }`; the shim calls `safe`, the installed `wrap`
+  calls `parse`. Real Node loads `node_modules/wrap` and calls `parse`;
+  on the base the analyzer followed the shim and answered `NOT_AFFECTED`.
+- `rwf083.base-url-shadows-installed-package`: `baseUrl: "./src"` with a
+  local `src/wrap/` beside an installed `wrap`; the same result.
+- `src/code-intelligence/module-resolver.runtime-resolution.test.ts`: a
+  `paths` entry naming a *sibling* installed instance
+  (`node_modules/b/node_modules/vuln-lib`) of the instance Node loads
+  (`node_modules/vuln-lib`, same name and version) -- the analyzer
+  attributed the sibling's code, a `PackageInstance` identity defect.
+
+**Fixed:** a tsconfig `baseUrl` / `paths` mapping is consulted only as a
+cross-check. When resolving with it gives a different outcome than Node's
+resolution, the specifier is unresolved (`unresolved_module`, category
+`identity_unresolved`), with a reason naming both answers, and neither is
+followed (ADR 0010 § 3; `REMEDIATION-PLAN.md` § 6.1 decision 7). The two
+oracle cases are now `UNKNOWN`. That is sound but not precise: real Node
+does call the target, and an `AFFECTED` here would need the analyzer to
+follow Node's answer while the project's own toolchain may follow the
+mapping -- the owner's strict-C2 decision of 2026-10-09 is that neither is
+followed. A mapping that names the very file Node loads is unaffected
+(`c2.paths-mapping-agrees-with-node`, `AFFECTED`).
+
+---
+
+## RWF-084 — ADR 0010 § 5 measured "0 / 122 adversarial verdicts changed" without C2's `paths` clause
+
+**Status:** Fixed (task C-1: the measurement re-taken, and decided on by the project owner)
+**Failure class:** record — a design measurement omitted part of the invariant it priced
+**Defect class:** not applicable (documentation)
+**Proof family affected:** none
+**Severity:** Medium (the project owner decided C2 on a precision cost that was understated)
+**Fix lane:** C
+
+**Discovered:** by task `C-1`, re-measuring ADR 0010 § 5 before
+implementing (AGENTS.md § C). § 5's prototype forced "NodeNext runtime
+resolution"; TypeScript 5.9.3 still applies `paths` and `baseUrl` under
+NodeNext (measured), so the prototype never implemented C2's last
+sentence. Implemented as written, over the 139 corpus cases
+(`node scripts/differential.mjs`): 3 verdicts change -- ADV-023, ADV2-015
+and ADV2-016, `AFFECTED` → `UNKNOWN` (`unresolved_module`) -- and the
+fixture suite's `typescript-paths` case moves the same way. 0 into
+`NOT_AFFECTED`; the validation baseline is unchanged.
+
+In all four, real `node` running the source compiled with the fixture's
+own tsconfig throws on the aliased import (`ERR_MODULE_NOT_FOUND` for
+`@lib/wrapper.js`, `MODULE_NOT_FOUND` for `lib/wrapper`): `tsc` emits the
+specifier unchanged.
+
+**Fixed:** the project owner was asked with these numbers and decided
+strict C2 (2026-10-09). The decision and the corrected measurement are
+appended to ADR 0010 ("Decision record — C2 under `paths` / `baseUrl`");
+§ 5's table is left as written, per that ADR's append-only practice. The
+four expected verdicts are corrected to `UNKNOWN`, each with its reason
+(`tests/adversarial/v1/expected.json`, `tests/adversarial/v2/expected.json`,
+`src/analysis/fixture-suite.integration.test.ts`,
+`fixtures/typescript-paths/README.md`).
+
+---
+
+## RWF-085 — Which file a `module-sync` export loads depends on the Node version, which the analyzer does not know
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (family A) wherever require(esm) is enabled
+**Defect class:** B (the analyzer resolves for one Node configuration; the deployed runtime may be another)
+**Proof family affected:** A (and B / C through the loaded set)
+**Severity:** not rated (depends on the deployed Node version)
+**Fix lane:** D (disclosure, `SUPPORTED_MODEL_EXCLUSIONS`) or C, by the project owner's choice; backlog `BL-056`
+
+**Discovered:** by task `C-1`, checking which export conditions its
+Node-only resolution honours. A package with `exports: { ".": {
+"module-sync": "./sync.mjs", "require": "./impl.cjs" } }`, required from
+CommonJS. Measured on Node v22.11.0: `node src/index.js` loads
+`impl.cjs`; `node --experimental-require-module src/index.js` loads
+`sync.mjs`. TypeScript 5.9.3's NodeNext resolution (the analyzer's, since
+C-1) names `impl.cjs`. Node's release notes enable require(esm), and with
+it the `module-sync` condition, by default from 22.12 / 20.19; that part is
+cited, not measured here (only Node v22.11.0 is installed). Where it is
+on, the analyzer reads `impl.cjs` while Node runs `sync.mjs`, the same
+shape as PRM-33.
+
+Not fixed by C-1: the analyzer has no notion of the deployed Node version
+or its flags, and choosing one is a product decision, the same class as
+PRM-67's runtime flags (`REMEDIATION-PLAN.md` § 6.1 decision 11: disclose
+`--conditions` and the loader flags now). A fail-closed option is to treat
+an `exports` map that lists `module-sync` (or any condition whose
+resolution differs by Node version) as `unresolved_module`.
+
+---
+
+## RWF-086 — TypeScript extensions are substituted and preferred inside `node_modules` and for a JavaScript importer
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (family A)
+**Defect class:** B (the specifier is the right binding; the file assumed to load for it is not what real `node` loads)
+**Proof family affected:** A (and B / C through the loaded set)
+**Severity:** not rated (needs a `.ts` file shipped beside a `.js` file in an installed package)
+**Fix lane:** C (C2's first sentence); backlog `BL-057`
+
+**Discovered:** by C-1's independent audit (finding 3), pre-existing on
+`main` and unchanged by C-1. TypeScript's NodeNext resolution maps
+`./x.js` to `x.ts` and tries TypeScript extensions before JavaScript ones
+-- right for a TypeScript project's own sources, which a toolchain
+compiles, but not inside `node_modules` or for a JavaScript importer,
+where Node loads the `.js` file. Measured by the auditor against real
+`node` v22.11.0 and the C-1 resolver: an installed `wrap` whose
+`index.js` does `require("./impl.js")`, with `impl.js` calling `parse` and
+`impl.ts` calling `safe`, is `NOT_AFFECTED` on the base and after C-1,
+while Node calls `parse`; `main: "index.js"` beside an `index.ts`
+resolves to `index.ts`.
+
+It also bounds what C-1 claims: `NodeResolutionOptions` is Node's
+resolution mode (no tsconfig `module` / `moduleResolution` / mapping),
+not Node's algorithm in every detail.
+
+---
+
+## RWF-087 — The `types` export condition was matched as if Node matched it
+
+**Status:** Fixed (task C-1)
+**Failure class:** false NOT_AFFECTED (family A)
+**Defect class:** B
+**Proof family affected:** A (and B / C through the loaded set)
+**Severity:** High where it applies (any package with a runtime `types` target)
+**Fix lane:** C
+
+**Discovered:** by C-1's independent audit (finding 1). TypeScript's
+NodeNext resolution always matches the `types` export condition; Node
+never does. For a package with `exports: { ".": { types: "./types.js",
+default: "./impl.js" } }`, the first `ts.resolveModuleName` returned
+`types.js` as a runtime result and the resolver took it. On `main`
+(`ab8b278`) this was already a family-A false `NOT_AFFECTED` for every
+project resolved under NodeNext (a JavaScript project with no tsconfig, or
+a `node16` / `nodenext` tsconfig); under node10 the base failed closed
+(`UNKNOWN`). C-1 as first written forced NodeNext for every project and
+so extended the false `NOT_AFFECTED` to the node10 ones; the audit blocked
+it before review.
+
+**Fixed:** `resolveSync` runs the noDts resolution first -- it drops the
+`types` condition along with declaration candidates -- and takes a runtime
+file from it; a runtime file only the default resolution reaches is
+unresolved. Real-Node oracle cases `audit.types-condition-runtime-target`
+(no tsconfig: `NOT_AFFECTED` on the base) and
+`audit.types-condition-runtime-target.module-commonjs` (`UNKNOWN` on the
+base, `NOT_AFFECTED` on C-1's first fix) are `AFFECTED`, as Node calls
+the target; resolver tests cover the `types`-only package (unresolved).
+
+---
+
+## RWF-088 — The declaration-only fallback ignored `exports` / `imports` when TypeScript reported no `packageId`
+
+**Status:** Fixed (task C-1)
+**Failure class:** false NOT_AFFECTED (family A)
+**Defect class:** A (the fallback keyed its decision on TypeScript's package identity, not on the package scope Node uses)
+**Proof family affected:** A (and B / C through the loaded set)
+**Severity:** High where it applies
+**Fix lane:** C
+
+**Discovered:** by C-1's independent audit (finding 2). VT-304's fallback
+returns `main` or a same-name sibling `.js` beside a resolved declaration
+file. Node never consults either for a specifier governed by an `exports`
+or `imports` map. C-1 as first written refused the fallback only when
+TypeScript reported a `packageId` and the resolved path had a
+`node_modules/<name>/` segment, so a package without a `version`, a
+workspace symlink (realpath outside `node_modules`), a self-reference and
+every `#` specifier still took a stale sibling. Measured by the auditor
+against real `node` v22.11.0: `NOT_AFFECTED` on the base and on C-1's
+first fix, while Node loads the map's target and calls `parse`.
+
+The re-audit of the first fix found two more bypasses of the same
+guard, also pre-existing: a subpath proxy `package.json` with its own
+`name` inside a package whose root declares `exports` (the shape rxjs's
+`operators/package.json` has), and a declaration taken from a separate
+`@types/<name>` package for a package that declares `exports`.
+
+**Fixed:** the fallback is decided from the package the specifier names,
+located the way Node locates it (`siblingFallbackAllowed`): never for a
+`#` specifier; for any other bare specifier only when no self-reference
+through the importer's own package scope applies, the named package's
+`node_modules/<name>/package.json` is found from the importer upwards,
+is readable and declares no `exports` (`exports: null` is absent, as in
+Node), and the declaration file's real path lies inside that package's
+real directory. Anything unestablished refuses, so the result is
+declaration-only (`UNKNOWN`). Oracle cases
+`audit.exports-no-version.stale-sibling`,
+`audit.imports-field.stale-sibling`,
+`audit.nested-named-manifest.stale-sibling` and
+`audit.types-package-beside-exports-package` are `UNKNOWN`
+(`declaration_only_resolution`), each `NOT_AFFECTED` on the base;
+resolver tests cover the workspace symlink and the self-reference, and
+the `exports: null` precision control.
+
+---
+
+## RWF-089 — The declaration-only fallback returns the package root's `main` for a subpath specifier
+
+**Status:** Open
+**Failure class:** false NOT_AFFECTED (family A)
+**Defect class:** B (the specifier is the right binding; the file assumed to load for it is not what real `node` loads)
+**Proof family affected:** A (and B / C through the loaded set)
+**Severity:** not rated (needs a subpath runtime file TypeScript's noDts resolution cannot find: extensionless, `.node`, JSON)
+**Fix lane:** C (VT-304's fallback, `module-resolver.ts`); backlog `BL-058`
+
+**Discovered:** by C-1's second independent re-audit (finding 1),
+pre-existing on `main` and unchanged by C-1. `attemptSiblingRuntimeFile`
+prefers `package.json`'s `main` whenever it lies in another directory
+than the declaration file -- right for the bare package name, wrong for a
+subpath, whose entry is never the root `main`. Measured by the auditor
+against real `node` v22.11.0: `wrap` (no `exports`, `main:
+"./dist/index.js"`, which calls `safe`), required as `wrap/feature` where
+`feature.d.ts` and an extensionless `feature` (calls `parse`) exist --
+`NOT_AFFECTED` on the base and after C-1, while Node calls `parse`. By
+code reading only, a relative specifier inside a package never reaches
+C-1's guard and could take the same `main` preference.
+
+C-1's `exports` / `imports` guard (RWF-088) is sound for what it covers;
+VT-304's fallback as a whole is not, by this finding. Fix idea: take
+`main` only when the specifier is the bare package name.

@@ -249,3 +249,56 @@ requirement, not a reason to weaken the invariant.
 `local-aliases.ts` stops being a provenance authority. The capability-grammar
 sweep becomes the regression net for every future loader idiom. The runtime
 resolver no longer changes meaning with the project's tsconfig.
+
+## Decision record — C2 under `paths` / `baseUrl` (project owner, 2026-10-09)
+
+Recorded by task [`C-1`](../tasks/C-1-runtime-resolution-mode.md), on the
+project owner's answer to the question that task asked before
+implementing. This ADR's body above is unchanged; this section is
+appended, not a revision.
+
+**What was measured.** § 5 reports "adversarial scenarios 0 / 122
+verdicts changed" for a prototype whose runtime resolution was "NodeNext".
+TypeScript applies a tsconfig's `paths` and `baseUrl` under NodeNext too
+(measured, TypeScript 5.9.3), so that prototype implemented C2's first
+sentence (the mode) and not its last (a `paths` / `baseUrl` mapping that
+disagrees with Node). With C2 implemented as written, over all 139 corpus
+cases (`node scripts/differential.mjs`): **3 verdicts change**, ADV-023,
+ADV2-015 and ADV2-016, all `AFFECTED` → `UNKNOWN` (`unresolved_module`);
+0 into `NOT_AFFECTED`; 0 findings removed; the validation baseline
+unchanged. The fixture suite's `typescript-paths` case moves the same way.
+In all four, real `node` running the source compiled with the fixture's
+own tsconfig throws (`ERR_MODULE_NOT_FOUND` / `MODULE_NOT_FOUND`) on the
+aliased import, because `tsc` emits the specifier unchanged and Node
+never reads tsconfig. Recorded as RWF-084 (`tests/validation/FINDINGS.md`).
+
+**Decision: strict C2, as written.** Runtime resolution never reads the
+tsconfig. A `paths` / `baseUrl` mapping is consulted only as a
+cross-check; when it gives a different outcome than Node's resolution —
+including when Node cannot resolve the specifier at all — the specifier is
+`unresolved_module` (§ 3), and neither answer is followed. The three
+adversarial cases' expected verdicts are corrected to `UNKNOWN`: an
+`AFFECTED` path through such an alias needs a resolution real Node never
+performs, the same reasoning `REMEDIATION-PLAN.md` § 6.1 decision 6 (task
+C-5) applies to a redirected `require`. It is consistent with decision 7
+there, which this record does not change.
+
+**Also in C-1, under C2's first sentence** (no decision needed, recorded
+for the reader): a tsconfig `paths` / `baseUrl` entry that shadows an
+installed package — under any `moduleResolution` — was a live family-A
+false `NOT_AFFECTED` that PRM-33 did not cover, recorded as RWF-083 and
+fixed by the same cross-check. C-1's independent audit found two more,
+both fixed by the task: TypeScript's NodeNext resolution matches the
+`types` export condition, which Node never does (RWF-087; the resolver now
+runs the noDts resolution, which drops it, first), and the declaration-only
+fallback (VT-304 Part 4) returned `main` or a stale sibling for a
+specifier governed by an `exports` or `imports` map whenever TypeScript
+reported no `packageId`, or read the manifests above the declaration
+rather than the named package's (RWF-088; now decided from the package
+the specifier names, located as Node locates it).
+
+**How far C2 holds after C-1.** NodeNext is Node's resolution *mode*, not
+Node's algorithm in every detail. Still open: TypeScript substitutes and
+prefers TypeScript extensions inside `node_modules` and for a JavaScript
+importer (RWF-086), and which file a `module-sync` export loads depends on
+the Node version (RWF-085).
