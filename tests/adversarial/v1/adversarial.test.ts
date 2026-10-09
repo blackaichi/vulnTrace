@@ -142,6 +142,10 @@ const ANALYSIS: Record<
     ],
     component:
       "TypeScript path-alias resolution fails end-to-end despite baseUrl/paths loading correctly",
+    // Historical (the MVP-era investigation). Since task C-1 the alias is
+    // unresolved by design (ADR 0010 C2: Node never reads tsconfig, and
+    // real node throws ERR_MODULE_NOT_FOUND on it), and expected.json says
+    // UNKNOWN; this text is shown only if the scenario disagrees again.
     explanation:
       'Confirmed by direct inspection: `loadTsProject` correctly discovers and loads this fixture\'s own tsconfig.json -- `baseUrl`/`paths` for `@lib/*` are present in the resulting compiler options. Yet calling the real resolver directly, `resolver.resolve("@lib/wrapper", ".../src/index.ts")`, still returns `{ kind: "unresolved" }`, and the call graph correspondingly records an `unknown (unresolved_module)` edge for main()\'s import. This is despite src/code-intelligence/module-resolver.test.ts having dedicated, passing unit tests for baseUrl/paths mapping -- meaning those unit tests\' own TS-program setup does not fully represent what happens when a real tsconfig.json is discovered and loaded via loadTsProject against an actual fixture project on disk. A concrete demonstration of why unit-level coverage of a resolver mechanism is not a substitute for fixture-suite/E2E proof (the exact gap already flagged for the typescript-paths fixture category in the prior MVP audit).',
   },

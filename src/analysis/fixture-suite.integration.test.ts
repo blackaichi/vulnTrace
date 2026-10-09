@@ -143,15 +143,22 @@ describe("fixture suite: each required fixture (docs/SDD.md § 31) demonstrates 
     expect(finding?.verdict).toBe("UNKNOWN");
   });
 
-  it("typescript-paths: reached only through a baseUrl/paths-aliased local import -> AFFECTED (VT-206)", async () => {
+  // Corrected by task C-1 (ADR 0010 C2; the project owner's decision of
+  // 2026-10-09). VT-206 asserted AFFECTED through the aliased import. Node
+  // never reads tsconfig: `@lib/wrapper.js` names no installed package, so
+  // real `node` throws MODULE_NOT_FOUND on it, and the program runs only
+  // under a toolchain that honours `paths`, whose answer is not Node's. A
+  // mapping that disagrees with Node's resolution is `unresolved_module`.
+  it("typescript-paths: reached only through a baseUrl/paths-aliased local import Node cannot resolve -> UNKNOWN (C-1)", async () => {
     const finding = await scanFixture({
       fixture: "typescript-paths",
       entrypoint: "src/index.ts",
       target: "vulnerable",
     });
 
-    expect(finding?.verdict).toBe("AFFECTED");
-    expect(finding?.evidence?.path).toHaveLength(3);
-    expect(finding?.evidence?.path.at(-1)).toContain("fixture-lib");
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.unknownReasons?.map((r) => r.reason)).toContain(
+      "unresolved_module",
+    );
   });
 });

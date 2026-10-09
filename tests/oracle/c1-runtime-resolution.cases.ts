@@ -65,6 +65,8 @@ export interface C1Case {
    * the sound answer anyway.
    */
   readonly precisionCost?: string;
+  /** Extra fields of the app's own `package.json` (an `imports` map). */
+  readonly manifest?: Readonly<Record<string, unknown>>;
 }
 
 const ENTRY = "src/index.js";
@@ -132,11 +134,13 @@ const POSITIVE: Readonly<Record<string, string>> = {
   [ENTRY]: APP + `const lib = require("vuln-lib");\nlib.parse("x");\n`,
 };
 
-function packageFiles(): Readonly<Record<string, string>> {
+function packageFiles(
+  manifest: Readonly<Record<string, unknown>> = {},
+): Readonly<Record<string, string>> {
   const dependencies = { "vuln-lib": "1.0.0", wrap: "1.0.0" };
   return {
     "package.json": JSON.stringify(
-      { name: "app", version: "1.0.0", dependencies },
+      { name: "app", version: "1.0.0", dependencies, ...manifest },
       null,
       2,
     ),
@@ -158,10 +162,13 @@ function packageFiles(): Readonly<Record<string, string>> {
   };
 }
 
-function project(files: Readonly<Record<string, string>>): ProjectSpec {
+function project(
+  files: Readonly<Record<string, string>>,
+  manifest?: Readonly<Record<string, unknown>>,
+): ProjectSpec {
   return {
     files: {
-      ...packageFiles(),
+      ...packageFiles(manifest),
       ...LIB,
       ...files,
       "rules.yml": simpleRuleFile({
@@ -190,7 +197,7 @@ export function oracleCase(kase: C1Case): OracleCase {
         negative: { name: "negative-control", project: project(NEGATIVE) },
       },
     },
-    variant: { name: "case", project: project(kase.files) },
+    variant: { name: "case", project: project(kase.files, kase.manifest) },
   };
 }
 
@@ -302,5 +309,146 @@ export const ALL_CASES: readonly C1Case[] = [
     called: true,
     base: "AFFECTED",
     expected: "AFFECTED",
+  },
+  // ---------------------------------------------------------------------
+  // Found by C-1's independent audit (finding 1): TypeScript's NodeNext
+  // resolution always matches the `types` export condition; Node never
+  // does. With a runtime file as the `types` target, the first resolution
+  // returned it as a runtime result. Before the audit fix, C-1 turned the
+  // tsconfig row from the base's UNKNOWN into a false NOT_AFFECTED.
+  // ---------------------------------------------------------------------
+  {
+    id: "audit.types-condition-runtime-target",
+    mechanism:
+      "`wrap`'s `exports` lists `types: ./types.js` (calls `safe`) before `default: ./impl.js` (calls `parse`); Node never matches `types` and loads `impl.js`",
+    files: {
+      "node_modules/wrap/package.json": JSON.stringify({
+        name: "wrap",
+        version: "1.0.0",
+        exports: { ".": { types: "./types.js", default: "./impl.js" } },
+      }),
+      "node_modules/wrap/types.js": runCalling("safe"),
+      "node_modules/wrap/impl.js": runCalling("parse"),
+      [ENTRY]: APP,
+    },
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "AFFECTED",
+  },
+  {
+    id: "audit.types-condition-runtime-target.module-commonjs",
+    mechanism:
+      "the same package under a `module: commonjs` tsconfig: UNKNOWN on the base (node10 failed closed), a false NOT_AFFECTED under C-1 before the audit fix",
+    files: {
+      "node_modules/wrap/package.json": JSON.stringify({
+        name: "wrap",
+        version: "1.0.0",
+        exports: { ".": { types: "./types.js", default: "./impl.js" } },
+      }),
+      "node_modules/wrap/types.js": runCalling("safe"),
+      "node_modules/wrap/impl.js": runCalling("parse"),
+      [ENTRY]: APP,
+      "tsconfig.json": tsconfig({ module: "commonjs" }),
+    },
+    called: true,
+    base: "UNKNOWN",
+    expected: "AFFECTED",
+  },
+  // ---------------------------------------------------------------------
+  // Found by C-1's independent audit (finding 2): the declaration-only
+  // fallback took a stale sibling `.js` for a specifier governed by
+  // `exports` / `imports` whenever TypeScript reported no `packageId` (a
+  // package without a version, an `imports` specifier). The `exports`
+  // target is extensionless, which Node loads and TypeScript's noDts
+  // resolution does not find.
+  // ---------------------------------------------------------------------
+  {
+    id: "audit.exports-no-version.stale-sibling",
+    mechanism:
+      "`wrap` (no `version`) maps `.` to `types: ./index.d.ts`, `default: ./lib/impl` (calls `parse`); a stale `index.js` beside the declaration calls `safe`; Node loads `lib/impl`",
+    files: {
+      "node_modules/wrap/package.json": JSON.stringify({
+        name: "wrap",
+        exports: { ".": { types: "./index.d.ts", default: "./lib/impl" } },
+      }),
+      "node_modules/wrap/index.d.ts": `export declare function run(x: string): unknown;\n`,
+      "node_modules/wrap/index.js": runCalling("safe"),
+      "node_modules/wrap/lib/impl": runCalling("parse"),
+      [ENTRY]: APP,
+    },
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    expectedReason: "declaration_only_resolution",
+  },
+  {
+    id: "audit.imports-field.stale-sibling",
+    mechanism:
+      "the app's own `imports` maps `#w` to `types: ./src/w.d.ts`, `default: ./src/w-impl` (calls `parse`); a stale `src/w.js` calls `safe`; Node loads `src/w-impl`",
+    files: {
+      ...plainWrap("safe"),
+      "src/w.d.ts": `export declare function run(x: string): unknown;\n`,
+      "src/w.js": runCalling("safe"),
+      "src/w-impl": runCalling("parse"),
+      [ENTRY]: `const w = require("#w");\nw.run("x");\n`,
+    },
+    manifest: {
+      imports: { "#w": { types: "./src/w.d.ts", default: "./src/w-impl" } },
+    },
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    expectedReason: "declaration_only_resolution",
+  },
+  // Found by C-1's independent re-audit: the guard must read the
+  // `exports` of the package the specifier NAMES, located as Node locates
+  // it -- not the nearest manifest with a `name` above the declaration.
+  {
+    id: "audit.nested-named-manifest.stale-sibling",
+    mechanism:
+      "`wrap`'s root declares `exports` (`types: ./sub/index.d.ts`, `default: ./sub/impl`, calls `parse`); a subpath proxy manifest `sub/package.json` carries a `name`; a stale `sub/index.js` calls `safe`; Node reads only the root's `exports`",
+    files: {
+      "node_modules/wrap/package.json": JSON.stringify({
+        name: "wrap",
+        version: "1.0.0",
+        exports: { ".": { types: "./sub/index.d.ts", default: "./sub/impl" } },
+      }),
+      "node_modules/wrap/sub/package.json": JSON.stringify({
+        name: "wrap/sub",
+        main: "./index.js",
+      }),
+      "node_modules/wrap/sub/index.d.ts": `export declare function run(x: string): unknown;\n`,
+      "node_modules/wrap/sub/index.js": runCalling("safe"),
+      "node_modules/wrap/sub/impl": runCalling("parse"),
+      [ENTRY]: APP,
+    },
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    expectedReason: "declaration_only_resolution",
+  },
+  {
+    id: "audit.types-package-beside-exports-package",
+    mechanism:
+      '`wrap` declares `exports: { ".": "./lib/impl" }` (calls `parse`); its declaration comes from a separate `@types/wrap`, which ships a stale `index.js` calling `safe`; Node loads `wrap`\'s `exports` target',
+    files: {
+      "node_modules/wrap/package.json": JSON.stringify({
+        name: "wrap",
+        version: "1.0.0",
+        exports: { ".": "./lib/impl" },
+      }),
+      "node_modules/wrap/lib/impl": runCalling("parse"),
+      "node_modules/@types/wrap/package.json": JSON.stringify({
+        name: "@types/wrap",
+        version: "1.0.0",
+      }),
+      "node_modules/@types/wrap/index.d.ts": `export declare function run(x: string): unknown;\n`,
+      "node_modules/@types/wrap/index.js": runCalling("safe"),
+      [ENTRY]: APP,
+    },
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    expectedReason: "declaration_only_resolution",
   },
 ];

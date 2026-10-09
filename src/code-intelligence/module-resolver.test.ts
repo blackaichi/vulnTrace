@@ -285,7 +285,14 @@ describe("createModuleResolver: ESM/CJS boundary via conditional exports", () =>
 });
 
 describe("createModuleResolver: TypeScript path mapping", () => {
-  it("resolves an aliased specifier via baseUrl + paths", async () => {
+  // Corrected by task C-1 (ADR 0010 C2; the project owner's decision of
+  // 2026-10-09). This test asserted that `@app/util` resolves to the mapped
+  // `src/util.ts`. Node never reads tsconfig: `require("@app/util")` looks
+  // for an installed `@app/util` package and throws MODULE_NOT_FOUND, so
+  // the mapped file is not what Node loads. A mapping that disagrees with
+  // Node's resolution is unresolved, naming the mapped file; the cases
+  // against real `node` are module-resolver.runtime-resolution.test.ts.
+  it("an aliased specifier Node cannot resolve is unresolved, never the mapped file", async () => {
     const root = tempProject();
     write(
       root,
@@ -306,10 +313,8 @@ describe("createModuleResolver: TypeScript path mapping", () => {
       path.join(root, "src", "index.ts"),
     );
 
-    expect(result).toMatchObject({
-      kind: "resolved",
-      resolvedFileName: utilPath,
-    });
+    expect(result.kind).toBe("unresolved");
+    expect((result as { reason: string }).reason).toContain(utilPath);
   });
 });
 

@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { isBuiltin } from "node:module";
 import path from "node:path";
 import ts from "typescript";
@@ -160,17 +161,77 @@ function toDeclarationOnlyModule(
   };
 }
 
+declare const nodeResolutionOptionsBrand: unique symbol;
+
+/**
+ * The compiler options every module resolution runs under, whatever the
+ * project's tsconfig says (ADR 0010 invariant C2, task C-1): `module` and
+ * `moduleResolution` NodeNext -- package `exports` / `imports` honoured,
+ * the `node`, `require` / `import` and `default` conditions, Node's
+ * file/package-scope format detection -- and `allowJs`, because Node loads
+ * JavaScript whatever a tsconfig says. Nothing else from the project's
+ * tsconfig: Node never reads it, so its `module`, `moduleResolution`,
+ * `customConditions`, `moduleSuffixes`, `rootDirs` and `preserveSymlinks`
+ * cannot change which file Node loads. Before C-1 the project's own
+ * options were used, and under `module: commonjs` (node10) or `bundler`
+ * resolution that named a file Node never loads (PRM-33).
+ *
+ * This is Node's resolution MODE, not Node's algorithm in every detail.
+ * TypeScript still matches the `types` condition (dropped by the noDts
+ * pass {@link resolveSync} runs first), and still substitutes and prefers
+ * TypeScript extensions (`./x.js` → `x.ts`, `index.ts` before
+ * `index.js`), also inside `node_modules` and for a JavaScript importer,
+ * where Node loads the `.js` file: RWF-086, open.
+ *
+ * Branded, with one producer ({@link nodeResolutionOptions}), so every
+ * TypeScript resolution call in this module provably receives options it
+ * built: `VT-INV-C-runtime-resolution`'s census
+ * (src/testing/runtime-resolution-census.ts) checks the call sites and the
+ * assertion.
+ */
+export type NodeResolutionOptions = ts.CompilerOptions & {
+  readonly [nodeResolutionOptionsBrand]: true;
+};
+
+/**
+ * The one producer of {@link NodeResolutionOptions}. `mapping` adds a
+ * tsconfig's `baseUrl` / `paths` (and the `pathsBasePath` TypeScript
+ * resolves `paths` against) and nothing else: it exists only for the
+ * cross-check in {@link createModuleResolver}, never to decide a file.
+ */
+function nodeResolutionOptions(mapping?: {
+  readonly baseUrl?: string;
+  readonly paths?: ts.MapLike<string[]>;
+  readonly pathsBasePath?: ts.CompilerOptions[string];
+}): NodeResolutionOptions {
+  const options: ts.CompilerOptions = {
+    allowJs: true,
+    module: ts.ModuleKind.NodeNext,
+    moduleResolution: ts.ModuleResolutionKind.NodeNext,
+  };
+  if (mapping?.baseUrl !== undefined) options.baseUrl = mapping.baseUrl;
+  if (mapping?.paths !== undefined) options.paths = mapping.paths;
+  if (mapping?.pathsBasePath !== undefined) {
+    options.pathsBasePath = mapping.pathsBasePath;
+  }
+  return Object.freeze(options) as NodeResolutionOptions;
+}
+
+/** Node's runtime resolution: never anything from the tsconfig (C2). */
+const NODE_RUNTIME_RESOLUTION_OPTIONS = nodeResolutionOptions();
+
 /**
  * Determines whether the importer is being resolved as ESM or CommonJS —
  * required to pick the right side of a conditional package export
  * (`{"import": "...", "require": "..."}`) — by delegating to TypeScript's
  * own implementation of Node's file/package-scope format detection
  * (extension, and the nearest ancestor package.json's `"type"` field),
- * rather than reimplementing that lookup (see ADR-0001).
+ * rather than reimplementing that lookup (see ADR-0001). Under
+ * {@link NodeResolutionOptions} that detection is Node's own.
  */
 function resolutionModeFor(
   importerFilePath: string,
-  compilerOptions: ts.CompilerOptions,
+  compilerOptions: NodeResolutionOptions,
 ): ts.ResolutionMode {
   return ts.getImpliedNodeFormatForFile(
     importerFilePath,
@@ -210,14 +271,17 @@ function resolutionModeFor(
 function attemptNoDtsResolution(
   specifier: string,
   importerFilePath: string,
-  compilerOptions: ts.CompilerOptions,
+  compilerOptions: NodeResolutionOptions,
   resolutionMode: ts.ResolutionMode,
 ): ts.ResolvedModuleFull | undefined {
   try {
-    const noDtsOptions = {
+    // Still Node's resolution: the same branded options (the spread keeps
+    // the brand), plus TypeScript's own switch that drops declaration
+    // candidates.
+    const noDtsOptions: NodeResolutionOptions = {
       ...compilerOptions,
       noDtsResolution: true,
-    } as ts.CompilerOptions;
+    };
     const result = ts.resolveModuleName(
       specifier,
       importerFilePath,
@@ -262,6 +326,147 @@ function derivePackageRootDir(
     return undefined;
   }
   return resolvedFile.slice(0, index + marker.length - 1);
+}
+
+/**
+ * A specifier Node resolves through `node_modules` (and so through a
+ * package's `exports`), as opposed to a relative or absolute path, which
+ * `exports` never governs.
+ */
+function isBareSpecifier(specifier: string): boolean {
+  return (
+    !specifier.startsWith("./") &&
+    !specifier.startsWith("../") &&
+    specifier !== "." &&
+    specifier !== ".." &&
+    !path.isAbsolute(specifier)
+  );
+}
+
+/**
+ * Whether a bare specifier that resolved only to `declarationFileName` may
+ * fall back to a sibling runtime file or `main` (task C-1, ADR 0010 C2;
+ * the independent audit's finding 2). Node resolves a bare specifier into
+ * a package that declares `exports`, and every `#` specifier (the
+ * importer's own `imports` map), through that map alone, never through
+ * `main` or a file beside a declaration.
+ *
+ * Decided from the package the specifier NAMES, located the way Node
+ * locates it -- not from TypeScript's `packageId` or a
+ * `node_modules/<name>/` segment of the declaration's path (which a
+ * package without a `version`, a workspace symlink or a self-reference
+ * lacks), and not from the manifests above the declaration (a subpath
+ * proxy `package.json` with its own `name`, or a separate `@types/<name>`
+ * package, is not the package Node reads `exports` from). C-1's audit and
+ * re-audit found each of those bypasses. In Node's order:
+ *
+ * 1. Self-reference: the importer's package scope (its nearest
+ *    `package.json`) names the package and declares `exports` -- refuse;
+ *    an unreadable scope refuses too.
+ * 2. `node_modules/<name>/package.json`, from the importer's directory up.
+ *    Not found, unreadable, or declaring `exports` -- refuse.
+ * 3. The declaration file's real path must lie inside that package's real
+ *    directory; otherwise the declaration is not that package's own
+ *    (`@types/<name>`) and its siblings are not what Node loads -- refuse.
+ *
+ * `exports: null` is absent, as in Node and package-entry.ts. Anything
+ * unestablished refuses: the result is then declaration-only, which
+ * fails closed.
+ */
+function siblingFallbackAllowed(
+  specifier: string,
+  declarationFileName: string,
+  importerFilePath: string,
+): boolean {
+  if (specifier.startsWith("#")) return false;
+  const segments = specifier.split("/");
+  const packageName = specifier.startsWith("@")
+    ? segments.slice(0, 2).join("/")
+    : segments[0];
+  if (packageName === undefined || packageName === "") return false;
+
+  // 1. Self-reference, which Node tries before node_modules.
+  const scope = nearestManifest(path.dirname(importerFilePath));
+  if (scope === "unreadable") return false;
+  if (
+    scope !== undefined &&
+    scope.manifest.name === packageName &&
+    declaresExports(scope.manifest)
+  ) {
+    return false;
+  }
+
+  // 2. The package Node loads for the name.
+  let packageDir: string | undefined;
+  for (let dir = path.dirname(importerFilePath); ;) {
+    const candidate = path.join(dir, "node_modules", packageName);
+    if (ts.sys.fileExists(path.join(candidate, "package.json"))) {
+      packageDir = candidate;
+      break;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) break;
+    dir = parent;
+  }
+  if (packageDir === undefined) return false;
+  const manifest = readManifest(path.join(packageDir, "package.json"));
+  if (manifest === undefined || declaresExports(manifest)) return false;
+
+  // 3. The declaration is that package's own.
+  const realPackageDir = realPath(packageDir);
+  const realDeclaration = realPath(declarationFileName);
+  return (
+    realPackageDir !== undefined &&
+    realDeclaration !== undefined &&
+    realDeclaration.startsWith(realPackageDir + path.sep)
+  );
+}
+
+interface Manifest {
+  readonly name?: unknown;
+  readonly exports?: unknown;
+}
+
+function declaresExports(manifest: Manifest): boolean {
+  return manifest.exports !== undefined && manifest.exports !== null;
+}
+
+/** A `package.json`, or `undefined` when it cannot be read or parsed as an object. */
+function readManifest(manifestPath: string): Manifest | undefined {
+  const text = ts.sys.readFile(manifestPath);
+  if (text === undefined) return undefined;
+  try {
+    const parsed: unknown = JSON.parse(text);
+    return typeof parsed === "object" && parsed !== null
+      ? (parsed as Manifest)
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The nearest `package.json` at or above `dir` (Node's package scope). */
+function nearestManifest(
+  dir: string,
+): { readonly manifest: Manifest } | "unreadable" | undefined {
+  for (let current = dir; ;) {
+    const manifestPath = path.join(current, "package.json");
+    if (ts.sys.fileExists(manifestPath)) {
+      const manifest = readManifest(manifestPath);
+      return manifest === undefined ? "unreadable" : { manifest };
+    }
+    const parent = path.dirname(current);
+    if (parent === current) return undefined;
+    current = parent;
+  }
+}
+
+function realPath(file: string): string | undefined {
+  try {
+    return realpathSync(file);
+  } catch {
+    return undefined;
+  }
 }
 
 const RUNTIME_SIBLING_EXTENSIONS = [".js", ".cjs", ".mjs"] as const;
@@ -356,12 +561,19 @@ function attemptSiblingRuntimeFile(
  * `ts.resolveModuleName` itself never resolves core specifiers at all (its
  * knowledge of Node's core API is ambient `@types/node` declarations, not
  * per-specifier resolution -- see docs/REAL-WORLD-BENCHMARK-AUDIT-V0.1.md
- * § 3.5). (1) Otherwise, the default resolution; if it isn't a declaration
- * file, done -- this is the common case and behavior is unchanged.
- * (2) Otherwise, {@link attemptNoDtsResolution} re-resolves the same
- * specifier preferring runtime candidates. (3) Otherwise,
- * {@link attemptSiblingRuntimeFile} tries a structurally-scoped
- * same-package fallback. (4) Otherwise, the result is honestly reported as
+ * § 3.5). (1) Otherwise, {@link attemptNoDtsResolution}: runtime
+ * candidates only, and without the `types` export condition Node never
+ * matches; a runtime file found here is the answer -- the common case,
+ * one TypeScript call. (2) Otherwise, the default resolution: nothing is
+ * unresolved; a runtime file it reaches that step (1) did not was reached
+ * only through the `types` condition, and is unresolved too (task C-1).
+ * (3) Otherwise (a declaration file), {@link attemptSiblingRuntimeFile}
+ * tries a structurally-scoped same-package fallback -- but never for a
+ * bare specifier governed by an `exports` or `imports` map, nor where the
+ * package scope cannot be established ({@link siblingFallbackAllowed}):
+ * Node resolves such a specifier through the map alone, and step (1)
+ * already applied it and found no runtime file (task C-1, ADR 0010 C2).
+ * (4) Otherwise, the result is honestly reported as
  * {@link DeclarationOnlyModule} -- an explicit, first-class uncertainty,
  * never silently coerced into either a normal resolution or a plain
  * resolution failure.
@@ -369,13 +581,32 @@ function attemptSiblingRuntimeFile(
 function resolveSync(
   specifier: string,
   importerFilePath: string,
-  compilerOptions: ts.CompilerOptions,
+  compilerOptions: NodeResolutionOptions,
 ): ModuleResolutionResult {
   if (isBuiltin(specifier)) {
     return { kind: "builtin", specifier: normalizeBuiltinSpecifier(specifier) };
   }
 
   const resolutionMode = resolutionModeFor(importerFilePath, compilerOptions);
+
+  // Node's answer first. TypeScript's NodeNext resolution always matches
+  // the `types` export condition, which Node never does, so a package
+  // whose `types` target is a runtime file would otherwise be read through
+  // a file Node never loads (C-1's independent audit, finding 1). The
+  // noDts resolution drops that condition along with declaration
+  // candidates.
+  const runtimeFromNoDts = attemptNoDtsResolution(
+    specifier,
+    importerFilePath,
+    compilerOptions,
+    resolutionMode,
+  );
+  if (runtimeFromNoDts && !isDeclarationExtension(runtimeFromNoDts.extension)) {
+    return toResolvedModuleFrom(runtimeFromNoDts);
+  }
+
+  // No runtime file through Node's route. The default resolution is
+  // consulted only to give an honest declaration-only account.
   const result = ts.resolveModuleName(
     specifier,
     importerFilePath,
@@ -397,23 +628,33 @@ function resolveSync(
 
   const resolved = result.resolvedModule;
   if (!isDeclarationExtension(resolved.extension)) {
-    return toResolvedModuleFrom(resolved);
-  }
-
-  const runtimeFromNoDts = attemptNoDtsResolution(
-    specifier,
-    importerFilePath,
-    compilerOptions,
-    resolutionMode,
-  );
-  if (runtimeFromNoDts && !isDeclarationExtension(runtimeFromNoDts.extension)) {
-    return toResolvedModuleFrom(runtimeFromNoDts);
+    // A runtime file reached only through a route Node does not take (the
+    // `types` condition): Node does not load it.
+    return {
+      kind: "unresolved",
+      specifier,
+      importer: importerFilePath,
+      reason:
+        `Cannot resolve module "${specifier}" from "${importerFilePath}": ` +
+        `"${resolved.resolvedFileName}" is reached only through TypeScript's ` +
+        `\`types\` condition, which Node never matches`,
+    };
   }
 
   const packageRootDir = derivePackageRootDir(
     resolved.resolvedFileName,
     resolved.packageId?.name,
   );
+  if (
+    isBareSpecifier(specifier) &&
+    !siblingFallbackAllowed(
+      specifier,
+      resolved.resolvedFileName,
+      importerFilePath,
+    )
+  ) {
+    return toDeclarationOnlyModule(resolved);
+  }
   const siblingRuntimeFile = attemptSiblingRuntimeFile(
     resolved.resolvedFileName,
     packageRootDir,
@@ -439,23 +680,91 @@ function resolveSync(
   return toDeclarationOnlyModule(resolved);
 }
 
+/** One resolution outcome, as a comparable key: the kind and the file it names. */
+function outcomeKey(result: ModuleResolutionResult): string {
+  switch (result.kind) {
+    case "resolved":
+    case "declaration":
+      return `${result.kind}:${result.resolvedFileName}`;
+    case "builtin":
+      return `builtin:${result.specifier}`;
+    case "unresolved":
+      return "unresolved";
+  }
+}
+
+/** An outcome, as a reason names it. */
+function describeOutcome(result: ModuleResolutionResult): string {
+  switch (result.kind) {
+    case "resolved":
+      return `"${result.resolvedFileName}"`;
+    case "declaration":
+      return `the declaration file "${result.resolvedFileName}"`;
+    case "builtin":
+      return `the builtin "${result.specifier}"`;
+    case "unresolved":
+      return "nothing (no file)";
+  }
+}
+
 /**
  * Creates a {@link ModuleResolver} for a loaded {@link TsProject}
- * (TASK-013). Follows Node.js/TypeScript module resolution semantics
- * through `ts.resolveModuleName` — the real compiler API — rather than a
- * simplistic string-based resolver (see docs/SDD.md § 16, ADR-0001): this
- * is what correctly handles package `main`, `exports` (including
- * conditional exports and subpaths), ESM/CJS boundaries, and TypeScript
- * `paths`/`baseUrl` mapping without VulnTrace re-deriving that logic
- * itself. Declaration-vs-runtime disambiguation (VT-304) is layered on top
- * in {@link resolveSync}, not reimplemented here.
+ * (TASK-013). Resolves through `ts.resolveModuleName` -- the real compiler
+ * API, rather than a simplistic string-based resolver (see docs/SDD.md
+ * § 16, ADR-0001) -- under {@link NodeResolutionOptions}, which is Node's
+ * algorithm: package `main`, `exports` (conditional exports and subpaths),
+ * ESM/CJS boundaries. Declaration-vs-runtime disambiguation (VT-304) is
+ * layered on top in {@link resolveSync}, not reimplemented here.
+ *
+ * The project's tsconfig never decides which file loads (ADR 0010
+ * invariant C2, task C-1). Before C-1 its options did: under
+ * `module: commonjs` they selected node10 resolution, which ignores
+ * `exports` (PRM-33), and every mode applied `paths` / `baseUrl`, which
+ * Node never reads (RWF-083). A tsconfig `baseUrl` / `paths` mapping is
+ * still consulted, but only as a cross-check: when resolving with it gives
+ * a different outcome than Node's resolution, the specifier is
+ * `unresolved`, with a reason naming both, rather than either answer
+ * followed silently (ADR 0010 § 3; REMEDIATION-PLAN § 6.1 decision 7;
+ * downstream it is `unresolved_module`, category `identity_unresolved`).
+ * That includes a mapped alias Node cannot load at all
+ * (`@lib/wrapper.js`): the program then runs only under a toolchain that
+ * rewrites or honours `paths`, whose answer is not Node's (the project
+ * owner's decision of 2026-10-09).
  */
 export function createModuleResolver(project: TsProject): ModuleResolver {
+  const raw = project.rawCompilerOptions;
+  const tsconfigMapping =
+    raw.baseUrl !== undefined || raw.paths !== undefined
+      ? nodeResolutionOptions({
+          baseUrl: raw.baseUrl,
+          paths: raw.paths,
+          pathsBasePath: raw.pathsBasePath,
+        })
+      : undefined;
   return {
     resolve(specifier, importerFilePath) {
-      return Promise.resolve(
-        resolveSync(specifier, importerFilePath, project.rawCompilerOptions),
+      const node = resolveSync(
+        specifier,
+        importerFilePath,
+        NODE_RUNTIME_RESOLUTION_OPTIONS,
       );
+      if (tsconfigMapping === undefined) {
+        return Promise.resolve(node);
+      }
+      const mapped = resolveSync(specifier, importerFilePath, tsconfigMapping);
+      if (outcomeKey(mapped) === outcomeKey(node)) {
+        return Promise.resolve(node);
+      }
+      return Promise.resolve({
+        kind: "unresolved",
+        specifier,
+        importer: importerFilePath,
+        reason:
+          `Cannot resolve module "${specifier}" from "${importerFilePath}": ` +
+          `the tsconfig's baseUrl/paths mapping resolves it to ` +
+          `${describeOutcome(mapped)}, Node's resolution to ` +
+          `${describeOutcome(node)} (ADR 0010 C2: neither is followed)`,
+      });
     },
   };
 }

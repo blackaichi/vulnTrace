@@ -96,6 +96,9 @@ export default defineConfig({
       "src/analysis/verdict.proof-inputs.test.ts",
       "src/testing/proof-input-casts.test.ts",
       "src/analysis/verdict.site-b-target-authority.integration.test.ts",
+
+      "src/testing/runtime-resolution-census.test.ts",
+      "src/code-intelligence/module-resolver.runtime-resolution.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take
