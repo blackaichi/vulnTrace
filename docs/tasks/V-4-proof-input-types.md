@@ -2,11 +2,16 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: V-4
 - **Branch**: v-4-proof-input-types
 - **Base SHA**: f9c62ec852e014f4408d2f9a29248c3e311f0360
-- **Commits**: —
+- **Commits**:
+  - `674d7e3` docs(tasks): V-4 task file — branded proof-input types and mutation tests
+  - `3a1de64` test(V-4): a closure marked incomplete with no reason withdraws families B and C
+  - `4da456f` fix(V-4): families B and C are built only from branded proof inputs
+  - `220455d` test(V-4): the proof-input cast census; VT-INV-V-corroboration registers predicates 1-3, 5 and the brands
+  - (this commit) docs(V-4): records — lane V complete, plan § 5a, debts, RWF-082, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -205,3 +210,53 @@ validation baseline exactly `RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`,
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5), in
 exactly that order. Add: the mutation list, each with the named test that
 caught it.
+
+## Corrections (2026-10-09)
+
+Appended once the work was done; the text above is as written at the
+start (`docs/tasks/README.md`).
+
+- **"Branded proof inputs, in `src/analysis/verdict.ts`" and "§ 8: types in
+  `src/domain/evidence.ts`".** Measured: `src/domain/` imports nothing
+  outside itself, and a `ClosureCorroboration` holds a `ModuleLoadClosure`
+  (`src/analysis/`). The three proof-input types live in `verdict.ts` with
+  their producers; only the two evidence brands are in `evidence.ts`.
+- **The producers and constructors are exported**, not module-private as
+  item 2's pattern ("module-private runtime mark") might suggest: the mark
+  is private, the functions are not. Exporting them is safe by
+  construction -- every producer checks its predicate, and every
+  constructor refuses an unmarked input -- and it lets each refusal have a
+  named unit test (`verdict.proof-inputs.test.ts`), which is what makes the
+  defence-in-depth checks mutation-catchable at all.
+- **No `UnattributedTarget`** (ADR 0011 § 2's third type): V-1 deleted the
+  phantom, so nothing would produce one.
+- **"A forged (cast) proof input fails closed to `UNKNOWN` at runtime"**
+  holds for the three proof INPUTS. The two evidence objects carry no
+  runtime mark (they are serialized output); for them the brand, the cast
+  census and review are the layers, and the census states the routes it
+  cannot see.
+- **The independent audit blocked the first version** on two in-scope
+  holes, both fixed on this branch: the cast census missed mapped wrappers
+  and function types, and a production import of `src/testing/`'s
+  fixtures; predicate 3 was checked only for the first unreachable target
+  node. It also found the predicate-4 mutation missing (added) and three
+  refusals whose deletion compiled (now each a compile error, by
+  `satisfies`).
+
+### Acceptance criteria, answered
+
+- Families B and C built only by constructors from branded inputs: **yes**.
+- An object literal of either evidence type is a compile error: **yes**
+  (and of each proof input).
+- A forged proof input fails closed at runtime: **yes** for the three proof
+  inputs; the evidence objects have no runtime mark (above).
+- `complete: false` with an empty list withdraws family C, failing on the
+  base: **yes** (F2 and F4).
+- A structural gate with a self-test: **yes** (`proof-input-casts.test.ts`).
+- Each corroboration check, deleted, caught by a named test: **yes**,
+  twenty-five mutations (the pull request lists them).
+- Predicates 1-3, 5 and the brands registered: **yes**.
+- Differentials 0 / 0 / 0 over 139 cases; validation baseline the
+  documented five: **yes** (the pull request).
+- Serialized output unchanged: **yes** (same keys, order and values;
+  brands are declarations only).

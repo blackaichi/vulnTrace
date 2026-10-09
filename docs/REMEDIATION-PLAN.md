@@ -1122,6 +1122,91 @@ predicate 5; § 8's V-1 row).
 - **E-4**: RWF-081 (an entrypoint's export written by another module is no
   root and no root gap).
 
+#### V-4 additions (task V-4, 2026-10-09)
+
+**Outcome of V-4** (ADR 0011 § 2's structural gate; § 8's V-4 row). Lane V
+is complete.
+
+- Families B and C are built only from branded proof inputs, each
+  produced by one function in `src/analysis/verdict.ts` that checks it:
+  `corroborateClosure` (`ClosureCorroboration`: predicate 1, both halves
+  -- present, roots, `complete`, no recorded reason -- with
+  `instanceLoaded` recorded), `corroborateEvaluation`
+  (`EvaluatedClosureCorroboration`: predicate 5 beside it, V-1's binding)
+  and `attributeTarget` (`AttributedTarget`: predicate 3, a member of the
+  analyzed graph). `confirmedAbsentInstanceEvidence` and
+  `confirmedUnreachableTargetEvidence` are the only builders of the two
+  evidence objects, whose interfaces (`src/domain/evidence.ts`) now carry a
+  nominal brand.
+- Three layers: an object literal of any of the five types is a compile
+  error (`@ts-expect-error` cases checked by `npm run typecheck`); a
+  production type assertion to one outside its producer fails the
+  Foundation cast census (`src/testing/proof-input-casts.ts`, through the
+  TypeScript checker, with a self-test); an input no producer made is
+  refused at runtime (a module-private mark) and `buildFinding` answers
+  `UNKNOWN`.
+- V-2's audit, finding 2, closed: a closure `{ complete: false,
+  incompleteness: [] }` left family C standing at `buildFinding` (failing
+  first in the F2 and F4 suites); it is now refused with the existing
+  `module_load_closure_unavailable` (ADR 0011 § 3: no new token). Not a
+  production shape: the builder sets `complete` exactly when the list is
+  empty.
+- Deviations from ADR 0011 § 2 and § 8, each measured: no
+  `UnattributedTarget` type -- V-1 deleted the phantom, so nothing
+  produces one, and the family-C constructor accepts only an
+  `AttributedTarget`; the proof-input types live in `verdict.ts` beside
+  their producers, not in `src/domain/evidence.ts` (`src/domain/` imports
+  nothing outside itself, and a `ClosureCorroboration` holds a
+  `ModuleLoadClosure`); only the two evidence brands are in
+  `evidence.ts`. Family A is unchanged: predicate 1 is stated for B and
+  C, and F4's family-A control `incompleteness_recorded_without_clearing_complete`
+  certifies family A's own read of the closure.
+- Measured: twenty-five mutations of production source, each caught by a
+  named test or by `tsc` (listed in the pull request). Through the
+  production `buildFinding`, six reach a false `NOT_AFFECTED` or a
+  surviving family in the F2/F4 suites or the real-Node oracle (predicate
+  1's two halves -- the list half only on a shape no builder produces, a
+  builder's own shape keeping `UNKNOWN` with a changed reason -- predicate
+  5, predicate 2's instance-keyed site, family B's corroboration and
+  constructor together, predicate 4's root incompleteness); one is caught
+  there by a changed reason only, the verdict staying `UNKNOWN` (family
+  B's per-target read, which the corroboration backs). The rest are layers no production
+  input reaches: the roots check, graph membership and the runtime marks
+  (unit tests), the brands (`@ts-expect-error`, by `tsc`), a forged
+  literal (the cast census), and the three refusals in `checkReachability`
+  and `buildFinding`, each of whose WHOLE deletion is a compile error by
+  a `satisfies` at its use. Not covered (the re-audit): deleting only
+  the `sawUnknown = true` line of `checkReachability`'s per-node
+  attribution refusal still compiles and no test reaches it, since no
+  producer returns a node outside the graph; under that mutation an
+  unattributed node of a second target would be skipped silently. Over
+  the 139 corpus cases: graph, proof and verdict differentials all 0.
+- The independent audit blocked the first version on two in-scope holes,
+  both fixed: the cast census missed mapped wrappers (`Partial<Finding>`,
+  `Pick`, `Omit`, `Readonly`) and function types, and a production import
+  of `src/testing/`'s fixtures; and predicate 3 was checked only for the
+  first unreachable target node, not for every node family C rests on.
+  The census now states the routes it cannot see (`any`, a generic cast
+  helper, a type predicate or `asserts` function, an overload, `as
+  never`, a `@ts-expect-error`); the two evidence objects carry no runtime
+  mark, so for them the census and review are the only layers.
+
+**What V-4 binds.**
+
+- **B-6, E-1..E-5, C-1..C-5, and every later task**: a new or moved
+  family-B or family-C proof goes through `corroborateClosure` and the
+  evidence constructors; the cast census fails on any assertion-based
+  other way, and its header lists the routes it cannot see.
+- **The independent re-audit certified V-4** with four non-blocking gaps,
+  three fixed on the branch (symbol-keyed index signatures; the import
+  check's reach stated; this section's wording) and one recorded above
+  (the single-line `sawUnknown` deletion).
+- **D-01**: the proof inputs are frozen values; `AnalysisProofContext`'s
+  own transitive immutability is still D-01's.
+- **Family A**, if a later task routes it through the corroboration: the
+  F4 control above flips to an invalidating mutation, which reopens a
+  certified decision and needs the project owner's.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

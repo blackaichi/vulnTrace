@@ -256,6 +256,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-079 | `vuln-lib` (synthetic fixture) | A whole-module CommonJS export of an opaque value (`module.exports = makeApi()`) emits no entrypoint root requirement, and a property export it overwrites (`exports.main = main` before it) still roots and witnesses `main` | false NOT_AFFECTED (family C) — see below | Open |
 | RWF-080 | `vuln-lib` (synthetic fixture) | An ESM destructured export (`export const { main } = api`) produces no export binding, so a plain file entrypoint's root set is complete with no root for `main` | false NOT_AFFECTED (family C) — see below | Open |
 | RWF-081 | `vuln-lib` (synthetic fixture) | An entrypoint's export written by ANOTHER module (`require("./index.js").main = fn` in a file the entrypoint loads) is no root and no root gap | false NOT_AFFECTED (family C) — see below | Open |
+| RWF-082 | n/a — the repository's own design records | ADR 0008 and ADR 0011 still open with "Status: **proposed** (design only; nothing here is implemented)", although lane A (ADR 0008) is merged through A-6 and lane V (ADR 0011) through V-3, with V-4 its last task | record — two ADRs understate their own implementation — see below | Open |
 
 ---
 
@@ -19561,4 +19562,30 @@ function `index.js` wrote, and family C stands. ADR 0009's E-4 ("writes by
 other modules: member writes on module objects") is its natural home; it
 is recorded on its own because it reaches an entrypoint's ROOTS, not a
 target's attribution. Backlog: `E-4`'s notes.
+
+## RWF-082 — ADR 0008 and ADR 0011 still say "nothing here is implemented"
+
+**Status:** Open
+**Failure class:** record — a design record's status line is false
+**Defect class:** not applicable (documentation)
+**Proof family affected:** none
+**Severity:** Low (no soundness or verdict path touched)
+**Fix lane:** none assigned (records); backlog `BL-055`
+
+**Discovered:** by task `V-4`, reading ADR 0011 as its specification
+(AGENTS.md § C). Both ADRs open with:
+
+```text
+Status: **proposed** (design only; nothing here is implemented).
+```
+
+Measured against the backlog on `main` at `f9c62ec`: ADR 0008's lane A is
+merged through `A-6` (PR #85), and ADR 0011's lane V through `V-3` (PR
+#88), with `V-4` (the task that found this) its last task. Both ADRs
+already carry accepted amendments recording implemented behaviour (ADR
+0008's decision records and Amendment A-0; ADR 0011's Amendment V-1),
+which the status line contradicts. ADR 0009 and ADR 0010 say the same and
+are still true: lanes E and C have not started. Not corrected by V-4: an
+ADR's text is outside its scope, and the wording of an implemented status
+is the project owner's to choose.
 

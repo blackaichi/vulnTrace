@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-08, by `V-3`.
+**Last updated:** 2026-10-09, by `V-4`.
 
 ## Objective
 
@@ -96,8 +96,15 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   a symbol that does not materialize is root incompleteness (PRM-25, and
   PRM-31, which ADR 0011 § 2 assigns to lane V). ADR 0011 § 2's
   name-keyed-lookup census is a Foundation test (`VT-INV-V-corroboration`).
-  What binds V-4, E-1 and E-3: REMEDIATION-PLAN § 5a, "V-1 additions"
-  through "V-3 additions".
+  `V-4`, the last of lane V, made the corroboration structural (ADR 0011
+  § 2): families B and C are built only from branded proof inputs, each
+  produced by one function in `verdict.ts` that checks it
+  (`corroborateClosure`: predicate 1, both halves; `corroborateEvaluation`:
+  predicate 5; `attributeTarget`: predicate 3); an object literal of one is
+  a compile error, a production cast to one fails a Foundation cast census,
+  and an input no producer made is refused at runtime. What binds every
+  later lane: REMEDIATION-PLAN § 5a, "V-1 additions" through "V-4
+  additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -128,21 +135,25 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`V-3` — identity-keyed roots; an unmaterialized symbol is incompleteness;
-name-lookup census gate ([task file](tasks/V-3-identity-keyed-roots.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `V-2`
-merged as PR #87.
+`V-4` — proof-input types (`ClosureCorroboration`, `AttributedTarget`)
+and mutation tests ([task file](tasks/V-4-proof-input-types.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `V-3`
+merged as PR #88.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-3`:
-`V-4`, then `C-1` and lane B. The P1 gaps `BL-048`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `V-4`:
+`C-1`, then lane B. The P1 gaps `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
 
+From `V-4`: RWF-082 and `BL-055` (P6, records: ADR 0008 and ADR 0011
+still say "nothing here is implemented"). Its one newly refused shape (a
+closure marked incomplete with no reason, V-2's audit finding 2) is no
+production shape, so no finding.
 From `V-3`: RWF-079 and `BL-053` (**P1**: a whole-module export of an
 opaque value emits no entrypoint root requirement, and the property export
 it overwrites still witnesses the name -- a family-C false `NOT_AFFECTED`,
