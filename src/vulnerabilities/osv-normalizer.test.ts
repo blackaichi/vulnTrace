@@ -322,3 +322,68 @@ describe("normalizeOsvVulnerability: malformed input", () => {
     expect(({} as Record<string, unknown>).polluted).toBeUndefined();
   });
 });
+
+/**
+ * Task B-1. The normalizer is the one place a record's shape is checked,
+ * so a record the rest of the scan cannot carry must be refused HERE --
+ * where the scan accounts it as one unusable record -- and never
+ * downstream, where it fails the whole report.
+ */
+describe("normalizeOsvVulnerability: identity and withdrawal (B-1)", () => {
+  const affected = [{ package: target, ranges: [] }];
+
+  // AUD-11: `id: ""` normalized, then failed `result.schema.json`'s
+  // `minLength: 1` on `findings[].vulnerability`: exit 3, report lost.
+  it("rejects an empty id", () => {
+    expect(() =>
+      normalizeOsvVulnerability({ id: "", affected }, target),
+    ).toThrow(OsvNormalizationError);
+  });
+
+  // AUD-14: OSV's `withdrawn` is "an RFC3339-formatted timestamp in UTC
+  // (ending in 'Z')" -- the time the entry should be considered withdrawn.
+  it("carries withdrawn when present", () => {
+    const vuln = normalizeOsvVulnerability(
+      { id: "GHSA-withdrawn", withdrawn: "2026-01-01T00:00:00Z", affected },
+      target,
+    );
+    expect(vuln).toMatchObject({ withdrawn: "2026-01-01T00:00:00Z" });
+  });
+
+  it("carries withdrawn with fractional seconds", () => {
+    const vuln = normalizeOsvVulnerability(
+      {
+        id: "GHSA-withdrawn",
+        withdrawn: "2026-01-01T00:00:00.123456Z",
+        affected,
+      },
+      target,
+    );
+    expect(vuln).toMatchObject({ withdrawn: "2026-01-01T00:00:00.123456Z" });
+  });
+
+  it("leaves withdrawn absent for a live record", () => {
+    const vuln = normalizeOsvVulnerability(
+      { id: "GHSA-live", affected },
+      target,
+    );
+    expect("withdrawn" in vuln).toBe(false);
+  });
+
+  // A `withdrawn` the normalizer cannot read is neither "withdrawn" (which
+  // would hide the advisory) nor "live" (which would ignore what the
+  // database said): the record is unusable, and the scan accounts it.
+  it.each([
+    ["a number", 1767225600],
+    ["a date without a time", "2026-01-01"],
+    ["a non-UTC offset", "2026-01-01T00:00:00+02:00"],
+    ["free text", "yes"],
+  ])("rejects a withdrawn that is %s", (_label, withdrawn) => {
+    expect(() =>
+      normalizeOsvVulnerability(
+        { id: "GHSA-withdrawn", withdrawn, affected },
+        target,
+      ),
+    ).toThrow(OsvNormalizationError);
+  });
+});
