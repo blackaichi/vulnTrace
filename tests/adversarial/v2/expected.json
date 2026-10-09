@@ -200,8 +200,8 @@
     "dir": "adv2-015-typescript-paths",
     "category": "15. TypeScript path aliases",
     "description": "tsconfig.json maps `@lib/*` to `src/lib/*` via the `paths` option; the entrypoint imports a local wrapper through the alias, which calls the vulnerable export.",
-    "expected": "AFFECTED",
-    "reason": "main() calls wrapIt() (imported via the @lib/wrapper.js alias), which calls dangerousOp() directly.",
+    "expected": "UNKNOWN",
+    "reason": "Corrected from AFFECTED by task C-1 (ADR 0010 invariant C2; the project owner's decision of 2026-10-09). wrapIt() calls dangerousOp() directly, and main() calls wrapIt() -- but only through `@lib/wrapper.js`, a specifier that exists solely in tsconfig's `paths`. Node never reads tsconfig, and tsc emits the specifier unchanged: compiled with this fixture's own tsconfig and run under real node (v22.11.0), the entry throws ERR_MODULE_NOT_FOUND (\"Cannot find package '@lib/wrapper.js'\") and main() never runs. The program runs only under a toolchain that rewrites or honours `paths` (a bundler, tsconfig-paths), and which file that toolchain loads is not Node's answer, so the path through the alias is not authoritative for AFFECTED, and the unresolved import leaves the module-load closure incomplete for any negative proof: UNKNOWN (`unresolved_module`), never NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": {
@@ -214,8 +214,8 @@
     "dir": "adv2-016-typescript-baseurl",
     "category": "16. TypeScript baseUrl (no explicit paths)",
     "description": "tsconfig.json sets only `baseUrl` (no `paths` map); a bare, non-relative specifier (`lib/wrapper`) resolves against baseUrl to a local wrapper that calls the vulnerable export.",
-    "expected": "AFFECTED",
-    "reason": "main() calls wrapIt() (imported via the baseUrl-relative bare specifier \"lib/wrapper\"), which calls dangerousOp() directly.",
+    "expected": "UNKNOWN",
+    "reason": "Corrected from AFFECTED by task C-1 (ADR 0010 invariant C2; the project owner's decision of 2026-10-09). wrapIt() calls dangerousOp() directly, and main() calls wrapIt() -- but only through the bare specifier \"lib/wrapper\", which resolves to src/lib/wrapper.ts solely through tsconfig's `baseUrl`. Node never reads tsconfig: to Node a bare specifier names an installed package, and with module commonjs tsc emits `require(\"lib/wrapper\")` unchanged, so compiled with this fixture's own tsconfig and run under real node (v22.11.0) the entry throws MODULE_NOT_FOUND (\"Cannot find module 'lib/wrapper'\") and main() never runs. Were a package named `lib` installed, Node would load it instead (RWF-083). Which file a `baseUrl`-honouring toolchain loads is not Node's answer, so the path is not authoritative for AFFECTED, and the unresolved import leaves the module-load closure incomplete for any negative proof: UNKNOWN (`unresolved_module`), never NOT_AFFECTED.",
     "vulnerability": "GHSA-vt2v2-0001",
     "vulnerableTarget": "vt2-vuln-lib#dangerousOp",
     "findingSelector": {

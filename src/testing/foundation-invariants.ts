@@ -44,6 +44,8 @@ export interface InvariantOwnership {
     | "P1-A"
     /** The soundness remediation's ADR 0008 (lane A; registered from task A-1). */
     | "ADR-0008"
+    /** The soundness remediation's ADR 0010 (lane C; registered from task C-1). */
+    | "ADR-0010"
     /** The soundness remediation's ADR 0011 (lane V; registered from task V-3). */
     | "ADR-0011";
   /** Repo-relative test files that own it. Each must exist and be gated. */
@@ -517,6 +519,42 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "phantom target). Predicate 2's " +
       "real-Node ground truth is tests/oracle/v1-site-b-corroboration.test.ts, " +
       "run in CI by `npm run test:oracle`.",
+  },
+
+  // ------------------------------------------------------------------
+  // Lane C: capability flow and runtime resolution (ADR 0010)
+  // ------------------------------------------------------------------
+  {
+    id: "VT-INV-C-runtime-resolution",
+    invariant:
+      "Every resolution that decides which file Node loads uses Node's " +
+      "algorithm, whatever the project's tsconfig says (ADR 0010 invariant " +
+      "C2): TypeScript's module resolution is reached in production only " +
+      "from module-resolver.ts's runtime path, and only with " +
+      "NodeResolutionOptions (moduleResolution NodeNext, allowJs, nothing " +
+      "else from the tsconfig), built by its one producer. A tsconfig " +
+      "baseUrl / paths mapping is consulted only as a cross-check: when it " +
+      "resolves a specifier to a different outcome than Node's resolution, " +
+      "the specifier is unresolved, never either answer followed silently. " +
+      "A bare specifier into a package that declares exports never falls " +
+      "back to main or a sibling file.",
+    foundation: "ADR-0010",
+    owners: [
+      "src/testing/runtime-resolution-census.test.ts",
+      "src/code-intelligence/module-resolver.runtime-resolution.test.ts",
+    ],
+    note:
+      "Task C-1 (PRM-33, RWF-083). The census owns the authority, found " +
+      "through the TypeScript checker (each call's resolved signature in " +
+      "typescript.d.ts, so an alias is seen through; the options " +
+      "argument's brand; every assertion to the brand), with a self-test " +
+      "that plants each kind of call in a scratch tree. The resolver test " +
+      "owns the behaviour against real `node`: ADR 0010 § 1's 40-row " +
+      "module x moduleResolution table over PRM-33's package, the " +
+      "baseUrl / paths cross-check both ways, and the declaration-only " +
+      "fallback for a package with exports. The end-to-end verdicts are " +
+      "tests/oracle/c1-runtime-resolution.test.ts, run in CI by " +
+      "`npm run test:oracle`.",
   },
 ];
 

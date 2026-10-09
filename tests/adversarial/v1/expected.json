@@ -312,8 +312,8 @@
     "dir": "adv-023-typescript-path-alias",
     "category": "23. TypeScript path alias",
     "description": "main() reaches the vulnerable call only through a tsconfig `paths`-mapped `@lib/wrapper` import.",
-    "expected": "AFFECTED",
-    "reason": "callVulnerable() unconditionally calls vulnerable(), and main() unconditionally calls callVulnerable() via the aliased import.",
+    "expected": "UNKNOWN",
+    "reason": "Corrected from AFFECTED by task C-1 (ADR 0010 invariant C2; the project owner's decision of 2026-10-09). callVulnerable() unconditionally calls vulnerable(), and main() calls callVulnerable() -- but only through `@lib/wrapper.js`, a specifier that exists solely in tsconfig's `paths`. Node never reads tsconfig, and tsc emits the specifier unchanged: compiled with this fixture's own tsconfig and run under real node (v22.11.0), the entry throws ERR_MODULE_NOT_FOUND (\"Cannot find package '@lib/wrapper.js'\") and main() never runs. The program runs only under a toolchain that rewrites or honours `paths` (a bundler, tsconfig-paths), and which file that toolchain loads is not Node's answer, so the path through the alias is not authoritative for AFFECTED, and the unresolved import leaves the module-load closure incomplete for any negative proof: UNKNOWN (`unresolved_module`), never NOT_AFFECTED.",
     "vulnerability": "GHSA-adv-0001",
     "vulnerableTarget": "adv-vuln-lib#vulnerable",
     "findingSelector": {

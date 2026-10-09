@@ -1,5 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -163,6 +169,50 @@ describe("C2: a tsconfig paths / baseUrl mapping is checked against Node", () =>
     expect(reason).toContain(path.join(root, "src/shim/wrap.js"));
   });
 
+  it("a paths entry naming a sibling installed instance never borrows it: Node loads the top-level instance (PackageInstance identity)", async () => {
+    const root = tempProject();
+    const manifest = JSON.stringify({
+      name: "vuln-lib",
+      version: "1.0.0",
+      main: "index.js",
+    });
+    write(root, {
+      // Two installs of vuln-lib@1.0.0, distinguishable only by path.
+      "node_modules/vuln-lib/package.json": manifest,
+      "node_modules/vuln-lib/index.js": `exports.which = "top-level";\n`,
+      "node_modules/b/package.json": JSON.stringify({
+        name: "b",
+        version: "1.0.0",
+      }),
+      "node_modules/b/node_modules/vuln-lib/package.json": manifest,
+      "node_modules/b/node_modules/vuln-lib/index.js": `exports.which = "nested";\n`,
+      "src/index.js": `console.log(require("vuln-lib").which);\n`,
+      "tsconfig.json": JSON.stringify({
+        compilerOptions: {
+          allowJs: true,
+          module: "nodenext",
+          baseUrl: ".",
+          paths: {
+            "vuln-lib": ["node_modules/b/node_modules/vuln-lib/index.js"],
+          },
+        },
+      }),
+    });
+    expect(realNode(root)).toBe("top-level");
+
+    const result = await createModuleResolver(loadTsProject(root)).resolve(
+      "vuln-lib",
+      path.join(root, "src", "index.js"),
+    );
+
+    // Not the nested sibling (the mapping's answer), and not silently the
+    // top-level one either: the two disagree, so neither is followed.
+    expect(result.kind).toBe("unresolved");
+    expect((result as { reason: string }).reason).toContain(
+      path.join(root, "node_modules/b/node_modules/vuln-lib/index.js"),
+    );
+  });
+
   it("a bare baseUrl shadowing an installed package is unresolved (RWF-083)", async () => {
     const root = tempProject();
     write(root, {
@@ -271,6 +321,145 @@ describe("C2: a tsconfig paths / baseUrl mapping is checked against Node", () =>
     expect(result).toMatchObject({
       kind: "resolved",
       resolvedFileName: path.join(root, "src/util.js"),
+    });
+  });
+});
+
+describe("C2: the `types` export condition is TypeScript's, never Node's (independent audit, finding 1)", () => {
+  it("a runtime file as the `types` target is skipped: the file Node loads", async () => {
+    const root = tempProject();
+    write(root, {
+      "node_modules/p/package.json": JSON.stringify({
+        name: "p",
+        version: "1.0.0",
+        exports: { ".": { types: "./types.js", default: "./impl.js" } },
+      }),
+      "node_modules/p/types.js": `exports.which = "types";\n`,
+      "node_modules/p/impl.js": `exports.which = "impl";\n`,
+      "src/index.js": `console.log(require("p").which);\n`,
+    });
+    expect(realNode(root)).toBe("impl");
+
+    const result = await createModuleResolver(loadTsProject(root)).resolve(
+      "p",
+      path.join(root, "src", "index.js"),
+    );
+
+    expect(result).toMatchObject({
+      kind: "resolved",
+      resolvedFileName: path.join(root, "node_modules/p/impl.js"),
+    });
+  });
+
+  it("a runtime file reachable only through `types` is unresolved", async () => {
+    const root = tempProject();
+    write(root, {
+      "node_modules/p/package.json": JSON.stringify({
+        name: "p",
+        version: "1.0.0",
+        exports: { ".": { types: "./types.js" } },
+      }),
+      "node_modules/p/types.js": `exports.which = "types";\n`,
+      "src/index.js": `console.log(require("p").which);\n`,
+    });
+    expect(realNode(root)).toBe("THROWS ERR_PACKAGE_PATH_NOT_EXPORTED");
+
+    const result = await createModuleResolver(loadTsProject(root)).resolve(
+      "p",
+      path.join(root, "src", "index.js"),
+    );
+
+    expect(result.kind).toBe("unresolved");
+  });
+});
+
+describe("C2: the declaration-only fallback is decided by the package's own scope (independent audit, finding 2)", () => {
+  /** A package whose `exports` target TypeScript cannot resolve, a declaration, and a stale sibling. */
+  const STALE = (name: string): Readonly<Record<string, string>> => ({
+    "package.json": JSON.stringify({
+      name,
+      version: "1.0.0",
+      exports: { ".": { types: "./index.d.ts", default: "./lib/real" } },
+    }),
+    "index.d.ts": `export {};\n`,
+    "index.js": `exports.which = "stale-sibling";\n`,
+    "lib/real": `exports.which = "exports-target";\n`,
+  });
+
+  function prefixed(
+    prefix: string,
+    files: Readonly<Record<string, string>>,
+  ): Record<string, string> {
+    return Object.fromEntries(
+      Object.entries(files).map(([file, content]) => [
+        `${prefix}/${file}`,
+        content,
+      ]),
+    );
+  }
+
+  it("a workspace symlink (its realpath has no node_modules segment) never falls back to the stale sibling", async () => {
+    const root = tempProject();
+    write(root, {
+      ...prefixed("packages/wpkg", STALE("wpkg")),
+      "src/index.js": `console.log(require("wpkg").which);\n`,
+    });
+    mkdirSync(path.join(root, "node_modules"), { recursive: true });
+    symlinkSync(
+      path.join(root, "packages/wpkg"),
+      path.join(root, "node_modules/wpkg"),
+      "dir",
+    );
+    expect(realNode(root)).toBe("exports-target");
+
+    const result = await createModuleResolver(loadTsProject(root)).resolve(
+      "wpkg",
+      path.join(root, "src", "index.js"),
+    );
+
+    expect(result.kind).toBe("declaration");
+  });
+
+  it("a self-reference never falls back to the stale sibling", async () => {
+    const root = tempProject();
+    write(root, {
+      ...STALE("self"),
+      "src/index.js": `console.log(require("self").which);\n`,
+    });
+    expect(realNode(root)).toBe("exports-target");
+
+    const result = await createModuleResolver(loadTsProject(root)).resolve(
+      "self",
+      path.join(root, "src", "index.js"),
+    );
+
+    expect(result.kind).toBe("declaration");
+  });
+
+  it("`exports: null` is absent, as in Node: the fallback still reads main (precision control)", async () => {
+    const root = tempProject();
+    write(root, {
+      "node_modules/p/package.json": JSON.stringify({
+        name: "p",
+        version: "1.0.0",
+        main: "./lib/main.js",
+        types: "./index.d.ts",
+        exports: null,
+      }),
+      "node_modules/p/index.d.ts": `export {};\n`,
+      "node_modules/p/lib/main.js": `exports.which = "main";\n`,
+      "src/index.js": `console.log(require("p").which);\n`,
+    });
+    expect(realNode(root)).toBe("main");
+
+    const result = await createModuleResolver(loadTsProject(root)).resolve(
+      "p",
+      path.join(root, "src", "index.js"),
+    );
+
+    expect(result).toMatchObject({
+      kind: "resolved",
+      resolvedFileName: path.join(root, "node_modules/p/lib/main.js"),
     });
   });
 });

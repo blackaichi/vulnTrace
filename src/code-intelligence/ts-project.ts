@@ -46,10 +46,15 @@ export interface TsProject {
   readonly diagnostics: readonly TsProjectDiagnostic[];
   /**
    * The raw `ts.CompilerOptions`, for other `src/code-intelligence/`
-   * modules that must call TypeScript compiler APIs directly (e.g.
-   * module-resolver.ts's `ts.resolveModuleName`) and therefore need real
-   * enum values, not {@link RelevantCompilerOptions}'s stringified summary.
-   * Not intended for consumers outside `src/code-intelligence/`.
+   * modules that need real enum values, not
+   * {@link RelevantCompilerOptions}'s stringified summary (call-graph.ts's
+   * JSX runtime reads `jsx`). Not intended for consumers outside
+   * `src/code-intelligence/`.
+   *
+   * Never the options module resolution runs under (ADR 0010 invariant
+   * C2, task C-1): module-resolver.ts resolves with Node's own algorithm
+   * whatever these say, and reads only `baseUrl` / `paths` from them, to
+   * cross-check a mapping against Node's answer.
    */
   readonly rawCompilerOptions: ts.CompilerOptions;
 }
@@ -128,12 +133,16 @@ const DEFAULT_JS_PROJECT_OPTIONS: RelevantCompilerOptions = {
 };
 
 /**
- * Plain JavaScript projects (no tsconfig.json) still run on real, modern
- * Node.js — which supports package.json `exports`/conditional exports and
- * ESM/CJS boundaries regardless of TypeScript. Defaulting resolution to
- * NodeNext (rather than leaving it unset, which falls back to the TS
- * compiler's own historical Node10/classic default) is what makes module
- * resolution (TASK-016) behave correctly for these projects too.
+ * The options of a plain JavaScript project (no tsconfig.json): NodeNext
+ * rather than unset (the TS compiler's own historical Node10/classic
+ * default), because such a project runs on real, modern Node.js.
+ *
+ * Module resolution no longer reads these, nor a tsconfig's options: since
+ * task C-1 it always runs under Node's algorithm (module-resolver.ts's
+ * `NodeResolutionOptions`, ADR 0010 invariant C2). Before C-1 this
+ * default was what gave a JavaScript project Node's resolution, while a
+ * TypeScript project with `module: commonjs` got node10, which ignores
+ * `exports` (PRM-33).
  */
 const DEFAULT_JS_PROJECT_RAW_OPTIONS: ts.CompilerOptions = {
   allowJs: true,
@@ -148,7 +157,8 @@ const DEFAULT_JS_PROJECT_RAW_OPTIONS: ts.CompilerOptions = {
  *
  * A malformed tsconfig.json is also not thrown: it is target-project data
  * being analyzed, not VulnTrace's own configuration, so it degrades to a
- * `diagnostics` entry and best-effort defaults rather than aborting the
+ * `diagnostics` entry and best-effort defaults (which, since task C-1,
+ * never change which file module resolution names) rather than aborting the
  * scan (see docs/SDD.md § 5: UNKNOWN over false certainty). Contrast with
  * TASK-002's `vulntrace.yml` loader, which throws — that is VulnTrace's
  * own configuration, where failing loudly immediately is correct.
