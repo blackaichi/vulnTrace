@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-10, by `B-3`.
+**Last updated:** 2026-10-10, by `B-4`.
 
 ## Objective
 
@@ -144,6 +144,16 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   (default 24) after the provider answered (AUD-06); a write failure is
   a `cache` diagnostic, never exit 4 (PRM-35). Invariant
   `VT-INV-B-cache-authority`. REMEDIATION-PLAN § 5a, "B-3 additions".
+  `B-4` made every installed package reach the report: a lock entry is
+  never dropped for a missing name or version (a nameless `file:` entry is
+  named by its manifest or linking entry, PRM-34; a named, versionless one
+  is an instance, RWF-093); an instance with no established version is
+  queried without one and is `UNKNOWN` per advisory (decision 4, PRM-64);
+  an unreadable manifest is recorded (PRM-66); and the installed tree plus
+  the closure's loaded instances are cross-checked against the lockfile,
+  each unlisted package an identity entry by its exact instance (decision
+  9, AUD-08). Four reason subtypes, no new category. Invariant
+  `VT-INV-B-inventory-identity`. REMEDIATION-PLAN § 5a, "B-4 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -174,20 +184,24 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`B-3` — OSV cache ([task file](tasks/B-3-osv-cache.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `B-2`
-merged as PR #92.
+`B-4` — inventory and identity drops
+([task file](tasks/B-4-inventory-identity-drops.md)): `READY_FOR_REVIEW`,
+its pull request awaiting the project owner. `B-3` merged as PR #93.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-3`:
-the rest of lane B (`B-4`..`B-6`). The P1 gaps `BL-057` and `BL-058`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-4`:
+the rest of lane B (`B-5`, `B-6`). The P1 gaps `BL-057` and `BL-058`
 (small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
+
+From `B-4`: RWF-093 (fixed by it: a named, versionless `file:` lock entry
+was dropped), and backlog `BL-060` (P4: a version-indeterminate `UNKNOWN`
+names no target). Its audit's read-error finding was fixed in the task.
 
 From `B-3`: no new finding or task (AUD-06, AUD-07 and PRM-35 fixed).
 One test (`scan.integration.test.ts`) wrote into the default cache and
