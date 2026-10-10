@@ -7,7 +7,10 @@ import { buildCallGraph } from "../code-intelligence/call-graph.js";
 import {
   type CacheStats,
   FileOsvCacheStore,
+  cacheTtlMs,
   createCachingProvider,
+  defaultOsvCacheDir,
+  isCacheDirInsideProject,
 } from "../cache/index.js";
 import {
   createTimingResolver,
@@ -101,7 +104,11 @@ export interface RunScanOptions {
   readonly pretty?: boolean;
   /** `--no-cache` (docs/SDD.md § 28): forces the vulnerability provider cache off regardless of config. */
   readonly noCache?: boolean;
-  /** Defaults to `<projectRoot>/.vulntrace-cache/osv`; mainly for tests. */
+  /**
+   * Defaults to the user cache directory (`defaultOsvCacheDir`); mainly for
+   * tests. Refused, like the default, when it lies inside the scanned
+   * project (task B-3, AUD-07).
+   */
   readonly cacheDir?: string;
   /** Defaults to a real {@link OsvProvider}; overridable for testing without live network access. */
   readonly provider?: VulnerabilityProvider;
@@ -458,18 +465,56 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   // Cache-first vulnerability provider (see docs/SDD.md § 28). `--no-cache`
   // always wins over config; otherwise config's `vulnerabilities.cache.enabled`
   // decides (enabled by default).
-  const provider =
-    options.noCache !== true && config.vulnerabilities.cache.enabled
-      ? createCachingProvider(
-          rawProvider,
-          new FileOsvCacheStore(
-            options.cacheDir ??
-              path.join(projectRoot, ".vulntrace-cache", "osv"),
-          ),
-          readOwnVersion(),
-          cacheStats,
-        )
-      : rawProvider;
+  //
+  // Task B-3 (AUD-07): the cache is the user's, never the scanned
+  // project's. A served entry replaces the provider's answer, and a planted
+  // `[]` is a well-formed answer, so a cache directory inside the project
+  // -- by `XDG_CACHE_HOME`, the home directory, a symlink or `cacheDir` --
+  // is refused, and the scan runs uncached, saying so. Entries expire
+  // after `ttlHours` (AUD-06). A failed write is counted and reported once
+  // below; it never fails the query (PRM-35).
+  const cacheDiagnostics: Diagnostic[] = [];
+  const cacheWriteFailures = { count: 0, first: "" };
+  let provider: VulnerabilityProvider = rawProvider;
+  let cacheDir: string | undefined;
+  if (options.noCache !== true && config.vulnerabilities.cache.enabled) {
+    cacheDir = options.cacheDir ?? defaultOsvCacheDir();
+    if (cacheDir === undefined) {
+      cacheDiagnostics.push({
+        source: "cache",
+        message:
+          "the OSV cache is off for this scan: no absolute user cache directory could be determined (set XDG_CACHE_HOME to an absolute path); every answer came from the provider",
+      });
+    } else if (isCacheDirInsideProject(cacheDir, projectRoot)) {
+      io.stderr(
+        `vulntrace: the OSV cache directory is ${cacheDir}, inside the scanned project\n`,
+      );
+      cacheDiagnostics.push({
+        source: "cache",
+        message:
+          "the OSV cache is off for this scan: its directory is inside the scanned project, whose files are never read as provider answers; every answer came from the provider",
+      });
+      cacheDir = undefined;
+    } else {
+      provider = createCachingProvider(
+        rawProvider,
+        new FileOsvCacheStore(cacheDir, {
+          ttlMs: cacheTtlMs(config.vulnerabilities.cache.ttlHours),
+        }),
+        readOwnVersion(),
+        cacheStats,
+        (error) => {
+          if (cacheWriteFailures.count === 0) {
+            cacheWriteFailures.first = errorMessage(error);
+          }
+          cacheWriteFailures.count++;
+        },
+      );
+    }
+  }
+  for (const diagnostic of cacheDiagnostics) {
+    io.stderr(`vulntrace: ${diagnostic.message}\n`);
+  }
 
   let rules: VulnerableSymbolRule[];
   let rulesById: ReadonlyMap<string, VulnerableSymbolRule>;
@@ -636,6 +681,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   }
 
   const diagnostics: Diagnostic[] = [
+    ...cacheDiagnostics,
     ...workspaceDiagnostics,
     ...entrypointsResult.diagnostics.map((d) => ({
       source: `entrypoints:${d.source}`,
@@ -1197,6 +1243,21 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         }
       }
     }
+  }
+
+  if (cacheWriteFailures.count > 0) {
+    const answers =
+      cacheWriteFailures.count === 1
+        ? "1 answer"
+        : `${cacheWriteFailures.count} answers`;
+    // The directory and the error (which names it) go to stderr only: the
+    // JSON output may be shared, and would carry the user's home path (B-3's
+    // audit, finding 3).
+    const message = `the OSV cache could not store ${answers}; each was used as the provider returned it, and only its caching was lost`;
+    io.stderr(
+      `vulntrace: ${message} (directory ${cacheDir ?? "unknown"}; first error: ${cacheWriteFailures.first})\n`,
+    );
+    diagnostics.push({ source: "cache", message });
   }
 
   const output: ScanOutput = {

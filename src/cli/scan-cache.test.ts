@@ -14,11 +14,13 @@ import { runScanCommand } from "./scan.js";
  * `runScanCommand`, not just the underlying cache module (see
  * src/cache/osv-cache.test.ts for that layer's own unit tests). Every test
  * here uses an isolated `cacheDir` inside its own temp directory, never the
- * default `<projectRoot>/.vulntrace-cache` — fixtures/direct-esm is a real,
- * checked-in, shared fixture reused by many other test files, and writing
- * a real cache directory into it would both pollute the tracked repo and
- * risk cross-test-file cache collisions (two different fake providers
- * answering the exact same {ecosystem, name, version} query differently).
+ * default -- the developer's own user cache directory since task B-3
+ * (before it, `<projectRoot>/.vulntrace-cache`, inside the checked-in,
+ * shared fixtures/direct-esm). Writing there would leak into the
+ * developer's real cache and risk cross-test-file cache collisions (two
+ * different fake providers answering the exact same {ecosystem, name,
+ * version} query differently). The isolated directory is outside the
+ * scanned fixture, so B-3's refusal of an in-project cache does not apply.
  */
 
 function fakeIo() {

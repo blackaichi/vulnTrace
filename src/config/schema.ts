@@ -27,6 +27,9 @@ export const DEFAULT_EXCLUDE: readonly string[] = [
  */
 export const DEFAULT_VULNERABILITY_PROVIDERS = ["osv"] as const;
 
+/** How long a cached provider answer is served (task B-3, decision 8). */
+export const DEFAULT_CACHE_TTL_HOURS = 24;
+
 const ProjectConfigSchema = z
   .object({
     root: z.string().min(1, "must not be empty").default("."),
@@ -79,10 +82,27 @@ const VulnerabilityProviderSchema = z.enum(DEFAULT_VULNERABILITY_PROVIDERS);
  * fresh scan of an unchanged dependency set should not need live network
  * access every time. `--no-cache` (docs/SDD.md § 25) overrides this at
  * the CLI layer regardless of what's configured here.
+ *
+ * `ttlHours` (task B-3, AUD-06, decision 8): how long a cached answer is
+ * served before the provider is asked again. Before B-3 an entry never
+ * expired, so an advisory published after the first scan was never seen.
+ * Where the cache lives is not configurable here: this file belongs to the
+ * scanned project, and the project must not choose where its provider
+ * answers are read from (`src/cache/cache-location.ts`). For the same
+ * reason it may only shorten the expiry, never lengthen it past the
+ * default: a longer TTL would let the scanned project choose how stale the
+ * user's cached answers are when they are served for it (B-3's audit,
+ * finding 1: `ttlHours: 1e308` was finite in hours and `Infinity` in
+ * milliseconds, so an entry never expired).
  */
 const CacheConfigSchema = z
   .object({
     enabled: z.boolean().default(true),
+    ttlHours: z
+      .number()
+      .positive()
+      .max(DEFAULT_CACHE_TTL_HOURS)
+      .default(DEFAULT_CACHE_TTL_HOURS),
   })
   .strict();
 
