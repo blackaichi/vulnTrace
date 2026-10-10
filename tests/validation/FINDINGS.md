@@ -160,8 +160,8 @@ A mismatch either way fails the generator, naming the ID.
 | AUD-03 | `vuln-lib` (synthetic fixture) | `process.getBuiltinModule(spec)` loads a builtin while the module-load closure reports complete | false NOT_AFFECTED — see below | Open |
 | AUD-04 | `vuln-lib` (synthetic fixture) | `inspector.Session#post('Runtime.evaluate', {includeCommandLineAPI:true})` is an unmodeled eval surface | false NOT_AFFECTED — see below | Open |
 | AUD-05 | `vuln-lib` (synthetic fixture), prerelease version | `semver.coerce` strips prereleases, dropping a vulnerable installed prerelease and falsely flagging an unaffected one | silent drop (recorded as a false "not applicable"); also false AFFECTED in the reverse direction — see below | **Fixed** (B-2) — see below |
-| AUD-06 | `vuln-lib` (synthetic fixture), cache | The OSV cache has no TTL or staleness signal, so an advisory published after the first scan is silently never seen | silent drop — see below | Open |
-| AUD-07 | `vuln-lib` (synthetic fixture), cache | The default OSV cache directory lives inside the scanned project's own tree, and its contents are trusted unvalidated | silent drop — see below | Open |
+| AUD-06 | `vuln-lib` (synthetic fixture), cache | The OSV cache has no TTL or staleness signal, so an advisory published after the first scan is silently never seen | silent drop — see below | **Fixed** (B-3) — see below |
+| AUD-07 | `vuln-lib` (synthetic fixture), cache | The default OSV cache directory lives inside the scanned project's own tree, and its contents are trusted unvalidated | silent drop — see below | **Fixed** (B-3) — see below |
 | AUD-08 | `vuln-lib` (synthetic fixture), lockfile/disk mismatch | A package really loaded from disk but missing from `package-lock.json` is never queried or reported | silent drop — see below | Open |
 | AUD-09 | `vuln-lib` (synthetic fixture) | A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | AUD-10 | `vuln-lib` (synthetic fixture) | A malformed OSV record is dropped to diagnostics only, with no `unreportedCandidates` entry | silent drop (product/observability) — see below | **Fixed** (B-1) — see below |
@@ -194,7 +194,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-32 | `vuln-lib` (synthetic fixture) | `this.X = ...` at module scope and an aliased `const api = module.exports; api.run = ...` are invisible to root-requirement detection | false NOT_AFFECTED — see below | Open |
 | PRM-33 | `vuln-lib` (synthetic fixture), tsconfig | Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map | false NOT_AFFECTED — see below | **Fixed** (C-1) — see below |
 | PRM-34 | `lodash` (`file:`-vendored, real npm 10.9.0 lockfile) | A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely | silent drop — see below | Open |
-| PRM-35 | `vuln-lib` (synthetic fixture), cache | A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic | scan abort — see below | Open |
+| PRM-35 | `vuln-lib` (synthetic fixture), cache | A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic | scan abort — see below | **Fixed** (B-3) — see below |
 | PRM-36 | `vuln-lib` (synthetic fixture), workspaces | The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set | false reason — see below | Open |
 | PRM-37 | `vuln-lib` (synthetic fixture) | A tagged-template call (`` tag`x` ``) gets no call-graph edge at all | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-38 | `vuln-lib` (synthetic fixture) | Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
@@ -16181,6 +16181,18 @@ equal (SemVer precedence orders them). B-2's first fix answered
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-06"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task B-3, 2026-10-10): Fixed.** Every stored entry
+records when the provider answered (`fetchedAt`), and `FileOsvCacheStore`
+serves it only while it is younger than the TTL:
+`vulnerabilities.cache.ttlHours`, default 24 (decision 8). An entry as old
+as the TTL or older, and one stamped in the future, is a miss, and the
+provider is asked again. Reproduced end to end, failing on the base
+(`src/cli/scan.b3-osv-cache.test.ts`, "B-3 / AUD-06"): an answer cached
+empty, then re-scanned 25 hours later after the provider started returning
+an advisory, is now re-queried and the advisory is an `AFFECTED` finding;
+on the base it was served forever. Foundation invariant
+`VT-INV-B-cache-authority`.
+
 ---
 
 ## AUD-07 — The default OSV cache directory lives inside the scanned project's own tree, and its contents are trusted unvalidated
@@ -16195,6 +16207,28 @@ Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-06"`. No
 The cache defaults to `<projectRoot>/.vulntrace-cache/osv`, and its comment's premise that "its shape is entirely controlled by VulnTrace itself" is false — the directory belongs to the target project being scanned, not to VulnTrace. A committed empty-array cache file suppresses every advisory for that key with zero provider queries; a truncated file is treated as a miss, but a wrong-shaped one (`{}`, `5`, `true`) throws.
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-07"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task B-3, 2026-10-10): Fixed.** Validation alone
+could not close this: a planted `[]` is a well-formed answer ("no
+advisories") under the provider's schema. What closes it is the location.
+The default cache directory is the user's (`XDG_CACHE_HOME` when it is
+absolute, else `LOCALAPPDATA` on Windows, else `~/.cache`, then
+`vulntrace/osv`; `src/cache/cache-location.ts`), and a directory that is,
+or resolves through a symlink to, a place inside the scanned project is
+refused: the scan runs uncached, with a `cache` diagnostic. The scanned
+project's config cannot set the location. Every entry is a strict envelope
+(`format`, `key`, `fetchedAt`, `vulns`), `vulns` validated with the
+provider's own schema (`OsvVulnerabilityListSchema`); a wrong shape, an
+entry written under another key and the pre-B-3 bare array are misses,
+never served and never fatal. The comment premise this section quotes is
+gone. Reproduced end to end, failing on the base
+(`src/cli/scan.b3-osv-cache.test.ts`, "B-3 / AUD-07"): an empty answer
+planted at the base's default location under the exact key is no longer
+read, and the scan writes nothing into the project; a cache directory
+inside the project, by `XDG_CACHE_HOME`, a symlink or `cacheDir`, is
+refused; `5`, `{}`, `[5]`, a bare array and an envelope without a fetch
+time are misses (on the base, `5` crashed the scan and the others were
+served). Foundation invariant `VT-INV-B-cache-authority`.
 
 ---
 
@@ -17325,6 +17359,17 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 4, "PRM-34: 
 `osv-cache.ts`'s comment states that losing the cache "must never be able to abort an otherwise-successful scan", but only the read path (`get()`) is guarded; a `set()` failure propagates and the scan exits 4 with a vulnerability-provider-failure diagnosis, misdiagnosing a local filesystem problem as a provider failure.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 4, "PRM-35: cache write aborts the scan"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task B-3, 2026-10-10): Fixed.** `createCachingProvider`
+catches a failed `set` and returns the provider's answer as it came; the
+scan counts the failures and reports them once, as a `cache` diagnostic
+(also on stderr), never exit 4. Writes are atomic (a temporary file, then
+a rename). Reproduced end to end, failing on the base
+(`src/cli/scan.b3-osv-cache.test.ts`, "B-3 / PRM-35"): a cache directory
+under a regular file now gives the uncached scan's exit code (1, two
+`AFFECTED` findings) and one diagnostic counting three answers; on the
+base, exit 4 with "vulnerability provider failure ... ENOTDIR". A real
+provider failure is still exit 4.
 
 ---
 

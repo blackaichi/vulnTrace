@@ -1436,6 +1436,71 @@ and OSV's own evaluation.
 - **B-5**: an `indeterminate` applicability is an `UNKNOWN` finding, so
   decision 3's exit codes count it as undecided.
 
+#### B-3 additions (task B-3, 2026-10-10)
+
+**Outcome of B-3** (§ 7's B-3 row, decision 8). The OSV cache is the
+user's, validated, expiring, and never fatal.
+
+- The default cache directory is the user cache directory
+  (`src/cache/cache-location.ts`): `XDG_CACHE_HOME` when absolute, else
+  `LOCALAPPDATA` on Windows, else `~/.cache`, then `vulntrace/osv`; no
+  absolute base means no cache. A directory that is, or resolves through a
+  symlink to, a place inside the scanned project (the project root
+  included) is refused, and the scan runs uncached with a `cache`
+  diagnostic; a path through a dangling link, or a root that cannot be
+  resolved, is refused too. Validation alone could not close AUD-07 (a
+  planted `[]` is a well-formed answer); the location does. The scanned
+  project's config cannot set the location. Fixed AUD-07.
+- An entry is a strict envelope `{format, key, fetchedAt, vulns}`, `vulns`
+  validated with the provider's own schema (`OsvVulnerabilityListSchema`,
+  exported from `osv-provider.ts`). An entry under another key, stamped in
+  the future, or as old as the TTL or older is a miss.
+  `CACHED_ANSWER_FORMAT` changed with the stored shape, so no pre-B-3 entry
+  is ever served. Fixed AUD-06.
+- `vulnerabilities.cache.ttlHours`: default **and maximum** 24. The
+  scanned project's config may shorten the expiry, never lengthen it; a
+  value above 24 is an invalid configuration (exit 2), not clamped. The
+  store refuses a TTL that is not a finite, positive number of
+  milliseconds (audit finding 1: `ttlHours: 1e308` was finite in hours and
+  `Infinity` in milliseconds, so an entry never expired).
+- A failed write never fails the query: `createCachingProvider` returns
+  the provider's answer and reports the failure; the scan counts failures
+  and reports them once as a `cache` diagnostic, never exit 4. Writes are
+  atomic (temporary file, then rename). The cache directory and the error
+  naming it are on stderr only, never in the JSON output (audit finding
+  3). Fixed PRM-35.
+- Foundation invariant `VT-INV-B-cache-authority` (owners
+  `src/cache/osv-cache.test.ts`, `src/cache/cache-location.test.ts`,
+  `src/cli/scan.b3-osv-cache.test.ts`). Ten mutations, each caught by a
+  named test: expiry removed; a future stamp served; schema validation
+  removed; the key check removed; a write failure propagated; the
+  containment check removed; symlinks not resolved; the default moved back
+  into the project; a relative `XDG_CACHE_HOME` accepted; the configured
+  TTL ignored.
+- No test run writes to the user cache directory (measured with a
+  sentinel `XDG_CACHE_HOME`): `scan.integration.test.ts`, the one test that
+  wrote into the default cache, now scans uncached.
+- **The independent audit BLOCKED on finding 1** (above), fixed on the
+  branch with findings 3 and 4 (the example config's Windows location),
+  and re-audited **CERTIFIED**. Recorded, not changed (finding 2): on a
+  case-insensitive mount under Linux, `realpath` does not fold case, so a
+  cache directory the user points into the project with different case is
+  not recognised as inside it; only the user's own environment can do
+  this. Also noted: the output says how many answers came from the cache,
+  not which or how old (a disclosure question for B-5 / D-1).
+- Over the 139 corpus cases: verdict differential 0, proof 0, graph 0,
+  unreported candidates +0/−0 (every corpus suite scans uncached).
+  Validation equals the D-09 baseline.
+
+**What B-3 binds.**
+
+- **B-4..B-6, and every later task**: a cached answer is served only by
+  `FileOsvCacheStore.get`, from a directory `isCacheDirInsideProject`
+  accepted; nothing reads provider answers from the scanned project. A
+  change to the stored entry's shape changes `CACHED_ANSWER_FORMAT`.
+- **B-5**: a cache diagnostic is not a provider failure and never changes
+  the exit code.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

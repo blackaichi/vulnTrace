@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: B-3
 - **Branch**: b-3-osv-cache
 - **Base SHA**: c90b96694b55bdda3930959bdbe3d4fc15d0d13b
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `00efc30` docs(tasks): B-3 task file — OSV cache
+  - `a56489c` test(B-3): OSV cache — AUD-06, AUD-07, PRM-35
+  - `329c88c` fix(B-3): the OSV cache is the user's, validated, expiring, and never fatal
+  - (this commit) docs(B-3): records — AUD-06, AUD-07, PRM-35 fixed, plan § 5a, debts, readme, architecture, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -167,3 +171,46 @@ failures (`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`).
 ## Report
 
 In the format of `AGENTS.md` § J.
+
+## Corrections (appended during the task)
+
+- **Choices § 7's row does not make**, each in the fail-closed direction:
+  - with no absolute user cache directory the scan runs uncached;
+  - a dangling link, or a project root that cannot be resolved, counts as
+    "inside the project";
+  - the scanned project's config cannot set the cache location;
+  - after the audit (below), `ttlHours` is capped at its default, 24. The
+    project's config may shorten the expiry, never lengthen it. A value
+    above 24 is an invalid configuration (exit 2), not clamped. Decision 8
+    says "configurable" without saying by whom: this is flagged for the
+    project owner in the pull request.
+- **A test changed, not weakened**: `src/cli/scan.integration.test.ts`
+  scans uncached. It was the one test that wrote into the default cache,
+  which is now the developer's own. Measured with a sentinel
+  `XDG_CACHE_HOME` over `npm test` and every other gate: no file was
+  written there.
+- **A comment premise corrected**: `src/cli/scan-cache.test.ts` named the
+  base's in-project default.
+- **Foundation invariant** `VT-INV-B-cache-authority` was added, as B-1
+  and B-2 did for lane B. Not named in § 7's row.
+- **Independent audit: BLOCKED, then CERTIFIED.**
+  - Finding 1 (blocking): `ttlHours: 1e308` passed `.finite()` in hours
+    and became `Infinity` in milliseconds, so an entry never expired, and
+    the scanned project sets it. Fixed by the cap and a constructor guard,
+    with tests.
+  - Finding 3: the cache path reached the JSON output; it is now on
+    stderr only.
+  - Finding 4: the example config omitted `%LOCALAPPDATA%`.
+  - Re-audited `CERTIFIED`. Recorded, not changed (finding 2): on a
+    case-insensitive mount under Linux, a cache directory the user points
+    into the project with different letter case is not recognised as
+    inside it.
+- **Gates**: the first performance run failed both wall-clock guards
+  (6214 ms of 5000, 20674 ms of 20000), while the audit's test runs loaded
+  the machine. Run alone: 3280 ms, 11577 ms and 4073 ms, all passing; no
+  threshold changed.
+- **Acceptance criteria**, answered: every box above is yes. The
+  differential moved nothing (0 graph, 0 proof, 0 verdict over 139
+  cases): every corpus suite scans uncached. Validation equals the D-09
+  baseline (`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`, each
+  with the same verdict on base and head).

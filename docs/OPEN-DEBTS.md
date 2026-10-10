@@ -1107,6 +1107,20 @@ instance is a prerelease, and the snapshot's ECOSYSTEM ranges are all for
 non-npm entries); validation equals the D-09 baseline. This entry still
 stands: lanes E, C (C-2..C-5) and B (B-3..B-6) remain.
 
+**Progress, added by task `B-3` (2026-10-10).** Task B-3
+(`docs/tasks/B-3-osv-cache.md`) fixes AUD-06 (an entry records when the
+provider answered and is served only for `ttlHours`, default and maximum
+24), AUD-07 (the cache is the user cache directory, a directory inside the
+scanned project by any path or symlink is refused and the scan runs
+uncached, and every entry is a strictly validated envelope for its own
+key) and PRM-35 (a cache write failure is a `cache` diagnostic, never exit
+4). Its audit found and it fixed an overflow (`ttlHours: 1e308` was
+`Infinity` in milliseconds). Invariant `VT-INV-B-cache-authority`.
+Over the 139 corpus cases: verdict differential 0, proof 0, graph 0,
+unreported candidates +0/−0 (the corpora scan uncached); validation
+equals the D-09 baseline. This entry still stands: lanes E, C (C-2..C-5) and B
+(B-4..B-6) remain.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
