@@ -71,8 +71,8 @@ describe("matchVersion: defaults and multiple ranges", () => {
     expect(matchVersion("0.0.1", [{ fixed: "1.0.0" }])).toBe("affected");
   });
 
-  it("is not_affected when affectedVersions is empty", () => {
-    expect(matchVersion("1.0.0", [])).toBe("not_affected");
+  it('is indeterminate when affectedVersions is empty (task B-2, AUD-09: no range is never "no version")', () => {
+    expect(matchVersion("1.0.0", [])).toBe("indeterminate");
   });
 
   it("is affected if ANY range matches", () => {

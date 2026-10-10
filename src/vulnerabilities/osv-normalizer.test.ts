@@ -147,8 +147,14 @@ describe("normalizeOsvVulnerability: affected ranges", () => {
           {
             package: target,
             ranges: [
-              { events: [{ introduced: "0" }, { fixed: "1.5.0" }] },
-              { events: [{ introduced: "1.6.0" }, { fixed: "1.5.0" }] },
+              {
+                type: "SEMVER",
+                events: [{ introduced: "0" }, { fixed: "1.5.0" }],
+              },
+              {
+                type: "SEMVER",
+                events: [{ introduced: "1.6.0" }, { fixed: "1.5.0" }],
+              },
             ],
           },
         ],
@@ -168,11 +174,21 @@ describe("normalizeOsvVulnerability: ecosystem/package scoping", () => {
         affected: [
           {
             package: { ecosystem: "PyPI", name: "fixture-lib" },
-            ranges: [{ events: [{ introduced: "0" }, { fixed: "9.9.9" }] }],
+            ranges: [
+              {
+                type: "SEMVER",
+                events: [{ introduced: "0" }, { fixed: "9.9.9" }],
+              },
+            ],
           },
           {
             package: target,
-            ranges: [{ events: [{ introduced: "0" }, { fixed: "1.0.1" }] }],
+            ranges: [
+              {
+                type: "SEMVER",
+                events: [{ introduced: "0" }, { fixed: "1.0.1" }],
+              },
+            ],
           },
         ],
       },
