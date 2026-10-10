@@ -18,6 +18,8 @@ export type {
   Vulnerability,
   VulnerabilityProvider,
   VulnerabilityReference,
+  UninterpretableVersionRange,
+  VersionInterval,
   VersionRange,
 } from "./vulnerability.js";
 export type {
