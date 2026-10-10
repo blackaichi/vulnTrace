@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildDependencyGraph,
+  buildDependencyInventory,
   isTopLevelPath,
   resolveDependency,
 } from "./dependency-graph.js";
@@ -173,5 +174,117 @@ describe("buildDependencyGraph", () => {
     expect(graph).toHaveLength(1);
     expect(graph[0]?.dependencyPaths).toEqual([]);
     expect(graph[0]?.direct).toBe(false);
+  });
+});
+
+describe("B-4 / PRM-34: no lockfile entry that is a package is dropped", () => {
+  const app = parsePackageJson({
+    dependencies: { lodash: "file:vendor/lodash" },
+  });
+
+  it("names a nameless file: entry by the one name its linking entry gives it (real npm 10.9.0 shape)", () => {
+    const lock = parsePackageLock({
+      lockfileVersion: 3,
+      packages: {
+        "": { dependencies: { lodash: "file:vendor/lodash" } },
+        "node_modules/lodash": { resolved: "vendor/lodash", link: true },
+        "vendor/lodash": { version: "4.17.20" },
+      },
+    });
+
+    const { nodes, unidentified } = buildDependencyInventory(app, lock);
+
+    expect(unidentified).toEqual([]);
+    expect(
+      nodes.map((node) => [node.name, node.version, node.locations]),
+    ).toEqual([["lodash", "4.17.20", ["vendor/lodash"]]]);
+  });
+
+  it("prefers the entry's own manifest name over a linking alias", () => {
+    const lock = parsePackageLock({
+      lockfileVersion: 3,
+      packages: {
+        "": {},
+        "node_modules/alias-x": { resolved: "vendor/lodash", link: true },
+        "vendor/lodash": { version: "4.17.20" },
+      },
+    });
+
+    const { nodes } = buildDependencyInventory(app, lock, {
+      readManifestName: (entryPath) =>
+        entryPath === "vendor/lodash" ? "lodash" : undefined,
+    });
+
+    expect(nodes.map((node) => node.name)).toEqual(["lodash"]);
+  });
+
+  it("keeps a versionless entry as a node with no version and no purl", () => {
+    const lock = parsePackageLock({
+      lockfileVersion: 3,
+      packages: {
+        "": {},
+        "node_modules/nv": { resolved: "vendor/nover", link: true },
+        "vendor/nover": { name: "nv" },
+        "node_modules/bare": {},
+      },
+    });
+
+    const { nodes } = buildDependencyInventory(app, lock);
+
+    expect(
+      nodes.map((node) => [node.name, node.version, node.purl]).sort(),
+    ).toEqual([
+      ["bare", undefined, undefined],
+      ["nv", undefined, undefined],
+    ]);
+  });
+
+  it("does not choose between two disagreeing linking names when no manifest names the entry", () => {
+    const lock = parsePackageLock({
+      lockfileVersion: 3,
+      packages: {
+        "": {},
+        "node_modules/right": { resolved: "vendor/both", link: true },
+        "node_modules/left": { resolved: "vendor/both", link: true },
+        "vendor/both": { version: "1.0.0" },
+      },
+    });
+
+    const { nodes, unidentified } = buildDependencyInventory(app, lock);
+
+    expect(nodes).toEqual([]);
+    expect(unidentified).toEqual([
+      {
+        entryPath: "vendor/both",
+        version: "1.0.0",
+        linkNames: ["left", "right"],
+      },
+    ]);
+  });
+
+  it("reports an entry nothing names, instead of dropping it", () => {
+    const lock = parsePackageLock({
+      lockfileVersion: 3,
+      packages: { "": {}, "vendor/anon": {} },
+    });
+
+    expect(buildDependencyInventory(app, lock).unidentified).toEqual([
+      { entryPath: "vendor/anon", linkNames: [] },
+    ]);
+  });
+
+  it("buildDependencyGraph returns the same nodes", () => {
+    const lock = parsePackageLock({
+      lockfileVersion: 3,
+      packages: {
+        "": {},
+        "node_modules/lodash": { resolved: "vendor/lodash", link: true },
+        "vendor/lodash": { version: "4.17.20" },
+      },
+    });
+
+    expect(buildDependencyGraph(app, lock)).toEqual(
+      buildDependencyInventory(app, lock).nodes,
+    );
   });
 });

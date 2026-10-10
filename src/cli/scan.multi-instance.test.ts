@@ -712,7 +712,7 @@ describe("P1-A5: contradictory version metadata for one physical root", () => {
 });
 
 describe("P1-A5: a version conflict is reported, not merely survived", () => {
-  it("G/H. emits one diagnostic, makes no query, and invents no finding", async () => {
+  it("G/H. emits one diagnostic, asks no contradicted version, and derives no verdict from one", async () => {
     const queried: string[] = [];
     const counting: VulnerabilityProvider = {
       queryPackage(query: PackageQuery) {
@@ -745,10 +745,18 @@ describe("P1-A5: a version conflict is reported, not merely survived", () => {
       "no advisory version range was evaluated against it",
     );
 
-    // ...without inventing a verdict for it, and without asking the
-    // provider about a version nothing established.
-    expect(output.findings).toEqual([]);
-    expect(queried.filter((q) => q.startsWith("conf-lib@"))).toEqual([]);
+    // ...without asking the provider about a version nothing established.
+    // Since task B-4 (PRM-64, decision 4) the instance is asked about
+    // WITHOUT a version, and the advisory returned is evaluated as
+    // indeterminate: one UNKNOWN finding with no version, never a verdict
+    // derived from either contradictory version. Before B-4: no query and
+    // no finding, so the advisory itself was never named.
+    expect(queried.filter((q) => q.startsWith("conf-lib@"))).toEqual([
+      "conf-lib@undefined",
+    ]);
+    expect(
+      output.findings.map((finding) => [finding.verdict, finding.version]),
+    ).toEqual([["UNKNOWN", undefined]]);
   });
 
   it("reports the identical diagnostic whichever order the records arrive in", async () => {

@@ -109,6 +109,10 @@ export default defineConfig({
       "src/cache/osv-cache.test.ts",
       "src/cache/cache-location.test.ts",
       "src/cli/scan.b3-osv-cache.test.ts",
+
+      "src/dependencies/dependency-graph.test.ts",
+      "src/dependencies/installed-tree.test.ts",
+      "src/cli/scan.b4-inventory-identity.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take

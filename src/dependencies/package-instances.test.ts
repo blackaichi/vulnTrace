@@ -689,7 +689,7 @@ describe("P1-A5 advisory query versions", () => {
     ).toEqual(["1.2.0", "2.0.0"]);
   });
 
-  it("contributes no query for an instance with no established version", () => {
+  it("asks once without a version for an instance with no established version (B-4, PRM-64)", () => {
     const root = tree({ "packages/privlib/package.json": manifest("privlib") });
 
     const registry = buildPackageInstanceRegistry({
@@ -706,14 +706,40 @@ describe("P1-A5 advisory query versions", () => {
       ],
     });
 
-    // Nothing to ask the provider -- but the instance still exists and is
-    // still evaluated against whatever a sibling's query returns.
+    // Before B-4 this asserted `[]`: no query, and the instance evaluated
+    // only against its siblings' version-filtered answers -- PRM-64's
+    // false premise, pinned. Decision 4: one query with no version.
     expect(
       advisoryQueryVersions(
         findApplicablePackageInstances(registry, "privlib"),
       ),
-    ).toEqual([]);
+    ).toEqual([undefined]);
     expect(findApplicablePackageInstances(registry, "privlib")).toHaveLength(1);
+  });
+
+  it("asks every installed version, then once without a version, when siblings are mixed (B-4)", () => {
+    const root = tree({ "packages/foo/package.json": manifest("foo") });
+
+    const registry = buildPackageInstanceRegistry({
+      dependencyNodes: [
+        node("foo", "2.0.0", "node_modules/b/node_modules/foo"),
+        node("foo", "1.0.0", "node_modules/a/node_modules/foo"),
+      ],
+      projectRoot: root,
+      workspacePackages: [
+        {
+          canonicalRoot: canonicalizePackageInstancePath(
+            path.join(root, "packages/foo"),
+          ),
+          packageName: "foo",
+          pattern: "packages/*",
+        },
+      ],
+    });
+
+    expect(
+      advisoryQueryVersions(findApplicablePackageInstances(registry, "foo")),
+    ).toEqual(["1.0.0", "2.0.0", undefined]);
   });
 });
 

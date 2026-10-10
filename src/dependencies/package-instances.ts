@@ -649,31 +649,43 @@ export function findApplicablePackageInstances(
 }
 
 /**
- * The distinct `name@version` pairs the vulnerability provider must be
- * queried for, to discover every advisory that could apply to ANY instance
- * of `advisoryPackageName`.
+ * The provider queries needed to discover every advisory that could apply
+ * to ANY instance of `advisoryPackageName`: each distinct installed
+ * version, sorted, then `undefined` -- one query with NO version -- when
+ * any instance has no established version.
  *
  * One query per distinct installed version, never one per instance: twins
  * at the same version share an answer, and repeating the query would be
- * pure network cost with no new information. Instances with no established
- * version contribute no query -- there is nothing to ask about -- but they
- * are still evaluated against whatever the siblings' queries return, which
- * is how a versionless instance reaches its own honest UNKNOWN instead of
- * silently disappearing from the report.
+ * pure network cost with no new information.
  *
- * Sorted, so the query order (and therefore the cache-population order and
- * any provider-failure message) does not depend on enumeration order.
+ * Task B-4 (PRM-64, decision 4): an instance with no established version
+ * is asked about by its own name, without a version. Before B-4 it
+ * contributed no query and was evaluated only against whatever its
+ * siblings' queries returned -- and OSV filters a versioned query by that
+ * version, so an advisory affecting no sibling's version never reached
+ * it: a silent drop. OSV answers a versionless query with every advisory
+ * for the name; each is evaluated against every instance, and the
+ * versionless one gets an `indeterminate` applicability (UNKNOWN) for
+ * each.
+ *
+ * Sorted, with the versionless query last, so the query order (and
+ * therefore the cache-population order and any provider-failure message)
+ * does not depend on enumeration order, and an advisory both kinds of
+ * query return is first seen from a versioned one.
  */
 export function advisoryQueryVersions(
   instances: readonly CandidatePackageInstance[],
-): readonly string[] {
+): readonly (string | undefined)[] {
   const versions = new Set<string>();
+  let versionless = false;
   for (const instance of instances) {
     if (instance.version !== undefined) {
       versions.add(instance.version);
+    } else {
+      versionless = true;
     }
   }
-  return [...versions].sort();
+  return [...[...versions].sort(), ...(versionless ? [undefined] : [])];
 }
 
 /**

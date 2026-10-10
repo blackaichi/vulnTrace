@@ -64,6 +64,13 @@ interface ScanOptions {
    * for a local package. Used only to pin the BASELINE (§ Z).
    */
   readonly withoutWorkspaceDiscovery?: boolean;
+  /**
+   * Drop every versionless lockfile entry from the dependency graph,
+   * reproducing the graph before task B-4 (PRM-34), which `continue`d on a
+   * missing version. With `withoutWorkspaceDiscovery`, it is the only way
+   * to leave a versionless member with no identity at all.
+   */
+  readonly withPreB4LockfileGraph?: boolean;
 }
 
 async function scan(options: ScanOptions) {
@@ -84,10 +91,13 @@ async function scan(options: ScanOptions) {
   // credited workspace discovery with identity the dependency graph
   // already supplied. `withoutWorkspaceDiscovery` therefore models merged
   // main HONESTLY: lockfile provenance present, workspace discovery absent.
-  const dependencyNodes = buildDependencyGraph(
+  const allNodes = buildDependencyGraph(
     loadPackageJsonFile(path.join(root, "package.json")),
     loadPackageLockFile(path.join(root, "package-lock.json")),
   );
+  const dependencyNodes = options.withPreB4LockfileGraph
+    ? allNodes.filter((node) => node.version !== undefined)
+    : allNodes;
   const discovery = options.withoutWorkspaceDiscovery
     ? { packages: [], unsupported: [] }
     : discoverWorkspacePackages(root);
@@ -223,19 +233,26 @@ describe("P1-A4 § Z: what changes, and what does not", () => {
     expect(withDiscovery.finding?.verdict).toBe("AFFECTED");
   });
 
-  it("THE REAL CASE: a versionless private workspace package has NO lockfile identity", async () => {
+  it("THE REAL CASE: a versionless private workspace package had NO lockfile identity before B-4", async () => {
     // `packages/privlib` is `"private": true` with no `version`, which is
     // ordinary in real monorepos. npm writes its lockfile entry without a
-    // version, `buildDependencyGraph` cannot form a DependencyNode from it
-    // ("inherent to unversioned/local links", as that module already
-    // said), and so it never reaches KnownPackageRoots. The repository's
-    // own `workspaces` declaration is the only authority left.
+    // version. Before task B-4, `buildDependencyGraph` formed no
+    // DependencyNode from it, so it never reached KnownPackageRoots and
+    // the repository's own `workspaces` declaration was the only authority
+    // left. Since B-4 (PRM-34) the entry is a node with no version.
     const root = fixturePath(FIXTURE);
-    const dependencyNodes = buildDependencyGraph(
+    const allNodes = buildDependencyGraph(
       loadPackageJsonFile(path.join(root, "package.json")),
       loadPackageLockFile(path.join(root, "package-lock.json")),
     );
-    expect(dependencyNodes.some((node) => node.name === "privlib")).toBe(false);
+    expect(
+      allNodes
+        .filter((node) => node.name === "privlib")
+        .map((node) => [node.locations, node.version]),
+    ).toEqual([[["packages/privlib"], undefined]]);
+    const dependencyNodes = allNodes.filter(
+      (node) => node.version !== undefined,
+    );
 
     const lockfileOnly = buildKnownPackageRoots(dependencyNodes, root);
     expect(
@@ -264,21 +281,32 @@ describe("P1-A4 § Z: what changes, and what does not", () => {
     );
   });
 
-  it("THE REAL CASE: its forwarded sink is UNKNOWN on base and AFFECTED here", async () => {
+  it("THE REAL CASE: its forwarded sink is UNKNOWN with no identity and AFFECTED with either authority", async () => {
     // Real Node executes privlib's forwarded implementation (asserted by
     // verify.cjs). Without identity the advisory's name is not bindable in
     // its entry at all -- it is a forward, not a definition -- so base can
     // prove nothing; the Site B identity gate makes that UNKNOWN rather
     // than the false NOT_AFFECTED the audit found. With identity, the
     // RWF-029 forwarding relation runs and binds the real implementation.
-    const withoutDiscovery = await scan({
+    const withoutIdentity = await scan({
+      entrypoint: `${APP}/privlib-consumer.cjs`,
+      packageName: "privlib",
+      packageInstance: "packages/privlib",
+      withoutWorkspaceDiscovery: true,
+      withPreB4LockfileGraph: true,
+    });
+    expect(withoutIdentity.finding?.verdict).toBe("UNKNOWN");
+    expect(withoutIdentity.finding?.verdict).not.toBe("NOT_AFFECTED");
+
+    // Task B-4: the lockfile's versionless entry alone now supplies the
+    // identity workspace discovery used to be the only source of.
+    const lockfileOnly = await scan({
       entrypoint: `${APP}/privlib-consumer.cjs`,
       packageName: "privlib",
       packageInstance: "packages/privlib",
       withoutWorkspaceDiscovery: true,
     });
-    expect(withoutDiscovery.finding?.verdict).toBe("UNKNOWN");
-    expect(withoutDiscovery.finding?.verdict).not.toBe("NOT_AFFECTED");
+    expect(lockfileOnly.finding?.verdict).toBe("AFFECTED");
 
     const withDiscovery = await scan({
       entrypoint: `${APP}/privlib-consumer.cjs`,

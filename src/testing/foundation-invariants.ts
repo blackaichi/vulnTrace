@@ -645,6 +645,38 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "application calls, so a stale, planted or malformed `[]` served as " +
       "the answer is a missing AFFECTED.",
   },
+  {
+    id: "VT-INV-B-inventory-identity",
+    invariant:
+      "Every package the project installs reaches the report: as an " +
+      "instance (queried, and evaluated against every advisory returned " +
+      "for its name), or as an identity unreportedCandidates entry naming " +
+      "its exact instance. A lockfile entry is never dropped for a missing " +
+      "name or version; a versionless instance is also queried without a " +
+      "version; a manifest that exists and cannot be read is reported, " +
+      "never read as no package; and every package installed in npm's " +
+      "layout under the project's (or a workspace member's) node_modules, " +
+      "or loaded by the module-load closure, that the lockfile and " +
+      "workspaces do not name is reported by its own canonical root, never " +
+      "matched by name or version. A walk the bound stops, or a path it " +
+      "cannot read, says so; neither is read as an empty directory.",
+    foundation: "LANE-B",
+    owners: [
+      "src/dependencies/dependency-graph.test.ts",
+      "src/dependencies/installed-tree.test.ts",
+      "src/dependencies/package-instances.test.ts",
+      "src/cli/scan.b4-inventory-identity.test.ts",
+    ],
+    note:
+      "Task B-4 (PRM-34, PRM-64, PRM-66, AUD-08; decisions 4 and 9). The " +
+      "graph test owns naming and versionless nodes; the tree test owns " +
+      "what the walk counts, links, roots and its bound; the instance test " +
+      "owns the query set; the scan test owns each finding end to end, " +
+      "with real npm's lockfile shape and real node as ground truth. Loud " +
+      "fixture: the rule targets an export the application calls, so a " +
+      "dropped package is a missing finding, and the nested same-name, " +
+      "same-version copy is the sibling-borrow case.",
+  },
 ];
 
 /**

@@ -20,20 +20,25 @@ import { loadConfigFile, parseConfig } from "../config/load.js";
 import type { Config } from "../config/schema.js";
 import {
   advisoryQueryVersions,
-  buildDependencyGraph,
+  buildDependencyInventory,
   buildPackageInstanceRegistry,
   describePackageInstance,
   discoverWorkspacePackages,
+  enumerateInstalledPackages,
   findApplicablePackageInstances,
   loadPackageJsonFile,
   loadPackageLockFile,
+  MAX_INSTALLED_TREE_DIRECTORIES,
+  type UnidentifiedLockEntry,
 } from "../dependencies/index.js";
 import type { DependencyNode } from "../domain/dependency.js";
 import type { CallGraph } from "../domain/graph.js";
 import type { Diagnostic } from "../domain/coverage.js";
 import {
   buildKnownPackageRoots,
+  canonicalizePackageInstancePath,
   createScanModuleIdentityCache,
+  readInstalledManifestIdentity,
 } from "../domain/resolved-target.js";
 import type { Finding } from "../domain/verdict.js";
 import type {
@@ -185,6 +190,14 @@ function loadRules(
     rules.push(...loadRuleFile(path.resolve(projectRoot, file)));
   }
   return rules;
+}
+
+/**
+ * How a provider query is named in a message: `name@version`, or the name
+ * alone for the versionless query of task B-4 (PRM-64, decision 4).
+ */
+function queryLabel(name: string, version: string | undefined): string {
+  return version === undefined ? `${name} (no version)` : `${name}@${version}`;
 }
 
 /**
@@ -529,6 +542,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   }
 
   let dependencyNodes: DependencyNode[];
+  let unidentifiedLockEntries: readonly UnidentifiedLockEntry[];
   try {
     const packageJson = loadPackageJsonFile(
       path.join(projectRoot, "package.json"),
@@ -536,7 +550,15 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     const packageLock = loadPackageLockFile(
       path.join(projectRoot, "package-lock.json"),
     );
-    dependencyNodes = buildDependencyGraph(packageJson, packageLock);
+    // Task B-4 (PRM-34): a nameless lock entry outside `node_modules` is
+    // named by its own manifest (or its linking entries); one nothing
+    // names is reported below, never dropped.
+    const inventory = buildDependencyInventory(packageJson, packageLock, {
+      readManifestName: (entryPath) =>
+        readInstalledManifestIdentity(path.join(projectRoot, entryPath)).name,
+    });
+    dependencyNodes = inventory.nodes;
+    unidentifiedLockEntries = inventory.unidentified;
   } catch (error) {
     io.stderr(
       `vulntrace: failed to read project dependency manifests: ${errorMessage(error)}\n`,
@@ -942,6 +964,156 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     });
   }
 
+  // Task B-4 -- the installed inventory's remaining silences, each said in
+  // both channels, as the identity entries above are. None of these is an
+  // instance: nothing establishes a name, or the lockfile does not list
+  // the package, so no advisory can be asked for or selected by it, and
+  // inventing an identity for it would be worse than saying so. Each is
+  // `undetermined`: whether any advisory applies is not known.
+  const accountedRoots = new Set<string>(
+    instanceRegistry.instances.map((instance) => instance.packageInstance),
+  );
+  const reportIdentityGap = (
+    gap: Omit<UnreportedCandidate, "stage" | "disposition" | "category"> & {
+      readonly reason:
+        | "lockfile_entry_unidentified"
+        | "installed_package_not_in_lockfile"
+        | "installed_manifest_untrusted";
+    },
+  ): void => {
+    diagnostics.push({ source: "dependencies", message: gap.detail });
+    unreportedCandidates.push({
+      stage: "package_identity",
+      disposition: "undetermined",
+      ...gap,
+      category: UNCERTAINTY_REASON_CATEGORY[gap.reason],
+    });
+  };
+
+  // PRM-34: a lockfile entry nothing names. Before B-4, `continue`.
+  for (const entry of unidentifiedLockEntries) {
+    const root = canonicalizePackageInstancePath(
+      path.resolve(projectRoot, entry.entryPath),
+    );
+    accountedRoots.add(root);
+    const instance = describePackageInstance(root, projectRoot);
+    const links =
+      entry.linkNames.length > 0
+        ? `the lockfile links it under ${entry.linkNames.length} different names ` +
+          `(${entry.linkNames.join(", ")}) and its own manifest declares none`
+        : `it has no "name" in the lockfile, no linking node_modules entry names it, ` +
+          `and its own manifest declares none`;
+    reportIdentityGap({
+      packageInstance: instance,
+      ...(entry.version !== undefined ? { version: entry.version } : {}),
+      reason: "lockfile_entry_unidentified",
+      detail:
+        `lockfile entry "${entry.entryPath}" could not be identified: ${links}; ` +
+        `no advisory was asked for or evaluated against package instance ` +
+        `"${instance}", so whether any vulnerability applies to it is undetermined`,
+    });
+  }
+
+  // PRM-66: a workspace member whose manifest cannot be read and that no
+  // lockfile entry names (one that does is the registry's
+  // `untrustedManifests`, above).
+  for (const root of workspaces.unreadableManifestRoots) {
+    if (accountedRoots.has(root)) {
+      continue;
+    }
+    accountedRoots.add(root);
+    const instance = describePackageInstance(root, projectRoot);
+    reportIdentityGap({
+      packageInstance: instance,
+      reason: "installed_manifest_untrusted",
+      detail:
+        `workspace member "${instance}" has a package.json that could not be read, ` +
+        `and nothing else names it, so its identity could not be established; no ` +
+        `advisory was asked for or evaluated against it`,
+    });
+  }
+
+  // AUD-08, decision 9: the installed tree, cross-checked against the
+  // inventory. Two sources: the packages on disk under the project's (and
+  // each workspace member's) `node_modules`, and every package instance the
+  // module-load closure actually loads -- which also covers one Node finds
+  // outside the project, in an ancestor `node_modules`.
+  const installedTree = enumerateInstalledPackages({
+    projectRoot,
+    startRoots: [
+      projectRoot,
+      ...workspaces.packages.map((member) => member.canonicalRoot),
+    ],
+  });
+  const unlisted = new Map<string, { name?: string; version?: string }>();
+  for (const onDisk of installedTree.packages) {
+    if (!accountedRoots.has(onDisk.canonicalRoot)) {
+      unlisted.set(onDisk.canonicalRoot, onDisk);
+    }
+  }
+  for (const loaded of moduleLoadClosure?.loadedPackageInstances ?? []) {
+    if (!accountedRoots.has(loaded) && !unlisted.has(loaded)) {
+      const manifest = readInstalledManifestIdentity(loaded);
+      unlisted.set(loaded, {
+        ...(manifest.name !== undefined ? { name: manifest.name } : {}),
+        ...(manifest.version.kind === "declared"
+          ? { version: manifest.version.version }
+          : {}),
+      });
+    }
+  }
+  for (const [root, onDisk] of [...unlisted].sort(([a], [b]) =>
+    a < b ? -1 : a > b ? 1 : 0,
+  )) {
+    const instance = describePackageInstance(root, projectRoot);
+    const label =
+      onDisk.name !== undefined
+        ? `${onDisk.name}${onDisk.version !== undefined ? `@${onDisk.version}` : ""}`
+        : "a package whose manifest declares no name";
+    reportIdentityGap({
+      ...(onDisk.name !== undefined ? { package: onDisk.name } : {}),
+      packageInstance: instance,
+      reason: "installed_package_not_in_lockfile",
+      detail:
+        `package instance "${instance}" (${label}) is installed but this project's ` +
+        `lockfile does not list it, so its identity is not established by the ` +
+        `project's dependency metadata; no advisory was asked for or evaluated ` +
+        `against it, and whether any vulnerability applies to it is undetermined`,
+    });
+  }
+  for (const unreadablePath of installedTree.unreadable) {
+    const where = describePackageInstance(unreadablePath, projectRoot);
+    const message =
+      `"${where}" in the installed node_modules tree could not be read, so ` +
+      `packages installed there but not listed in the lockfile may not have ` +
+      `been reported`;
+    diagnostics.push({ source: "dependencies", message });
+    io.stderr(`vulntrace: ${message}\n`);
+    unreportedCandidates.push({
+      stage: "workspace_discovery",
+      disposition: "undetermined",
+      reason: "installed_tree_unreadable",
+      category: UNCERTAINTY_REASON_CATEGORY.installed_tree_unreadable,
+      detail: message,
+    });
+  }
+  if (installedTree.truncated) {
+    const message =
+      `the installed node_modules tree could not be enumerated completely within ` +
+      `this analyzer's bound (${MAX_INSTALLED_TREE_DIRECTORIES} directories); ` +
+      `packages installed but not listed in the lockfile may not have been reported`;
+    diagnostics.push({ source: "dependencies", message });
+    io.stderr(`vulntrace: ${message}\n`);
+    unreportedCandidates.push({
+      stage: "workspace_discovery",
+      disposition: "undetermined",
+      reason: "installed_tree_enumeration_truncated",
+      category:
+        UNCERTAINTY_REASON_CATEGORY.installed_tree_enumeration_truncated,
+      detail: message,
+    });
+  }
+
   const findings: Finding[] = [];
 
   // Advisory lookup is driven by PACKAGE NAME, and the fan-out below is
@@ -977,13 +1149,13 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         rawVulnerabilities = await provider.queryPackage({
           ecosystem: "npm",
           name: packageName,
-          version,
+          ...(version !== undefined ? { version } : {}),
         });
         providerMs += Date.now() - providerStart;
       } catch (error) {
         providerMs += Date.now() - providerStart;
         io.stderr(
-          `vulntrace: vulnerability provider failure for ${packageName}@${version}: ${errorMessage(error)}\n`,
+          `vulntrace: vulnerability provider failure for ${queryLabel(packageName, version)}: ${errorMessage(error)}\n`,
         );
         return 4;
       }
@@ -1011,7 +1183,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
             vulnerabilitiesById.set(vulnerability.id, vulnerability);
           }
         } catch (error) {
-          const message = `skipping malformed vulnerability record for ${packageName}@${version}: ${errorMessage(error)}`;
+          const message = `skipping malformed vulnerability record for ${queryLabel(packageName, version)}: ${errorMessage(error)}`;
           io.stderr(`vulntrace: ${message}\n`);
           diagnostics.push({ source: "vulnerabilities", message });
           // One entry per distinct record: the same record returned by
@@ -1055,19 +1227,19 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     )) {
       // F3 § 4 -- the no-finding path nothing recorded before.
       //
-      // `advisoryQueryVersions` contributes no query for an instance with
-      // no established version ("there is nothing to ask about"), and that
-      // is correct. An instance whose SIBLINGS have versions is still
-      // evaluated against whatever their queries returned, reaching its
-      // own honest UNKNOWN -- F3 § 4 says to preserve that, and the loop
-      // below does.
+      // An instance with no established version is asked about by its own
+      // name, without a version (task B-4, PRM-64, decision 4), and is
+      // evaluated below against every advisory returned for the name,
+      // reaching its own honest UNKNOWN for each. Before B-4 it contributed
+      // no query and was evaluated only against its siblings' version-
+      // filtered answers, which silently missed every advisory affecting
+      // no sibling's version.
       //
-      // But when NO advisory was surfaced for this name at all, that
-      // rescue never happens: the instance is evaluated against nothing,
-      // produces no finding, and before F3 vanished from the report
-      // entirely. "This package has no known advisories" and "nobody could
-      // ask whether this package has advisories" reached the reader as the
-      // same silence.
+      // When NO advisory is relevant (none returned, none usable, or none
+      // matching `--cve`), the instance is evaluated against nothing and
+      // produces no finding; before F3 it vanished from the report
+      // entirely. This entry keeps saying so: its version is still
+      // unknown.
       //
       // Deliberately NOT a fabricated UNKNOWN finding (F3 § 4: "do not
       // fabricate advisory findings solely to make taxonomy convenient").
@@ -1089,9 +1261,9 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
           detail:
             `package instance "${instance}" (${packageName}) has no established ` +
             `version, and no ${relevantUnusable.length > 0 ? "usable " : ""}advisory ` +
-            `was discovered for any sibling instance of ` +
-            `this name, so no advisory was ever evaluated against it; whether any ` +
-            `vulnerability applies to this instance is undetermined`,
+            `${cveFilter !== undefined ? `matching ${cveFilter} ` : ""}was returned for ` +
+            `this name, asked without a version, so no advisory was ever evaluated ` +
+            `against it; whether any vulnerability applies to this instance is undetermined`,
         });
       }
 

@@ -1,6 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { canonicalizePackageInstancePath } from "../domain/resolved-target.js";
+import {
+  canonicalizePackageInstancePath,
+  readInstalledManifestIdentity,
+} from "../domain/resolved-target.js";
 
 /**
  * One local workspace package discovered from a monorepo root's own
@@ -98,6 +101,13 @@ export interface WorkspaceDiscovery {
    * {@link unsupported}, in the same order.
    */
   readonly incompleteness: readonly WorkspaceDiscoveryIncompleteness[];
+  /**
+   * Canonical roots a pattern covers whose `package.json` exists and cannot
+   * be read (task B-4, PRM-66), sorted. Not packages here -- nothing
+   * establishes their name -- and not silence either: the scan reports
+   * each one nothing else names.
+   */
+  readonly unreadableManifestRoots: readonly string[];
 }
 
 /**
@@ -242,31 +252,45 @@ export function readWorkspacePatterns(
   return candidate as readonly string[];
 }
 
-/** Reads a manifest's `name`/`version`, or `{}` when it cannot be read. */
+/**
+ * Reads a manifest's `name`/`version`, through the registry's own reader
+ * (`readInstalledManifestIdentity`), so the two can never disagree about
+ * what a manifest says.
+ *
+ * Three outcomes, not two (task B-4, PRM-66): no `package.json` at all
+ * (`exists: false` -- not a package), one that parses (`readable: true`),
+ * and one that exists and cannot be consumed (`readable: false`). Before
+ * B-4 the last was folded into the first, so a workspace member with a
+ * broken manifest was "not a package" and, when no lockfile entry named it
+ * with a version, vanished from the report. Node does not ignore it
+ * either: it refuses to load the package (`ERR_INVALID_PACKAGE_CONFIG`).
+ */
 function readManifestIdentity(packageRoot: string): {
   name?: string;
   version?: string;
   exists: boolean;
+  readable: boolean;
 } {
-  try {
-    const raw: unknown = JSON.parse(
-      readFileSync(path.join(packageRoot, "package.json"), "utf-8"),
-    );
-    const name = (raw as { name?: unknown }).name;
-    const version = (raw as { version?: unknown }).version;
-    return {
-      name: typeof name === "string" && name.length > 0 ? name : undefined,
-      // Non-empty, matching `readInstalledManifestIdentity`'s reading of
-      // the same field in the same file: `"version": ""` is not a version,
-      // and admitting it here would manufacture a contradiction against a
-      // lockfile entry that states a real one.
-      version:
-        typeof version === "string" && version.length > 0 ? version : undefined,
-      exists: true,
-    };
-  } catch {
-    return { exists: false };
+  const identity = readInstalledManifestIdentity(packageRoot);
+  if (identity.version.kind === "absent") {
+    return { exists: false, readable: false };
   }
+  if (
+    identity.version.kind === "untrusted" &&
+    identity.version.reason === "unreadable"
+  ) {
+    return { exists: true, readable: false };
+  }
+  return {
+    ...(identity.name !== undefined ? { name: identity.name } : {}),
+    // Only a usable version string; an unusable one is the registry's to
+    // report (`installed_manifest_untrusted`), as before B-4.
+    ...(identity.version.kind === "declared"
+      ? { version: identity.version.version }
+      : {}),
+    exists: true,
+    readable: true,
+  };
 }
 
 /** Immediate subdirectories of `directory`, or `undefined` if unreadable. */
@@ -461,6 +485,7 @@ export function discoverWorkspacePackages(
   const canonicalProjectRoot = canonicalizePackageInstancePath(projectRoot);
   const byRoot = new Map<string, WorkspacePackage>();
   const unsupported: WorkspaceDiscoveryIncompleteness[] = [];
+  const unreadableManifestRoots = new Set<string>();
 
   for (const pattern of patterns) {
     const interpreted = interpretWorkspacePattern(pattern);
@@ -529,6 +554,10 @@ export function discoverWorkspacePackages(
       if (canonicalRoot === canonicalProjectRoot) {
         continue;
       }
+      if (!identity.readable) {
+        unreadableManifestRoots.add(canonicalRoot);
+        continue;
+      }
       // First pattern to admit a root wins the `pattern` label only; the
       // ROOT is what carries identity, and the result is sorted below, so
       // this cannot change WHICH packages are returned.
@@ -552,6 +581,7 @@ export function discoverWorkspacePackages(
           : 0,
     ),
     unsupported,
+    [...unreadableManifestRoots],
   );
 }
 
@@ -613,6 +643,7 @@ function pnpmOnlyReasons(
 function finish(
   packages: readonly WorkspacePackage[],
   incompleteness: readonly WorkspaceDiscoveryIncompleteness[],
+  unreadableManifestRoots: readonly string[] = [],
 ): WorkspaceDiscovery {
   // Deduplicated and sorted BY MESSAGE, exactly as before F3 -- the
   // message is what identifies a condition (two patterns can be
@@ -632,6 +663,7 @@ function finish(
     packages,
     unsupported: sorted.map((entry) => entry.message),
     incompleteness: sorted,
+    unreadableManifestRoots: [...unreadableManifestRoots].sort(),
   };
 }
 

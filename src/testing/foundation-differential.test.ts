@@ -362,6 +362,11 @@ const CORPUS: readonly CorpusCase[] = [
     },
     advisories: [ADVISORY],
     expect: {
+      // Task B-4 (PRM-64, decision 4): the instance has no established
+      // version, so it is queried without one and the advisory is an
+      // UNKNOWN finding (version indeterminate). Before B-4: no query, no
+      // finding.
+      verdicts: ["UNKNOWN"],
       candidateReasons: ["installed_manifest_untrusted"],
       candidateStages: ["package_identity"],
       diagnosticSources: ["dependencies"],
@@ -680,14 +685,21 @@ describe("offline differential: each case produces the semantics it claims", () 
           // The target is the one the fixture's own rules.yml declares.
           // It must survive resolution unchanged: same module specifier,
           // same exported symbol, same kind, same rule confidence.
+          // Except a version-indeterminate UNKNOWN: `buildFinding` decides it
+          // before any target is resolved, so it names none (task B-4 made
+          // the first corpus case reach one: candidate-manifest-untrusted).
+          const versionIndeterminate = finding.unknownReasons.includes(
+            "advisory_version_applicability_indeterminate",
+          );
+          const expectedTarget = versionIndeterminate ? null : DECLARED_TARGET;
           expect(
             finding.target,
             `TARGET CHANGED\n` +
               `  invariant: a finding reports the advisory target its rule declared\n` +
               `  case:      ${corpusCase.name} (${finding.vulnerability})\n` +
-              `  expected:  ${JSON.stringify(DECLARED_TARGET)}\n` +
+              `  expected:  ${JSON.stringify(expectedTarget)}\n` +
               `  actual:    ${JSON.stringify(finding.target)}`,
-          ).toEqual(DECLARED_TARGET);
+          ).toEqual(expectedTarget);
 
           // Confidence tracks the VERDICT: an AFFECTED is a positive claim
           // and carries one; a NOT_AFFECTED rests on a negative proof and
