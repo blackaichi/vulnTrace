@@ -130,6 +130,60 @@ function computeDependencyPaths(
 }
 
 /**
+ * A lockfile entry no authority names (task B-4, PRM-34): no `name` of its
+ * own, outside `node_modules` (so no path to derive one from), no single
+ * name its linking `node_modules/<name>` entries agree on, and no
+ * readable manifest name. No advisory can be asked for or selected by it,
+ * so it is reported as an identity gap rather than dropped.
+ */
+export interface UnidentifiedLockEntry {
+  /** The lockfile install path, e.g. `vendor/anon`. */
+  readonly entryPath: string;
+  readonly version?: string;
+  /** Every name a linking entry gave it, sorted; possibly empty. */
+  readonly linkNames: readonly string[];
+}
+
+export interface DependencyInventory {
+  readonly nodes: DependencyNode[];
+  readonly unidentified: readonly UnidentifiedLockEntry[];
+}
+
+export interface DependencyInventoryOptions {
+  /**
+   * Reads the `"name"` of the manifest at a lockfile install path, or
+   * `undefined` when there is none or it cannot be read. Consulted only for
+   * a nameless entry outside `node_modules`. Absent, no manifest is read.
+   */
+  readonly readManifestName?: (entryPath: string) => string | undefined;
+}
+
+/**
+ * The names the lockfile's `link: true` entries give each link target,
+ * keyed by the target's install path (`resolved`). npm writes a `file:`
+ * dependency as a link `node_modules/<name>` whose `resolved` is the
+ * target's own entry path (measured with npm 10.9.0 in task B-4).
+ */
+function linkNamesByTarget(
+  packages: Readonly<Record<string, PackageLockEntry>>,
+): Map<string, Set<string>> {
+  const byTarget = new Map<string, Set<string>>();
+  for (const [entryPath, entry] of Object.entries(packages)) {
+    if (entry.link !== true || entry.resolved === undefined) {
+      continue;
+    }
+    const name = derivePackageName(entryPath);
+    if (name === undefined) {
+      continue;
+    }
+    const names = byTarget.get(entry.resolved) ?? new Set<string>();
+    names.add(name);
+    byTarget.set(entry.resolved, names);
+  }
+  return byTarget;
+}
+
+/**
  * Builds the normalized dependency graph (see docs/SDD.md § 11) by
  * combining:
  * - package.json: the authoritative set of directly-declared dependency
@@ -141,11 +195,31 @@ function computeDependencyPaths(
  * distinct install location), so multiple installed versions of the same
  * package name naturally become multiple `DependencyNode`s, each with its
  * own `direct` classification and `dependencyPaths`.
+ *
+ * Task B-4 (PRM-34): no entry that is a package is dropped any more.
+ *
+ * - A versionless entry is a node with no version. Before B-4 it was
+ *   `continue`d as "inherent to unversioned/local links", which held for
+ *   a link entry and for nothing else: a `file:` dependency whose manifest
+ *   has no version, and a workspace member, are packages.
+ * - A versionless `link: true` entry is not itself a package -- it is the
+ *   `node_modules` symlink to one, and its target has its own entry -- so
+ *   it stays out, exactly as before. Its name names the target.
+ * - A nameless entry outside `node_modules` is named by its own manifest
+ *   (the identity authority, as for an npm alias), else by the one name
+ *   its linking entries agree on. npm omits `name` when the manifest has
+ *   none, or when the manifest's name, the directory's name and the name
+ *   it is linked under all agree (measured with npm 10.9.0, six shapes),
+ *   so this is the ordinary `file:` dependency, not an edge case. Two
+ *   disagreeing
+ *   linking names with no manifest name are not chosen between: the entry
+ *   is {@link UnidentifiedLockEntry}, as is one nothing names at all.
  */
-export function buildDependencyGraph(
+export function buildDependencyInventory(
   packageJson: PackageJson,
   packageLock: PackageLock,
-): DependencyNode[] {
+  options: DependencyInventoryOptions = {},
+): DependencyInventory {
   const directNames = new Set([
     ...Object.keys(packageJson.dependencies),
     ...Object.keys(packageJson.devDependencies),
@@ -154,36 +228,70 @@ export function buildDependencyGraph(
   ]);
 
   const dependencyPathByPath = computeDependencyPaths(packageLock.packages);
+  const linkNames = linkNamesByTarget(packageLock.packages);
   const nodes: DependencyNode[] = [];
+  const unidentified: UnidentifiedLockEntry[] = [];
 
   for (const [entryPath, entry] of Object.entries(packageLock.packages)) {
     if (entryPath === "") {
       continue;
     }
 
-    const name = entry.name ?? derivePackageName(entryPath);
     const { version } = entry;
 
-    // A dependency we cannot identify by name or resolved version cannot
-    // form a valid DependencyNode; this is inherent to unversioned/local
-    // links (e.g. unsupported workspace members), not a parsing failure.
-    if (!name || !version) {
+    // A link is the symlink to a package, not a package: its target has
+    // its own entry. A link entry that does carry a version was a node
+    // before B-4 and stays one.
+    if (entry.link === true && version === undefined) {
       continue;
+    }
+
+    const name = entry.name ?? derivePackageName(entryPath);
+    let resolvedName = name;
+    if (resolvedName === undefined) {
+      const fromLinks = [...(linkNames.get(entryPath) ?? [])].sort();
+      resolvedName =
+        options.readManifestName?.(entryPath) ??
+        (fromLinks.length === 1 ? fromLinks[0] : undefined);
+      if (resolvedName === undefined) {
+        unidentified.push({
+          entryPath,
+          ...(version !== undefined ? { version } : {}),
+          linkNames: fromLinks,
+        });
+        continue;
+      }
     }
 
     const dependencyPath = dependencyPathByPath.get(entryPath);
 
     nodes.push({
       id: `npm:${entryPath}`,
-      name,
-      version,
+      name: resolvedName,
+      ...(version !== undefined ? { version } : {}),
       ecosystem: "npm",
-      direct: isTopLevelPath(entryPath) && directNames.has(name),
+      direct: isTopLevelPath(entryPath) && directNames.has(resolvedName),
       locations: [entryPath],
       dependencyPaths: dependencyPath ? [dependencyPath] : [],
-      purl: toPurl(name, version),
+      ...(version !== undefined ? { purl: toPurl(resolvedName, version) } : {}),
     });
   }
 
-  return nodes;
+  unidentified.sort((a, b) =>
+    a.entryPath < b.entryPath ? -1 : a.entryPath > b.entryPath ? 1 : 0,
+  );
+  return { nodes, unidentified };
+}
+
+/**
+ * The nodes of {@link buildDependencyInventory}. A caller that must account
+ * for every entry -- the scan -- uses the inventory, whose `unidentified`
+ * list this drops.
+ */
+export function buildDependencyGraph(
+  packageJson: PackageJson,
+  packageLock: PackageLock,
+  options: DependencyInventoryOptions = {},
+): DependencyNode[] {
+  return buildDependencyInventory(packageJson, packageLock, options).nodes;
 }

@@ -233,9 +233,16 @@ describe("F1-B: lockfile vs installed manifest version authority", () => {
     expect(
       output.findings.filter((finding) => finding.verdict === "AFFECTED"),
     ).toEqual([]);
-    // § 22: not "a query with the right version" -- no query at all. There
-    // is no version to ask about.
-    expect(queries.map((query) => query.version)).toEqual([]);
+    // § 22: not "a query with the right version" -- there is no version
+    // to ask about.
+    // Task B-4 (PRM-64, decision 4): an instance with no established
+    // version is asked about without one, and every advisory returned is
+    // evaluated against it as indeterminate -- an UNKNOWN finding, never a
+    // version-derived AFFECTED and never silence. Before B-4: no query.
+    expect(queries.map((query) => query.version)).toEqual([undefined]);
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "UNKNOWN",
+    ]);
     // § 23: the absence of a finding must not be silent.
     expect(conflictDiagnostics(output)).toHaveLength(1);
     expect(conflictDiagnostics(output)[0]).toContain(
@@ -265,7 +272,14 @@ describe("F1-B: lockfile vs installed manifest version authority", () => {
     expect(conflictDiagnostics(output)[0]).toContain(
       "no advisory version range was evaluated against it",
     );
-    expect(queries.map((query) => query.version)).toEqual([]);
+    // Task B-4 (PRM-64, decision 4): an instance with no established
+    // version is asked about without one, and every advisory returned is
+    // evaluated against it as indeterminate -- an UNKNOWN finding, never a
+    // version-derived AFFECTED and never silence. Before B-4: no query.
+    expect(queries.map((query) => query.version)).toEqual([undefined]);
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "UNKNOWN",
+    ]);
   });
 
   it("§ 15 control -- an agreeing lockfile and manifest keep the existing AFFECTED verdict", async () => {
@@ -357,14 +371,13 @@ describe("F1-B: lockfile vs installed manifest version authority", () => {
     expect(conflictDiagnostics(output)).toEqual([]);
   });
 
-  it("§ 17 limitation -- a versionless lockfile entry is never enumerated, so its manifest version cannot rescue it", async () => {
-    // Pinned, not fixed. `buildDependencyGraph` forms no `DependencyNode`
-    // for a lockfile entry with no `version` ("inherent to
-    // unversioned/local links"), so this root reaches the registry through
-    // NO authority at all -- there is no instance for a manifest version to
-    // attach to. That is an ENUMERATION gap, not a metadata-authority one,
-    // and closing it means changing what a `DependencyNode` is, which this
-    // task deliberately does not do. Recorded as a remaining limitation.
+  it("§ 17 (closed by B-4, PRM-34) -- a versionless lockfile entry is enumerated, and its manifest version applies", async () => {
+    // Pinned as a limitation until task B-4: `buildDependencyGraph` formed
+    // no `DependencyNode` for a lockfile entry with no `version`, so this
+    // root reached the registry through no authority at all and the scan
+    // said nothing about it. Since B-4 a versionless entry is a node with
+    // no version; the installed manifest is then the one claim, so the
+    // instance has a version and the advisory is evaluated against it.
     const root = divergentProject({
       declaredVersion: undefined,
       installedVersion: "1.0.0",
@@ -375,8 +388,11 @@ describe("F1-B: lockfile vs installed manifest version authority", () => {
 
     const output = await scanOutput(root, provider);
 
-    expect(output.findings).toEqual([]);
-    expect(queries).toEqual([]);
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "AFFECTED",
+    ]);
+    expect(output.findings[0]?.version).toBe("1.0.0");
+    expect(queries.map((query) => query.version)).toEqual(["1.0.0"]);
   });
 
   it("§ 18 -- an unparseable installed manifest fails closed rather than trusting the declared version", async () => {
@@ -393,7 +409,14 @@ describe("F1-B: lockfile vs installed manifest version authority", () => {
     expect(
       output.findings.filter((finding) => finding.verdict === "AFFECTED"),
     ).toEqual([]);
-    expect(queries.map((query) => query.version)).toEqual([]);
+    // Task B-4 (PRM-64, decision 4): an instance with no established
+    // version is asked about without one, and every advisory returned is
+    // evaluated against it as indeterminate -- an UNKNOWN finding, never a
+    // version-derived AFFECTED and never silence. Before B-4: no query.
+    expect(queries.map((query) => query.version)).toEqual([undefined]);
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "UNKNOWN",
+    ]);
     expect(
       output.diagnostics.filter((diagnostic) =>
         diagnostic.message.includes("could not be read"),
@@ -505,7 +528,14 @@ describe("F1-B: lockfile vs installed manifest version authority", () => {
     // ONE logical instance, therefore exactly ONE conflict diagnostic --
     // not one per metadata source that named the directory.
     expect(conflictDiagnostics(output)).toHaveLength(1);
-    expect(queries.map((query) => query.version)).toEqual([]);
+    // Task B-4 (PRM-64, decision 4): an instance with no established
+    // version is asked about without one, and every advisory returned is
+    // evaluated against it as indeterminate -- an UNKNOWN finding, never a
+    // version-derived AFFECTED and never silence. Before B-4: no query.
+    expect(queries.map((query) => query.version)).toEqual([undefined]);
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "UNKNOWN",
+    ]);
     expect(
       output.findings.filter((finding) => finding.verdict === "AFFECTED"),
     ).toEqual([]);
@@ -699,7 +729,14 @@ describe("F1-B: alias and scoped-package ownership survive version reconciliatio
     expect(
       output.findings.filter((finding) => finding.verdict === "AFFECTED"),
     ).toEqual([]);
-    expect(queries.map((query) => query.version)).toEqual([]);
+    // Task B-4 (PRM-64, decision 4): an instance with no established
+    // version is asked about without one, and every advisory returned is
+    // evaluated against it as indeterminate -- an UNKNOWN finding, never a
+    // version-derived AFFECTED and never silence. Before B-4: no query.
+    expect(queries.map((query) => query.version)).toEqual([undefined]);
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "UNKNOWN",
+    ]);
     expect(conflictDiagnostics(output)).toHaveLength(1);
     // Reported under its real identity, at its real install directory.
     expect(conflictDiagnostics(output)[0]).toContain("vuln-lib");
@@ -744,7 +781,14 @@ describe("F1-B: alias and scoped-package ownership survive version reconciliatio
     expect(
       output.findings.filter((finding) => finding.verdict === "AFFECTED"),
     ).toEqual([]);
-    expect(queries.map((query) => query.version)).toEqual([]);
+    // Task B-4 (PRM-64, decision 4): an instance with no established
+    // version is asked about without one, and every advisory returned is
+    // evaluated against it as indeterminate -- an UNKNOWN finding, never a
+    // version-derived AFFECTED and never silence. Before B-4: no query.
+    expect(queries.map((query) => query.version)).toEqual([undefined]);
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "UNKNOWN",
+    ]);
     expect(conflictDiagnostics(output)).toHaveLength(1);
     expect(conflictDiagnostics(output)[0]).toContain("@scope/vuln-lib");
   });
@@ -967,11 +1011,18 @@ describe("F1 remediation: conflict diagnostics state TRUE provenance", () => {
       'whose "version" field is not a usable version string',
     );
     expect(messages[0]).not.toContain("could not be read");
-    // Behavior is untouched: still fails closed, still no query.
+    // Behavior is untouched: still fails closed.
     expect(
       output.findings.filter((finding) => finding.verdict === "AFFECTED"),
     ).toEqual([]);
-    expect(queries.map((query) => query.version)).toEqual([]);
+    // Task B-4 (PRM-64, decision 4): an instance with no established
+    // version is asked about without one, and every advisory returned is
+    // evaluated against it as indeterminate -- an UNKNOWN finding, never a
+    // version-derived AFFECTED and never silence. Before B-4: no query.
+    expect(queries.map((query) => query.version)).toEqual([undefined]);
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "UNKNOWN",
+    ]);
   });
 
   it("still says 'could not be read' for a genuinely unparseable manifest", async () => {

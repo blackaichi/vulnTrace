@@ -1501,6 +1501,87 @@ user's, validated, expiring, and never fatal.
 - **B-5**: a cache diagnostic is not a provider failure and never changes
   the exit code.
 
+#### B-4 additions (task B-4, 2026-10-10)
+
+**Outcome of B-4** (§ 7's B-4 row, decisions 4 and 9). Every package the
+project installs reaches the report, as an instance or as an identity
+entry naming its exact instance.
+
+- `buildDependencyInventory` (`src/dependencies/dependency-graph.ts`)
+  drops no entry that is a package. A versionless entry is a node with no
+  version (`DependencyNode.version` is optional); a versionless
+  `link: true` entry stays out (its target is the package). A nameless
+  entry outside `node_modules` is named by its own manifest, else by the
+  one name its linking `node_modules/<name>` entries agree on; otherwise
+  it is an `undetermined` entry, reason `lockfile_entry_unidentified`.
+  Measured with npm 10.9.0 (six shapes): npm omits `name` when the
+  manifest has none, or when the manifest's name, the directory's name
+  and the link name all agree. Fixed PRM-34 and RWF-093 (found by B-4: a named, versionless
+  `file:` entry was dropped; F1-B had pinned the same drop as a
+  limitation).
+- Decision 4: `advisoryQueryVersions` adds one query without a version
+  for a name with any instance whose version is not established, for
+  whatever reason (none declared, a contradiction, an untrusted manifest),
+  and every advisory returned is evaluated against every instance of the
+  name: `UNKNOWN` (`advisory_version_applicability_indeterminate`) for the
+  versionless one. F1-B § 22 and P1-A5 G/H had chosen "no query" for a
+  contradicted version; that choice is replaced by decision 4 (flagged for
+  the project owner in the pull request). Fixed PRM-64.
+- Workspace discovery reads a manifest through the registry's reader and
+  records one that exists and cannot be read; the scan reports one nothing
+  else names as `installed_manifest_untrusted`. Fixed PRM-66.
+- Decision 9: `enumerateInstalledPackages`
+  (`src/dependencies/installed-tree.ts`) walks npm's layout under the
+  project's and each workspace member's `node_modules`, recursively,
+  links followed by realpath, not descending out of the project; the
+  scan adds every instance the module-load closure loads. Each canonical
+  root the registry, an unidentified lock entry or an unreadable workspace
+  manifest does not account for is an entry, reason
+  `installed_package_not_in_lockfile`. Not an instance. The walk is bounded
+  by 50,000 operations (every listing and every entry examined); a
+  truncated walk is `installed_tree_enumeration_truncated`
+  (`budget_exceeded`) and a path it cannot read, other than an absent
+  one, `installed_tree_unreadable` (`analysis_precondition_unmet`), both on
+  stage `workspace_discovery`. Fixed AUD-08.
+- Four reason subtypes, no new category, no schema version change (both
+  schema enums; as A-3b and B-1 did).
+- Foundation invariant `VT-INV-B-inventory-identity` (owners
+  `src/dependencies/dependency-graph.test.ts`,
+  `src/dependencies/installed-tree.test.ts`,
+  `src/dependencies/package-instances.test.ts`,
+  `src/cli/scan.b4-inventory-identity.test.ts`). Nineteen mutations, each
+  caught by a named test, the `PackageInstance` one a sibling borrow (an
+  unloaded nested twin with the listed copy's own name and version).
+- **The independent audit CERTIFIED the change** with four non-blocking
+  findings: a read error read as an empty directory (fixed:
+  `installed_tree_unreadable`), the walk's comment overclaiming what Node
+  loads (corrected), the npm naming rule stated falsely (corrected), and a
+  nameless local package named by its linking alias (recorded below). The
+  walk's cost was bounded by listings only; every examined entry now
+  counts.
+- **Known limitations.** A nameless `file:` package whose manifest has no
+  name is named, queried and selected by the name it is linked under, as
+  npm itself does; an advisory for a registry package of that name then
+  selects it (a possible extra finding, never a hidden one). The walk
+  skips a dot-named directory and an `@`-named directory that is itself a
+  package, which npm never writes and Node can load; one the closure
+  loads is still reported.
+- Over the 139 corpus cases: verdict differential 0, proof 0, graph 0,
+  unreported candidates +0/−0 (no corpus case has a versionless or
+  nameless lock entry, an unlisted installed package or a broken
+  manifest; B-4's behaviour is measured by its own tests). Validation
+  equals the D-09 baseline.
+
+**What B-4 binds.**
+
+- **B-5, B-6, and every later task**: an instance with no established
+  version is queried without one and evaluated as indeterminate; nothing
+  installed is dropped silently, and a gap is an identity entry naming its
+  exact instance. Decision 3's exit codes count every B-4 entry as
+  undecided. The `installed_version_unavailable` detail names a `--cve`
+  filter when one is set; PRM-36's condition (the unfiltered set) is still
+  B-5's.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

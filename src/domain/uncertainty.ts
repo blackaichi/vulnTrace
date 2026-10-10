@@ -182,6 +182,11 @@ export const UNCERTAINTY_REASONS = [
   "workspace_pattern_unsupported",
   "workspace_enumeration_truncated",
   "workspace_layout_unsupported",
+  // --- Scan-stage, installed inventory (task B-4) ---
+  "lockfile_entry_unidentified",
+  "installed_package_not_in_lockfile",
+  "installed_tree_enumeration_truncated",
+  "installed_tree_unreadable",
 
   // --- Scan-stage, advisory intake (cli/scan.ts, task B-1) ---
   "advisory_record_malformed",
@@ -347,6 +352,15 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   installed_version_unavailable: "identity_unresolved",
   installed_version_conflicted: "identity_unresolved",
   installed_manifest_untrusted: "identity_unresolved",
+  // Task B-4 (PRM-34): a lockfile entry nothing names -- no `name`, no
+  // agreeing linking `node_modules/<name>` entry, no manifest name -- so
+  // no advisory can be asked for or selected by it.
+  lockfile_entry_unidentified: "identity_unresolved",
+  // Task B-4 (AUD-08, decision 9): a package installed on disk, or loaded
+  // by the closure, that the lockfile does not list. Its identity is not
+  // established by the project's authoritative metadata, so it is
+  // reported rather than invented into an instance.
+  installed_package_not_in_lockfile: "identity_unresolved",
   // A declaration this analyzer cannot interpret at all leaves the set of
   // local packages -- their names, their roots -- unestablished. Distinct
   // from `workspace_pattern_unsupported`, where the declaration parsed and
@@ -400,6 +414,12 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // depends on, was never obtained in usable form: a missing precondition,
   // not an ambiguous identity and not a syntax the frontend could learn.
   advisory_record_malformed: "analysis_precondition_unmet",
+  // Task B-4 (its independent audit, finding 1): a directory of the
+  // installed tree, or an entry in one, could not be read for a reason
+  // other than its absence (a permission error). What is behind it was
+  // never established, so the cross-check against the lockfile is
+  // incomplete there.
+  installed_tree_unreadable: "analysis_precondition_unmet",
   // Family C's closure corroboration (task V-1): the module-load closure
   // loads a module whose top level the call graph never reached -- for
   // example one reached only through a re-export declaration (`export *
@@ -418,6 +438,10 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   traversal_truncated: "budget_exceeded",
   call_graph_truncated: "budget_exceeded",
   workspace_enumeration_truncated: "budget_exceeded",
+  // Task B-4 (decision 9): the walk of the installed tree reached its
+  // configured bound, exactly as `workspace_enumeration_truncated` does for
+  // a workspace pattern: raising the bound closes it.
+  installed_tree_enumeration_truncated: "budget_exceeded",
 
   // -- the runtime floor. --
   unclassified_uncertainty_reason: "capability_escape",

@@ -162,7 +162,7 @@ A mismatch either way fails the generator, naming the ID.
 | AUD-05 | `vuln-lib` (synthetic fixture), prerelease version | `semver.coerce` strips prereleases, dropping a vulnerable installed prerelease and falsely flagging an unaffected one | silent drop (recorded as a false "not applicable"); also false AFFECTED in the reverse direction — see below | **Fixed** (B-2) — see below |
 | AUD-06 | `vuln-lib` (synthetic fixture), cache | The OSV cache has no TTL or staleness signal, so an advisory published after the first scan is silently never seen | silent drop — see below | **Fixed** (B-3) — see below |
 | AUD-07 | `vuln-lib` (synthetic fixture), cache | The default OSV cache directory lives inside the scanned project's own tree, and its contents are trusted unvalidated | silent drop — see below | **Fixed** (B-3) — see below |
-| AUD-08 | `vuln-lib` (synthetic fixture), lockfile/disk mismatch | A package really loaded from disk but missing from `package-lock.json` is never queried or reported | silent drop — see below | Open |
+| AUD-08 | `vuln-lib` (synthetic fixture), lockfile/disk mismatch | A package really loaded from disk but missing from `package-lock.json` is never queried or reported | silent drop — see below | **Fixed** (B-4) — see below |
 | AUD-09 | `vuln-lib` (synthetic fixture) | A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | AUD-10 | `vuln-lib` (synthetic fixture) | A malformed OSV record is dropped to diagnostics only, with no `unreportedCandidates` entry | silent drop (product/observability) — see below | **Fixed** (B-1) — see below |
 | AUD-11 | `vuln-lib` (synthetic fixture) | A single OSV record with an empty `id` string fails schema validation and discards the whole report | scan abort — see below | **Fixed** (B-1) — see below |
@@ -193,7 +193,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-31 | `vuln-lib` (synthetic fixture) | Root-requirement materialization matches a candidate node by AST name text, so a same-named decoy elsewhere satisfies it | false NOT_AFFECTED — see below | **Fixed** (V-3) — see below |
 | PRM-32 | `vuln-lib` (synthetic fixture) | `this.X = ...` at module scope and an aliased `const api = module.exports; api.run = ...` are invisible to root-requirement detection | false NOT_AFFECTED — see below | Open |
 | PRM-33 | `vuln-lib` (synthetic fixture), tsconfig | Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map | false NOT_AFFECTED — see below | **Fixed** (C-1) — see below |
-| PRM-34 | `lodash` (`file:`-vendored, real npm 10.9.0 lockfile) | A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely | silent drop — see below | Open |
+| PRM-34 | `lodash` (`file:`-vendored, real npm 10.9.0 lockfile) | A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely | silent drop — see below | **Fixed** (B-4) — see below |
 | PRM-35 | `vuln-lib` (synthetic fixture), cache | A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic | scan abort — see below | **Fixed** (B-3) — see below |
 | PRM-36 | `vuln-lib` (synthetic fixture), workspaces | The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set | false reason — see below | Open |
 | PRM-37 | `vuln-lib` (synthetic fixture) | A tagged-template call (`` tag`x` ``) gets no call-graph edge at all | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
@@ -202,9 +202,9 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-61 | `vuln-lib` (synthetic fixture) | Export forwarding resolves to the first "own" binding of a name, which a later `module.exports` replacement or property write can make stale | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below | Open |
 | PRM-62 | `vuln-lib` (synthetic fixture) | An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value | false NOT_AFFECTED — see below | Open |
 | PRM-63 | `vuln-lib` (synthetic fixture) | Several ways of replacing/mutating `module.exports` (bracket member write, module-alias write, `Object.assign(module.exports, …)`) are not recognized as export writes | false NOT_AFFECTED (for the uncompensated shapes) — see below | Open |
-| PRM-64 | `foo` (synthetic workspace fixture) | A versionless package instance is evaluated only against advisories its own (missing) version would filter to | silent drop — see below | Open |
+| PRM-64 | `foo` (synthetic workspace fixture) | A versionless package instance is evaluated only against advisories its own (missing) version would filter to | silent drop — see below | **Fixed** (B-4) — see below |
 | PRM-65 | `vuln-lib` (synthetic fixture), paginated OSV response | The real `OsvProvider` sends one request with no `page_token`, so a paginated OSV response's later pages are silently never seen | silent drop — see below | **Fixed** (B-1) — see below |
-| PRM-66 | `bad` (synthetic workspace fixture) | A workspace member with a malformed manifest is silently skipped only when its lockfile entry is versionless | silent drop (versionless lock entry only) — see below | Open |
+| PRM-66 | `bad` (synthetic workspace fixture) | A workspace member with a malformed manifest is silently skipped only when its lockfile entry is versionless | silent drop (versionless lock entry only) — see below | **Fixed** (B-4) — see below |
 | PRM-67 | `vuln-lib` (synthetic fixture) | `SUPPORTED_MODEL_EXCLUSIONS` omits `--conditions` and `--import`/preload flags, so the model's stated scope is false | disclosure — see below | Open |
 | PRM-101 | `vuln-lib` (synthetic fixture) | Site B hands a phantom target to reachability with no closure corroboration, certifying export-*-only code unreachable although its top level runs | false NOT_AFFECTED — see below | **Fixed** (V-1) — see below |
 | PRM-102 | `vuln-lib-fork` (synthetic fixture, manifest name mismatch) | Site A/B selection is keyed by advisory package NAME, not by exact `PackageInstance` | false NOT_AFFECTED (realistic for a lock entry whose manifest name differs from the queried name) — see below | **Fixed** (V-1) — see below |
@@ -267,6 +267,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-090 | `schemas/result.schema.json` | The result schema states that an `unreportedCandidates` entry carries `category` "IF AND ONLY IF disposition is undetermined", and does not enforce it: an `undetermined` entry with no category and a `not_applicable` entry with one both validate | unenforced guarantee (output contract) — see below | Open |
 | RWF-091 | `vuln-lib` (synthetic fixture) | The OSV normalizer paired a SEMVER range's events in array order, while OSV's specification sorts them by version before evaluating (a sorted array is only recommended): `[{introduced: 2.0.0}, {fixed: 1.0.0}]` declared `2.5.0` out of range, which the specification calls affected | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | RWF-092 | `vuln-lib` (synthetic fixture) | An OSV event naming two kinds (`{fixed, last_affected}`, `{limit, fixed}`), which OSV forbids, was parsed by a union of non-strict schemas that kept the first matching kind and silently dropped the other, narrowing the range | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
+| RWF-093 | `nv` (`file:` dependency, real npm 10.9.0 lockfile) | A lockfile entry with a `name` and no `version` (a `file:` dependency whose manifest declares none) was dropped by the dependency graph; not a workspace member, so nothing else named it | silent drop — see below | **Fixed** (B-4) — see below |
 
 ---
 
@@ -16245,6 +16246,30 @@ The dependency inventory is built from `package-lock.json` alone; a package pres
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-08"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task B-4, 2026-10-10): Fixed** (decision 9). The scan
+cross-checks the installed tree against the inventory
+(`src/dependencies/installed-tree.ts`): every directory under the
+project's `node_modules`, and each workspace member's, recursively,
+scoped packages included and links followed by realpath, plus every
+package instance the module-load closure loads (which covers one Node
+finds in an ancestor `node_modules`, outside the project). Each canonical
+root no lockfile entry or workspace declaration names is an
+`unreportedCandidates` entry, `package_identity`, `undetermined`, reason
+`installed_package_not_in_lockfile` (a new subtype of
+`identity_unresolved`), naming the exact instance and, when its manifest
+says, the package. It is not made an instance: decision 9 records it, and
+the registry stays metadata-driven. The walk is bounded (50,000
+directory listings) and a truncated walk is reported
+(`installed_tree_enumeration_truncated`, `budget_exceeded`). Reproduced end
+to end, failing on the base (`src/cli/scan.b4-inventory-identity.test.ts`,
+"B-4 / AUD-08"): both of the audit's cases (a hoisted package absent from
+the lockfile; a nested on-disk-only copy that shadows a listed hoisted
+one, real `node` running the nested copy), a nested twin with the listed
+copy's own name and version (loaded, and not loaded), a scoped package,
+and a package loaded from an ancestor `node_modules`. Foundation invariant
+`VT-INV-B-inventory-identity`.
+
 ---
 
 ## AUD-09 — A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected
@@ -17345,6 +17370,29 @@ For a `package.json` dependency declared as `file:vendor/lodash`, real npm 10.9.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 4, "PRM-34: silent drop (real npm lockfile)"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task B-4, 2026-10-10): Fixed.** `buildDependencyInventory`
+(`src/dependencies/dependency-graph.ts`) no longer drops an entry that is a
+package. A nameless entry outside `node_modules` is named by its own
+manifest, else by the one name its linking `node_modules/<name>` entries
+agree on; one nothing names (or two disagreeing linking names with no
+manifest name) is an `unreportedCandidates` entry, reason
+`lockfile_entry_unidentified` (a new subtype of `identity_unresolved`),
+never `continue`. A versionless `link: true` entry is still not a package
+(its target is). The comment premise is corrected: measured with real npm
+10.9.0 in this task (six shapes), npm omits `name` when the manifest
+declares none, or when the manifest's name, the directory's name and the
+name the package is linked under all agree (`file:vendor/lodash` linked as
+`lodash`, manifest `lodash`); it writes it otherwise (`vendor/lod` linked
+as `lodash`, manifest `lodash`: `"name": "lodash"`; `vendor/x` linked as
+`foo`, manifest `x`: `"name": "x"`). So this is the ordinary `file:`
+dependency. (Two earlier drafts of this rule were each measured false by
+B-4's independent audit, finding 3 and its re-audit.) Reproduced end to end with the real lockfile shape, failing on
+the base (`src/cli/scan.b4-inventory-identity.test.ts`, "B-4 / PRM-34"):
+the vendored package is now queried at `4.17.20` and is an `AFFECTED`
+finding on `vendor/lodash`, with real `node` running it; on the base, no
+query and no finding. See also RWF-093, the versionless half.
+
 ---
 
 ## PRM-35 — A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic
@@ -17584,6 +17632,26 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-63 F
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-64 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task B-4, 2026-10-10): Fixed** (decision 4).
+`advisoryQueryVersions` adds one query **without a version** for a
+package name with any instance whose version is not established, and
+every advisory returned is evaluated against every instance of the name:
+the versionless instance gets an `UNKNOWN` finding
+(`advisory_version_applicability_indeterminate`) for each, a versioned
+sibling keeps its own applicability (`matchVersion`). This covers every
+reason a registry instance has no version: no version declared, a
+contradiction (`installed_version_conflicted`) and an unreadable or
+unusable installed manifest (`installed_manifest_untrusted`) alike; before
+B-4 each of those was asked nothing, and an advisory affecting no
+sibling's version was never named. Reproduced end to end with the round-2
+audit's fixture, failing on the base
+(`src/cli/scan.b4-inventory-identity.test.ts`, "B-4 / PRM-64"): `GHSA-y`
+now reaches `packages/foo`, and is `not_applicable` to the nested
+`foo@1.0.0`. Five existing tests pinned "no query" as expected and were
+changed to the decided behaviour (F3 § 4, F1-B § 18–24, P1-A5 G/H; listed
+in the B-4 task file).
+
 ---
 
 ## PRM-65 — The real `OsvProvider` sends one request with no `page_token`, so a paginated OSV response's later pages are silently never seen
@@ -17631,6 +17699,21 @@ finding; after the fix, `AFFECTED`, as the one-page control
 For a versioned lockfile entry, a malformed workspace manifest is correctly recorded as `installed_manifest_untrusted`. For a versionless entry, the same malformed manifest instead gives `findings: []` and `unreportedCandidates: []` with no record at all. Node itself refuses to load the package (`ERR_INVALID_PACKAGE_CONFIG`), so there is no runtime exposure — but the silent-drop contract is still violated for the versionless case.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-66 FALSE only for a versionless lock entry")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task B-4, 2026-10-10): Fixed.** Two mechanisms. The
+versionless lock entry is now a dependency-graph node (PRM-34's fix, named
+by its linking `node_modules/bad` entry), so the registry reads its
+manifest and records `installed_manifest_untrusted`, as it already did
+for a versioned entry; the instance is then queried without a version
+(PRM-64). And workspace discovery no longer reads a manifest that exists
+and cannot be parsed as "no manifest" (`readManifestIdentity` in
+`workspaces.ts` now uses the registry's own reader): a member nothing else
+names is reported as `installed_manifest_untrusted` by its instance.
+Reproduced end to end, failing on the base
+(`src/cli/scan.b4-inventory-identity.test.ts`, "B-4 / PRM-66"), both lock
+variants and the pattern-only case, with a directory that has no
+`package.json` at all as the control.
 
 ---
 
@@ -20163,3 +20246,36 @@ still a record the normalizer cannot use (B-1's `advisory_record_malformed`
 entry). An unknown extra key next to one known key is ignored, as
 before.
 
+---
+
+## RWF-093 — A named, versionless lockfile entry was dropped by the dependency graph
+
+**Status:** Fixed (task B-4)
+**Failure class:** silent drop
+**Defect class:** A (identity never established for an installed package)
+**Proof family affected:** none (no instance, so no finding at all)
+**Severity:** High (a loaded, vulnerable package reaches no finding and no entry)
+**Fix lane:** B — intake, cache, output
+
+**Discovered:** by task B-4, measuring PRM-34's premise with real npm
+10.9.0. For `"nv": "file:vendor/nover"` whose manifest declares no
+`version`, npm writes `"vendor/nover": { "name": "nv" }`.
+`buildDependencyGraph` `continue`d on a missing version ("inherent to
+unversioned/local links"), which held for a `link: true` entry and for
+nothing else. Unlike a versionless workspace member, nothing else names
+this package, so it had no instance. F1-B had pinned the same drop for a
+versionless `node_modules` entry as a known limitation (§ 17 of
+`src/cli/scan.metadata-uncertainty.test.ts`).
+
+**Reproduction (base `cfa6565`):** the fixture above, the application
+calling `nv`'s exported `danger`, real `node` running it, an advisory for
+`nv`: no query, no finding, no `unreportedCandidates` entry, exit 0.
+
+**Fix (B-4):** a versionless entry is a `DependencyNode` with no version
+(`DependencyNode.version` is optional), so it is an instance, queried
+without a version (PRM-64) and `UNKNOWN`
+(`advisory_version_applicability_indeterminate`); with an installed
+manifest that declares a version, that version applies (F1-B § 17 now
+asserts `AFFECTED`). Tests: `src/cli/scan.b4-inventory-identity.test.ts`
+("a named, versionless file: entry is an instance with no version") and
+`src/dependencies/dependency-graph.test.ts`.
