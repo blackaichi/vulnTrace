@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-10, by `B-1`.
+**Last updated:** 2026-10-10, by `B-2`.
 
 ## Objective
 
@@ -128,7 +128,15 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   (AUD-10, AUD-11); a withdrawn advisory is the new `withdrawn`
   disposition, output schema `0.7` (AUD-14, decision 10). Invariant
   `VT-INV-B-provider-completeness`. What binds B-2..B-6: REMEDIATION-PLAN
-  § 5a, "B-1 additions".
+  § 5a, "B-1 additions". `B-2` made version applicability SemVer's and
+  OSV's: strict SemVer precedence with prereleases, never `semver.coerce`
+  (AUD-05); a range VulnTrace cannot order (GIT, ECOSYSTEM, untyped, no
+  `introduced`, an entry with no bounds) is `indeterminate`, an `UNKNOWN`
+  finding, never `not_applicable` (AUD-09); SEMVER events are walked
+  sorted, as OSV specifies (RWF-091, found by it; RWF-092 from its
+  audit). Invariant
+  `VT-INV-B-version-applicability`. REMEDIATION-PLAN § 5a, "B-2
+  additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -159,20 +167,25 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`B-1` — provider completeness
-([task file](tasks/B-1-provider-completeness.md)): `READY_FOR_REVIEW`,
-its pull request awaiting the project owner. `C-1` merged as PR #90.
+`B-2` — version applicability
+([task file](tasks/B-2-version-applicability.md)): `READY_FOR_REVIEW`,
+its pull request awaiting the project owner. `B-1` merged as PR #91.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-1`:
-the rest of lane B (`B-2`..`B-6`). The P1 gaps `BL-057` and `BL-058`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-2`:
+the rest of lane B (`B-3`..`B-6`). The P1 gaps `BL-057` and `BL-058`
 (small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
+
+From `B-2`: RWF-091 (fixed by it: OSV events paired in array order
+instead of OSV's sorted walk, a silent drop) and RWF-092 (from its
+audit, fixed by it: an event naming two kinds narrowed to one). No new
+task.
 
 From `B-1`: RWF-090 and `BL-059` (P3: the result schema documents
 "category if and only if undetermined" for unreported candidates and does

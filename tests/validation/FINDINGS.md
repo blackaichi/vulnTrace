@@ -159,11 +159,11 @@ A mismatch either way fails the generator, naming the ID.
 | AUD-02 | `vuln-lib` (synthetic fixture) | A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3b), through the fail-closed default — see below |
 | AUD-03 | `vuln-lib` (synthetic fixture) | `process.getBuiltinModule(spec)` loads a builtin while the module-load closure reports complete | false NOT_AFFECTED — see below | Open |
 | AUD-04 | `vuln-lib` (synthetic fixture) | `inspector.Session#post('Runtime.evaluate', {includeCommandLineAPI:true})` is an unmodeled eval surface | false NOT_AFFECTED — see below | Open |
-| AUD-05 | `vuln-lib` (synthetic fixture), prerelease version | `semver.coerce` strips prereleases, dropping a vulnerable installed prerelease and falsely flagging an unaffected one | silent drop (recorded as a false "not applicable"); also false AFFECTED in the reverse direction — see below | Open |
+| AUD-05 | `vuln-lib` (synthetic fixture), prerelease version | `semver.coerce` strips prereleases, dropping a vulnerable installed prerelease and falsely flagging an unaffected one | silent drop (recorded as a false "not applicable"); also false AFFECTED in the reverse direction — see below | **Fixed** (B-2) — see below |
 | AUD-06 | `vuln-lib` (synthetic fixture), cache | The OSV cache has no TTL or staleness signal, so an advisory published after the first scan is silently never seen | silent drop — see below | Open |
 | AUD-07 | `vuln-lib` (synthetic fixture), cache | The default OSV cache directory lives inside the scanned project's own tree, and its contents are trusted unvalidated | silent drop — see below | Open |
 | AUD-08 | `vuln-lib` (synthetic fixture), lockfile/disk mismatch | A package really loaded from disk but missing from `package-lock.json` is never queried or reported | silent drop — see below | Open |
-| AUD-09 | `vuln-lib` (synthetic fixture) | A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected | silent drop (false "not applicable") — see below | Open |
+| AUD-09 | `vuln-lib` (synthetic fixture) | A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | AUD-10 | `vuln-lib` (synthetic fixture) | A malformed OSV record is dropped to diagnostics only, with no `unreportedCandidates` entry | silent drop (product/observability) — see below | **Fixed** (B-1) — see below |
 | AUD-11 | `vuln-lib` (synthetic fixture) | A single OSV record with an empty `id` string fails schema validation and discards the whole report | scan abort — see below | **Fixed** (B-1) — see below |
 | AUD-12 | `vuln-lib` (synthetic fixture) | An all-UNKNOWN scan exits 0, identical to a clean scan, with no machine-readable signal that nothing was decided | false reason / product — see below | Open |
@@ -265,6 +265,8 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-088 | `vuln-lib` (synthetic fixture) | The declaration-only fallback took `main` or a stale sibling `.js` for a specifier Node resolves through an `exports` or `imports` map: a package without a `version`, a workspace symlink, a self-reference, a `#` specifier, a subpath proxy manifest with its own `name`, a declaration from a separate `@types` package | false NOT_AFFECTED (family A) — see below | **Fixed** (C-1) — see below |
 | RWF-089 | `vuln-lib` (synthetic fixture) | VT-304's declaration-only fallback prefers the package root's `main` for a SUBPATH specifier (`require("wrap/feature")` with only `feature.d.ts` resolvable to TypeScript): Node never uses the root `main` for a subpath, and loads `feature` | false NOT_AFFECTED (family A) — see below | Open |
 | RWF-090 | `schemas/result.schema.json` | The result schema states that an `unreportedCandidates` entry carries `category` "IF AND ONLY IF disposition is undetermined", and does not enforce it: an `undetermined` entry with no category and a `not_applicable` entry with one both validate | unenforced guarantee (output contract) — see below | Open |
+| RWF-091 | `vuln-lib` (synthetic fixture) | The OSV normalizer paired a SEMVER range's events in array order, while OSV's specification sorts them by version before evaluating (a sorted array is only recommended): `[{introduced: 2.0.0}, {fixed: 1.0.0}]` declared `2.5.0` out of range, which the specification calls affected | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
+| RWF-092 | `vuln-lib` (synthetic fixture) | An OSV event naming two kinds (`{fixed, last_affected}`, `{limit, fixed}`), which OSV forbids, was parsed by a union of non-strict schemas that kept the first matching kind and silently dropped the other, narrowing the range | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 
 ---
 
@@ -16128,6 +16130,42 @@ Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-04"`. No
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-05"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task B-2, 2026-10-10): Fixed.** `version-matching.ts`
+and `osv-normalizer.ts` parse the installed version and every bound as
+strict SemVer (`semver.parse`) and compare by SemVer precedence,
+prereleases included and build metadata ignored; no production file
+names `coerce` (an AST census in
+`src/vulnerabilities/version-applicability.b2.test.ts`). A value that is
+not a SemVer version (`1.2`, `latest`, a commit hash) is `indeterminate`
+-- an `UNKNOWN` finding with `advisory_version_applicability_indeterminate`
+-- never coerced into one.
+
+Measured on the base (`5ce993c`), through the production
+`normalizeOsvVulnerability` and `matchVersion` and end to end through
+the real `OsvProvider` (`src/cli/scan.b2-version-applicability.test.ts`):
+installed `2.0.0-rc.1` against `fixed: 2.0.0` and against
+`fixed: 2.0.0-rc.2` is a `not_applicable` entry; after the fix, an
+`AFFECTED` finding. `1.5.0-beta.3` against `last_affected: 1.5.0-beta.2`
+is `AFFECTED` on the base and `not_applicable` after. Precision added to
+this record (AGENTS.md § C): the audit's second reverse case is damaged
+in the source; measured here, `1.5.0-beta.3` against
+`introduced: 1.5.0-beta.1, fixed: 1.5.0-beta.2` is `not_applicable` on
+the base too (both bounds coerce to `1.5.0`, and so does the installed
+version), so it is right on the base for the wrong reason, and stays right
+after. A `versions` list entry `2.0.0-rc.1` matched an installed `2.0.0`
+on the base (false `AFFECTED`); it matches only `2.0.0-rc.1` now. Owner:
+`VT-INV-B-version-applicability`.
+
+Found by B-2's independent audit (finding 1) and fixed in the same
+task: node-semver keeps a numeric prerelease identifier at or above
+`Number.MAX_SAFE_INTEGER` as a string and compares it as a JavaScript
+number, so `1.0.0-9007199254740992` and `1.0.0-9007199254740993` compare
+equal (SemVer precedence orders them). B-2's first fix answered
+`not_affected` for the first against `fixed` the second; the shared
+`parseSemVer` (`version-matching.ts`) now refuses such a value, so it is
+`indeterminate`. The base (`5ce993c`) gave the same false
+`not_affected`, through `semver.coerce`.
+
 ---
 
 ## AUD-06 — The OSV cache has no TTL or staleness signal, so an advisory published after the first scan is silently never seen
@@ -16187,6 +16225,33 @@ Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-08"`. No
 A GIT-type range's fixed commit hash is run through `semver.coerce` (e.g. `coerce('3f2a9c1b0d')` = `'3.0.0'`), so an installed `5.0.0` is reported `not_applicable` against a range that cannot legitimately be interpreted as semver at all. An affected entry with no ranges and no versions list is likewise read as `not_affected` rather than indeterminate. The file's own comment already admits the GIT case is "silently miscompared".
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-09"`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task B-2, 2026-10-10): Fixed.** The normalizer keeps
+`ranges[].type`, and the domain's `VersionRange` has an uninterpretable
+member that says why a range cannot be compared. Only a `SEMVER` range is
+ordered against an installed version; a `GIT` range (commit hashes), an
+`ECOSYSTEM` range ("arbitrary, uninterpreted strings", OSV), a range of
+another type or of none, an `affected` entry for the package with no
+ranges and no versions, a SEMVER range with no `introduced` event (OSV:
+"There must be at least one"), a bound that is not a SemVer version, and
+two events of different kinds at one version (which OSV's
+`sorted(range.events)` leaves unordered) are each uninterpretable, never
+an empty range. `matchVersion` answers `indeterminate` for an empty list
+and for an uninterpretable range that no other range or listed version
+covers: an `UNKNOWN` finding with
+`advisory_version_applicability_indeterminate` (category
+`identity_unresolved`), never a `not_applicable` entry. A range that does
+cover the version still decides `AFFECTED` (a GIT range beside a
+`versions` list naming the installed version).
+
+Measured on the base (`5ce993c`): the audit's GIT record
+(`fixed: "3f2a9c1b0d"`, installed `5.0.0`) and its empty entry each give a
+`not_applicable` entry; so do an `ECOSYSTEM` range and a range with no
+type. After the fix, each is one `UNKNOWN` finding per exact instance.
+The recorded OSV snapshot's `ECOSYSTEM` ranges all belong to `Maven` and
+`RubyGems` entries, which the normalizer already ignores, so no corpus
+verdict moves (`node scripts/differential.mjs`: 0 graph, 0 proof, 0
+verdict changes over 139 cases). Owner: `VT-INV-B-version-applicability`.
 
 ---
 
@@ -19981,3 +20046,75 @@ producer emitted against `0.6` could stop validating -- so it is left
 for its own task. Fix idea: an `if` / `then` per disposition in the
 schema, plus a discriminated union for `UnreportedCandidate` in
 `output.ts`, with the additivity test stating why it still holds.
+
+---
+
+## RWF-091 — The OSV normalizer paired a SEMVER range's events in array order, while OSV evaluates them in version order
+
+**Status:** Fixed (task B-2)
+**Failure class:** silent drop (false "not applicable")
+**Defect class:** B (the range compared is not the range the advisory declares)
+**Proof family affected:** none (no verdict, no proof; it decides whether an advisory reaches the verdict layer)
+**Severity:** High
+**Fix lane:** B — intake, cache, output
+
+**Discovered:** by task B-2, verifying its premises against OSV's
+specification (`ossf.github.io/osv-schema`, "Evaluation", read
+2026-10-10). OSV's `IncludedInRanges` walks `sorted(range.events)`; the
+specification only recommends ("While not required") keeping the array
+sorted. `eventsToRanges` in `osv-normalizer.ts` paired each `introduced`
+with the next event in ARRAY order.
+
+**Reproduction (base `5ce993c`):** a SEMVER range with events
+`[{introduced: "2.0.0"}, {fixed: "1.0.0"}]` normalized to the single
+interval `{introduced: 2.0.0, fixed: 1.0.0}`, which contains no version;
+installed `2.5.0` was `not_affected` -- a `not_applicable` entry, no
+finding. The specification's walk (fixed `1.0.0`, then introduced
+`2.0.0`) calls `2.5.0` affected. The same pairing widened other ranges
+(`[{introduced: 1.0.0}, {fixed: 3.0.0}, {fixed: 2.0.0}]` read `2.5.0` as
+affected; the specification does not), a false `AFFECTED` the other way.
+
+**Fix (B-2):** the normalizer sorts a SEMVER range's events by SemVer
+precedence (`introduced: "0"` first) and walks them as the specification
+does, into disjoint intervals; a range whose order the specification
+leaves open (two event kinds at one version) is uninterpretable, so
+`indeterminate`. A sweep in `src/vulnerabilities/version-applicability.b2.test.ts`
+compares normalize-then-match with a literal transcription of OSV's
+pseudo-code over 3000 generated, shuffled SEMVER entries (prereleases
+included) x 18 installed versions: every answer agrees.
+
+**Not changed:** a `limit` event is still not applied. It can only narrow
+a range (OSV: it "may result in false negatives"), so ignoring it keeps
+versions in range -- never a silent drop, at worst a finding the advisory
+did not intend. The recorded snapshot carries no `limit` event.
+
+---
+
+## RWF-092 — An OSV event naming two kinds was narrowed to one, silently
+
+**Status:** Fixed (task B-2)
+**Failure class:** silent drop (false "not applicable")
+**Defect class:** B (the range compared is not the range the advisory declares)
+**Proof family affected:** none (no verdict, no proof)
+**Severity:** Medium (OSV forbids the shape; a record carrying it is malformed)
+**Fix lane:** B — intake, cache, output
+
+**Discovered:** by B-2's independent audit (finding 2). OSV allows "only
+a single type" per event object. `OsvEventSchema` in `osv-normalizer.ts`
+was a `z.union` of four non-strict objects: the first branch that matched
+won and zod stripped the other key.
+
+**Reproduction (base `5ce993c`, and B-2's first fix):** SEMVER events
+`[{introduced: "1.0.0"}, {fixed: "1.2.0", last_affected: "2.0.0"}]`,
+installed `1.5.0`: `not_affected`, a `not_applicable` entry. Read as
+`last_affected: 2.0.0` the version is affected, so the honest answer is
+undecided. Same for `{limit: "*", fixed: "1.2.0"}` and
+`{last_affected: "1.0.0", fixed: "1.2.0"}`.
+
+**Fix (B-2):** the event schema reads all four keys; a SEMVER range with
+an event naming more than one is uninterpretable, so `indeterminate`
+unless another range covers the version. An event naming none of them is
+still a record the normalizer cannot use (B-1's `advisory_record_malformed`
+entry). An unknown extra key next to one known key is ignored, as
+before.
+
