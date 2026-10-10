@@ -1121,6 +1121,20 @@ unreported candidates +0/−0 (the corpora scan uncached); validation
 equals the D-09 baseline. This entry still stands: lanes E, C (C-2..C-5) and B
 (B-4..B-6) remain.
 
+**Progress, added by task `B-4` (2026-10-10).** Task B-4
+(`docs/tasks/B-4-inventory-identity-drops.md`) fixes PRM-34 (a nameless
+`file:` lock entry is named by its manifest or its linking entry, and one
+nothing names is an identity entry), PRM-64 (decision 4: an instance with
+no established version is queried without one), PRM-66 (a manifest that
+cannot be read is recorded) and AUD-08 (decision 9: the installed tree and
+the closure's loaded instances are cross-checked against the inventory),
+and RWF-093, which it found (a named, versionless lock entry was dropped).
+Its audit certified it, with a read error read as an empty directory
+found and fixed. Invariant `VT-INV-B-inventory-identity`. Over the 139
+corpus cases: verdict differential 0, proof 0, graph 0, unreported
+candidates +0/−0; validation equals the D-09 baseline. This entry still
+stands: lanes E, C (C-2..C-5) and B (B-5, B-6) remain.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

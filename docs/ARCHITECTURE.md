@@ -260,7 +260,7 @@ no code path converts one into a finding.
 | Disposition | Meaning |
 | --- | --- |
 | `not_applicable` | The installed version is outside every affected range. Real information, arrived at with certainty. Carries **no category at all**, structurally, so a consumer summing categories cannot count patched packages as analysis gaps. |
-| `undetermined` | Applicability could not be established. Carries a category. Since task B-1 this includes an advisory record the provider returned and the normalizer could not use (`advisory_record_malformed`). |
+| `undetermined` | Applicability could not be established. Carries a category. Since task B-1 this includes an advisory record the provider returned and the normalizer could not use (`advisory_record_malformed`). Since task B-4 it includes a package installed but not identified: a lockfile entry nothing names (`lockfile_entry_unidentified`), a package on disk or loaded that the lockfile does not list (`installed_package_not_in_lockfile`), and an installed tree the walk could not finish (`installed_tree_enumeration_truncated`) or read (`installed_tree_unreadable`). |
 | `withdrawn` | The provider withdrew the advisory, so it was not analyzed (task B-1, decision 10; schema `0.7`). The provider's statement about the advisory, made with certainty: like `not_applicable`, **no category**. |
 
 **None is a `NOT_AFFECTED`.** A `not_applicable` entry is a statement
@@ -280,7 +280,9 @@ Two consequences worth stating plainly:
 Owned by `src/cli/scan.f3-no-finding.test.ts`; the `withdrawn` and
 `advisory_record_malformed` entries by
 `src/cli/scan.b1-provider-completeness.test.ts`
-(`VT-INV-B-provider-completeness`).
+(`VT-INV-B-provider-completeness`); the installed-inventory entries by
+`src/cli/scan.b4-inventory-identity.test.ts`
+(`VT-INV-B-inventory-identity`).
 
 ## 7. Target authority (P1-A)
 

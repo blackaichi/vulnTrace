@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: B-4
 - **Branch**: b-4-inventory-identity-drops
 - **Base SHA**: cfa6565fcd8d4a697f940a7a7c9f03075c9e5822
-- **Commits**: —
+- **Commits**:
+  - `4ac45f1` docs(tasks): B-4 task file — inventory and identity drops
+  - `ec132eb` test(B-4): inventory and identity drops — PRM-34, PRM-64, PRM-66, AUD-08
+  - `b74bded` fix(B-4): every installed package reaches the report — instance or identity entry
+  - (this commit) docs(B-4): records — PRM-34, PRM-64, PRM-66, AUD-08 fixed, RWF-093, BL-060, plan § 5a, debts, architecture, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -216,3 +220,74 @@ validation exactly the five D-09 known failures (`RWB-03`, `RWB-05`,
 ## Report
 
 In the format of `AGENTS.md` § J.
+
+## Corrections (appended during the task)
+
+- **A premise in this file is false** (the independent audit, finding 3,
+  re-measured with npm 10.9.0): npm does not omit `name` "exactly when the
+  directory's basename equals the manifest's name". It omits it when the
+  manifest's name agrees with the name the package is linked under, or
+  the manifest has none (`vendor/y` linked as `y`, manifest `y`: no name;
+  `vendor/z` linked as `bar`, no manifest name: no name; `vendor/x` linked
+  as `foo`, manifest `x`: `"name": "x"`). The code's naming order
+  (manifest name, else the one linking name) was right for every shape;
+  the comments and the FINDINGS update now state the measured rule.
+- **That correction was itself incomplete** (the re-audit): `vendor/lod`
+  linked as `lodash`, manifest `lodash` — this file's own first
+  measurement — gets `"name": "lodash"`. The rule that fits all six
+  measured shapes: npm omits `name` when the manifest has none, or when
+  the manifest's name, the directory's name and the link name all agree.
+  The comments and the FINDINGS update state that rule; the code does not
+  depend on it.
+- **Scope of decision 4, read as the code defines "versionless"**: every
+  registry instance whose version is `undefined` is queried without one —
+  none declared, a contradiction (`installed_version_conflicted`) or an
+  untrusted installed manifest (`installed_manifest_untrusted`). F1-B § 22
+  and P1-A5 G/H had chosen "no query" for the last two; that silently
+  hid every advisory whose range covers the installed (contradicted)
+  version (F1-B's own Case B). Flagged for the project owner in the pull
+  request.
+- **Existing tests changed, not weakened** (each pinned "no query" or a
+  limitation B-4 closes): `scan.f3-no-finding.test.ts` (F3 § 4: one test
+  split in two, the versionless query and the no-advisory entry),
+  `scan.metadata-uncertainty.test.ts` (F1-B: seven "no query" assertions
+  now assert one versionless query and an `UNKNOWN`; § 17's pinned
+  limitation now asserts `AFFECTED`), `scan.multi-instance.test.ts` (G/H),
+  `package-instances.test.ts` (the pinned `[]`),
+  `verdict.workspaces.integration.test.ts` (the "no identity" baseline is
+  now modelled explicitly with the pre-B-4 graph, and the lockfile-only
+  identity is asserted), `foundation-differential.test.ts`
+  (`candidate-manifest-untrusted` now has a finding; a version-indeterminate
+  `UNKNOWN` names no target, backlog `BL-060`), and two exact-shape
+  workspace tests (the new `unreadableManifestRoots` field).
+- **PRM-36 overlap**: the `installed_version_unavailable` detail had to
+  change (it said no sibling query found an advisory; the instance is now
+  queried itself). It now names a `--cve` filter when one is set. PRM-36's
+  prescribed fix (compute the condition from the unfiltered set) is still
+  B-5's; PRM-36 is not marked fixed.
+- **Choices § 7's row does not make**, each in the fail-closed direction: a
+  nameless entry is named by its manifest before its linking entry (the
+  identity authority, as for an alias); two disagreeing linking names with
+  no manifest name are not chosen between; an unlisted installed package is
+  reported, never made an instance (decision 9's wording); the walk does
+  not descend into a checkout linked from outside the project (the
+  closure's cross-check covers what is loaded from there); the truncation
+  and unreadable entries use stage `workspace_discovery` (an unknown
+  number of candidates, no package named), avoiding a schema change.
+- **Independent audit: CERTIFIED**, four non-blocking findings. Fixed: a
+  read error was read as an empty directory (now
+  `installed_tree_unreadable`, `analysis_precondition_unmet`); the walk's
+  cost was bounded by listings only (every examined entry now counts,
+  structural tests); the walk's comment overclaimed what Node loads
+  (corrected); the npm naming rule was stated falsely (corrected twice, see
+  above). Recorded as a known limitation (finding 4): a nameless `file:`
+  package whose manifest has no name is named by its link, as npm does, so
+  a registry advisory of that name selects it (an extra finding, never a
+  hidden one). The delta was re-audited: CERTIFIED.
+- **Acceptance criteria**, answered: every box is yes. Nineteen mutations,
+  each caught by a named test (M10 first survived: its sibling-borrow
+  test's twin was also loaded, so the closure reported it; an unloaded twin
+  test was added). The differential moved nothing (0 graph, 0 proof, 0
+  verdict, unreported +0/−0 over 139 cases); validation equals the D-09
+  baseline (`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`, each with
+  the same verdict on base and head).
