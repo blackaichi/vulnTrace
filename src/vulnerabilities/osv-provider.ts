@@ -18,6 +18,15 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_MAX_PAGES = 100;
 
 /**
+ * What this provider answers: a list of opaque records. Exported so the
+ * OSV cache validates a stored answer with the same schema a live one
+ * passes (task B-3, AUD-07).
+ */
+export const OsvVulnerabilityListSchema = z.array(
+  z.record(z.string(), z.unknown()),
+);
+
+/**
  * Only the outer envelope is validated — `{ vulns?: object[] }` — not each
  * vulnerability's fields. Each entry stays an opaque {@link RawVulnerability}
  * (see docs/SDD.md § 12; AGENTS.md: "Do not couple OSV parsing directly to
@@ -30,7 +39,7 @@ const DEFAULT_MAX_PAGES = 100;
  * faithfully, so the envelope is refused rather than read as "complete".
  */
 const OsvQueryResponseSchema = z.object({
-  vulns: z.array(z.record(z.string(), z.unknown())).default([]),
+  vulns: OsvVulnerabilityListSchema.default([]),
   next_page_token: z.string().min(1).optional(),
 });
 

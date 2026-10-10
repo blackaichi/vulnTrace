@@ -17,7 +17,10 @@ describe("ConfigSchema defaults", () => {
           maxAnalysisSeconds: 60,
         },
       },
-      vulnerabilities: { providers: ["osv"], cache: { enabled: true } },
+      vulnerabilities: {
+        providers: ["osv"],
+        cache: { enabled: true, ttlHours: 24 },
+      },
       rules: { files: [] },
       output: { format: "json", pretty: false },
     });
@@ -86,6 +89,29 @@ describe("ConfigSchema validation", () => {
   it("rejects a non-boolean vulnerabilities.cache.enabled", () => {
     expect(() =>
       ConfigSchema.parse({ vulnerabilities: { cache: { enabled: "yes" } } }),
+    ).toThrow();
+  });
+
+  it("accepts a positive vulnerabilities.cache.ttlHours (task B-3)", () => {
+    const result = ConfigSchema.parse({
+      vulnerabilities: { cache: { ttlHours: 0.5 } },
+    });
+
+    expect(result.vulnerabilities.cache.ttlHours).toBe(0.5);
+  });
+
+  it.each([0, -1, Number.POSITIVE_INFINITY, "24", 24.5, 1e6, 1e308])(
+    "rejects vulnerabilities.cache.ttlHours: %s (task B-3)",
+    (ttlHours) => {
+      expect(() =>
+        ConfigSchema.parse({ vulnerabilities: { cache: { ttlHours } } }),
+      ).toThrow();
+    },
+  );
+
+  it("has no setting for the cache's location: the scanned project must not choose it (task B-3, AUD-07)", () => {
+    expect(() =>
+      ConfigSchema.parse({ vulnerabilities: { cache: { dir: "/tmp/x" } } }),
     ).toThrow();
   });
 

@@ -22,8 +22,15 @@ analysis:
 vulnerabilities:
   providers:
     - osv
+  # The cache lives in the user cache directory ($XDG_CACHE_HOME/vulntrace/osv
+  # when XDG_CACHE_HOME is absolute, else %LOCALAPPDATA%\vulntrace\osv on
+  # Windows, else ~/.cache/vulntrace/osv), never inside the scanned project.
   cache:
     enabled: true
+    # Hours a cached provider answer is served before OSV is asked again.
+    # At most 24 (the default): a project's config may shorten it, never
+    # lengthen it.
+    ttlHours: 24
 
 rules:
   files:

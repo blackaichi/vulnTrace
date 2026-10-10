@@ -66,6 +66,10 @@ describe("runScanCommand against a recorded real OSV response", () => {
     const exitCode = await runScanCommand({
       projectPathArg: tmpDir,
       provider: new SnapshotOsvProvider(),
+      // Task B-3: the default cache is the user's own directory now, not
+      // this temporary project. Uncached, the test neither writes there nor
+      // reads a developer's earlier entry instead of the snapshot.
+      noCache: true,
       io: {
         stdout: (t) => stdout.push(t),
         stderr: (t) => stderr.push(t),

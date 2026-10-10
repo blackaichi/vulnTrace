@@ -413,6 +413,7 @@ describe("B-3 / AUD-07: the scanned project cannot supply the cached answer", ()
     expect(cacheDiagnostics(first.output)[0]).toMatch(
       /inside the scanned project/,
     );
+    expect(JSON.stringify(first.output)).not.toContain(inside);
   });
 
   it("a user cache directory reached through a symlink into the scanned project is refused", async () => {
@@ -513,5 +514,9 @@ describe("B-3 / PRM-35: a cache write failure is a diagnostic, never exit 4", ()
     expect(result.stderr).not.toMatch(/vulnerability provider failure/);
     expect(cacheDiagnostics(result.output)).toHaveLength(1);
     expect(cacheDiagnostics(result.output)[0]).toMatch(/3 answers/);
+    // The JSON output may be shared: the cache directory (a user path) and
+    // the error naming it are on stderr only (B-3's audit, finding 3).
+    expect(JSON.stringify(result.output)).not.toContain(notADirectory);
+    expect(result.stderr).toContain(cacheDir);
   });
 });

@@ -617,6 +617,34 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "export the application calls, so an advisory wrongly declared out of " +
       "range is a missing AFFECTED.",
   },
+  {
+    id: "VT-INV-B-cache-authority",
+    invariant:
+      "A cached answer is served in place of the provider's only when it is " +
+      "this cache's own entry for the exact query: a strictly validated " +
+      "envelope (format, key, fetch time, and records that pass the " +
+      "provider's own schema) written under the same key, fetched no later " +
+      "than now and less than the configured TTL ago. The cache directory is " +
+      "never inside the scanned project, by any path or symlink; when it " +
+      "would be, or cannot be determined, the scan runs uncached and says " +
+      "so. A failed cache write never changes an answer or the exit code: it " +
+      "is a cache diagnostic.",
+    foundation: "LANE-B",
+    owners: [
+      "src/cache/osv-cache.test.ts",
+      "src/cache/cache-location.test.ts",
+      "src/cli/scan.b3-osv-cache.test.ts",
+    ],
+    note:
+      "Task B-3 (AUD-06, AUD-07, PRM-35). The store test owns what is " +
+      "served (TTL boundary, future stamp, every non-own entry shape, the " +
+      "pre-B-3 key) and that a write failure never fails a query; the " +
+      "location test owns the default directory and the containment check " +
+      "(symlinks, dangling links, fail-closed); the scan test owns each " +
+      "finding end to end. Loud fixture: the rule targets an export the " +
+      "application calls, so a stale, planted or malformed `[]` served as " +
+      "the answer is a missing AFFECTED.",
+  },
 ];
 
 /**

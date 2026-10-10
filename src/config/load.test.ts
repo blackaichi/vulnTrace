@@ -35,7 +35,10 @@ describe("loadConfigFromYaml", () => {
           maxAnalysisSeconds: 60,
         },
       },
-      vulnerabilities: { providers: ["osv"], cache: { enabled: true } },
+      vulnerabilities: {
+        providers: ["osv"],
+        cache: { enabled: true, ttlHours: 24 },
+      },
       rules: { files: ["rules/vulntrace-rules.yml"] },
       output: { format: "json", pretty: true },
     });
