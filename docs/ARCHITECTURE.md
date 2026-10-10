@@ -337,9 +337,12 @@ current consumer.
 ## 9. Per-scan caches and indexes (F5)
 
 Every cache in the analysis path exists for one scan and is thrown away
-with it. The one persistent cache in the tree is the OSV advisory cache
-(`<project>/.vulntrace-cache/osv/`), which is provider I/O and not analysis
-state.
+with it. The one persistent cache is the OSV advisory cache, which is
+provider I/O and not analysis state. It lives in the user cache directory
+(`src/cache/cache-location.ts`), never inside the scanned project, and
+serves only its own validated, unexpired entry for the exact query
+(task B-3, `VT-INV-B-cache-authority`); before B-3 it lived at
+`<project>/.vulntrace-cache/osv/` and was read back unvalidated (AUD-07).
 
 | Cache / index | Owner | Lifetime | Key | Failure policy | Stability assumption |
 | --- | --- | --- | --- | --- | --- |

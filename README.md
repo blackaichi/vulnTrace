@@ -381,16 +381,26 @@ plus `coverage/lcov.info` and an HTML report).
 Every scan reports per-phase timing (`timings` in the JSON output —
 parsing, resolution, graph construction, reachability, provider,
 cache hit/miss; see `docs/SDD.md § 30`). OSV responses are cached by
-default at `<project>/.vulntrace-cache/osv/` — gitignored in *this*
-repository, but not in a scanned project, whose own `.gitignore` (if
-any) is not consulted — keyed by `{tool version, ecosystem, package
-name, version}`, where "tool version" is the literal `package.json`
-version string rather than a build identity, so two different builds
-that happen to share that version string **do** reuse each other's
-cache entries; disable with `--no-cache` or
-`vulnerabilities.cache.enabled: false` in `vulntrace.yml`. The cache
-directory is not schema-validated on read (see `docs/OPEN-DEBTS.md`
-D-17, `AUD-06`/`AUD-07`). `src/cli/scan-performance.test.ts` is the
+default in the user cache directory — `$XDG_CACHE_HOME/vulntrace/osv/`
+when `XDG_CACHE_HOME` is an absolute path, else
+`%LOCALAPPDATA%\vulntrace\osv\` on Windows, else
+`~/.cache/vulntrace/osv/` — never inside the scanned project: a cache
+directory that is, or resolves through a symlink to, a place inside the
+project is refused, and the scan runs uncached with a `cache` diagnostic
+(task B-3, `AUD-07`). Entries are keyed by `{answer format, tool
+version, ecosystem, package name, version}`, where "tool version" is the
+literal `package.json` version string rather than a build identity, so
+two different builds that happen to share that version string **do**
+reuse each other's cache entries. Every entry is validated on read (the
+provider's own schema, and the key it was written under), and is served
+for `vulnerabilities.cache.ttlHours` (default and maximum 24: the scanned
+project's config may shorten it, never lengthen it) after the provider
+answered; an older, future-stamped or malformed entry is re-queried
+(`AUD-06`). A cache write failure is a `cache` diagnostic, never a failed
+scan (`PRM-35`). Disable the cache with `--no-cache` or
+`vulnerabilities.cache.enabled: false` in `vulntrace.yml`; its location
+is not configurable from `vulntrace.yml`, which belongs to the scanned
+project. `src/cli/scan-performance.test.ts` is the
 regression guard: a synthetic ~300-file project must scan in under 5
 seconds.
 

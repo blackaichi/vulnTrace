@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-10, by `B-2`.
+**Last updated:** 2026-10-10, by `B-3`.
 
 ## Objective
 
@@ -136,7 +136,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   sorted, as OSV specifies (RWF-091, found by it; RWF-092 from its
   audit). Invariant
   `VT-INV-B-version-applicability`. REMEDIATION-PLAN § 5a, "B-2
-  additions".
+  additions". `B-3` made the OSV cache the user's, never the scanned
+  project's: the user cache directory (`XDG_CACHE_HOME`, `LOCALAPPDATA`,
+  `~/.cache`), and a directory inside the project, by any path or
+  symlink, is refused and the scan runs uncached (AUD-07); an entry is a
+  validated envelope served only for its own key and for `ttlHours`
+  (default 24) after the provider answered (AUD-06); a write failure is
+  a `cache` diagnostic, never exit 4 (PRM-35). Invariant
+  `VT-INV-B-cache-authority`. REMEDIATION-PLAN § 5a, "B-3 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -167,20 +174,25 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`B-2` — version applicability
-([task file](tasks/B-2-version-applicability.md)): `READY_FOR_REVIEW`,
-its pull request awaiting the project owner. `B-1` merged as PR #91.
+`B-3` — OSV cache ([task file](tasks/B-3-osv-cache.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `B-2`
+merged as PR #92.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-2`:
-the rest of lane B (`B-3`..`B-6`). The P1 gaps `BL-057` and `BL-058`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-3`:
+the rest of lane B (`B-4`..`B-6`). The P1 gaps `BL-057` and `BL-058`
 (small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
+
+From `B-3`: no new finding or task (AUD-06, AUD-07 and PRM-35 fixed).
+One test (`scan.integration.test.ts`) wrote into the default cache and
+now scans uncached; no test run writes to the user cache directory
+(measured with a sentinel `XDG_CACHE_HOME`).
 
 From `B-2`: RWF-091 (fixed by it: OSV events paired in array order
 instead of OSV's sorted walk, a silent drop) and RWF-092 (from its
