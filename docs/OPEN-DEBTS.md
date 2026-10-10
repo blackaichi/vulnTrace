@@ -1089,6 +1089,24 @@ graph 0, unreported candidates +0/−0 (no recorded OSV answer is
 paginated, withdrawn or unusable); validation equals the D-09 baseline.
 This entry still stands: lanes E, C (C-2..C-5) and B (B-2..B-6) remain.
 
+**Progress, added by task `B-2` (2026-10-10).** Task B-2
+(`docs/tasks/B-2-version-applicability.md`) fixes AUD-05 (`semver.coerce`
+stripped prereleases: versions and bounds are now strict SemVer, compared
+by precedence, and a value that is not a SemVer version is
+`indeterminate`) and AUD-09 (a GIT, ECOSYSTEM, unknown or untyped range,
+an `affected` entry with no ranges and no versions, a SEMVER range with
+no `introduced` event and two event kinds at one version are
+uninterpretable, and `matchVersion` answers `indeterminate` -- an
+`UNKNOWN` finding -- unless another range covers the version, never
+`not_applicable`). Found and fixed RWF-091 (SEMVER events were paired in
+array order; OSV evaluates them sorted by version) and, through its
+audit, RWF-092 (an event naming two kinds was narrowed to one). Invariant
+`VT-INV-B-version-applicability`. Over the 139 corpus cases: verdict
+differential 0, proof 0, graph 0, unreported candidates +0/−0 (no corpus
+instance is a prerelease, and the snapshot's ECOSYSTEM ranges are all for
+non-npm entries); validation equals the D-09 baseline. This entry still
+stands: lanes E, C (C-2..C-5) and B (B-3..B-6) remain.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

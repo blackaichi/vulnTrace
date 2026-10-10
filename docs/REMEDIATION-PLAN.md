@@ -1370,6 +1370,72 @@ started.
 - **BL-059** (RWF-090): the schema enforces "category if and only if
   undetermined" for `withdrawn` only.
 
+#### B-2 additions (task B-2, 2026-10-10)
+
+**Outcome of B-2** (§ 7's B-2 row). Version applicability follows SemVer
+and OSV's own evaluation.
+
+- The installed version and every bound are parsed by `parseSemVer`
+  (`src/vulnerabilities/version-matching.ts`), never `semver.coerce`, and
+  compared by SemVer precedence, prereleases included, build metadata
+  ignored. A value that is not a SemVer version, or a numeric prerelease
+  identifier at or above `Number.MAX_SAFE_INTEGER` (node-semver compares it
+  inexactly; audit finding 1), is `indeterminate`. Fixed AUD-05.
+- `VersionRange` is `VersionInterval | UninterpretableVersionRange`
+  (`src/domain/vulnerability.ts`). The normalizer keeps `ranges[].type`;
+  only a `SEMVER` range is ordered. A GIT, ECOSYSTEM, other or untyped
+  range, an `affected` entry with no ranges and no versions, a SEMVER range
+  with no `introduced`, a bound that is not a SemVer version, two event
+  kinds at one version, and an event naming two kinds (RWF-092, audit
+  finding 2) are uninterpretable. `matchVersion` answers `indeterminate`
+  for an empty list and for an uninterpretable range no other range or
+  listed version covers: an `UNKNOWN` finding with
+  `advisory_version_applicability_indeterminate`, never a `not_applicable`
+  entry. No output schema change, no new reason. Fixed AUD-09.
+- A SEMVER range's events are sorted and walked as OSV's `IncludedInRanges`
+  specifies, into disjoint intervals; reading them in array order was a
+  silent drop. Found and fixed RWF-091. A `limit` event is still not
+  applied (it only narrows a range; ignoring it never hides a finding).
+- Foundation invariant `VT-INV-B-version-applicability` (owners
+  `src/vulnerabilities/version-applicability.b2.test.ts`,
+  `src/cli/scan.b2-version-applicability.test.ts`): a sweep against a
+  literal transcription of OSV's evaluation pseudo-code (3000 generated,
+  shuffled SEMVER entries x 18 installed versions, exact agreement), and an
+  AST census that no production file under `src/` names `coerce`.
+- Sixteen mutations, each caught by a named test: coercion restored; an
+  uninterpretable range excluding; an empty list `not_affected`; an
+  undecided range outvoted; events unsorted; every range type read as
+  SEMVER; an empty entry unmarked; a no-`introduced` range dropped; a
+  cross-kind tie accepted; a later `introduced` reopening a range;
+  `last_affected` exclusive; an unparseable bound skipped; a sibling borrow
+  (every instance evaluated with the first instance's version); the
+  `versions` list dropped; the unsafe-identifier guard removed; a two-kind
+  event accepted.
+- **The independent audit CERTIFIED the change** (a 200,000-record fuzz
+  against its own transcription of OSV's pseudo-code, `limit` included: 0
+  unsafe disagreements), with two non-blocking findings fixed on the branch
+  (findings 1 and 2 above) and re-audited `CERTIFIED`. Recorded, not
+  changed: OSV's `IncludedInVersions` compares by equality, so an
+  unparseable listed version or a GIT range next to a range that excludes
+  the version is `indeterminate` here where OSV would say "not affected"
+  (deliberate, fail-closed); `semver.parse` tolerates a leading `v` and
+  surrounding whitespace, consistently on both sides.
+- Over the 139 corpus cases: verdict differential 0, proof 0, graph 0,
+  unreported candidates +0/−0 (no corpus instance is a prerelease; the
+  snapshot's ECOSYSTEM ranges are all for Maven and RubyGems entries).
+  Validation equals the D-09 baseline.
+
+**What B-2 binds.**
+
+- **B-3..B-6, and every later task**: applicability is decided only by
+  `matchVersion` over the normalizer's ranges; a new range shape the
+  normalizer cannot order is an `UninterpretableVersionRange`, never an
+  empty or narrower interval. The OSV cache stores raw answers, so B-2
+  reaches a warm cache without a `CACHED_ANSWER_FORMAT` change; a change
+  to the stored answer's shape still needs one (B-1).
+- **B-5**: an `indeterminate` applicability is an `UNKNOWN` finding, so
+  decision 3's exit codes count it as undecided.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

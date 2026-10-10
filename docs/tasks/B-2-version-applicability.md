@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: B-2
 - **Branch**: b-2-version-applicability
 - **Base SHA**: 5ce993c076049a9fbe87c778479c230475f4e403
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `29b90bb` docs(tasks): B-2 task file — version applicability
+  - `706e3cb` test(B-2): version applicability — AUD-05, AUD-09, RWF-091, RWF-092
+  - `b8360db` fix(B-2): version applicability by SemVer precedence and OSV's own evaluation
+  - (this commit) docs(B-2): records — AUD-05, AUD-09 fixed, RWF-091, RWF-092, plan § 5a, debts, backlog, progress, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -182,3 +186,31 @@ D-09 known failures (`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`).
 ## Report
 
 In the format of `AGENTS.md` § J.
+
+## Corrections (appended during the task)
+
+- **Scope addition, RWF-091** (stated in the premises above): unsorted
+  SEMVER events were paired in array order. Required for "compare SEMVER
+  ranges"; registered and fixed here.
+- **Choices § 7's row does not make**, each in the fail-closed direction:
+  a range with no type is treated like an unknown type; a SEMVER range with
+  no `introduced` event (invalid under OSV) and two event kinds at one
+  version (OSV's sort leaves their order open) are uninterpretable; a
+  `limit` event is still not applied (it only narrows a range). OSV's
+  `IncludedInVersions` compares by equality, so an unparseable listed
+  version or a GIT range beside a range that excludes the version is
+  `indeterminate` here where OSV would say "not affected" -- a precision
+  cost, accepted.
+- **Independent audit: CERTIFIED**, with two non-blocking findings fixed on
+  the branch and re-audited `CERTIFIED`: (1) node-semver compares a numeric
+  prerelease identifier at or above `Number.MAX_SAFE_INTEGER` inexactly,
+  so such a value is now refused (`parseSemVer`), recorded in AUD-05's
+  status update; (2) an event naming two kinds was narrowed to one by the
+  event schema's union (RWF-092, pre-existing), now uninterpretable. Its
+  note 3 (the "strict" parse tolerates `v` and whitespace) corrected a
+  comment. The full verdict is in the pull request.
+- **Acceptance criteria**, answered: every box above is yes. The
+  differential moved nothing (0 graph, 0 proof, 0 verdict over 139
+  cases): no corpus instance is a prerelease, and the snapshot's
+  ECOSYSTEM ranges are all for non-npm entries.
+
