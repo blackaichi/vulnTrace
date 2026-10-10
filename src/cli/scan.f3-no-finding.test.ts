@@ -547,21 +547,45 @@ describe("F3 § 4 / F-1: an instance whose version was never established", () =>
     "src/index.js": "module.exports = { main: () => 1 };\n",
   };
 
-  it("records it as an undetermined candidate instead of dropping it", async () => {
+  it("asks the provider without a version, and evaluates what it returns as UNKNOWN (B-4, PRM-64)", async () => {
     const { provider, queries } = recordingProvider([ADVISORY]);
     const { output } = await scan(
       project(VERSIONLESS_WORKSPACE_PACKAGE),
       provider,
     );
 
-    // NO QUERY AT ALL. Not a query with a borrowed version, not one with a
-    // fabricated version, not one with the package's directory name
-    // standing in for a version.
-    expect(queries).toEqual([]);
+    // Before task B-4 this asserted NO QUERY AT ALL -- PRM-64's premise:
+    // an advisory affecting no sibling's version (here there is no
+    // sibling) was never seen. Decision 4: one query WITHOUT a version.
+    // Still never a borrowed, fabricated or directory-derived version.
+    expect(queries).toEqual(["vuln-lib@(no version)"]);
 
-    // NO SYNTHETIC FINDING. There is no advisory to name -- the provider
-    // was never asked -- so inventing a finding would be inventing the
-    // very fact this entry exists to say is missing (F3 § 4).
+    // Every advisory returned is evaluated against the instance's own
+    // absent version: indeterminate, so an honest UNKNOWN finding carrying
+    // no version -- and, being a finding, not also an unreported entry.
+    expect(output.findings.map((finding) => finding.verdict)).toEqual([
+      "UNKNOWN",
+    ]);
+    expect(output.findings[0]?.version).toBeUndefined();
+    expect(
+      output.unreportedCandidates.filter(
+        (candidate) => candidate.reason === "installed_version_unavailable",
+      ),
+    ).toEqual([]);
+  });
+
+  it("records it as an undetermined candidate when no advisory is returned for its name", async () => {
+    const { provider, queries } = recordingProvider([]);
+    const { output } = await scan(
+      project(VERSIONLESS_WORKSPACE_PACKAGE),
+      provider,
+    );
+
+    expect(queries).toEqual(["vuln-lib@(no version)"]);
+
+    // NO SYNTHETIC FINDING. There is no advisory to name, so inventing a
+    // finding would be inventing the very fact this entry exists to say
+    // is missing (F3 § 4).
     expect(output.findings).toEqual([]);
 
     // Selected by REASON, never by array position (F3 § 27): candidate
@@ -584,7 +608,7 @@ describe("F3 § 4 / F-1: an instance whose version was never established", () =>
     // must be able to tell "no version established" from "version is the
     // empty string".
     expect(entry?.version).toBeUndefined();
-    // It names no advisory, honestly, because none was ever discovered.
+    // It names no advisory, honestly, because none was returned.
     expect(entry?.vulnerability).toBeUndefined();
   });
 
@@ -666,14 +690,15 @@ describe("F3 § 4 / F-1 control: a sibling's version is never borrowed", () => {
     "src/index.js": "module.exports = { main: () => 1 };\n",
   };
 
-  it("queries only the sibling's real version, never one invented for A", async () => {
+  it("queries the sibling's real version and A without one, never a version invented for A", async () => {
     const { provider, queries } = recordingProvider([ADVISORY]);
     await scan(project(TWO_INSTANCES), provider);
 
-    // Exactly one query, carrying B's own version. One query per distinct
-    // installed VERSION -- never one per instance -- so A contributes
-    // none, and no query is ever made on A's behalf.
-    expect(queries).toEqual(["vuln-lib@1.0.0"]);
+    // B's own version, then -- since task B-4 (PRM-64, decision 4) -- one
+    // query WITHOUT a version on A's behalf. One query per distinct
+    // installed VERSION, never one per instance, and never a version
+    // invented for A.
+    expect(queries).toEqual(["vuln-lib@1.0.0", "vuln-lib@(no version)"]);
   });
 
   it("gives A its own instance-local UNKNOWN rather than B's version", async () => {

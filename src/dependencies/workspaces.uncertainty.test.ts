@@ -85,6 +85,7 @@ describe("F1-A: pnpm-workspace.yaml-only layouts are explicit, not empty", () =>
       // structured view too, or every such scan would grow a phantom
       // uncertainty entry.
       incompleteness: [],
+      unreadableManifestRoots: [],
     });
   });
 

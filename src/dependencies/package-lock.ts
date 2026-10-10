@@ -55,9 +55,13 @@ export type PackageLock = z.infer<typeof PackageLockSchema>;
  *
  * Only meaningful for `node_modules`-rooted paths. Returns `undefined` for
  * the root entry (path `""`) and for non-`node_modules` paths (e.g. a
- * workspace member at `packages/foo`) — npm always writes an explicit
- * `name` for those, so callers should prefer `entry.name` and only fall
- * back to this for `node_modules` paths.
+ * workspace member at `packages/foo`, a `file:` dependency at
+ * `vendor/lodash`). npm does NOT always write a `name` for those: it omits
+ * it when the manifest has none, or when the manifest's name, the
+ * directory's name and the name it is linked under all agree (measured
+ * with npm 10.9.0, task B-4, PRM-34 and its independent audit).
+ * `buildDependencyInventory`
+ * names such an entry from its manifest or its linking entries instead.
  */
 export function derivePackageName(entryPath: string): string | undefined {
   if (entryPath === "" || !entryPath.includes("node_modules/")) {

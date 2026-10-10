@@ -296,6 +296,8 @@ describe("P1-A4: package-root authority", () => {
       // the exact-shape control, so that a future reason which forgets to
       // populate one of the two channels cannot pass silently.
       incompleteness: [],
+      // B-4: no member's manifest was unreadable either.
+      unreadableManifestRoots: [],
     });
   });
 });

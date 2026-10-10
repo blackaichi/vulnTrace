@@ -29,6 +29,10 @@ export {
 } from "./package-lock-errors.js";
 export {
   buildDependencyGraph,
+  buildDependencyInventory,
+  type DependencyInventory,
+  type DependencyInventoryOptions,
+  type UnidentifiedLockEntry,
   isTopLevelPath,
   resolveDependency,
 } from "./dependency-graph.js";
@@ -47,6 +51,12 @@ export {
   CycloneDxSyntaxError,
   CycloneDxValidationError,
 } from "./cyclonedx-errors.js";
+export {
+  type InstalledPackageOnDisk,
+  type InstalledTreeEnumeration,
+  MAX_INSTALLED_TREE_DIRECTORIES,
+  enumerateInstalledPackages,
+} from "./installed-tree.js";
 export {
   type WorkspaceDiscovery,
   type WorkspacePackage,
