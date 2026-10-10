@@ -1,13 +1,16 @@
+import semver from "semver";
 import { z } from "zod";
 import type {
   RawVulnerability,
   Severity,
   Vulnerability,
   VulnerabilityReference,
+  VersionInterval,
   VersionRange,
 } from "../domain/vulnerability.js";
 import { summarizeZodError } from "../shared/zod-issues.js";
 import { OsvNormalizationError } from "./osv-normalizer-errors.js";
+import { parseSemVer } from "./version-matching.js";
 
 /**
  * Only the subset of the OSV schema (https://ossf.github.io/osv-schema/)
@@ -17,12 +20,32 @@ import { OsvNormalizationError } from "./osv-normalizer-errors.js";
  * schemas (see docs/SDD.md § 12; AGENTS.md: "Do not couple OSV parsing
  * directly to the verdict engine").
  */
-const OsvEventSchema = z.union([
-  z.object({ introduced: z.string() }),
-  z.object({ fixed: z.string() }),
-  z.object({ last_affected: z.string() }),
-  z.object({ limit: z.string() }),
-]);
+/**
+ * One OSV event: OSV allows "only a single type" per event object. Every
+ * key is read, so an event that names two (`{fixed, last_affected}`) is
+ * seen as such, and its range is uninterpretable (B-2's independent audit,
+ * finding 2; RWF-092) -- a union of non-strict objects kept the first
+ * branch that matched and dropped the other key, narrowing the range. An
+ * event with none of the four keys is still a record the normalizer
+ * cannot use.
+ */
+const OsvEventSchema = z
+  .object({
+    introduced: z.string().optional(),
+    fixed: z.string().optional(),
+    last_affected: z.string().optional(),
+    limit: z.string().optional(),
+  })
+  .refine(
+    (event) =>
+      event.introduced !== undefined ||
+      event.fixed !== undefined ||
+      event.last_affected !== undefined ||
+      event.limit !== undefined,
+    {
+      message: "an event names none of introduced, fixed, last_affected, limit",
+    },
+  );
 
 type OsvEvent = z.infer<typeof OsvEventSchema>;
 
@@ -85,42 +108,167 @@ export interface NormalizationTarget {
   readonly name: string;
 }
 
+/** OSV's `introduced: "0"`: "a version that sorts before any other version". */
+const OSV_BEGINNING = "0";
+
+type EventKind = "introduced" | "fixed" | "last_affected";
+
 /**
- * Converts one OSV `ranges[].events[]` sequence into {@link VersionRange}s.
- * OSV represents (possibly several, disjoint) affected ranges as a flat
- * chronological event list — each `introduced` opens a range, closed by
- * the next `fixed`/`last_affected`. A `limit` event (an unresolved upper
- * bound with no known fix) is intentionally not mapped to a field — see
- * TASK-010 completion report.
+ * OSV's SEMVER comparison: SemVer 2.0 precedence, with `introduced: "0"`
+ * before every version. `null` for a value that is not a SemVer version --
+ * never coerced into one (task B-2, AUD-05).
  */
-function eventsToRanges(events: readonly OsvEvent[]): VersionRange[] {
-  const ranges: VersionRange[] = [];
-  let current:
-    { introduced?: string; fixed?: string; lastAffected?: string } | undefined;
+function semverKey(kind: EventKind, raw: string): semver.SemVer | "0" | null {
+  if (kind === "introduced" && raw === OSV_BEGINNING) {
+    return OSV_BEGINNING;
+  }
+  return parseSemVer(raw);
+}
+
+function compareKeys(a: semver.SemVer | "0", b: semver.SemVer | "0"): number {
+  if (a === OSV_BEGINNING) return b === OSV_BEGINNING ? 0 : -1;
+  if (b === OSV_BEGINNING) return 1;
+  return semver.compare(a, b);
+}
+
+/**
+ * Converts one OSV `SEMVER` range's `events` into disjoint
+ * {@link VersionInterval}s, by OSV's own evaluation (the specification's
+ * `IncludedInRanges`, read 2026-10-10): the events are SORTED by version
+ * and walked in that order -- `introduced` opens a range, `fixed` closes it
+ * before its version, `last_affected` after its version. OSV only
+ * recommends a sorted array; reading it in array order paired an
+ * `introduced` with whatever event followed it, and declared a version the
+ * specification calls affected out of range (task B-2, RWF-091).
+ *
+ * Every case the specification does not decide is uninterpretable, never
+ * an empty (or narrower) range:
+ *
+ * - no events, or no `introduced` ("There must be at least one
+ *   `introduced` object");
+ * - a bound that is not a SemVer version;
+ * - two events of different kinds at one version (the specification's
+ *   `sorted(range.events)` leaves their order, and so the answer, open).
+ *
+ * A `limit` event is not applied: it only narrows a range (OSV: it "may
+ * result in false negatives"), so leaving it out can only keep a version
+ * in range -- the direction that never hides a finding.
+ */
+function semverEventsToRanges(events: readonly OsvEvent[]): VersionRange[] {
+  const keyed: {
+    readonly kind: EventKind;
+    readonly raw: string;
+    readonly key: semver.SemVer | "0";
+  }[] = [];
 
   for (const event of events) {
-    if ("introduced" in event) {
-      if (current) {
-        ranges.push(current);
-      }
-      current = { introduced: event.introduced };
-    } else if ("fixed" in event) {
-      current = { ...current, fixed: event.fixed };
-      ranges.push(current);
-      current = undefined;
-    } else if ("last_affected" in event) {
-      current = { ...current, lastAffected: event.last_affected };
-      ranges.push(current);
-      current = undefined;
+    const present = (
+      ["introduced", "fixed", "last_affected", "limit"] as const
+    ).filter((name) => event[name] !== undefined);
+    if (present.length !== 1) {
+      return [
+        {
+          uninterpretable: `a SEMVER range event names ${present.join(" and ")}, where OSV allows one`,
+        },
+      ];
     }
-    // "limit" events carry no field of their own in VersionRange; skipped.
+    let kind: EventKind;
+    let raw: string;
+    if (event.introduced !== undefined) {
+      kind = "introduced";
+      raw = event.introduced;
+    } else if (event.fixed !== undefined) {
+      kind = "fixed";
+      raw = event.fixed;
+    } else if (event.last_affected !== undefined) {
+      kind = "last_affected";
+      raw = event.last_affected;
+    } else {
+      continue;
+    }
+    const key = semverKey(kind, raw);
+    if (key === null) {
+      return [
+        {
+          uninterpretable: `a SEMVER range bound "${raw}" is not a SemVer version`,
+        },
+      ];
+    }
+    keyed.push({ kind, raw, key });
   }
 
-  if (current) {
-    ranges.push(current);
+  if (!keyed.some((event) => event.kind === "introduced")) {
+    return [
+      {
+        uninterpretable: "a SEMVER range has no introduced event",
+      },
+    ];
+  }
+
+  keyed.sort((a, b) => compareKeys(a.key, b.key));
+
+  for (let i = 1; i < keyed.length; i += 1) {
+    const previous = keyed[i - 1]!;
+    const current = keyed[i]!;
+    if (
+      compareKeys(previous.key, current.key) === 0 &&
+      previous.kind !== current.kind
+    ) {
+      return [
+        {
+          uninterpretable:
+            `a SEMVER range has both a ${previous.kind} and a ${current.kind} ` +
+            `event at version "${current.raw}", which leaves its order undecided`,
+        },
+      ];
+    }
+  }
+
+  const ranges: VersionInterval[] = [];
+  let open: string | undefined;
+
+  for (const event of keyed) {
+    if (event.kind === "introduced") {
+      open ??= event.raw;
+    } else if (open !== undefined) {
+      ranges.push(
+        event.kind === "fixed"
+          ? { introduced: open, fixed: event.raw }
+          : { introduced: open, lastAffected: event.raw },
+      );
+      open = undefined;
+    }
+  }
+
+  if (open !== undefined) {
+    ranges.push({ introduced: open });
   }
 
   return ranges;
+}
+
+/**
+ * One OSV range, as {@link VersionRange}s. Only a `SEMVER` range can be
+ * ordered against an installed npm version (task B-2, AUD-09): a `GIT`
+ * range's bounds are commit hashes, an `ECOSYSTEM` range's are
+ * "arbitrary, uninterpreted strings" (OSV), and a range of another or no
+ * type is not one this normalizer knows. Each is uninterpretable, never
+ * compared as SemVer.
+ */
+function rangeToVersionRanges(
+  range: z.infer<typeof OsvRangeSchema>,
+): VersionRange[] {
+  if (range.type !== "SEMVER") {
+    return [
+      {
+        uninterpretable:
+          range.type === undefined
+            ? "a range has no type"
+            : `a ${range.type} range cannot be ordered against a SemVer version`,
+      },
+    ];
+  }
+  return semverEventsToRanges(range.events);
 }
 
 function extractSeverity(
@@ -179,9 +327,20 @@ export function normalizeOsvVulnerability(
 
   const affectedVersions: VersionRange[] = [];
   for (const entry of relevantAffected) {
-    for (const range of entry.ranges) {
-      affectedVersions.push(...eventsToRanges(range.events));
+    // An entry for the package that lists no range and no version says
+    // nothing about which versions it affects: never "none" (task B-2,
+    // AUD-09).
+    if (entry.ranges.length === 0 && entry.versions.length === 0) {
+      affectedVersions.push({
+        uninterpretable: "an affected entry lists no ranges and no versions",
+      });
     }
+    for (const range of entry.ranges) {
+      affectedVersions.push(...rangeToVersionRanges(range));
+    }
+    // OSV's `IncludedInVersions`: a listed version is affected. Matched
+    // by SemVer equality; one that is not a SemVer version is
+    // indeterminate in the matcher.
     for (const version of entry.versions) {
       affectedVersions.push({ introduced: version, lastAffected: version });
     }
@@ -189,9 +348,11 @@ export function normalizeOsvVulnerability(
 
   const fixedVersions = [
     ...new Set(
-      affectedVersions
-        .map((range) => range.fixed)
-        .filter((fixed): fixed is string => typeof fixed === "string"),
+      affectedVersions.flatMap((range) =>
+        range.uninterpretable === undefined && range.fixed !== undefined
+          ? [range.fixed]
+          : [],
+      ),
     ),
   ];
 

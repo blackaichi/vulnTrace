@@ -102,6 +102,9 @@ export default defineConfig({
 
       "src/cli/scan.b1-provider-completeness.test.ts",
       "src/vulnerabilities/osv-provider.pagination.test.ts",
+
+      "src/vulnerabilities/version-applicability.b2.test.ts",
+      "src/cli/scan.b2-version-applicability.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take

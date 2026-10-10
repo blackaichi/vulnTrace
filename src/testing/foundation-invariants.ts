@@ -589,6 +589,34 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "every rule targets an export the application calls, so an advisory " +
       "that disappears is a missing AFFECTED, never a quiet UNKNOWN.",
   },
+  {
+    id: "VT-INV-B-version-applicability",
+    invariant:
+      "An advisory is declared out of range for an installed version " +
+      "(`not_applicable`) only when the version is a SemVer version and " +
+      "every range the advisory declares for the package is a SEMVER range " +
+      "that, evaluated as OSV specifies (events sorted by SemVer precedence, " +
+      "prereleases included, never coerced), excludes it. A range that cannot " +
+      "be ordered against a SemVer version (GIT, ECOSYSTEM, another or no " +
+      "type, no introduced event, a bound that is not a SemVer version, two " +
+      "event kinds at one version) and an affected entry with no ranges and " +
+      "no versions are indeterminate, never empty: an UNKNOWN finding unless " +
+      "another range or listed version covers the version.",
+    foundation: "LANE-B",
+    owners: [
+      "src/vulnerabilities/version-applicability.b2.test.ts",
+      "src/cli/scan.b2-version-applicability.test.ts",
+    ],
+    note:
+      "Task B-2 (AUD-05, AUD-09, RWF-091). The unit test owns the " +
+      "normalize-then-match pipeline against a literal transcription of " +
+      "OSV's evaluation pseudo-code over generated, shuffled event lists " +
+      "with prereleases, and the census that `semver.coerce` appears nowhere " +
+      "in src/; the scan test owns each shape end to end through the real " +
+      "OsvProvider, per exact instance. Loud fixture: the rule targets an " +
+      "export the application calls, so an advisory wrongly declared out of " +
+      "range is a missing AFFECTED.",
+  },
 ];
 
 /**
