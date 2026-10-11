@@ -1582,6 +1582,80 @@ entry naming its exact instance.
   filter when one is set; PRM-36's condition (the unfiltered set) is still
   B-5's.
 
+#### B-5 additions (task B-5, 2026-10-11)
+
+**Outcome of B-5** (§ 7's B-5 row, decision 3). A scan says, in its exit
+code and in its output, whether it left anything undecided.
+
+- `summarizeScan` (`src/cli/scan-summary.ts`) computes the result's
+  `summary` from the very `findings` and `unreportedCandidates` arrays it
+  is emitted with: counts by verdict and by disposition, and an
+  `outcome`. `exitCodeFor` computes the exit code from the summary alone:
+  `affected` exits `1`, `undecided` (an `UNKNOWN` finding or an
+  `undetermined` entry, nothing `AFFECTED`) exits **`5`** (new),
+  `decided` exits `0`. `--lenient-exit` maps `5` to `0` and changes
+  nothing else. `2`, `3` and `4` are unchanged; a cache diagnostic is not
+  an entry and never moves the code (B-3). Fixed AUD-12.
+- **`withdrawn` is decided** (settled here, as B-1's note asked).
+  Decision 3's text names it in neither list ("decided": `NOT_AFFECTED`
+  or "a determinate not-applicable disposition"; "undecided": an
+  `UNKNOWN` or an indeterminate disposition). It is read as a determinate
+  not-applicable statement: the provider says the advisory applies to no
+  version at all, with certainty and no uncertainty category (B-1,
+  decision 10), and nothing further could decide it. Flagged for the
+  project owner in the pull request.
+- Output schema `0.8`: `summary`, additive (not `required`; strict inside),
+  always emitted by the producer, as F3's fields were.
+- `run.ts` rejects an empty or blank `--cve`, one with surrounding
+  whitespace, and a `--lenient-exit` given a value (exit 2, no scan). A `--cve` that selects nothing for any installed
+  package (no usable advisory, and no unusable record it may name) is a
+  `vulnerabilities` diagnostic and a stderr line. Fixed PRM-111.
+- The versionless `installed_version_unavailable` detail is decided on
+  the unfiltered set: "no advisory was returned for this name" only when
+  none was, and otherwise the number of distinct advisories returned over
+  all of the name's queries (an advisory usable from one query and
+  malformed from another counts once). PRM-36's recorded sentence had already been removed by B-4
+  (measured); its prescribed condition is B-5's. Fixed PRM-36.
+- The HTML overview falls back to the first `unknownReasons` entry. Fixed
+  PRM-110 (whose title misdescribed the code; corrected in FINDINGS).
+- Foundation invariant `VT-INV-B-exit-decision` (owners
+  `src/cli/scan.b5-cli-output.test.ts`, `src/cli/run.b5-flags.test.ts`).
+  Nineteen mutations, each caught by a named test.
+- Eight existing assertions pinned exit `0` for a scan with an `UNKNOWN`
+  and nothing `AFFECTED`; each now asserts `5`, the decided behaviour. An
+  F5 helper that read any code above `1` as a failure accepts `5`, and
+  B-1's schema-version test accepts `0.8` (listed in the B-5 task file).
+- Over the 139 corpus cases: verdict differential 0, proof 0, graph 0,
+  unreported candidates +0/−0; 35 cases' exit code moved from `0` to `5`
+  (no suite asserts it). Validation equals the D-09 baseline.
+- **The independent audit CERTIFIED the change** with seven non-blocking
+  findings, all addressed in the task: PRM-36's count could count one
+  advisory twice and credit it to the versionless query (fixed: distinct
+  ids, over all queries, and the wording says so); the `withdrawn`
+  rationale argued from one of decision 3's two lists only (rewritten
+  above); a `--cve` with surrounding whitespace silently matched nothing
+  (now a usage error); the schema cannot check the summary's counts
+  against the arrays (stated in the schema description); B-1's version
+  test had been loosened (now pins `0.8`); a stale test comment
+  (corrected); the HTML exit test did not read the report and no test
+  rejected a malformed summary (both added).
+- **Known limitation, for the project owner.** A non-empty `--cve` that
+  selects nothing exits `0` when nothing else is undecided: decision 3
+  asks only that it be reported, and it is (a diagnostic and a stderr
+  line). A CI gate that reads only the exit code cannot tell it from a
+  clean scan.
+
+**What B-5 binds.**
+
+- **Every later task**: a new disposition or verdict must say whether it
+  is decided (`summarizeScan` and the schema's `summary` enumerate both
+  vocabularies, and a new value is a compile error there); the exit code
+  is computed only by `exitCodeFor` from the summary. A state that leaves
+  a candidate undecided must reach `findings` or `unreportedCandidates`,
+  never `diagnostics` only, or the exit code cannot see it.
+- **D-1**: edits `html-report.ts` after B-5; the overview's summary
+  fallback is B-5's, the disclosure sentences are D-1's.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

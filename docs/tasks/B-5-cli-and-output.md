@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: B-5
 - **Branch**: b-5-cli-and-output
 - **Base SHA**: 5d41db897642c5b87446ae816a2905d2e8548d3f
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `6311955` docs(tasks): B-5 task file — CLI and output
+  - `73e92b7` test(B-5): CLI and output — AUD-12, PRM-36, PRM-110, PRM-111
+  - `3b6eafd` fix(B-5): exit 5 when undecided, a summary in every result, --cve checked
+  - (this commit) docs(B-5): records — AUD-12, PRM-36, PRM-110, PRM-111 fixed, plan § 5a, debts, readme, architecture, backlog, progress
 - **Superseded by**: —
 
 ## Project context
@@ -139,7 +143,8 @@ exhaustively ("any `UNKNOWN` finding, or any unreported candidate whose
 disposition is indeterminate"); the only indeterminate disposition is
 `undetermined`. `withdrawn` is, like `not_applicable`, a certain statement
 with no uncertainty category (B-1, decision 10): the provider says the
-advisory is void. Counting it as undecided would make a retracted
+advisory is void. (See Corrections: the "decided" list is equally
+exhaustive, so this is a reading, not a consequence of the text.) Counting it as undecided would make a retracted
 advisory fail a CI gate forever, with nothing anyone could do to decide
 it. Flagged for the project owner in the pull request.
 
@@ -197,3 +202,54 @@ validation exactly the five D-09 known failures (`RWB-03`, `RWB-05`,
 ## Report
 
 In the format of `AGENTS.md` § J.
+
+## Corrections (appended during the task)
+
+- **The `withdrawn` rationale above is one-sided** (the independent audit,
+  finding 2): decision 3's "decided" list (`NOT_AFFECTED`, "a determinate
+  not-applicable disposition") is as exhaustive as its "undecided" list,
+  and `withdrawn` is in neither by name. The reading stands on its own
+  ground: a withdrawal is the provider's determinate statement that the
+  advisory applies to no version, with no uncertainty category. The code
+  comment (`scan-summary.ts`) and REMEDIATION-PLAN § 5a say so; flagged for
+  the project owner.
+- **Premises measured.** PRM-36's recorded sentence no longer existed on
+  the base (B-4 had replaced it); the audit's own `--cve CVE-Y` case now
+  yields an `UNKNOWN` for `GHSA-y` and no "no advisory" entry (asserted,
+  passing on the base too). B-5 applied the plan's condition (the
+  unfiltered set). PRM-110's FINDINGS title misdescribes the code
+  (`summaryOf` never read `unknownReasons`); corrected in its status
+  update.
+- **Existing tests changed, not weakened.** Eight assertions pinned exit
+  `0` for a scan with an `UNKNOWN` and nothing `AFFECTED`, each now `5`
+  (decision 3): `e2e-vertical-slice.test.ts` (1), `scan-security.test.ts`
+  (1), `scan.b2-version-applicability.test.ts` (1),
+  `scan.integration.test.ts` (1), `scan.test.ts` (4). In each the verdict
+  assertion is unchanged. `scan.f5-performance-foundation.test.ts`'s helper
+  read any code above `1` as a failure and now accepts `5`.
+  `scan.b1-provider-completeness.test.ts` pins `0.8`. Six fixtures that
+  build a `ScanOutput` by hand gained `summary` (the type requires it).
+  `docs/SOUNDNESS-CONTRACT.md`'s generated examples were regenerated.
+- **Choices § 7's row does not make**, each in the fail-closed or
+  explicit direction: the exit code for "undecided" is `5` (the next free
+  code); the flag is `--lenient-exit` and takes no value; a `--cve` with
+  surrounding whitespace is a usage error (from the audit); `summary`
+  carries an `outcome` besides the counts, and is required in the
+  producer's type but not in the schema (additivity, as F3).
+- **Independent audit: CERTIFIED**, seven non-blocking findings, all
+  addressed (REMEDIATION-PLAN § 5a, "B-5 additions"): PRM-36's count could
+  count one advisory twice (fixed; test added); the `withdrawn` rationale
+  (above); a padded `--cve` (now rejected; test added); the schema cannot
+  check counts against arrays (stated); B-1's loosened version test
+  (pinned); a stale comment (fixed); the HTML test did not read the report
+  and no test rejected a malformed summary (both added). Its finding 3's
+  other half is left to the owner: a `--cve` that selects nothing exits
+  `0` when nothing else is undecided (reported, as decision 3 asks).
+- **Acceptance criteria**, answered: every box is yes. Nineteen mutations,
+  each caught by a named test (one, a blank `--cve`, first survived as an
+  equivalent mutant of the new whitespace rule and was redefined to
+  remove the emptiness check). Differential: graph 0, proof 0, verdict 0,
+  unreported candidates +0/−0 over 139 cases; 35 cases' exit code moved
+  `0` → `5`. Validation equals the D-09 baseline (`RWB-03`, `RWB-05`,
+  `RWB-09b`, `VAL-002`, `VAL-003`, each with the same verdict on base and
+  head).

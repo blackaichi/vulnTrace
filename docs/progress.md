@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-10, by `B-4`.
+**Last updated:** 2026-10-11, by `B-5`.
 
 ## Objective
 
@@ -154,6 +154,16 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   each unlisted package an identity entry by its exact instance (decision
   9, AUD-08). Four reason subtypes, no new category. Invariant
   `VT-INV-B-inventory-identity`. REMEDIATION-PLAN § 5a, "B-4 additions".
+  `B-5` made the exit code say whether anything was left undecided
+  (decision 3, AUD-12): `1` when something is `AFFECTED`, else `5` when a
+  finding is `UNKNOWN` or an unreported candidate is `undetermined`, else
+  `0` (`withdrawn` is decided); `--lenient-exit` restores `0` for the
+  undecided case. Every result carries a `summary` of counts (schema
+  `0.8`) from which the exit code is computed. An empty `--cve` is a usage
+  error and an unmatched one is said (PRM-111); the versionless "no
+  advisory" detail uses the unfiltered set (PRM-36); the HTML overview
+  falls back to `unknownReasons` (PRM-110). Invariant
+  `VT-INV-B-exit-decision`. REMEDIATION-PLAN § 5a, "B-5 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -184,20 +194,24 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`B-4` — inventory and identity drops
-([task file](tasks/B-4-inventory-identity-drops.md)): `READY_FOR_REVIEW`,
-its pull request awaiting the project owner. `B-3` merged as PR #93.
+`B-5` — CLI and output
+([task file](tasks/B-5-cli-and-output.md)): `READY_FOR_REVIEW`, its pull
+request awaiting the project owner. `B-4` merged as PR #94.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-4`:
-the rest of lane B (`B-5`, `B-6`). The P1 gaps `BL-057` and `BL-058`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-5`:
+the rest of lane B (`B-6`), then `RWF-050-repro` and lane E. The P1 gaps `BL-057` and `BL-058`
 (small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of them.
 
 ## Recently discovered
+
+From `B-5`: no new finding or task. PRM-110's title misdescribed the code
+(corrected in its status update); PRM-36's recorded sentence had already
+been removed by B-4 (measured).
 
 From `B-4`: RWF-093 (fixed by it: a named, versionless `file:` lock entry
 was dropped), and backlog `BL-060` (P4: a version-indeterminate `UNKNOWN`

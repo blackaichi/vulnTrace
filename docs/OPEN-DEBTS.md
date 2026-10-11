@@ -1135,6 +1135,21 @@ corpus cases: verdict differential 0, proof 0, graph 0, unreported
 candidates +0/−0; validation equals the D-09 baseline. This entry still
 stands: lanes E, C (C-2..C-5) and B (B-5, B-6) remain.
 
+**Progress, added by task `B-5` (2026-10-11).** Task B-5
+(`docs/tasks/B-5-cli-and-output.md`) fixes AUD-12 (decision 3: a finished
+scan exits `5` when nothing is `AFFECTED` and something is undecided,
+`--lenient-exit` restores `0`, and every result carries a `summary` of
+counts, schema `0.8`), PRM-111 (an empty or blank `--cve` is a usage
+error; a filter that selects nothing is a diagnostic), PRM-36 (the
+versionless "no advisory" detail is decided on the unfiltered set; its
+recorded sentence had already been removed by B-4) and PRM-110 (the HTML
+overview falls back to the first `unknownReasons` entry). A `withdrawn`
+entry counts as decided. Invariant `VT-INV-B-exit-decision`. Over the 139
+corpus cases: verdict differential 0, proof 0, graph 0, unreported
+candidates +0/−0, and 35 cases' exit code moved from `0` to `5`;
+validation equals the D-09 baseline. This entry still stands: lanes E, C
+(C-2..C-5) and B (B-6) remain.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
