@@ -1161,6 +1161,22 @@ graph 0; validation equals the D-09 baseline. Discovered: `BL-061`
 (one rule per advisory id), `BL-062` (an aliased instance reported twice).
 This entry still stands: lanes E and C (C-2..C-5) remain.
 
+**Progress, added by task `RWF-050-repro` (2026-10-12).** Task
+RWF-050-repro (`docs/tasks/RWF-050-repro-may-execute-operand.md`)
+reproduced `RWF-050` against real Node. This entry above declined to count
+it, because it was UNCLASSIFIED. It is now a settled finding: a live false
+`NOT_AFFECTED` with a complete family C proof in 13 MAY-abrupt spellings
+(`FLAG && bail();` and its siblings, while `if (FLAG) bail();` is already
+`UNKNOWN`). Defect class C, P0, lane E. Each spelling is an
+open-soundness-defect record against `RWF-050` and this entry. The fix is
+backlog `BL-063`. The task also found that 48 existing "keeps authority"
+unit tests assert the unsound attribution for MAY positions, and that
+ADR 0009 § 8's E-1 acceptance protects them: a decision for the project
+owner (`docs/REMEDIATION-PLAN.md` § 5a, "RWF-050-repro additions"). Tests
+and records only: verdict, proof and graph differentials 0. This entry
+still stands: lanes E and C (C-2..C-5) remain, and RWF-050 joins lane E's
+open findings.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

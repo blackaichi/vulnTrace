@@ -222,7 +222,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-3b), through the fail-closed default — see below |
-| RWF-050 | n/a — a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`) has no register row of its own | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below | Open |
+| RWF-050 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute abrupt operand (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`, an optional-chain-guarded argument, a `do`/`while` condition, a `for` update) is not a module-evaluation cutoff, though the statement form `if (flag) bail();` is, so a later export write stays authoritative | false NOT_AFFECTED (family C), reproduced against real Node by RWF-050-repro — see below | Open (lane E, backlog `BL-063`) |
 | PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a), through the fail-closed default — see below |
 | PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | **Fixed** (A-4, Amendment A-0 part B) — see below |
 | RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | **Fixed** (RWF-051-typecheck) — see below |
@@ -18340,6 +18340,122 @@ Full account: `tests/validation/FINDINGS.md`, "RWF-026 ...", section
 "Remaining limitations (deliberately not fixed here)" (this same file,
 above) — this is a correction to the register's own stated gap, not new
 report content from `docs/audits/`.
+
+**Status update (task RWF-050-repro, 2026-10-12): reproduced and
+classified. Still Open.** This supersedes the UNCLASSIFIED lines above.
+
+- **Failure class:** false `NOT_AFFECTED`, with a complete family C proof.
+- **Defect class:** C (multi-valued provenance collapsed to one value):
+  the export holds the early write's value on every load where the operand
+  fires and the later write's value otherwise, and the analyzer keeps only
+  the later write.
+- **Proof family affected:** C (measured).
+- **Severity:** P0 / critical soundness, the same as RWF-015, RWF-016 and
+  RWF-026.
+- **Fix lane:** E (ADR 0009 § 1 clause 3, "the existing straight-line and
+  abrupt-completion machinery … selects a unique last write that
+  definitely runs"). Backlog `BL-063`, ordered before `E-1`.
+
+**The mechanism (read at `570a4b6`).** `mayEndModuleEvaluation`
+(`src/code-intelligence/module-model.ts`) answers a MAY question ("can
+this top-level statement end module evaluation?"). For statements it
+answers it as a MAY: it walks into every statement container, so
+`if (FLAG) bail();` is a cutoff. For an expression it consults RWF-026's
+MUST relation (`isDefinitelyAbruptCallStatement` →
+`necessarilyEvaluatesAbruptly`), which refuses every position that is not
+necessarily evaluated. So `FLAG && bail();`, which is the same program as
+`if (FLAG) bail();`, is not a cutoff, and a later export write stays
+authoritative. RWF-026's refusals were right for the question RWF-026
+asked (does this expression NECESSARILY end evaluation?), but that is the
+wrong question for a MAY cutoff. The same holds for `isDefinitelyAbruptCallStatement`'s
+comments on a `do`/`while` condition and a `for` update ("would need
+body-completion reasoning this relation does not have"): a MAY cutoff
+needs no body-completion reasoning.
+
+**Reproduction (real Node v22.11.0, H-0 oracle harness).**
+`tests/oracle/rwf050-may-execute-operand.cases.ts` and `.test.ts`. A
+package `wrap` whose `index.js` requires `./b` first (`b.js` keeps the
+exports object and reads `.run` only when called), then writes
+`exports.run = dangerousOp` (calls `vuln-lib`'s `parse`), then one
+MAY-abrupt top-level operand, then `exports.run = safeOp` (calls `safe`).
+The entry catches the throw from `require("wrap")` and calls
+`require("wrap/b").later("x")`. With the flag truthy (real Node), Node
+calls `parse`. An uncaught module-scope throw removes the module from
+`require.cache`, so a module that already holds the exports object is
+the only way to observe the partial value. The cycle runs before both
+writes, so ADR 0009 § 1 clause 4's observation point (a re-entrant
+`require` BETWEEN the writes) is absent: lane E's clause 4 does not close
+these cases, and only the abrupt-completion machinery decides.
+
+| case | real Node calls `parse` | analyzer at `570a4b6` |
+| --- | --- | --- |
+| `if (FLAG) bail();` (contrast) | yes | `UNKNOWN` (`unresolved_target`) |
+| `FLAG && bail();` | yes | **`NOT_AFFECTED`**, family C |
+| `!FLAG \|\| bail();` | yes | **`NOT_AFFECTED`**, family C |
+| `(FLAG ? null : 0) ?? bail();` | yes | **`NOT_AFFECTED`**, family C |
+| `FLAG ? bail() : 0;` | yes | **`NOT_AFFECTED`**, family C |
+| `!FLAG ? 0 : bail();` | yes | **`NOT_AFFECTED`**, family C |
+| `z &&= bail();` (`let z = FLAG`) | yes | **`NOT_AFFECTED`**, family C |
+| `z \|\|= bail();` (`let z = !FLAG`) | yes | **`NOT_AFFECTED`**, family C |
+| `z ??= bail();` (`let z = FLAG ? null : 0`) | yes | **`NOT_AFFECTED`**, family C |
+| `const g = FLAG && bail();` | yes | **`NOT_AFFECTED`**, family C |
+| `void [FLAG && bail()];` | yes | **`NOT_AFFECTED`**, family C |
+| `Math?.max(bail());` | yes | **`NOT_AFFECTED`**, family C |
+| `do {} while (bail());` | yes | **`NOT_AFFECTED`**, family C |
+| `for (let i = 0; i < 1; bail()) {}` | yes | **`NOT_AFFECTED`**, family C |
+| negative control (no abrupt line) | no | `NOT_AFFECTED` (correct) |
+| positive control (direct `parse` call) | yes | `AFFECTED` (correct) |
+
+Every false result is the same observation: `vuln-lib#parse`,
+`reachableSubgraphComplete: true`, 0 unknown edges. Each is pinned as an
+open-soundness-defect record (`RWF-050`, `D-17`, expected `UNKNOWN`). The
+last three rows are RWF-026's other refused positions. The `do`/`while`
+and `for` rows, with an empty body, are not even conditional: the
+condition and the update are reached on every load.
+
+**Mutation (throwaway, reverted).** A prototype that makes every
+module-time definitely-abrupt call outside a function body a MAY cutoff
+flips all 13 records to `UNKNOWN` (each fails with "the live result … is
+now ADMISSIBLE -- RWF-050 may be fixed for this case"), keeps the
+contrast, and fails 48 of 5,648 unit tests in 9 files. All 48 are
+"keeps authority" controls for MAY positions, in the RWF-016, RWF-017,
+RWF-018, RWF-019, RWF-020, RWF-024, RWF-026 and RWF-028 suites and
+`verdict.expression-position-throwing-call-export-authority.integration.test.ts`.
+There are two exceptions. The `for (; ; bail()) { break; }` and
+`do { break; } while (bail())` rows (and their paired rows) are guarded by
+a `break` that really never reaches `bail`, so authority there is a
+precision cost the fix may recover. One nested instance-field row exposed
+a gap in the prototype, not in the rule.
+
+**Corrections (AGENTS.md § C; measured).**
+
+1. *RWF-026's `REFUSED` table premise is false for its MAY rows.*
+   `module-model.definitely-abrupt-expression-evaluation.test.ts`'s
+   `REFUSED` doc comment reads "Every one of these completes under real
+   Node with `bail` either never called or its exception handled, so the
+   later write really is the module's exported value and MUST keep its
+   authority". For the short-circuit, conditional-arm, logical-assignment
+   and optional-chain rows, that holds only for a falsy `FLAG`. The rows,
+   and the matching "keeps authority" rows of the other suites the
+   mutation lists, assert the attribution this record reproduces as
+   unsound. They are not inverted here: inverting them is the fix's job,
+   in the same change that makes them pass (backlog `BL-063`). RWF-026's
+   own ground-truth measurement ("20 CONDITIONAL/DEFERRED positions —
+   every one completes") is true for the flag values it ran, and is not a
+   claim about every load.
+2. *ADV2-086's fixture comment.*
+   `tests/adversarial/v2/fixtures/adv2-086-definitely-abrupt-expression-evaluation/node_modules/vt2-init-lib/index.js`
+   is described (RWF-026, "ADV2-086") as surrounded by "eleven conditional
+   or deferred decoys … none of which ends module evaluation". With
+   `VT2_CONDITION=yes`, `const guarded = FLAG && bail();` throws (measured:
+   `require("vt2-init-lib")` throws "fast mode is not supported by this
+   build"). The case's expected verdict (`UNKNOWN`) is unaffected.
+3. *ADR 0009 § 8, E-1's precision acceptance.* E-1's row lists "every
+   RWF-013 … RWF-028 'keeps authority / keeps the later export
+   attributable' control" as **must stay green**. That list includes the
+   rows of correction 1, which the fix must invert. Amending the ADR is the
+   project owner's decision. Recorded in `docs/REMEDIATION-PLAN.md` § 5a,
+   "RWF-050-repro additions".
 
 ---
 
