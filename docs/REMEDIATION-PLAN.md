@@ -1656,6 +1656,43 @@ code and in its output, whether it left anything undecided.
 - **D-1**: edits `html-report.ts` after B-5; the overview's summary
   fallback is B-5's, the disclosure sentences are D-1's.
 
+#### B-6 additions (task B-6, 2026-10-12)
+
+**Outcome of B-6** (§ 7's B-6 row). A rule applies only to the package it
+names. `buildFinding` compares the rule's `package.name` with the
+finding's `packageName` (the name the advisory selected the instance by;
+an npm alias is the package it is) after the no-rule branch and before
+reachability or instance matching. A mismatch is `UNKNOWN` with the new
+reason subtype `rule_package_mismatch` (category
+`analysis_precondition_unmet`, still six categories; both enums of
+`schemas/result.schema.json`, no schema version change, as B-4). Fixed
+AUD-15.
+
+- **Premise correction (AGENTS.md § D).** AUD-15's recorded reason
+  (`package_instance_absence_*`, "never traversed") no longer existed at
+  the base: the finding carried `vulnerable_target_unresolved` with
+  resolution prose. The defect stood in that form, and a rule naming the
+  wrong package was worse than silent: it was applied, and could be
+  `AFFECTED`.
+- Over the 139 corpus cases: verdict differential 0, proof 0, graph 0;
+  validation equals the D-09 baseline. Mutations (case-insensitive
+  compare, a branch that never fires, an inverted compare) are each caught
+  by `src/cli/scan.rule-package-mismatch.test.ts`.
+- **Independent audit: `CERTIFIED`.** No path to a new `NOT_AFFECTED` or a
+  changed `AFFECTED`. Three low findings: a precision loss for a package
+  the app never loads (a family-A `NOT_AFFECTED` is now `UNKNOWN`, asserted
+  and recorded), the binding `package.name`, and a pre-existing duplicate
+  report of one aliased instance (`BL-062`). It also measured that one
+  rule per advisory id is already enforced (`BL-061`).
+- **Known limitations.** See FINDINGS AUD-15 (B-6 status update).
+
+**What B-6 binds.**
+
+- **Every later task**: a rule is attached to an advisory by id but is
+  valid only for `rule.package.name`; a task that adds a rule or a rule
+  source must keep the comparison, and a multi-package rule design
+  (`BL-061`) must replace it, not bypass it.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

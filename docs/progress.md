@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-11, by `B-5`.
+**Last updated:** 2026-10-12, by `B-6`.
 
 ## Objective
 
@@ -164,6 +164,10 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   advisory" detail uses the unfiltered set (PRM-36); the HTML overview
   falls back to `unknownReasons` (PRM-110). Invariant
   `VT-INV-B-exit-decision`. REMEDIATION-PLAN § 5a, "B-5 additions".
+  `B-6`, the last of lane B, made a rule apply only to the package it
+  names (AUD-15): a finding for another package of a multi-package
+  advisory is `UNKNOWN` with `rule_package_mismatch`, decided before any
+  instance matching. REMEDIATION-PLAN § 5a, "B-6 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -194,14 +198,15 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`B-5` — CLI and output
-([task file](tasks/B-5-cli-and-output.md)): `READY_FOR_REVIEW`, its pull
-request awaiting the project owner. `B-4` merged as PR #94.
+`B-6` — Rule/package mismatch reason
+([task file](tasks/B-6-rule-package-mismatch-reason.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `B-5`
+merged as PR #95.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-5`:
-the rest of lane B (`B-6`), then `RWF-050-repro` and lane E. The P1 gaps `BL-057` and `BL-058`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-6`:
+`RWF-050-repro`, then lane E. The P1 gaps `BL-057` and `BL-058`
 (small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
@@ -209,100 +214,7 @@ candidates to reorder ahead of them.
 
 ## Recently discovered
 
-From `B-5`: no new finding or task. PRM-110's title misdescribed the code
-(corrected in its status update); PRM-36's recorded sentence had already
-been removed by B-4 (measured).
-
-From `B-4`: RWF-093 (fixed by it: a named, versionless `file:` lock entry
-was dropped), and backlog `BL-060` (P4: a version-indeterminate `UNKNOWN`
-names no target). Its audit's read-error finding was fixed in the task.
-
-From `B-3`: no new finding or task (AUD-06, AUD-07 and PRM-35 fixed).
-One test (`scan.integration.test.ts`) wrote into the default cache and
-now scans uncached; no test run writes to the user cache directory
-(measured with a sentinel `XDG_CACHE_HOME`).
-
-From `B-2`: RWF-091 (fixed by it: OSV events paired in array order
-instead of OSV's sorted walk, a silent drop) and RWF-092 (from its
-audit, fixed by it: an event naming two kinds narrowed to one). No new
-task.
-
-From `B-1`: RWF-090 and `BL-059` (P3: the result schema documents
-"category if and only if undetermined" for unreported candidates and does
-not enforce it; B-1 enforces it for `withdrawn` only, because tightening
-the other dispositions weighs against schema additivity). B-1 also added
-the missing backlog § 2 rows for C-1's RWF-085, RWF-086 and RWF-089.
-
-From `C-1`: RWF-083 (fixed by it: a tsconfig `paths` / `baseUrl` mapping
-followed where Node loads an installed package), RWF-084 (ADR 0010 § 5's
-measurement omitted the `paths` clause; corrected with the owner's
-decision), RWF-085 and `BL-056` (**P1**: which file a `module-sync` export
-loads depends on the Node version; disclose or fail closed -- needs the
-project owner's choice), RWF-086 and `BL-057` (**P1**, from its audit:
-TypeScript's `.js` → `.ts` substitution inside `node_modules`), RWF-089
-and `BL-058` (**P1**, from its re-audit: VT-304's fallback takes the root
-`main` for a subpath specifier), RWF-087
-and RWF-088 (from its audit, fixed by it: the `types` export condition;
-the declaration fallback's `exports` guard), and RWF-082's update (ADR
-0010's status line is now false too, `BL-055`).
-
-From `V-4`: RWF-082 and `BL-055` (P6, records: ADR 0008 and ADR 0011
-still say "nothing here is implemented"). Its one newly refused shape (a
-closure marked incomplete with no reason, V-2's audit finding 2) is no
-production shape, so no finding.
-From `V-3`: RWF-079 and `BL-053` (**P1**: a whole-module export of an
-opaque value emits no entrypoint root requirement, and the property export
-it overwrites still witnesses the name -- a family-C false `NOT_AFFECTED`,
-pre-existing; candidate to fold into `E-3`), RWF-080 and `BL-054` (**P1**:
-an ESM destructured export is no export binding), RWF-081 (**P1**, in
-`E-4`'s notes: an export written by another module is no root gap).
-From `V-2`: no new task; its audit's one open point (the guard reads the
-incompleteness list, not `closure.complete`) is bound to `V-4`
-(REMEDIATION-PLAN § 5a, "V-2 additions").
-From `V-1`: RWF-078 (found by its audits and fixed by it: a module loaded
-only through a re-export declaration is never evaluated, so family C stood
-over a target it calls) and `BL-052` (P4, precision: evaluate such modules
-in the call graph).
-From `A-6`: RWF-075 (fixed by A-6: ADR 0008's `.call` / `.apply`
-exception read literally), `BL-050` (**P1**, RWF-076: an ES module's
-default import read as CommonJS interop, a family-C false `NOT_AFFECTED`),
-`BL-051` (**P1**, RWF-077: a destructured loader through `.call`, family
-A) and `BL-049` (P4, precision: retire `resolvesToUnrelatedConstructor`). From `A-5b`: `BL-048` (**P1**, RWF-074: VT-214's object-literal member
-check misses `with` and writes from other files, a family-C false
-`NOT_AFFECTED`). From `A-5a`: RWF-071, RWF-072, RWF-073 (each a false `NOT_AFFECTED`,
-fixed by A-5a), and `BL-047` (P2: ADR 0008 § 2's A2 structural gates,
-assigned to no task by § 8). From `A-4`: RWF-068 (fixed by A-4: the iterator's own methods),
-`BL-046` (**P1**, RWF-070: `await` constructs a promise's `constructor` /
-`Symbol.species`, a family-C false `NOT_AFFECTED` outside the protocol
-list; needs the project owner's decision) and `BL-045` (P2, RWF-069: the
-`path.*` admissions run `util.inspect.custom` through a structured
-argument the probe cannot build; no live false `NOT_AFFECTED` since A-4).
-From
-`A-3b`: `BL-040` (**P1**, RWF-065: `module.parent.require` loads a
-module the loader classifier misses, a family-A false `NOT_AFFECTED`;
-families B and C fail closed since A-3b), RWF-066 (fixed by A-3b: the
-automatic JSX runtime's implicit `require`), `BL-041` and `BL-042`
-(precision: resolve the JSX factory; resolve own-export calls through
-the write set), `BL-043` (**P1**, RWF-067: a loader capability escaping
-through a for-of destructuring assignment, family A), `BL-044` (**P1**,
-reproduce first: `importHelpers` loads `tslib` unseen). From `A-3a`: `BL-039` (**P1**, RWF-063: a builtin object monkeypatched
-through a parameter, container or destructuring of the global object
-keeps the table's no-edge proof), RWF-064 (the builtin probe; fixed in
-part), and PRM-13's false-`AFFECTED` direction (VT-213; fixed by A-5a). From
-`A-2`: none. From `A-1`: `BL-037` (**P1**, RWF-061: a `vm.Script` reached through a
-subclass or factory is a family-A false `NOT_AFFECTED`), `BL-038` (**P1**,
-RWF-062: `new A()` resolves to a constructor overload signature), RWF-060 (**P1**,
-an implicit constructor forwarding a callback into an ambient or builtin
-base; added to A-3's acceptance), `BL-036` (RWF-059, an instance field
-initializer's calls attributed to the class-definition owner), `BL-034`
-(resolve an explicit `super(...)` through the base authority —
-precision) and `BL-035` (RWF-058, a call inside a member decorator's
-expression is attributed to the member). From
-`BL-029`: `BL-032` (the suites' finding selector is written out
-four times, the tool's suite view included) and `BL-033` (vitest's
-`Timeout calling "onTaskUpdate"` looks duration-bound, not load-bound;
-verify and remove it from the suites). Still open from earlier tasks:
-`BL-030` (promote `test:validation` to a CI gate — needs a decision),
-`BL-031` (the 39 "Appendix A" citations, RWF-055), `BL-017`, `BL-018`
-(with finding RWF-052), `BL-004` (archived P0-Z and P0 closure probes,
-added by the project owner).
+From `B-6`: `BL-061` (P2: one rule per advisory id, so the second package
+of a multi-package advisory can never be `AFFECTED`) and `BL-062` (P3: an
+aliased instance reported under two names). AUD-15's recorded reason had
+already changed before B-6 (measured).
