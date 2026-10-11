@@ -134,7 +134,7 @@ below.
 | Finding | Summary | Impact | Lane | Closed by | Task |
 | --- | --- | --- | --- | --- | --- |
 | RWF-047 (OPEN-DEBTS D-16) | a member write on a require-bound module object keeps its static attribution | FNA and FA | E | E writes by other modules | E-4 |
-| RWF-050 | RWF-026's inherited MAY-execute conditional/logical abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`), given a register row but not independently reproduced | possible FNA — UNCLASSIFIED | none yet: plausibly E (export attribution's abrupt-completion machinery, by analogy with RWF-026's own family — `FINDINGS.md` RWF-050) | reproduce end to end against real Node first; only then classify (defect class, proof family, lane) | **RWF-050-repro** (added by `remediation-reconciliation`; see § 5a) |
+| RWF-050 | RWF-026's inherited MAY-execute abrupt-operand gap (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`, and RWF-026's other refused MAY positions) | FNA, family C (reproduced by RWF-050-repro; defect class C) | E (ADR 0009 § 1 clause 3) | the module-evaluation cutoff becomes MAY for expressions, as it is for statements | reproduced and classified by **RWF-050-repro**; fixed by **BL-063** (§ 5a, "RWF-050-repro additions") |
 
 Added by task
 [`remediation-reconciliation`](tasks/remediation-reconciliation.md):
@@ -148,6 +148,14 @@ because the mechanism it inherits from RWF-026 (`mayEndModuleEvaluation`'s
 abrupt-completion reachability) is the same machinery ADR 0009 § 1
 clause 3 (E-1's scope) keeps and narrows; this is a hypothesis for
 scheduling purposes only; the task itself decides.
+
+**Decided by task RWF-050-repro (2026-10-12).** It reaches a real verdict:
+13 spellings, each a false `NOT_AFFECTED` with a complete family C proof
+against real Node. The hypothesis held: lane E, clause 3. The fix is a
+separate task, `BL-063`, and not part of E-1, because E-1's write set does
+not touch the cutoff, and E-1's precision acceptance (ADR 0009 § 8)
+protects the controls `BL-063` must invert. See § 5a, "RWF-050-repro
+additions".
 
 ### 2.5 Task A-0 (ADR 0008 coverage reproduction)
 
@@ -1692,6 +1700,52 @@ AUD-15.
   valid only for `rule.package.name`; a task that adds a rule or a rule
   source must keep the comparison, and a multi-package rule design
   (`BL-061`) must replace it, not bypass it.
+
+#### RWF-050-repro additions (task RWF-050-repro, 2026-10-12)
+
+**Outcome of RWF-050-repro** (§ 2.4's RWF-050 row). Reproduced and
+classified; nothing fixed, no production change. RWF-050 is a live false
+`NOT_AFFECTED` with a complete family C proof: 13 MAY-abrupt spellings
+against real Node, each now an open-soundness-defect record
+(`tests/oracle/rwf050-may-execute-operand.*`, `RWF-050`, `D-17`). Defect
+class C, proof family C, P0, lane **E** (ADR 0009 § 1 clause 3). The fix
+is backlog `BL-063`. Full record: FINDINGS RWF-050 (RWF-050-repro status
+update).
+
+- **Why it is not lane E's clause 4.** The reproductions put the
+  re-entrant `require` before both writes, so no observation point lies
+  between them. E-1's write set and observation-point rule leave every
+  case as it is. Only the cutoff relation (`mayEndModuleEvaluation`)
+  decides, and it uses RWF-026's MUST relation for a MAY question.
+- **The fix's shape (a recommendation for `BL-063`, not decided here).**
+  The cutoff becomes MAY for expressions as it already is for statements:
+  any module-time evaluation of a call `isDefinitelyAbruptCall` proves,
+  outside a function body and not caught within the statement, ends the
+  definitely-reached region. RWF-026's MUST relation stays as it is for the
+  questions that need MUST. A throwaway prototype of exactly this flips all
+  13 records and fails 48 unit tests, all "keeps authority" controls for
+  MAY positions (FINDINGS RWF-050, "Mutation").
+- **Differentials.** Tests and records only: graph, proof and verdict
+  differentials 0 over the corpora.
+
+**Decision for the project owner (ADR 0009 § 8).** E-1's row says every
+RWF-013 … RWF-028 "keeps authority / keeps the later export attributable"
+control **must stay green**. That list includes the MAY rows of the
+RWF-016, RWF-017, RWF-018, RWF-019, RWF-020, RWF-024, RWF-026 and RWF-028
+suites, which assert the unsound attribution and which `BL-063` must
+invert (FINDINGS RWF-050, correction 1). Recommendation: order `BL-063`
+before E-1, and amend ADR 0009 § 8 so that E-1's precision acceptance
+names those controls as they stand after `BL-063`. Until that is decided,
+the ADR text stands and `BL-063` is the record of the conflict.
+
+**What RWF-050-repro binds.**
+
+- **`BL-063`**: deletes every RWF-050 open-soundness-defect record and
+  asserts `UNKNOWN` for each case. It inverts the MAY "keeps authority"
+  rows in the same change, and keeps the `break`-guarded loop rows only by
+  a rule it can justify against real Node.
+- **E-1**: until ADR 0009 § 8 is amended, its precision acceptance must
+  not be read as protecting a MAY "keeps authority" control.
 
 ## 6. Decisions for the user
 

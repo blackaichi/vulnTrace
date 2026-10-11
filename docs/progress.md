@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-12, by `B-6`.
+**Last updated:** 2026-10-12, by `RWF-050-repro`.
 
 ## Objective
 
@@ -198,23 +198,29 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`B-6` — Rule/package mismatch reason
-([task file](tasks/B-6-rule-package-mismatch-reason.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `B-5`
-merged as PR #95.
+`RWF-050-repro` — Reproduce RWF-026's inherited MAY-execute abrupt-operand
+gap; then classify
+([task file](tasks/RWF-050-repro-may-execute-operand.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `B-6`
+merged as PR #96. RWF-050 is a live family-C false `NOT_AFFECTED` (13
+spellings, open-soundness-defect records), lane E, fix `BL-063`.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `B-6`:
-`RWF-050-repro`, then lane E. The P1 gaps `BL-057` and `BL-058`
-(small, `module-resolver.ts` only, from C-1), `BL-048`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After
+`RWF-050-repro`: `BL-063` (proposed before E-1), then lane E. Open
+decision for the project owner: ADR 0009 § 8 makes E-1's precision
+acceptance protect the MAY "keeps authority" tests `BL-063` must invert
+(REMEDIATION-PLAN § 5a, "RWF-050-repro additions"). The P1 gaps `BL-057`
+and `BL-058` (small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
 `BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
-candidates to reorder ahead of them.
+candidates to reorder ahead of lane E.
 
 ## Recently discovered
 
-From `B-6`: `BL-061` (P2: one rule per advisory id, so the second package
-of a multi-package advisory can never be `AFFECTED`) and `BL-062` (P3: an
-aliased instance reported under two names). AUD-15's recorded reason had
-already changed before B-6 (measured).
+From `RWF-050-repro`: `BL-063` (P0: the fix for RWF-050). Two record
+errors measured: RWF-026's `REFUSED` test premise ("every one of these
+completes under real Node") is false for its MAY rows, and ADV2-086's
+"decoys" do end module evaluation for a truthy flag (FINDINGS RWF-050,
+corrections).

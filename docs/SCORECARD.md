@@ -347,7 +347,7 @@ this table except the category.
 | PRM-106 | open | Open | false NOT_AFFECTED — see below |
 | PRM-107 | open | Open | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below |
 | PRM-109 | open | Open | false NOT_AFFECTED — see below |
-| RWF-050 | open | Open | UNCLASSIFIED — possible false NOT_AFFECTED, not independently reproduced — see below |
+| RWF-050 | open | Open (lane E, backlog `BL-063`) | false NOT_AFFECTED (family C), reproduced against real Node by RWF-050-repro — see below |
 | RWF-052 | open | Open | record — a register entry overstates an open defect — see below |
 | RWF-055 | open | Open | record — roughly a third of the backlog's stated justifications point nowhere, same shape as D-10 but far wider — see below |
 | RWF-058 | open | Open | fabricated edge (misattributed caller; no verdict moved) — see below |

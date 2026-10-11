@@ -2,11 +2,14 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: RWF-050-repro
 - **Branch**: rwf-050-repro-may-execute-operand
 - **Base SHA**: 570a4b6f714f95aee8d832914ca6972458bc30b6
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): RWF-050-repro task file — reproduce the MAY-execute abrupt-operand gap`
+  - `test(RWF-050-repro): reproduce the MAY-execute abrupt-operand gap against real Node`
+  - (this commit) `docs(RWF-050-repro): records — RWF-050 classified, BL-063, plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -131,18 +134,18 @@ collapses it to the last write.
 
 ## Acceptance criteria
 
-- [ ] Every reproduced spelling is an oracle case with a loud fixture,
+- [x] Every reproduced spelling is an oracle case with a loud fixture,
       both controls and real-Node ground truth
-- [ ] No test asserts a wrong verdict as its expected outcome; each
+- [x] No test asserts a wrong verdict as its expected outcome; each
       reproduction is an open-soundness-defect record against RWF-050 and
       D-17
-- [ ] RWF-050 is classified in FINDINGS (register row and section):
+- [x] RWF-050 is classified in FINDINGS (register row and section):
       defect class, proof family, severity, lane
-- [ ] The false RWF-026 `REFUSED` premise and ADV2-086 comment are
+- [x] The false RWF-026 `REFUSED` premise and ADV2-086 comment are
       recorded as corrections
-- [ ] A backlog row exists for the fix, with priority and dependencies
-- [ ] No production file under `src/` changed
-- [ ] Graph, proof and verdict differentials zero; all gates green;
+- [x] A backlog row exists for the fix, with priority and dependencies
+- [x] No production file under `src/` changed
+- [x] Graph, proof and verdict differentials zero; all gates green;
       validation at exactly the five documented failures
 
 ## Gates
