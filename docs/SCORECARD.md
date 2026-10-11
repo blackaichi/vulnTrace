@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4830 tests, 198 files | measured (deterministic) — `npm test` at `a-2-possible-edge (base b7c8f57)`, 2026-09-29 | 221 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4830 tests, 198 files | measured (deterministic) — `npm test` at `a-2-possible-edge (base b7c8f57)`, 2026-09-29 | 222 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (deterministic) — `npm run test:validation` at `d-03-hermetic-osv-validation (base a87faa2)`, 2026-09-27 | Real npm-installed packages against real advisories, replayed from a recorded OSV snapshot since D-03 (was live). | Integration evidence and a provider-movement detector across re-recordings, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -69,7 +69,7 @@ cannot be averaged into one number without destroying both. Read the
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
 | Categories | 6 — unmodeled_construct, value_uncertainty, capability_escape, identity_unresolved, analysis_precondition_unmet, budget_exceeded | structural — `src/domain/uncertainty.ts` | Each category names a different KIND of work, which is the only property that makes a taxonomy worth having. | **Observational.** Nothing in the taxonomy authorizes a proof or is read by any branch that decides a verdict. |
-| Specific reasons classified | 60 | structural — the same file, exhaustiveness compile-enforced | Every `DynamicCallReason` appears verbatim and every reason has exactly one category. | Eight of them are the P1-B1 frontend-gap subtypes; `unsupported_construct` survives as their runtime floor, not as a bucket — see §7.1. |
+| Specific reasons classified | 61 | structural — the same file, exhaustiveness compile-enforced | Every `DynamicCallReason` appears verbatim and every reason has exactly one category. | Eight of them are the P1-B1 frontend-gap subtypes; `unsupported_construct` survives as their runtime floor, not as a bucket — see §7.1. |
 
 Reasons per category:
 
@@ -79,7 +79,7 @@ Reasons per category:
 | `value_uncertainty` | 3 |
 | `capability_escape` | 17 |
 | `identity_unresolved` | 11 |
-| `analysis_precondition_unmet` | 9 |
+| `analysis_precondition_unmet` | 10 |
 | `budget_exceeded` | 4 |
 
 ## 6. Real-world benchmark
@@ -306,9 +306,9 @@ field and the vocabulary are documented next to the table.
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
 | Findings recorded | 163 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 52 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-13, AUD-15, AUD-16, PRM-21, PRM-22, PRM-24, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-32, PRM-60, PRM-61, PRM-62, PRM-63, PRM-67, PRM-103, PRM-105, PRM-106, PRM-107, PRM-109, RWF-050, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-070, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Still open | 51 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-26, PRM-27, PRM-28, PRM-29, PRM-30, PRM-32, PRM-60, PRM-61, PRM-62, PRM-63, PRM-67, PRM-103, PRM-105, PRM-106, PRM-107, PRM-109, RWF-050, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-070, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 4 — RWF-002, PRM-108, RWF-063, RWF-064 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
-| Recorded as fixed | 107 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
+| Recorded as fixed | 108 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
 
 ### 8.1 Outstanding findings, in their own words
 
@@ -327,7 +327,6 @@ this table except the category.
 | AUD-03 | open | Open | false NOT_AFFECTED — see below |
 | AUD-04 | open | Open | false NOT_AFFECTED — see below |
 | AUD-13 | open | Open | false AFFECTED — see below |
-| AUD-15 | open | Open | false reason — see below |
 | AUD-16 | open | Open | disclosure — see below |
 | PRM-21 | open | Open | false NOT_AFFECTED — see below |
 | PRM-22 | open | Open | false NOT_AFFECTED — see below |

@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: B-6
 - **Branch**: b-6-rule-package-mismatch-reason
 - **Base SHA**: 6707a00a8cffdd0547530e0b1db907f28597fb1d
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `docs(tasks): B-6 task file — rule/package mismatch reason`
+  - `test(B-6): rule/package mismatch reason — AUD-15`
+  - `fix(B-6): a rule applies only to the package it names — rule_package_mismatch`
+  - (this commit) `docs(B-6): records — AUD-15 fixed, plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -108,18 +112,18 @@ B-6 row; if wanted it is a discovered task).
 
 ## Acceptance criteria
 
-- [ ] The two-package repro's `other-lib` finding is `UNKNOWN` with
+- [x] The two-package repro's `other-lib` finding is `UNKNOWN` with
       `rule_package_mismatch`, whose prose names the rule's package and
       the finding's package, and no resolution failure.
-- [ ] The named package's finding is unchanged.
-- [ ] `rule_package_mismatch` belongs to `analysis_precondition_unmet`;
+- [x] The named package's finding is unchanged.
+- [x] `rule_package_mismatch` belongs to `analysis_precondition_unmet`;
       the number of categories is still six.
-- [ ] The tests failed on the base commit and pass after.
-- [ ] Verdict, proof and graph differentials reported separately; no
+- [x] The tests failed on the base commit and pass after.
+- [x] Verdict, proof and graph differentials reported separately; no
       `NOT_AFFECTED` is created.
-- [ ] Every gate of `AGENTS.md` § I passes; validation equals the D-09
+- [x] Every gate of `AGENTS.md` § I passes; validation equals the D-09
       baseline.
-- [ ] Independent audit `CERTIFIED`.
+- [x] Independent audit `CERTIFIED`.
 
 ## Gates
 
@@ -128,3 +132,13 @@ The full set in `AGENTS.md` § I, unrelaxed.
 ## Report
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
+
+## Outcome
+
+- Independent audit: `CERTIFIED`, no unsoundness. Its three low findings:
+  the precision loss for a package the app never loads (asserted, and the
+  task's "which is sound" above is true only for a loaded package), the
+  now-binding `package.name`, and a pre-existing duplicate report of an
+  aliased instance (`BL-062`). One rule per advisory id: `BL-061`.
+- Differentials over 139 cases: verdict 0, proof 0, graph 0. Validation
+  equals the D-09 baseline.

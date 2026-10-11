@@ -1150,6 +1150,17 @@ candidates +0/−0, and 35 cases' exit code moved from `0` to `5`;
 validation equals the D-09 baseline. This entry still stands: lanes E, C
 (C-2..C-5) and B (B-6) remain.
 
+**Progress, added by task `B-6` (2026-10-12).** Task B-6
+(`docs/tasks/B-6-rule-package-mismatch-reason.md`), the last of lane B,
+fixes AUD-15: a rule applies only to the package it names, and a finding
+for another package is `UNKNOWN` with the new reason `rule_package_mismatch`
+(AUD-15's recorded reason had already changed; a rule naming the wrong
+package had been applied silently and could be `AFFECTED`). Its audit
+certified it. Over the 139 corpus cases: verdict differential 0, proof 0,
+graph 0; validation equals the D-09 baseline. Discovered: `BL-061`
+(one rule per advisory id), `BL-062` (an aliased instance reported twice).
+This entry still stands: lanes E and C (C-2..C-5) remain.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
