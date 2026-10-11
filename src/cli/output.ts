@@ -10,6 +10,7 @@ import type {
 } from "../domain/uncertainty.js";
 import type { Finding } from "../domain/verdict.js";
 import type { PhaseTimings } from "../performance/timing.js";
+import type { ScanSummary } from "./scan-summary.js";
 
 const repoRoot = path.resolve(
   fileURLToPath(new URL("../../", import.meta.url)),
@@ -26,8 +27,9 @@ const validate = ajv.compile(schema);
 /**
  * docs/SDD.md § 24's example output; matches schemas/result.schema.json's
  * `$id`. `0.7`: the `withdrawn` disposition (task B-1, decision 10).
+ * `0.8`: the `summary` (task B-5, decision 3).
  */
-export const SCHEMA_VERSION = "0.7";
+export const SCHEMA_VERSION = "0.8";
 
 export interface JsonTarget {
   readonly module: string;
@@ -206,6 +208,14 @@ export interface ScanOutput {
    * itself to the diagnostic by naming the same instance.
    */
   readonly unreportedCandidates: readonly UnreportedCandidate[];
+  /**
+   * Task B-5 (AUD-12, decision 3): counts by verdict and by disposition,
+   * and the outcome the exit code follows from. Always emitted, computed
+   * from the two arrays above by `summarizeScan` and from nothing else.
+   * Optional in the schema only, so that a result archived before 0.8
+   * still validates (the F3 additivity rule).
+   */
+  readonly summary: ScanSummary;
   /** Per-phase timing instrumentation (see docs/SDD.md § 30, TASK-029). */
   readonly timings: PhaseTimings;
 }

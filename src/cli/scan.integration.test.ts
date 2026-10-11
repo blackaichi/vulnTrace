@@ -84,7 +84,8 @@ describe("runScanCommand against a recorded real OSV response", () => {
     // out of `unmodeled_construct` so the P1-B ranking stays honest.
     expect(stderr.join("")).toContain("UNKNOWN finding");
     expect(stderr.join("")).toContain("no_vulnerable_symbol_rule");
-    expect(exitCode).toBe(0);
+    // Task B-5 (AUD-12, decision 3): all UNKNOWN is undecided, exit 5.
+    expect(exitCode).toBe(5);
 
     const output = JSON.parse(stdout.join(""));
     expect(output.schemaVersion).toBeDefined();

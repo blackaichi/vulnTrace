@@ -254,7 +254,8 @@ describe("runScanCommand: resource limits are enforced and diagnosed", () => {
         io,
       });
 
-      expect(exitCode).toBe(0);
+      // Task B-5 (decision 3): an UNKNOWN and nothing AFFECTED exits 5.
+      expect(exitCode).toBe(5);
       const output = JSON.parse(stdout.join(""));
       expect(output.findings).toHaveLength(1);
       expect(output.findings[0]).toMatchObject({

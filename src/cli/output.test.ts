@@ -8,6 +8,7 @@ import {
   validateScanOutput,
   type ScanOutput,
 } from "./output.js";
+import { summarizeScan } from "./scan-summary.js";
 
 describe("findingToJson", () => {
   it("renames the domain target's 'export' field to 'symbol', per docs/SDD.md § 24's documented output shape", () => {
@@ -88,6 +89,15 @@ describe("validateScanOutput", () => {
     },
     diagnostics: [],
     unreportedCandidates: [],
+    summary: {
+      outcome: "affected",
+      findings: { AFFECTED: 1, NOT_AFFECTED: 0, UNKNOWN: 0 },
+      unreportedCandidates: {
+        not_applicable: 0,
+        undetermined: 0,
+        withdrawn: 0,
+      },
+    },
     timings: {
       parsingMs: 5,
       resolutionMs: 2,
@@ -329,6 +339,7 @@ describe("formatScanOutput", () => {
     schemaVersion: SCHEMA_VERSION,
     scan: { id: "scan-1", project: "." },
     findings: [],
+    summary: summarizeScan([], []),
     coverage: {
       files: 0,
       modulesResolved: 0,

@@ -74,6 +74,7 @@ import {
   type ScanOutput,
   type UnreportedCandidate,
 } from "./output.js";
+import { exitCodeFor, SCAN_EXIT, summarizeScan } from "./scan-summary.js";
 import {
   UNCERTAINTY_CATEGORIES,
   UNCERTAINTY_REASON_CATEGORY,
@@ -107,6 +108,13 @@ export interface RunScanOptions {
    */
   readonly outputPath?: string;
   readonly pretty?: boolean;
+  /**
+   * `--lenient-exit` (task B-5, decision 3): exit 0, not 5, when nothing is
+   * AFFECTED and something is undecided -- the behaviour before B-5. It
+   * changes the exit code only; the output, its `summary` included, is the
+   * same.
+   */
+  readonly lenientExit?: boolean;
   /** `--no-cache` (docs/SDD.md § 28): forces the vulnerability provider cache off regardless of config. */
   readonly noCache?: boolean;
   /**
@@ -1115,6 +1123,10 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
   }
 
   const findings: Finding[] = [];
+  // Task B-5: whether `--cve` selected anything at all -- a usable
+  // advisory, or an unusable record it may name -- for any installed
+  // package. A filter that selected nothing is said out loud below.
+  let cveFilterMatched = false;
 
   // Advisory lookup is driven by PACKAGE NAME, and the fan-out below is
   // driven by INSTANCE -- deliberately two different keys.
@@ -1215,6 +1227,27 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     const relevantUnusable = [...unusableRecords.values()].filter((record) =>
       mayMatchCveFilter(record.identity, cveFilter),
     );
+    if (relevant.length > 0 || relevantUnusable.length > 0) {
+      cveFilterMatched = true;
+    }
+    // Task B-5 (PRM-36): how many DISTINCT advisories the provider returned
+    // for this name, over all of its queries and BEFORE `--cve` -- what "no
+    // advisory was returned" is decided on. The filtered set says only what
+    // this report evaluates. An unusable record counts once per readable
+    // id, and not at all when a usable copy of that id was kept (B-5's
+    // audit, finding 1: the same advisory, usable from one query and
+    // malformed from another, was counted twice); one with no readable id
+    // counts once per distinct record.
+    const returnedIds = new Set<string>(vulnerabilitiesById.keys());
+    let unidentifiedReturned = 0;
+    for (const record of unusableRecords.values()) {
+      if (record.identity.id === undefined) {
+        unidentifiedReturned += 1;
+      } else {
+        returnedIds.add(record.identity.id);
+      }
+    }
+    const returnedForName = returnedIds.size + unidentifiedReturned;
 
     // FAN OUT PER EXACT INSTANCE. Each one is resolved, evaluated and
     // proved entirely on its own: `buildFinding` still reasons about
@@ -1251,6 +1284,20 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
         projectRoot,
       );
       if (candidate.version === undefined && relevant.length === 0) {
+        // Task B-5 (PRM-36). Whether the provider returned nothing, or
+        // returned advisories that `--cve` (or the normalizer) then left
+        // out, is decided on the UNFILTERED set: "no advisory was
+        // returned" is said only when none was.
+        const returned =
+          returnedForName === 0
+            ? "no advisory was returned for this name, asked without a version"
+            : `${String(returnedForName)} ${returnedForName === 1 ? "advisory was" : "advisories were"} ` +
+              `returned for this name (its query without a version included), and ` +
+              (cveFilter === undefined
+                ? "none was usable"
+                : relevantUnusable.length === 0
+                  ? `none matches --cve ${cveFilter}`
+                  : `none that may match --cve ${cveFilter} was usable`);
         unreportedCandidates.push({
           stage: "package_identity",
           disposition: "undetermined",
@@ -1260,9 +1307,7 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
           category: UNCERTAINTY_REASON_CATEGORY.installed_version_unavailable,
           detail:
             `package instance "${instance}" (${packageName}) has no established ` +
-            `version, and no ${relevantUnusable.length > 0 ? "usable " : ""}advisory ` +
-            `${cveFilter !== undefined ? `matching ${cveFilter} ` : ""}was returned for ` +
-            `this name, asked without a version, so no advisory was ever evaluated ` +
+            `version, and ${returned}, so no advisory was ever evaluated ` +
             `against it; whether any vulnerability applies to this instance is undetermined`,
         });
       }
@@ -1417,6 +1462,17 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     }
   }
 
+  // Task B-5. A `--cve` filter that selected nothing for any installed
+  // package leaves a report with nothing in it; before B-5 that report
+  // was byte-identical to one whose filter matched and was clean.
+  if (cveFilter !== undefined && !cveFilterMatched) {
+    const message =
+      `--cve ${cveFilter} matched no advisory the vulnerability provider returned ` +
+      `for the installed packages (by id or alias), so this report evaluates no advisory`;
+    io.stderr(`vulntrace: ${message}\n`);
+    diagnostics.push({ source: "vulnerabilities", message });
+  }
+
   if (cacheWriteFailures.count > 0) {
     const answers =
       cacheWriteFailures.count === 1
@@ -1432,13 +1488,19 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     diagnostics.push({ source: "cache", message });
   }
 
+  const jsonFindings = findings.map(findingToJson);
+  const sortedUnreported = sortUnreportedCandidates(unreportedCandidates);
+  // Task B-5 (AUD-12, decision 3): computed from the very arrays emitted
+  // next to it, and the exit code below from it -- never separately.
+  const summary = summarizeScan(jsonFindings, sortedUnreported);
   const output: ScanOutput = {
     schemaVersion: SCHEMA_VERSION,
     scan: { id: randomUUID(), project: options.projectPathArg },
-    findings: findings.map(findingToJson),
+    findings: jsonFindings,
     coverage: computeCoverage(graph),
     diagnostics,
-    unreportedCandidates: sortUnreportedCandidates(unreportedCandidates),
+    unreportedCandidates: sortedUnreported,
+    summary,
     timings: {
       // Derived, not independently measured -- see PhaseTimings' own doc
       // comment (src/performance/timing.ts) for why.
@@ -1500,5 +1562,21 @@ export async function runScanCommand(options: RunScanOptions): Promise<number> {
     io.stdout(rendered);
   }
 
-  return findings.some((finding) => finding.verdict === "AFFECTED") ? 1 : 0;
+  // Task B-5 (AUD-12, decision 3). Before B-5 this was "1 if anything is
+  // AFFECTED, else 0", so a scan that decided nothing exited exactly like
+  // a clean one.
+  const lenient = options.lenientExit === true;
+  if (summary.outcome === "undecided") {
+    const unknown = summary.findings.UNKNOWN;
+    const undetermined = summary.unreportedCandidates.undetermined;
+    io.stderr(
+      `vulntrace: nothing is AFFECTED, but the scan left candidates undecided ` +
+        `(${String(unknown)} UNKNOWN finding${unknown === 1 ? "" : "s"}, ` +
+        `${String(undetermined)} undetermined unreported candidate${undetermined === 1 ? "" : "s"}); ` +
+        (lenient
+          ? `exiting 0 because of --lenient-exit\n`
+          : `exiting ${String(SCAN_EXIT.undecided)} (--lenient-exit exits 0 instead)\n`),
+    );
+  }
+  return exitCodeFor(summary, lenient);
 }

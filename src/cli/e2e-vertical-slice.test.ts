@@ -168,7 +168,7 @@ describe("E2E vertical slice (TASK-025)", () => {
     });
   });
 
-  it("known vulnerable + dynamic call target (dynamic fixture) -> UNKNOWN, never NOT_AFFECTED, exit code 0, schema-valid JSON", async () => {
+  it("known vulnerable + dynamic call target (dynamic fixture) -> UNKNOWN, never NOT_AFFECTED, exit code 5, schema-valid JSON", async () => {
     const configPath = writeVerticalSliceConfig("src/index.ts");
     const { io, stdout, stderr } = fakeIo();
 
@@ -182,7 +182,9 @@ describe("E2E vertical slice (TASK-025)", () => {
 
     // FOUNDATION F3 § 22. A scan that produces an UNKNOWN is no longer
     // silent about WHY on the human-facing stream. Everything else about
-    // stderr is unchanged -- this is the only line the scan writes, so an
+    // stderr is unchanged -- this and B-5's undecided-exit line are the
+    // only lines this scan writes (B-5 also writes that line for an
+    // undetermined entry, and one for a --cve that selects nothing), so an
     // otherwise-clean scan with no UNKNOWN still writes nothing at all
     // (asserted by the two AFFECTED/NOT_AFFECTED cases above, which still
     // require `stderr` to be exactly `[]`).
@@ -193,7 +195,9 @@ describe("E2E vertical slice (TASK-025)", () => {
     expect(stderr.join("")).toContain("1 UNKNOWN finding; why:");
     expect(stderr.join("")).toContain("value_uncertainty");
     expect(stderr.join("")).toContain("dynamic_member_access (1)");
-    expect(exitCode).toBe(0);
+    // Task B-5 (AUD-12, decision 3): an UNKNOWN and nothing AFFECTED is
+    // undecided, exit 5 -- before B-5, 0, the same as a clean scan.
+    expect(exitCode).toBe(5);
 
     const output: unknown = JSON.parse(stdout.join(""));
     expect(validateScanOutput(output)).toEqual([]);

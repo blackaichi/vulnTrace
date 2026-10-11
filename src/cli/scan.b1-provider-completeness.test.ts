@@ -687,8 +687,8 @@ describe("B-1: the result schema (0.7) and the HTML report carry the withdrawn d
     timings,
   });
 
-  it("is version 0.7", () => {
-    expect(SCHEMA_VERSION).toBe("0.7");
+  it("is version 0.8 (0.7 added withdrawn; B-5's 0.8 the summary)", () => {
+    expect(SCHEMA_VERSION).toBe("0.8");
   });
 
   it("accepts a withdrawn entry and an advisory_record_malformed entry", () => {

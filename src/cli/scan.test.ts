@@ -150,7 +150,7 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
     expect(output.findings[0]?.verdict).toBe("NOT_AFFECTED");
   });
 
-  it("produces UNKNOWN (exit code 0) when no rule is configured for the vulnerability", async () => {
+  it("produces UNKNOWN (exit code 5) when no rule is configured for the vulnerability", async () => {
     const configPath = writeConfig(undefined);
     const { io, stdout } = fakeIo();
 
@@ -162,7 +162,9 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       io,
     });
 
-    expect(exitCode).toBe(0);
+    // Task B-5 (AUD-12, decision 3): an UNKNOWN and nothing AFFECTED
+    // is undecided, exit 5 (0 before B-5, the same as a clean scan).
+    expect(exitCode).toBe(5);
     const output = JSON.parse(stdout.join(""));
     expect(output.findings[0]?.verdict).toBe("UNKNOWN");
   });
@@ -238,7 +240,9 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       io,
     });
 
-    expect(exitCode).toBe(0);
+    // Task B-5 (AUD-12, decision 3): an UNKNOWN and nothing AFFECTED
+    // is undecided, exit 5 (0 before B-5, the same as a clean scan).
+    expect(exitCode).toBe(5);
     const output = JSON.parse(stdout.join(""));
     expect(output.diagnostics).toEqual([
       {
@@ -277,7 +281,9 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       io,
     });
 
-    expect(exitCode).toBe(0);
+    // Task B-5 (AUD-12, decision 3): an UNKNOWN and nothing AFFECTED
+    // is undecided, exit 5 (0 before B-5, the same as a clean scan).
+    expect(exitCode).toBe(5);
     const output = JSON.parse(stdout.join(""));
     expect(output.diagnostics).toEqual([
       {
@@ -306,7 +312,9 @@ describe("runScanCommand: fixtures/direct-esm end to end with an injected provid
       io,
     });
 
-    expect(exitCode).toBe(0);
+    // Task B-5 (AUD-12, decision 3): an UNKNOWN and nothing AFFECTED
+    // is undecided, exit 5 (0 before B-5, the same as a clean scan).
+    expect(exitCode).toBe(5);
     const output = JSON.parse(stdout.join(""));
     expect(output.diagnostics).toContainEqual({
       source: "call-graph",

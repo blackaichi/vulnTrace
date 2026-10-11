@@ -677,6 +677,30 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "dropped package is a missing finding, and the nested same-name, " +
       "same-version copy is the sibling-borrow case.",
   },
+  {
+    id: "VT-INV-B-exit-decision",
+    invariant:
+      "A finished scan's exit code says whether anything was left " +
+      "undecided: 1 when a finding is AFFECTED; otherwise 5 when a finding " +
+      "is UNKNOWN or an unreportedCandidates entry is undetermined (0 under " +
+      "--lenient-exit, which changes nothing else); otherwise 0. The output " +
+      "always carries a summary whose counts are those of its own findings " +
+      "and unreportedCandidates arrays, and the exit code is computed from " +
+      "that summary and nothing else. An empty or blank --cve is a usage " +
+      "error, and a --cve filter that selects nothing is said out loud.",
+    foundation: "LANE-B",
+    owners: [
+      "src/cli/scan.b5-cli-output.test.ts",
+      "src/cli/run.b5-flags.test.ts",
+    ],
+    note:
+      "Task B-5 (AUD-12, PRM-36, PRM-110, PRM-111; decision 3). The scan " +
+      "test owns each outcome's exit code in both modes and both formats, " +
+      "the summary against the arrays, the unmatched filter, PRM-36's " +
+      "unfiltered condition and the HTML fallback, end to end; the run test " +
+      "owns the flags at the CLI boundary. withdrawn is decided (B-5's " +
+      "reading of decision 3, REMEDIATION-PLAN § 5a).",
+  },
 ];
 
 /**

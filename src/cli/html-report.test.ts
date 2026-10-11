@@ -19,6 +19,7 @@ import {
   validateScanOutput,
   type ScanOutput,
 } from "./output.js";
+import { summarizeScan } from "./scan-summary.js";
 
 /**
  * HTML Report v0.1 — renderer unit tests.
@@ -55,13 +56,16 @@ const EMPTY_TIMINGS = {
 } as const;
 
 function scanOutput(partial: Partial<ScanOutput> = {}): ScanOutput {
+  const findings = partial.findings ?? [];
+  const unreportedCandidates = partial.unreportedCandidates ?? [];
   return {
     schemaVersion: SCHEMA_VERSION,
     scan: { id: "scan-0001", project: "." },
-    findings: [],
+    findings,
     coverage: EMPTY_COVERAGE,
     diagnostics: [],
-    unreportedCandidates: [],
+    unreportedCandidates,
+    summary: summarizeScan(findings, unreportedCandidates),
     timings: EMPTY_TIMINGS,
     ...partial,
   };

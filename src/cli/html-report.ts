@@ -344,9 +344,22 @@ function targetOf(finding: JsonFinding): string | undefined {
   return restated ? `${restated.module}#${restated.export}` : undefined;
 }
 
-/** The first reason string — the overview table's one-line summary. */
+/**
+ * The overview table's one-line summary: the first evidence reason, else
+ * the first classified `unknownReasons` entry. Task B-5 (PRM-110): an
+ * UNKNOWN decided before reachability (no vulnerable-symbol rule, an
+ * indeterminate version) records its reason in `unknownReasons` only, and
+ * the overview used to read "no reason recorded" for it.
+ */
 function summaryOf(finding: JsonFinding): string | undefined {
-  return finding.evidence?.reasons?.[0];
+  const reason = finding.evidence?.reasons?.[0];
+  if (reason !== undefined) {
+    return reason;
+  }
+  const classified = finding.unknownReasons?.[0];
+  return classified === undefined
+    ? undefined
+    : `${classified.reason} (${classified.category})`;
 }
 
 /** Stable, index-derived element id: never random, never content-hashed. */

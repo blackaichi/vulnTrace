@@ -157,9 +157,10 @@ async function scanJson(
       stderr: (text) => stderr.push(text),
     },
   });
-  // 0 = no findings, 1 = findings reported. Anything higher is a real
-  // failure and must not be silently parsed as empty output.
-  if (exitCode > 1) {
+  // 0 = decided, 1 = AFFECTED, 5 = undecided (task B-5, decision 3). 2,
+  // 3 and 4 are real failures and must not be silently parsed as empty
+  // output.
+  if (exitCode > 1 && exitCode !== 5) {
     throw new Error(`scan exited ${exitCode}: ${stderr.join("")}`);
   }
   return JSON.parse(stdout.join("")) as ScanOutputShape;

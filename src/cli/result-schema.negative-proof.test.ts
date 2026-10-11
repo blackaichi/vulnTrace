@@ -33,6 +33,7 @@ import {
   type JsonFinding,
   type ScanOutput,
 } from "./output.js";
+import { summarizeScan } from "./scan-summary.js";
 
 /**
  * VT-CONTRACT-01 -- EXACTLY ONE negative-proof evidence object per
@@ -105,6 +106,7 @@ function outputWith(finding: JsonFinding): ScanOutput {
     coverage: EMPTY_COVERAGE,
     diagnostics: [],
     unreportedCandidates: [],
+    summary: summarizeScan([finding], []),
     timings: ZERO_TIMINGS,
   };
 }
