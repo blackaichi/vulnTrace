@@ -2323,6 +2323,28 @@ export async function buildFinding(
     };
   }
 
+  // Task B-6 (AUD-15). A rule belongs to ONE package; it is attached to an
+  // advisory, and an advisory may affect several. A rule whose
+  // `package.name` is not this finding's package describes another
+  // package's code, so its targets say nothing about this one: resolving
+  // them against this instance only fails, and blaming the resolution (or
+  // a "never traversed" absence) is false. Compared by the exact name, the
+  // same identity the finding is reported under, before any instance
+  // matching. This withdraws toward UNKNOWN and creates no proof.
+  if (rule.package.name !== packageName) {
+    return {
+      ...base,
+      verdict: "UNKNOWN",
+      evidence: {
+        path: [],
+        reasons: [
+          `the rule for ${vulnerability.id} names package "${rule.package.name}", not "${packageName}"; its targets describe another package's code, so this package has no vulnerable-symbol rule`,
+        ],
+      },
+      unknownReasons: aggregateUncertainty(["rule_package_mismatch"]),
+    };
+  }
+
   const {
     reachable,
     sawUnknown,

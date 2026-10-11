@@ -166,6 +166,7 @@ export const UNCERTAINTY_REASONS = [
   "vulnerable_target_unresolved",
   "advisory_version_applicability_indeterminate",
   "no_vulnerable_symbol_rule",
+  "rule_package_mismatch",
   "no_entrypoints_available",
   "call_graph_truncated",
   "closure_widening_construct_reachable",
@@ -394,6 +395,13 @@ export const UNCERTAINTY_REASON_CATEGORY: Record<
   // Reachability has nothing to search for -- a missing precondition, not
   // a failure to resolve one.
   no_vulnerable_symbol_rule: "analysis_precondition_unmet",
+  // Task B-6 (AUD-15): the advisory has a rule, but the rule's
+  // `package.name` is not this finding's package. An advisory may affect
+  // several packages and a rule is attached by advisory id, so the rule's
+  // targets describe another package's code. For THIS package there is
+  // still no model of the dangerous behaviour -- the same missing
+  // precondition as `no_vulnerable_symbol_rule`, with a finer cause.
+  rule_package_mismatch: "analysis_precondition_unmet",
   // Nothing to search FROM. Same shape, other end of the search.
   no_entrypoints_available: "analysis_precondition_unmet",
   // Family B's corroborating closure was absent, incomplete, or reported
