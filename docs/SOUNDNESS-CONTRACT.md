@@ -443,7 +443,7 @@ module.exports = { main };
 
 ```json
 {
-  "schemaVersion": "0.7",
+  "schemaVersion": "0.8",
   "scan": {
     "id": "00000000-0000-0000-0000-000000000000",
     "project": "<project>"
@@ -485,6 +485,19 @@ module.exports = { main };
   },
   "diagnostics": [],
   "unreportedCandidates": [],
+  "summary": {
+    "outcome": "affected",
+    "findings": {
+      "AFFECTED": 1,
+      "NOT_AFFECTED": 0,
+      "UNKNOWN": 0
+    },
+    "unreportedCandidates": {
+      "not_applicable": 0,
+      "undetermined": 0,
+      "withdrawn": 0
+    }
+  },
   "timings": {
     "parsingMs": 0,
     "resolutionMs": 0,
@@ -520,7 +533,7 @@ module.exports = { main };
 
 ```json
 {
-  "schemaVersion": "0.7",
+  "schemaVersion": "0.8",
   "scan": {
     "id": "00000000-0000-0000-0000-000000000000",
     "project": "<project>"
@@ -567,6 +580,19 @@ module.exports = { main };
   },
   "diagnostics": [],
   "unreportedCandidates": [],
+  "summary": {
+    "outcome": "decided",
+    "findings": {
+      "AFFECTED": 0,
+      "NOT_AFFECTED": 1,
+      "UNKNOWN": 0
+    },
+    "unreportedCandidates": {
+      "not_applicable": 0,
+      "undetermined": 0,
+      "withdrawn": 0
+    }
+  },
   "timings": {
     "parsingMs": 0,
     "resolutionMs": 0,
@@ -603,7 +629,7 @@ module.exports = { main };
 
 ```json
 {
-  "schemaVersion": "0.7",
+  "schemaVersion": "0.8",
   "scan": {
     "id": "00000000-0000-0000-0000-000000000000",
     "project": "<project>"
@@ -652,6 +678,19 @@ module.exports = { main };
     }
   ],
   "unreportedCandidates": [],
+  "summary": {
+    "outcome": "undecided",
+    "findings": {
+      "AFFECTED": 0,
+      "NOT_AFFECTED": 0,
+      "UNKNOWN": 1
+    },
+    "unreportedCandidates": {
+      "not_applicable": 0,
+      "undetermined": 0,
+      "withdrawn": 0
+    }
+  },
   "timings": {
     "parsingMs": 0,
     "resolutionMs": 0,

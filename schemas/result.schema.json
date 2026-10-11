@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://vulntrace.dev/schema/result-0.7.json",
+  "$id": "https://vulntrace.dev/schema/result-0.8.json",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -641,6 +641,71 @@
             "type": "string",
             "minLength": 1,
             "description": "Human-readable explanation; always present. Where the same condition also appears in diagnostics, this is the same sentence, so the two channels cannot word one fact differently."
+          }
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "description": "0.8, task B-5 (AUD-12, decision 3): what the scan decided. findings counts the findings array by verdict and unreportedCandidates counts that array by disposition, every key present, zero included. outcome is affected when any finding is AFFECTED; otherwise undecided when any finding is UNKNOWN or any unreported candidate is undetermined; otherwise decided (every candidate is NOT_AFFECTED, not_applicable or withdrawn). The exit code follows from outcome: 1 affected, 5 undecided (0 under --lenient-exit), 0 decided. Always emitted since 0.8, computed by the producer from the two arrays; this schema checks the shape only and cannot check the counts against the arrays, which a consumer can recompute. Not required, so a result archived before 0.8 still validates.",
+      "required": [
+        "outcome",
+        "findings",
+        "unreportedCandidates"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "outcome": {
+          "enum": [
+            "affected",
+            "undecided",
+            "decided"
+          ]
+        },
+        "findings": {
+          "type": "object",
+          "required": [
+            "AFFECTED",
+            "NOT_AFFECTED",
+            "UNKNOWN"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "AFFECTED": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "NOT_AFFECTED": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "UNKNOWN": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        },
+        "unreportedCandidates": {
+          "type": "object",
+          "required": [
+            "not_applicable",
+            "undetermined",
+            "withdrawn"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "not_applicable": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "undetermined": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "withdrawn": {
+              "type": "integer",
+              "minimum": 0
+            }
           }
         }
       }

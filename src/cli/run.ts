@@ -9,7 +9,7 @@ const SUPPORTED_FORMATS = new Set(["json", "html"]);
 
 const USAGE =
   "vulntrace: usage: vulntrace <command> [options]\n" +
-  "  vulntrace scan <path> [--format json|html] [--output <file>] [--cve <id>] [--config <file>] [--pretty] [--no-cache]\n" +
+  "  vulntrace scan <path> [--format json|html] [--output <file>] [--cve <id>] [--config <file>] [--pretty] [--no-cache] [--lenient-exit]\n" +
   "  vulntrace rules validate <file>\n" +
   "  vulntrace version\n";
 
@@ -81,9 +81,28 @@ export async function runCli(
       return 2;
     }
 
+    // Task B-5 (PRM-111): an empty or blank `--cve` used to reach the scan
+    // as a filter that matches nothing -- zero findings and exit 0, the
+    // same bytes as a clean scan. No advisory id is blank or carries
+    // surrounding whitespace, so either is a usage error, never a filter
+    // (B-5's audit, finding 3: `--cve " CVE-1"` matched nothing).
     const cve = flags.cve;
-    if (cve !== undefined && typeof cve !== "string") {
-      io.stderr("vulntrace: --cve requires a value\n");
+    if (
+      cve !== undefined &&
+      (typeof cve !== "string" || cve.trim() === "" || cve.trim() !== cve)
+    ) {
+      io.stderr(
+        "vulntrace: --cve requires an advisory id, with no surrounding whitespace\n",
+      );
+      return 2;
+    }
+
+    // Task B-5 (decision 3): a switch, never a value. `--lenient-exit=false`
+    // must not be read as "on", and `--lenient-exit <word>` must not
+    // silently swallow the word.
+    const lenientExit = flags["lenient-exit"];
+    if (lenientExit !== undefined && lenientExit !== true) {
+      io.stderr("vulntrace: --lenient-exit takes no value\n");
       return 2;
     }
 
@@ -102,6 +121,7 @@ export async function runCli(
         outputPath: output,
         pretty: flags.pretty === true,
         noCache: flags["no-cache"] === true,
+        lenientExit: lenientExit === true,
         io,
       });
     } catch (error) {

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { renderHtmlReport } from "./html-report.js";
 import { SCHEMA_VERSION, type ScanOutput } from "./output.js";
+import { summarizeScan } from "./scan-summary.js";
 
 /**
  * FOUNDATION F3 § 23 -- the report exposes the taxonomy, and does NOT
@@ -35,13 +36,16 @@ const EMPTY_TIMINGS = {
 };
 
 function scanOutput(partial: Partial<ScanOutput> = {}): ScanOutput {
+  const findings = partial.findings ?? [];
+  const unreportedCandidates = partial.unreportedCandidates ?? [];
   return {
     schemaVersion: SCHEMA_VERSION,
     scan: { id: "scan-f3", project: "." },
-    findings: [],
+    findings,
     coverage: EMPTY_COVERAGE,
     diagnostics: [],
-    unreportedCandidates: [],
+    unreportedCandidates,
+    summary: summarizeScan(findings, unreportedCandidates),
     timings: EMPTY_TIMINGS,
     ...partial,
   };

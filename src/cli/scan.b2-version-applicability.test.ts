@@ -310,7 +310,8 @@ describe("B-2 / AUD-09: a range VulnTrace cannot order is undecided, never out o
       }),
     ]);
 
-    expect(exit).toBe(0);
+    // Task B-5 (decision 3): an indeterminate applicability is undecided.
+    expect(exit).toBe(5);
     expectApplicabilityUnknown(output);
   });
 
