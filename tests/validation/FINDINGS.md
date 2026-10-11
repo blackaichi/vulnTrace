@@ -166,7 +166,7 @@ A mismatch either way fails the generator, naming the ID.
 | AUD-09 | `vuln-lib` (synthetic fixture) | A GIT-type version range is compared as semver, and an advisory entry with neither ranges nor versions reads as not-affected | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | AUD-10 | `vuln-lib` (synthetic fixture) | A malformed OSV record is dropped to diagnostics only, with no `unreportedCandidates` entry | silent drop (product/observability) — see below | **Fixed** (B-1) — see below |
 | AUD-11 | `vuln-lib` (synthetic fixture) | A single OSV record with an empty `id` string fails schema validation and discards the whole report | scan abort — see below | **Fixed** (B-1) — see below |
-| AUD-12 | `vuln-lib` (synthetic fixture) | An all-UNKNOWN scan exits 0, identical to a clean scan, with no machine-readable signal that nothing was decided | false reason / product — see below | Open |
+| AUD-12 | `vuln-lib` (synthetic fixture) | An all-UNKNOWN scan exits 0, identical to a clean scan, with no machine-readable signal that nothing was decided | false reason / product — see below | **Fixed** (B-5) — see below |
 | AUD-13 | `vuln-lib` (synthetic fixture) | Babel-style `__esModule` interop is not modeled for a default ESM import of a CommonJS module | false AFFECTED — see below | Open |
 | AUD-14 | `vuln-lib` (synthetic fixture) | An OSV record's `withdrawn` field is not parsed; a withdrawn advisory is still analyzed | false AFFECTED — see below | **Fixed** (B-1) — see below |
 | AUD-15 | `vuln-lib` (synthetic fixture) | An UNKNOWN's reason text falsely claims a package "was never traversed" when the true cause is that no rule names it | false reason — see below | Open |
@@ -195,7 +195,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-33 | `vuln-lib` (synthetic fixture), tsconfig | Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map | false NOT_AFFECTED — see below | **Fixed** (C-1) — see below |
 | PRM-34 | `lodash` (`file:`-vendored, real npm 10.9.0 lockfile) | A `file:`-vendored dependency whose real npm lockfile entry has no `name` is silently dropped entirely | silent drop — see below | **Fixed** (B-4) — see below |
 | PRM-35 | `vuln-lib` (synthetic fixture), cache | A cache-directory write failure (`ENOTDIR`) aborts the whole scan with exit 4 instead of degrading to a diagnostic | scan abort — see below | **Fixed** (B-3) — see below |
-| PRM-36 | `vuln-lib` (synthetic fixture), workspaces | The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set | false reason — see below | Open |
+| PRM-36 | `vuln-lib` (synthetic fixture), workspaces | The `--cve` unreported-candidate reason "no advisory was discovered for any sibling instance" is computed from the filtered result, not the true discovery set | false reason — see below | **Fixed** (B-5) — see below |
 | PRM-37 | `vuln-lib` (synthetic fixture) | A tagged-template call (`` tag`x` ``) gets no call-graph edge at all | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-38 | `vuln-lib` (synthetic fixture) | Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | PRM-60 | `vuln-lib` (synthetic fixture) | `unsupported_*` reasons are treated as never widening the closure, but four capability-receiver shapes let them load a new module | false NOT_AFFECTED — see below | Open |
@@ -215,8 +215,8 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-107 | `vuln-lib` (synthetic fixture), nested + top instance | `module.paths` is recognized only through a small, fully-enumerated set of literal method-name calls | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below | Open |
 | PRM-108 | `vuln-lib` (synthetic fixture) | A destructured builtin binding's imported name falls back to the local name for a string-literal or computed property key | false NOT_AFFECTED — see below | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below |
 | PRM-109 | `vuln-lib` (synthetic fixture) | `graph.ts` restates the same "`unsupported_*` reasons cannot introduce a new module" premise PRM-60 disproves | false NOT_AFFECTED — see below | Open |
-| PRM-110 | `vuln-lib` (synthetic fixture) | The HTML report's per-finding summary reads only the first `unknownReasons` entry, so a rule mismatch reads as "no reason recorded" | false reason — see below | Open |
-| PRM-111 | `vuln-lib` (synthetic fixture) | An empty `--cve` value (`--cve ""`) is accepted and silently returns zero findings rather than being rejected | silent drop — see below | Open |
+| PRM-110 | `vuln-lib` (synthetic fixture) | The HTML report's per-finding summary reads only the first `unknownReasons` entry, so a rule mismatch reads as "no reason recorded" | false reason — see below | **Fixed** (B-5) — see below |
+| PRM-111 | `vuln-lib` (synthetic fixture) | An empty `--cve` value (`--cve ""`) is accepted and silently returns zero findings rather than being rejected | silent drop — see below | **Fixed** (B-5) — see below |
 | PRM-112 | `vuln-lib` (synthetic fixture) | `instanceof` against a class defining a static `[Symbol.hasInstance]` invokes it with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | PRM-113 | `vuln-lib` (synthetic fixture) | `for await…of` over a value with an async iterator (`[Symbol.asyncIterator]`) invokes it with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
@@ -16391,6 +16391,28 @@ Exit code 0 means only "no AFFECTED finding"; a scan where every candidate resol
 
 Full reproduction: `docs/audits/2026-09-independent-audit.md § 4, "AUD-12"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task B-5, 2026-10-11): Fixed** (decision 3,
+REMEDIATION-PLAN § 6.1 item 3). A finished scan exits `1` when a finding is
+`AFFECTED`; otherwise **`5`** when a finding is `UNKNOWN` or an
+`unreportedCandidates` entry is `undetermined`; otherwise `0`.
+`--lenient-exit` maps `5` to `0` and changes nothing else. The error codes
+`2`, `3` and `4` keep their meaning. Every result carries a `summary`
+(schema `0.8`, additive): counts by verdict and by disposition, and an
+`outcome` (`affected`, `undecided` or `decided`). It is computed by
+`summarizeScan` (`src/cli/scan-summary.ts`) from the very arrays emitted
+next to it, and the exit code is computed from it by `exitCodeFor`, so the
+three cannot disagree. A `withdrawn` entry counts as decided, as B-1 left
+for B-5 to settle: decision 3 defines "undecided" exhaustively, and a
+withdrawal is a certain statement with no uncertainty category, like
+`not_applicable`. Reproduced end to end, failing on the base
+(`src/cli/scan.b5-cli-output.test.ts`, "B-5 (AUD-12, decision 3)"): the
+audit's case (two no-rule `UNKNOWN`s) exits 0 on the base and 5 now; a
+scan with only an undetermined entry (B-1's malformed record, B-4's
+versionless instance with no advisory) likewise. Over the 139 corpus cases
+of `scripts/differential.mjs`, 35 cases that exited 0 now exit 5; no verdict
+moved. Foundation invariant `VT-INV-B-exit-decision`.
+
 ---
 
 ## AUD-13 — Babel-style `__esModule` interop is not modeled for a default ESM import of a CommonJS module
@@ -17434,6 +17456,26 @@ Filtering with `--cve CVE-Y` on a package for which `GHSA-x` (`CVE-X`) was reall
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 4, "PRM-36: false reason under --cve"`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task B-5, 2026-10-11): Fixed.** Measured first:
+the recorded sentence ("no advisory was discovered for any sibling
+instance") no longer existed on `main` at B-5's base. B-4 queries a
+versionless instance itself and rewrote the detail to "no advisory matching
+`<id>` was returned". On the audit's own fixture shape and `--cve CVE-Y`,
+the versionless member now gets an `UNKNOWN` for `GHSA-y` and no "no
+advisory" entry at all (asserted, passing on the base too). What was left
+is the plan's prescription: the detail's condition was still the filtered
+set, so with a filter matching nothing for the name it could not say that
+advisories were returned and filtered out. B-5 decides it on the
+unfiltered set (`returnedForName` in `scan.ts`): "no advisory was returned
+for this name" only when none was, and otherwise "`N` advisories were
+returned for this name (its query without a version included), and none
+matches --cve `<id>`" (or "none was usable"), counting distinct advisories
+over all of the name's queries (B-5's audit found the first draft counted
+one advisory twice when one query returned it usable and another
+malformed). Failing on the base:
+`src/cli/scan.b5-cli-output.test.ts`, "B-5 (PRM-36)".
+
 ---
 
 ## PRM-37 — A tagged-template call (`` tag`x` ``) gets no call-graph edge at all
@@ -17993,6 +18035,18 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-109`
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-110`) and § 4 ("HTML case")`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task B-5, 2026-10-11): Fixed.** A correction to
+this record first: the title says `summaryOf` "reads only the first
+`unknownReasons` entry". Measured on B-5's base, it read
+`evidence.reasons[0]` and never read `unknownReasons` at all; the body above
+describes the code correctly. `summaryOf` (`src/cli/html-report.ts`) now
+falls back to the first `unknownReasons` entry, rendered as
+`<reason> (<category>)`, when the finding has no evidence reason; an
+evidence reason still comes first. Reproduced on a real scan's no-rule
+`UNKNOWN`, failing on the base (`src/cli/scan.b5-cli-output.test.ts`, "B-5
+(PRM-110)").
+
 ---
 
 ## PRM-111 — An empty `--cve` value (`--cve ""`) is accepted and silently returns zero findings rather than being rejected
@@ -18007,6 +18061,19 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-110`
 `run.ts`'s `--cve` guard rejects only a non-string value; an empty string passes the guard and is used as a filter matching nothing, so `findings` is empty and exit is 0 with no diagnostic — indistinguishable from a genuinely clean scan.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-111`) and § 4 ("intake --cve \"\"")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task B-5, 2026-10-11): Fixed.** `run.ts` rejects an
+empty or whitespace-only `--cve` (`--cve ""`, `--cve=`, `--cve "   "`), and
+one with surrounding whitespace (`--cve " CVE-1"`, from B-5's audit), as a
+usage error, exit 2, before any scan runs. Separately, a non-empty `--cve`
+that selects nothing for any installed package is now said out loud: a
+`vulnerabilities` diagnostic and a stderr line ("`--cve <id>` matched no
+advisory the vulnerability provider returned for the installed
+packages"); before B-5 that report was byte-identical to a clean one.
+Failing on the base: `src/cli/run.b5-flags.test.ts` (PRM-111) and
+`src/cli/scan.b5-cli-output.test.ts` ("a --cve filter that matches
+nothing").
 
 ---
 

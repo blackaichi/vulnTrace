@@ -284,6 +284,18 @@ Owned by `src/cli/scan.f3-no-finding.test.ts`; the `withdrawn` and
 `src/cli/scan.b4-inventory-identity.test.ts`
 (`VT-INV-B-inventory-identity`).
 
+**What the scan decided, and the exit code** (task B-5, decision 3; schema
+`0.8`). Every result carries a `summary`: counts of `findings` by verdict
+and of `unreportedCandidates` by disposition, and an `outcome`.
+`affected` when a finding is `AFFECTED`; otherwise `undecided` when a
+finding is `UNKNOWN` or an entry is `undetermined`; otherwise `decided`
+(`NOT_AFFECTED`, `not_applicable` and `withdrawn` are all decided). A
+finished scan exits `1`, `5` or `0` respectively; `--lenient-exit` exits
+`0` for `undecided` and changes nothing else. The summary is computed
+from the two arrays and the exit code from the summary, so they cannot
+disagree. Owned by `src/cli/scan.b5-cli-output.test.ts` and
+`src/cli/run.b5-flags.test.ts` (`VT-INV-B-exit-decision`).
+
 ## 7. Target authority (P1-A)
 
 Which function an advisory actually names is its own hard problem, and

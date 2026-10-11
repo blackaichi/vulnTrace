@@ -127,9 +127,15 @@ vulntrace rules validate rules/vulntrace-rules.yml
 vulntrace version
 ```
 
-Exit codes: `0` no AFFECTED findings, `1` at least one AFFECTED finding,
-`2` configuration/usage error, `3` analysis failure, `4` vulnerability
-provider/network failure (see `docs/SDD.md § 25` and `src/cli/scan.ts`).
+Exit codes: `0` nothing is AFFECTED and every candidate was decided
+(`NOT_AFFECTED`, not applicable to the installed version, or withdrawn by
+the provider), `1` at least one AFFECTED finding, `5` nothing is AFFECTED
+but at least one candidate is undecided (an `UNKNOWN` finding or an
+undetermined unreported candidate), `2` configuration/usage error, `3`
+analysis failure, `4` vulnerability provider/network failure.
+`--lenient-exit` exits `0` instead of `5` and changes nothing else. The
+JSON result's `summary` carries the same decision as counts and an
+`outcome` (see `src/cli/scan-summary.ts`).
 
 ### HTML report
 
