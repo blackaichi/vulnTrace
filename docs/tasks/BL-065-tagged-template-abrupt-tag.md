@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-065
 - **Branch**: bl-065-tagged-template-abrupt-tag
 - **Base SHA**: 36d0b735af8a49fc54ec2f63431e4e6f102808fa
-- **Commits**: —
+- **Commits**:
+  - `docs(tasks): BL-065 task file — a tagged template of a proven-abrupt callee is a definitely-abrupt invocation`
+  - `test(BL-065): a tagged template of a proven-abrupt tag against real Node — RWF-095`
+  - `fix(BL-065): a tagged template calls its tag — RWF-095`
+  - (this commit) `docs(BL-065): records — RWF-095 fixed, RWF-096 and RWF-097 found, plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -97,19 +101,19 @@ the template ends, and the analyzer keeps only the later write).
 
 ## Acceptance criteria
 
-- [ ] Both RWF-095 open-soundness-defect records are deleted and their
+- [x] Both RWF-095 open-soundness-defect records are deleted and their
       cases assert `UNKNOWN`, with real Node calling the target
-- [ ] The other tag forms and the precision controls are oracle cases
+- [x] The other tag forms and the precision controls are oracle cases
       with loud fixtures, both controls and real-Node ground truth
-- [ ] Each new `UNKNOWN` case fails on the base commit and passes after
+- [x] Each new `UNKNOWN` case fails on the base commit and passes after
       the fix
-- [ ] A mutation that removes the predicate's tagged-template branch, and
+- [x] A mutation that removes the predicate's tagged-template branch, and
       one that removes it from the MAY check only, are each caught by a
       named test
-- [ ] Only `module-model.ts` changed under `src/` (besides tests)
-- [ ] Graph, proof and verdict differentials reported separately; no
+- [x] Only `module-model.ts` changed under `src/` (besides tests)
+- [x] Graph, proof and verdict differentials reported separately; no
       verdict moves toward `NOT_AFFECTED`
-- [ ] All gates green; validation at exactly the five documented failures
+- [x] All gates green; validation at exactly the five documented failures
 
 ## Gates
 
@@ -121,3 +125,28 @@ scorecard.
 ## Report
 
 In the format of `AGENTS.md` section J.
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW` (the plan above is unchanged):
+
+- **Premises held.** All four were re-measured as stated.
+- **Failing first: nine, not eleven.** Of the planned `UNKNOWN` cases,
+  nine fail on the base. `` new Bail`x`; `` was already `UNKNOWN` there
+  for an unrelated reason (the call graph does not model a construction
+  whose callee is a call result, `unsupported_computed_callee`), and is
+  kept as a guard, labelled as such. The `async`-tag control was first
+  written as `` abail`x`.catch(() => {}); ``, which is `UNKNOWN` on the
+  base through `unsupported_call_result_receiver`; it is
+  `` void abail`x`; `` instead.
+- **Two doc comments corrected** in the fix commit (the audit's drift
+  finding): `mayEndModuleEvaluation`'s header and `isDefinitelyAbruptCall`'s
+  doc now name the tagged template; and one false premise in
+  `cannotCompleteNormally`'s doc ("`() => expr` … trivially never
+  abrupt"), which is RWF-096.
+- **Scope added, records only:** RWF-096 and RWF-097, found by the
+  independent audit and reproduced by this task against real Node, are
+  registered and pinned as open-soundness-defect records
+  (`tests/oracle/rwf096-callee-summary.test.ts`); their fixes are backlog
+  `BL-066` and `BL-067`, not this task. The callee-summary body proof was
+  out of this task's bounds.

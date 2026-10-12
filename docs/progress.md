@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-12, by `BL-063`.
+**Last updated:** 2026-10-12, by `BL-065`.
 
 ## Objective
 
@@ -179,7 +179,10 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   statement that MAY throw through an unproven callee is still not a
   cutoff), backlog `BL-064`, and its audit RWF-095 (a tagged template of
   a proven-abrupt callee is never a cutoff), backlog `BL-065`.
-  REMEDIATION-PLAN § 5a, "BL-063 additions".
+  REMEDIATION-PLAN § 5a, "BL-063 additions". `BL-065` fixed RWF-095 (a
+  tagged template is a call of its tag); its audit found RWF-096 and
+  RWF-097, two more gaps in the callee summary (backlog `BL-066`,
+  `BL-067`). REMEDIATION-PLAN § 5a, "BL-065 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -210,29 +213,30 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`BL-063` — The module-evaluation cutoff is MAY for expressions too
-([task file](tasks/BL-063-may-execute-operand-cutoff.md)):
+`BL-065` — A tagged template of a proven-abrupt callee is a
+definitely-abrupt invocation
+([task file](tasks/BL-065-tagged-template-abrupt-tag.md)):
 `READY_FOR_REVIEW`, its pull request awaiting the project owner.
-`RWF-050-repro` merged as PR #97. RWF-050 is fixed; ADR 0009 § 8's
-decision record (option (a)) is for the owner to confirm or drop.
+`BL-063` merged as PR #98; ADR 0009 § 8's decision record (option (a))
+is still for the owner to confirm or drop.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-063`:
-`BL-065` (RWF-095, small, no decision needed) is ready; `BL-064` (RWF-094) needs a project-owner decision first (precision versus
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-065`:
+`BL-064` (RWF-094) needs a project-owner decision first (precision versus
 soundness, likely an ADR 0009 § 1 clause 4 amendment, a candidate to fold
-into E-1); then lane E (`E-1`). The P1 gaps `BL-057` and `BL-058` (small,
+into E-1); `BL-066` and `BL-067` (RWF-096, RWF-097: small,
+`module-model.ts` only, no decision needed) are ready; then lane E
+(`E-1`). The P1 gaps `BL-057` and `BL-058` (small,
 `module-resolver.ts` only, from C-1), `BL-048` (RWF-074), `BL-050`
 (RWF-076), `BL-040`, `BL-043` and `BL-051` (live family-A false
 `NOT_AFFECTED`s) are candidates to reorder ahead of lane E.
 
 ## Recently discovered
 
-From `BL-063`: `BL-064` (P0: RWF-094, a module-time statement that MAY
-throw through an unproven callee is not a cutoff; two open-soundness-defect
-records); `BL-065` (P0: RWF-095, a tagged template of a proven-abrupt
-callee is never a cutoff; found by the independent audit). Record errors
-measured and corrected: the
-`commonjs-expression-position-throwing-call-export-authority` fixture's
-"all four are proven safe" comment, and ADV2-086's expected-verdict
-rationale (it also listed `maybe(FLAG)` as never ending evaluation).
+From `BL-065`'s independent audit: `BL-066` (P0: RWF-096, a concise-bodied
+arrow that can only throw is never proven abrupt; the comment calling it
+"trivially never abrupt" was false and is corrected) and `BL-067` (P0:
+RWF-097, the callee summary misses a definitely-abrupt call in a required
+expression position or a default parameter). Five open-soundness-defect
+records in `tests/oracle/rwf096-callee-summary.test.ts`.
