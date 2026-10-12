@@ -32,8 +32,10 @@ import {
  * and asserts `expected`.
  *
  * Also pinned here, from BL-063's independent audit: `new C()` running a
- * throwing instance field and a getter read (RWF-094's family), and
- * RWF-095, a tagged template of a proven-abrupt callee.
+ * throwing instance field and a getter read (RWF-094's family). RWF-095, a
+ * tagged template of a proven-abrupt callee, was pinned here too until
+ * task BL-065 fixed it; its cases now assert the sound verdict in
+ * `rwf095-tagged-template-tag.test.ts`.
  */
 
 // One macrotask turn before each case (backlog BL-033).
@@ -52,7 +54,7 @@ const FAMILY_C: VerdictObservation = {
 
 interface PinnedCase extends Rwf050Case {
   /** The open FINDINGS record that owns the defect. */
-  readonly rwf: "RWF-094" | "RWF-095";
+  readonly rwf: "RWF-094";
 }
 
 const CASES: readonly PinnedCase[] = [
@@ -103,27 +105,6 @@ const CASES: readonly PinnedCase[] = [
       "`const o = { get v() { FLAG && bail(); return 1; } }; void o.v;`",
     abrupt: "const o = { get v() { FLAG && bail(); return 1; } };\nvoid o.v;\n",
     rwf: "RWF-094",
-    called: true,
-    base: "NOT_AFFECTED",
-    expected: "UNKNOWN",
-  },
-  // RWF-095: a TAGGED TEMPLATE of a proven-abrupt callee is not a
-  // definitely-abrupt invocation (`isDefinitelyAbruptInvocation` knows only
-  // calls and constructions), in any position.
-  {
-    id: "rwf095.tagged-template",
-    mechanism: "`` bail`x`; ``",
-    abrupt: "bail`x`;\n",
-    rwf: "RWF-095",
-    called: true,
-    base: "NOT_AFFECTED",
-    expected: "UNKNOWN",
-  },
-  {
-    id: "rwf095.tagged-template-may",
-    mechanism: "`` FLAG && bail`x`; ``",
-    abrupt: "FLAG && bail`x`;\n",
-    rwf: "RWF-095",
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
