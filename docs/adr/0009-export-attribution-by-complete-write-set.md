@@ -231,6 +231,29 @@ precision acceptance: they must all stay green.
 | **E-4** writes by other modules: member writes on module objects and on re-export sources | `commonjs-reexports.ts`, `symbol-binder.ts` consumer (after lane A's A-5) | RWF-047 (D-16), PRM-11 | the RWF-047 open-defect records in `src/analysis/require-member-write-widening.integration.test.ts` flip from recorded-disagreement to passing |
 | **E-5** AUD-13 ESM→CJS default interop | `module-model.ts` ESM consumer of a CJS default | AUD-13 (reproduction to be taken from the audit report) | to be determined from the audit report |
 
+## Decision record — E-1's precision acceptance after BL-063 (taken by task BL-063, 2026-10-12; the project owner confirms it by merging, or drops it)
+
+**What was found.** Task RWF-050-repro reproduced RWF-050 against real
+Node: a definitely-abrupt call in a MAY-evaluated module-time position
+(`FLAG && bail();`, a conditional arm, a logical assignment's right-hand
+side, an optional-chain-guarded argument, a `do`/`while` condition, a
+`for` incrementor) was not a module-evaluation cutoff, a live false
+`NOT_AFFECTED`. § 8's E-1 row lists every RWF-013 … RWF-028 "keeps
+authority / keeps the later export attributable" control as **must stay
+green**. That list included the MAY rows, which assert the unsound
+attribution (FINDINGS RWF-050, correction 3).
+
+**The decision.** Option (a) of `docs/REMEDIATION-PLAN.md` § 5a,
+"RWF-050-repro additions": `BL-063` is ordered before E-1 and fixes
+RWF-050 under clause 3 (the cutoff is MAY for expressions as for
+statements), and § 8's E-1 precision acceptance names those controls **as
+they stand after `BL-063`**: a row BL-063 inverted (it now asserts that
+authority is withdrawn) must stay as BL-063 left it, and is not a
+precision regression for E-1 to restore. The project owner gave the go
+for BL-063 without choosing between (a) and (b) (a separate amendment
+task); BL-063 took the recommended option, said so in its pull request,
+and the record can be dropped without touching the fix.
+
 ## Rationale
 
 Every export-model defect found so far picked *one* write and trusted it.

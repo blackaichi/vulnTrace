@@ -1177,6 +1177,26 @@ and records only: verdict, proof and graph differentials 0. This entry
 still stands: lanes E and C (C-2..C-5) remain, and RWF-050 joins lane E's
 open findings.
 
+**Progress, added by task `BL-063` (2026-10-12).** Task BL-063
+(`docs/tasks/BL-063-may-execute-operand-cutoff.md`) fixed `RWF-050`: the
+module-evaluation cutoff is MAY for expressions as for statements, so a
+proven-abrupt call in any module-time position ends the definitely-reached
+region (`module-model.ts`). The 13 records are deleted and assert
+`UNKNOWN`, with 9 more MAY spellings measured and asserted the same way.
+41 "keeps authority" tests were inverted, each program grounded under real
+Node; 9 of the withdrawn programs never call `bail` and are labelled
+precision costs. ADR 0009 § 8 carries a decision record for E-1's
+precision acceptance. The task found `RWF-094`, a further live family-C
+false `NOT_AFFECTED` of this entry: a module-time statement that MAY throw
+through a callee no proof reaches (`maybe(FLAG)`, `JSON.parse(...)`) is
+still not a cutoff. Two open-soundness-defect records; backlog `BL-064`,
+which needs a precision-versus-soundness decision; its independent audit
+added three more RWF-094 shapes (`new C()` running a throwing instance
+field, a getter read) and found `RWF-095` (a tagged template of a
+proven-abrupt callee is never a cutoff; two records; backlog `BL-065`, no
+decision needed). This entry still stands: lanes E and C (C-2..C-5)
+remain, and RWF-094 and RWF-095 join lane E's open findings.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

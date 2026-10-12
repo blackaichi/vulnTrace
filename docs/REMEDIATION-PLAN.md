@@ -157,6 +157,11 @@ not touch the cutoff, and E-1's precision acceptance (ADR 0009 § 8)
 protects the controls `BL-063` must invert. See § 5a, "RWF-050-repro
 additions".
 
+**Fixed by task BL-063 (2026-10-12).** See § 5a, "BL-063 additions". It
+found `RWF-094` (a module-time statement that MAY throw through an
+unproven callee), lane E, backlog `BL-064`, and its audit found `RWF-095`
+(a tagged template of a proven-abrupt callee), backlog `BL-065`.
+
 ### 2.5 Task A-0 (ADR 0008 coverage reproduction)
 
 Added 2026-09-27, when the project owner decided ADR 0008's Amendment
@@ -1746,6 +1751,50 @@ the ADR text stands and `BL-063` is the record of the conflict.
   a rule it can justify against real Node.
 - **E-1**: until ADR 0009 § 8 is amended, its precision acceptance must
   not be read as protecting a MAY "keeps authority" control.
+
+#### BL-063 additions (task BL-063, 2026-10-12)
+
+**Outcome.** RWF-050 fixed in `module-model.ts` only: a call or
+construction `isDefinitelyAbruptCall` proves can only throw, anywhere
+`mayEndModuleEvaluation`'s walk reaches at module time and not caught
+within its top-level statement, is a cutoff. Excluded, because module
+evaluation never evaluates them: an instance field's initializer, and a
+`for` incrementor or `do`/`while` condition after a body that always
+leaves by `break` first (`bodyAlwaysBreaks`). RWF-026's MUST relation is
+unchanged. The ADR 0009 § 8 conflict is settled by a decision record in
+the ADR (option (a), taken on the owner's go, confirmed or dropped at
+review). Full record: FINDINGS RWF-050 (BL-063 status update).
+
+- **Precision cost, measured.** Of the 61 programs whose cutoff moved in
+  the hermetic suites, 9 never call `bail` under real Node (an operand
+  correlated with its own guard or a constant) and now withdraw. Each is
+  labelled `precision-cost` in its test. Recovering them needs value
+  semantics the cutoff does not have; no task is planned.
+- **Differentials.** `node scripts/differential.mjs` against `fdd4136`,
+  139 corpus cases: graph 0, proof 0, verdict 0 (none into
+  `NOT_AFFECTED`, none unmeasured). ADV2-084 and ADV2-086 move their
+  cutoff earlier and keep `UNKNOWN`. A zero corpus differential is not
+  evidence of soundness (OPEN-DEBTS D-12); the 22 oracle cases are.
+
+**What BL-063 binds.**
+
+- **E-1**: its precision acceptance names the RWF-013 … RWF-028 controls
+  as BL-063 left them (ADR 0009, decision record). A row BL-063 inverted
+  must stay inverted.
+- **Every later change to the cutoff**: a position may be excluded from
+  the MAY check only when module evaluation never evaluates it, shown
+  against real Node, in `isNeverEvaluatedAtModuleTime`; the oracle
+  controls `bl063.control.*` and the mutation list in FINDINGS RWF-050
+  name the tests that guard it.
+- **`BL-064`** (RWF-094, found by BL-063): a module-time statement that MAY
+  throw through a callee no proof reaches is still not a cutoff. Two
+  open-soundness-defect records (`tests/oracle/rwf094-may-throw-statement.test.ts`).
+  Closing it needs a precision-versus-soundness decision (FINDINGS
+  RWF-094, "Why it needs a decision"), before or with E-1.
+- **`BL-065`** (RWF-095, found by BL-063's independent audit): a tagged
+  template whose tag is a proven-abrupt callee is not a definitely-abrupt
+  invocation, in any position. Two records in the same file; a small
+  `module-model.ts` fix, no decision needed.
 
 ## 6. Decisions for the user
 
