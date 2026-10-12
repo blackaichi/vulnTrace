@@ -1011,8 +1011,9 @@ function firstModuleEvaluationCutoff(
  * **The relation is MAY, for expressions as for statements (BL-063,
  * RWF-050).** The named positions above are where RWF-016 … RWF-026 proved
  * the call NECESSARILY runs; they still answer, but they are no longer
- * the limit. Any call or construction {@link isDefinitelyAbruptCall}
- * proves can only throw, anywhere this walk reaches at module time, is a
+ * the limit. Any call, tagged template (BL-065, RWF-095) or construction
+ * {@link isDefinitelyAbruptCall} proves can only throw, anywhere this walk
+ * reaches at module time, is a
  * cutoff: `FLAG && bail();` is the same program as `if (FLAG) bail();`,
  * and on every load that evaluates `bail()` nothing below it runs. The
  * MUST relation ({@link necessarilyEvaluatesAbruptly}) answered "does this
@@ -1111,10 +1112,13 @@ function mayEndModuleEvaluation(
     // walk means. A function-like node's body and parameters are never
     // reached (the stop below); the two other positions this walk does
     // reach but module evaluation never evaluates are excluded by
-    // {@link isNeverEvaluatedAtModuleTime}.
+    // {@link isNeverEvaluatedAtModuleTime}. A tagged template calls its
+    // tag, so it is an invocation here too (BL-065, RWF-095).
     if (
       abruptCalls &&
-      (ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+      (ts.isCallExpression(node) ||
+        ts.isTaggedTemplateExpression(node) ||
+        ts.isNewExpression(node)) &&
       isDefinitelyAbruptCall(node) &&
       !isCaughtWithin(node, statement) &&
       !isNeverEvaluatedAtModuleTime(node, statement)
@@ -2973,9 +2977,11 @@ function classifyAbruptSequence(
  *   deliberately does not attempt (see RWF-016's remaining-limitations
  *   note in tests/validation/FINDINGS.md);
  * - an `async`/generator function ({@link isAsyncOrGeneratorCallable});
- * - an arrow function with a concise (non-block) body — `() => expr` can
- *   only ever complete by returning the expression's value, so it is
- *   trivially never abrupt and its body is not even inspected.
+ * - an arrow function with a concise (non-block) body — its body is not
+ *   inspected. An earlier version of this comment said `() => expr` is
+ *   "trivially never abrupt"; that is false (`() => bail()` always
+ *   throws), and the refusal is a live false `NOT_AFFECTED`, RWF-096
+ *   (backlog `BL-066`), found by BL-065's independent audit.
  */
 function cannotCompleteNormally(
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
@@ -3063,8 +3069,12 @@ function callableAlwaysThrows(
  * callee this file's own text proves can only ever throw (RWF-016's
  * proof, factored out by RWF-017 so both call POSITIONS can share it).
  *
- * Only a directly-written `CallExpression` with a plain identifier callee
- * qualifies; `unwrapParentheses` is applied first because parentheses
+ * As RWF-016 wrote it, only a directly-written `CallExpression` with a
+ * plain identifier callee qualified; RWF-028 widened the callee to the
+ * shapes {@link resolveInvocationTargetIdentity} resolves and added a
+ * construction, and BL-065 a tagged template (see
+ * {@link isDefinitelyAbruptInvocation}). The table below is RWF-016's
+ * original one. `unwrapParentheses` is applied first because parentheses
  * change nothing about evaluation:
  *
  * ```text
@@ -3108,6 +3118,7 @@ function isDefinitelyAbruptCall(expression: ts.Expression): boolean {
  *
  * ```text
  * bail()        alias()      h.bail()       -- a CALL
+ * bail`x`       alias`x`     h.bail`x`      -- a CALL, by a tagged template (BL-065)
  * new bail()    new alias()  new h.bail()   -- a CONSTRUCT
  * ```
  *
@@ -3138,6 +3149,18 @@ function isDefinitelyAbruptInvocation(
 
   if (ts.isCallExpression(unwrapped)) {
     const target = resolveExactLocalCallable(unwrapped.expression);
+    if (target === undefined) {
+      return false;
+    }
+    return callableAlwaysThrows(target, depth);
+  }
+
+  // BL-065 (RWF-095): a tagged template CALLS its tag -- the tag, then
+  // every substitution, is evaluated, and then the tag is invoked with
+  // `[[Call]]` exactly as `bail(["x"])` would be. Same identity proof,
+  // same `async`/generator refusal, same body proof as a call.
+  if (ts.isTaggedTemplateExpression(unwrapped)) {
+    const target = resolveExactLocalCallable(unwrapped.tag);
     if (target === undefined) {
       return false;
     }
@@ -3552,7 +3575,9 @@ function expressionCannotCompleteNormally(
   if (ts.isTaggedTemplateExpression(expression)) {
     // The tag is evaluated first, then every substitution — and all of
     // them before the tag is ever CALLED, which is why nothing needs to be
-    // known about the tag function itself.
+    // known about the tag function itself HERE. Whether CALLING the tag is
+    // abrupt is {@link isDefinitelyAbruptCall}'s question, asked above
+    // (BL-065, RWF-095).
     if (required(expression.tag)) {
       return true;
     }
