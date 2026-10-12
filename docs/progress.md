@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-12, by `RWF-050-repro`.
+**Last updated:** 2026-10-12, by `BL-063`.
 
 ## Objective
 
@@ -168,6 +168,18 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   names (AUD-15): a finding for another package of a multi-package
   advisory is `UNKNOWN` with `rule_package_mismatch`, decided before any
   instance matching. REMEDIATION-PLAN § 5a, "B-6 additions".
+- Lane E's preparation. `RWF-050-repro` reproduced RWF-050 (a
+  definitely-abrupt call in a MAY-evaluated module-time position was not a
+  module-evaluation cutoff: a live family-C false `NOT_AFFECTED`).
+  `BL-063` fixed it: the cutoff is MAY for expressions as for statements
+  (`mayEndModuleEvaluation`), excluding only positions module evaluation
+  never evaluates; 41 "keeps authority" tests inverted, each grounded under
+  real Node (9 are labelled precision costs). ADR 0009 § 8 carries a
+  decision record for E-1's precision acceptance. It found RWF-094 (a
+  statement that MAY throw through an unproven callee is still not a
+  cutoff), backlog `BL-064`, and its audit RWF-095 (a tagged template of
+  a proven-abrupt callee is never a cutoff), backlog `BL-065`.
+  REMEDIATION-PLAN § 5a, "BL-063 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -198,29 +210,29 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`RWF-050-repro` — Reproduce RWF-026's inherited MAY-execute abrupt-operand
-gap; then classify
-([task file](tasks/RWF-050-repro-may-execute-operand.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `B-6`
-merged as PR #96. RWF-050 is a live family-C false `NOT_AFFECTED` (13
-spellings, open-soundness-defect records), lane E, fix `BL-063`.
+`BL-063` — The module-evaluation cutoff is MAY for expressions too
+([task file](tasks/BL-063-may-execute-operand-cutoff.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner.
+`RWF-050-repro` merged as PR #97. RWF-050 is fixed; ADR 0009 § 8's
+decision record (option (a)) is for the owner to confirm or drop.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After
-`RWF-050-repro`: `BL-063` (proposed before E-1), then lane E. Open
-decision for the project owner: ADR 0009 § 8 makes E-1's precision
-acceptance protect the MAY "keeps authority" tests `BL-063` must invert
-(REMEDIATION-PLAN § 5a, "RWF-050-repro additions"). The P1 gaps `BL-057`
-and `BL-058` (small, `module-resolver.ts` only, from C-1), `BL-048`
-(RWF-074, small, reusing A-5b's whole-graph check), `BL-050` (RWF-076),
-`BL-040`, `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
-candidates to reorder ahead of lane E.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-063`:
+`BL-065` (RWF-095, small, no decision needed) is ready; `BL-064` (RWF-094) needs a project-owner decision first (precision versus
+soundness, likely an ADR 0009 § 1 clause 4 amendment, a candidate to fold
+into E-1); then lane E (`E-1`). The P1 gaps `BL-057` and `BL-058` (small,
+`module-resolver.ts` only, from C-1), `BL-048` (RWF-074), `BL-050`
+(RWF-076), `BL-040`, `BL-043` and `BL-051` (live family-A false
+`NOT_AFFECTED`s) are candidates to reorder ahead of lane E.
 
 ## Recently discovered
 
-From `RWF-050-repro`: `BL-063` (P0: the fix for RWF-050). Two record
-errors measured: RWF-026's `REFUSED` test premise ("every one of these
-completes under real Node") is false for its MAY rows, and ADV2-086's
-"decoys" do end module evaluation for a truthy flag (FINDINGS RWF-050,
-corrections).
+From `BL-063`: `BL-064` (P0: RWF-094, a module-time statement that MAY
+throw through an unproven callee is not a cutoff; two open-soundness-defect
+records); `BL-065` (P0: RWF-095, a tagged template of a proven-abrupt
+callee is never a cutoff; found by the independent audit). Record errors
+measured and corrected: the
+`commonjs-expression-position-throwing-call-export-authority` fixture's
+"all four are proven safe" comment, and ADV2-086's expected-verdict
+rationale (it also listed `maybe(FLAG)` as never ending evaluation).

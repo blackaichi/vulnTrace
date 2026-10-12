@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-063
 - **Branch**: bl-063-may-execute-operand-cutoff
 - **Base SHA**: fdd4136819ebe4eb7298a7cade9cce59f4a957bf
-- **Commits**: —
+- **Commits**:
+  - `docs(tasks): BL-063 task file — the module-evaluation cutoff is MAY for expressions too`
+  - `test(BL-063): the MAY-execute abrupt operand against real Node — RWF-050`
+  - `fix(BL-063): the module-evaluation cutoff is MAY for expressions too — RWF-050`
+  - (this commit) `docs(BL-063): records — RWF-050 fixed, RWF-094 and RWF-095 found, ADR 0009 decision record, plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -101,19 +105,19 @@ operand fires, and the analyzer keeps only the later write.
 
 ## Acceptance criteria
 
-- [ ] Every RWF-050 open-soundness-defect record is deleted and its case
+- [x] Every RWF-050 open-soundness-defect record is deleted and its case
       asserts `UNKNOWN`, with real Node calling the target
-- [ ] New MAY spellings beyond the 13 and precision controls are oracle
+- [x] New MAY spellings beyond the 13 and precision controls are oracle
       cases with loud fixtures, both controls and real-Node ground truth
-- [ ] Each new test fails on the base commit and passes after the fix
-- [ ] Every inverted "keeps authority" row is grounded against real Node
+- [x] Each new test fails on the base commit and passes after the fix
+- [x] Every inverted "keeps authority" row is grounded against real Node
       or recorded as a precision cost; none asserts a wrong verdict
-- [ ] A mutation that removes the new rule is caught by a named test
-- [ ] Only `module-model.ts` changed under `src/` (besides tests)
-- [ ] ADR 0009 § 8 carries a decision record (option (a))
-- [ ] Graph, proof and verdict differentials reported separately; no
+- [x] A mutation that removes the new rule is caught by a named test
+- [x] Only `module-model.ts` changed under `src/` (besides tests)
+- [x] ADR 0009 § 8 carries a decision record (option (a))
+- [x] Graph, proof and verdict differentials reported separately; no
       verdict moves toward `NOT_AFFECTED`
-- [ ] All gates green; validation at exactly the five documented failures
+- [x] All gates green; validation at exactly the five documented failures
 
 ## Gates
 
@@ -126,3 +130,22 @@ scorecard.
 
 In the format of `AGENTS.md` section J. Item 5 names the ADR 0009 § 8
 option taken on the owner's unqualified "go".
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW` (the plan above is unchanged):
+
+- **Premises checked.** The mechanism and the 13 reproductions held. The
+  prototype's "48 failing tests" re-measured as 41 under this fix: the
+  `break`-guarded loop rows and the nested instance-field row keep
+  authority by `bodyAlwaysBreaks` and the instance-field exclusion.
+- **Two more record errors with the same false premise**, corrected in the
+  fix commit: the `commonjs-expression-position-throwing-call-export-authority`
+  fixture's "all four are proven safe" comment (its `&&` operand throws
+  under `FIXTURE_LIB_MODE=fast` and `FIXTURE_LIB_FLAG`), and ADV2-086's
+  expected-verdict rationale, which also listed `maybe(FLAG)` as never
+  ending evaluation.
+- **Scope added, records only:** RWF-094 (found by this task) and RWF-095
+  (found by its independent audit) are registered and pinned as
+  open-soundness-defect records (`tests/oracle/rwf094-may-throw-statement.test.ts`);
+  their fixes are backlog `BL-064` and `BL-065`, not this task.

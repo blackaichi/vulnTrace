@@ -222,7 +222,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-114 | `vuln-lib` (synthetic fixture) | Assigning a function to `Error.prepareStackTrace` registers a callable hook invoked with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | PRM-115 | `vuln-lib` (synthetic fixture) | TypeScript decorators (legacy and standard) are call expressions at class-definition time with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-116 | `vuln-lib` (synthetic fixture) | A JSX element is a call to its configured factory with no modeled edge | false NOT_AFFECTED — see below | **Fixed** (A-3b), through the fail-closed default — see below |
-| RWF-050 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute abrupt operand (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`, an optional-chain-guarded argument, a `do`/`while` condition, a `for` update) is not a module-evaluation cutoff, though the statement form `if (flag) bail();` is, so a later export write stays authoritative | false NOT_AFFECTED (family C), reproduced against real Node by RWF-050-repro — see below | Open (lane E, backlog `BL-063`) |
+| RWF-050 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | RWF-026's MAY-execute abrupt operand (`flag && bail()`, `flag ? bail() : v`, `z ||= bail()`, an optional-chain-guarded argument, a `do`/`while` condition, a `for` update) is not a module-evaluation cutoff, though the statement form `if (flag) bail();` is, so a later export write stays authoritative | false NOT_AFFECTED (family C), reproduced against real Node by RWF-050-repro — see below | **Fixed** (BL-063) — see below |
 | PRM-117 | `vuln-lib` (synthetic fixture) | An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-3a), through the fail-closed default — see below |
 | PRM-118 | `vuln-lib` (synthetic fixture) | A getter or setter body is attributed to the enclosing owner, so an accessor real Node never runs yields a fabricated `AFFECTED` path | false AFFECTED — see below | **Fixed** (A-4, Amendment A-0 part B) — see below |
 | RWF-051 | n/a — the repository's own gate configuration | Nothing under `tests/` is type-checked, so a type-level guard written there (`tests/binding-grammar/`'s `@ts-expect-error` disagreement pin) is enforced by no gate | tooling — see below | **Fixed** (RWF-051-typecheck) — see below |
@@ -268,6 +268,8 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-091 | `vuln-lib` (synthetic fixture) | The OSV normalizer paired a SEMVER range's events in array order, while OSV's specification sorts them by version before evaluating (a sorted array is only recommended): `[{introduced: 2.0.0}, {fixed: 1.0.0}]` declared `2.5.0` out of range, which the specification calls affected | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | RWF-092 | `vuln-lib` (synthetic fixture) | An OSV event naming two kinds (`{fixed, last_affected}`, `{limit, fixed}`), which OSV forbids, was parsed by a union of non-strict schemas that kept the first matching kind and silently dropped the other, narrowing the range | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | RWF-093 | `nv` (`file:` dependency, real npm 10.9.0 lockfile) | A lockfile entry with a `name` and no `version` (a `file:` dependency whose manifest declares none) was dropped by the dependency graph; not a workspace member, so nothing else named it | silent drop — see below | **Fixed** (B-4) — see below |
+| RWF-094 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A module-time statement that MAY throw through a callee no proof reaches (`maybe(FLAG)` with a local function that throws on one path, `JSON.parse(...)`) is not a module-evaluation cutoff, so a later export write stays authoritative though a module already holding the exports object observes the earlier one | false NOT_AFFECTED (family C), reproduced against real Node by BL-063 — see below | Open (lane E, backlog `BL-064`) |
+| RWF-095 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A TAGGED TEMPLATE whose tag is a proven-abrupt local callee (`` bail`x`; ``, `` FLAG && bail`x`; ``) is not a definitely-abrupt invocation: `isDefinitelyAbruptInvocation` recognises only calls and constructions, so it is never a module-evaluation cutoff | false NOT_AFFECTED (family C), found by BL-063's independent audit, reproduced against real Node — see below | Open (lane E, backlog `BL-065`) |
 
 ---
 
@@ -18457,6 +18459,73 @@ a gap in the prototype, not in the rule.
    project owner's decision. Recorded in `docs/REMEDIATION-PLAN.md` § 5a,
    "RWF-050-repro additions".
 
+**Status update (task BL-063, 2026-10-12): Fixed.** This supersedes the
+"Still Open" lines above.
+
+- **The fix** (`src/code-intelligence/module-model.ts`,
+  `mayEndModuleEvaluation`): the cutoff is MAY for expressions as it was
+  for statements. Any call or construction `isDefinitelyAbruptCall`
+  proves can only throw, reached by the walk at module time and not caught
+  within its top-level statement, is a cutoff. The walk is opened into
+  expressions for every file with a definitely-abrupt callable
+  (`fileHasDefinitelyAbruptCallable`, the same cheap gate RWF-026 uses).
+  Two positions the walk reaches are excluded because module evaluation
+  never evaluates them (`isNeverEvaluatedAtModuleTime`): an instance
+  field's initializer, and a `for` incrementor or `do`/`while` condition
+  whose body always leaves by `break` first (`bodyAlwaysBreaks`: a `break`
+  among the body block's own statements with no `continue` before it). A
+  method's or accessor's computed key is walked; its body is not. RWF-026's
+  MUST relation is unchanged and still answers.
+- **Reproductions flipped.** All 13 open-soundness-defect records are
+  deleted and assert `UNKNOWN` with real Node calling the target
+  (`tests/oracle/rwf050-may-execute-operand.*`). Nine more MAY spellings,
+  each measured as a further live false `NOT_AFFECTED` on the base, assert
+  `UNKNOWN` too: a static field, a static block, an instance field's
+  computed key, a method's computed key, an object literal's computed key,
+  a heritage expression, a construction (`FLAG && new Bail()`), a `switch`
+  case test and a `try` with no `catch`. Six precision controls keep
+  `NOT_AFFECTED` (a function body, an arrow body, an instance field, a
+  caught call, both `break`-guarded loops).
+- **Inverted rows.** 41 tests: 40 unit "keeps authority" rows in the
+  RWF-016, RWF-017, RWF-018, RWF-019, RWF-020, RWF-024, RWF-026 and
+  RWF-028 suites, and the RWF-026 integration test, now assert the
+  withdrawal. The
+  prototype's 48 failures included the `break`-guarded loop rows and one
+  nested instance-field row; `bodyAlwaysBreaks` and the instance-field
+  exclusion keep those (7). Every program whose cutoff moved anywhere in
+  `npm test`, the adversarial, binding-grammar, validation and oracle
+  suites (61) was run under real Node with `FLAG`, `MODE` and `obj` free:
+  50 end module evaluation on some load (bail's exception, or once a
+  `TypeError` before `bail`), 2 more under their fixture's environment
+  variables, and 9 never do. Those 9 are precision costs, not claims: the
+  operand is correlated with its own guard (`if (FLAG) { FLAG || bail(); }`)
+  or a constant (`let z = 1; z ||= bail();`, `obj.m?.()` on `{}`,
+  `first || bail()`), and the cutoff has no value semantics. Each is
+  labelled `precision-cost` in its test. Where an old row's spelling was
+  only correlated, the MAY row now reads a second free variable `MODE`.
+- **Corrections 1 and 2 applied.** The RWF-026 `REFUSED` doc comment and
+  ADV2-086's expected-verdict rationale (`tests/adversarial/v2/expected.json`)
+  now say what real Node does. The same false premise sat in
+  `fixtures/commonjs-expression-position-throwing-call-export-authority/node_modules/fixture-lib/conditional.js`
+  ("all four are proven safe"): with `FIXTURE_LIB_MODE=fast` and
+  `FIXTURE_LIB_FLAG` set, its `&&` operand throws (measured); corrected
+  there, and the integration test asserts `UNKNOWN`.
+- **Correction 3 decided.** ADR 0009 § 8 carries a decision record: E-1's
+  precision acceptance names the RWF-013 … RWF-028 controls as they stand
+  after BL-063.
+- **The exclusions are for the MAY check only.** The `return`/`throw`
+  and RWF-016 … RWF-026 MUST predicates keep their earlier reach, so a
+  literal `throw` in a class static block nested inside an instance field
+  (`class C { f = class { static { bail(); } }; }`) still withdraws though
+  Node never runs it: a pre-existing precision cost, not a regression
+  (found by BL-063's independent audit).
+- **Independent audit:** CERTIFIED (56 shapes probed against the analyzer
+  and real Node). Its pre-existing findings are RWF-094's further shapes
+  and RWF-095, below.
+- **Not closed by this fix: RWF-094**, found by it. A module-time call
+  that MAY throw through a callee no proof reaches (`maybe(FLAG)`,
+  `JSON.parse(...)`) is still not a cutoff.
+
 ---
 
 ## PRM-117 — An object's `[util.inspect.custom]()` method, run by `console.log` / `util.inspect` / `util.format("%o")`, gets no call-graph edge
@@ -20499,3 +20568,103 @@ manifest that declares a version, that version applies (F1-B § 17 now
 asserts `AFFECTED`). Tests: `src/cli/scan.b4-inventory-identity.test.ts`
 ("a named, versionless file: entry is an instance with no version") and
 `src/dependencies/dependency-graph.test.ts`.
+
+---
+
+## RWF-094 — A module-time statement that MAY throw through an unproven callee is not a module-evaluation cutoff
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (multi-valued provenance collapsed to one value)
+**Proof family affected:** C (measured)
+**Severity:** P0 / critical soundness
+**Fix lane:** E (ADR 0009 § 1 clauses 3 and 4); needs a design decision
+
+**Discovered:** by task BL-063, measuring the scope of RWF-050's fix.
+BL-063 made the module-evaluation cutoff MAY for every call
+`isDefinitelyAbruptCall` proves can ONLY throw. Every other module-time
+call is still assumed to complete normally. That assumption is what
+RWF-016 deliberately made ("treating an arbitrary call as a possible
+terminator would make almost every real module's exports unattributable"),
+and RWF-026 recorded its local half as P0-B ("a callee that throws on one
+path and RETURNS on another is still not definitely abrupt"). Neither
+recorded that it reaches a real verdict. It does.
+
+**Reproduction (real Node v22, H-0 oracle harness, on BL-063's branch).**
+`tests/oracle/rwf094-may-throw-statement.test.ts`, on RWF-050's fixture:
+`wrap/b` holds `wrap`'s exports object through a cycle that runs BEFORE
+both writes of `exports.run`, so ADR 0009 § 1 clause 4's observation point
+(a re-entrant `require` BETWEEN the writes) is absent, and E-1 as specified
+leaves these cases as they are.
+
+| statement between the writes | real Node calls `parse` | analyzer |
+| --- | --- | --- |
+| `maybe(FLAG);` (`function maybe(f) { if (f) throw …; return 1; }`) | yes | **`NOT_AFFECTED`**, family C |
+| `JSON.parse(FLAG ? "{" : "{}");` | yes | **`NOT_AFFECTED`**, family C |
+
+Both are pinned as open-soundness-defect records (`RWF-094`, `D-17`,
+expected `UNKNOWN`).
+
+**Why it needs a decision.** Almost any statement can throw: a call into a
+dependency, a builtin, a property read of `undefined`. Closing this in
+general means that once a module's exports object can be observed before
+its last competing write (an earlier cycle-capable `require`, or the
+object escaping), every statement between the competing writes that is
+not proven to complete is a cutoff. That withdraws attribution from many
+multi-write modules: a precision-versus-soundness choice for the project
+owner (`docs/WORKFLOW.md` § 7), naturally an amendment to ADR 0009
+§ 1 clause 4 (the observation point would extend to "the exports object
+was observable before the competing writes"). A narrower first step,
+the local `maybe(FLAG)` shape, would need multi-path callee completion
+(RWF-027's machinery, applied to a call statement rather than a heritage
+clause). Backlog `BL-064`.
+
+**Further shapes (task BL-063's independent audit, 2026-10-12;
+reproduced against real Node on BL-063's branch, each pinned in the same
+test file).** Implicit invocations whose callee no proof reaches, the same
+family:
+
+| statement between the writes | real Node calls `parse` | analyzer |
+| --- | --- | --- |
+| `class C { f = bail(); } new C();` | yes | **`NOT_AFFECTED`**, family C |
+| `class C { f = FLAG && bail(); } new C();` | yes | **`NOT_AFFECTED`**, family C |
+| `const o = { get v() { FLAG && bail(); return 1; } }; void o.v;` | yes | **`NOT_AFFECTED`**, family C |
+
+The first needs no precision decision: a construction whose instance
+field initializer is definitely abrupt is an RWF-028-style proof, a narrow
+first step. The audit also measured (unit level, not pinned) that a
+callable declared inside a class static block (`class A { static { const
+b = () => { throw e; }; b(); } }`) is not resolved, so even its
+unconditional call keeps authority: the identity side of the same gap.
+
+---
+
+## RWF-095 — A tagged template whose tag is a proven-abrupt callee is not a module-evaluation cutoff
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (multi-valued provenance collapsed to one value, as RWF-050: the invocation that ends evaluation is not recognised because a tagged template is not modelled as calling its tag)
+**Proof family affected:** C (measured)
+**Severity:** P0 / critical soundness
+**Fix lane:** E (ADR 0009 § 1 clause 3)
+
+**Discovered:** by task BL-063's independent audit, measured by BL-063 on
+its branch. `isDefinitelyAbruptInvocation` (`module-model.ts`) recognises
+two invocation kinds, a call and a construction. A tagged template
+(`` bail`x` ``) calls its tag exactly as `bail(["x"])` would, but is neither
+kind, so a proven-abrupt tag is never a cutoff, in a required position or
+a MAY one. Pre-existing: RWF-016 … RWF-028 and BL-063 all share the
+predicate.
+
+**Reproduction (real Node v22, H-0 oracle harness).**
+`tests/oracle/rwf094-may-throw-statement.test.ts`, RWF-050's fixture:
+
+| statement between the writes | real Node calls `parse` | analyzer |
+| --- | --- | --- |
+| `` bail`x`; `` | yes | **`NOT_AFFECTED`**, family C |
+| `` FLAG && bail`x`; `` | yes | **`NOT_AFFECTED`**, family C |
+
+Both pinned as open-soundness-defect records (`RWF-095`, `D-17`, expected
+`UNKNOWN`). **Fix:** treat a `TaggedTemplateExpression` whose tag resolves
+through `resolveExactLocalCallable` like a call (backlog `BL-065`; no
+decision needed).
