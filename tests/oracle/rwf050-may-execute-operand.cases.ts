@@ -10,7 +10,6 @@ import {
 } from "../../src/testing/oracle/hit.js";
 import type { ProjectSpec } from "../../src/testing/oracle/project.js";
 import { syntheticProvider } from "../../src/testing/oracle/provider.js";
-import type { VerdictObservation } from "../../src/testing/open-soundness-defect.js";
 
 /**
  * Task RWF-050-repro (docs/tasks/RWF-050-repro-may-execute-operand.md):
@@ -69,14 +68,8 @@ export interface Rwf050Case {
   readonly called: boolean;
   /** The analyzer's verdict on the base commit, measured. */
   readonly base: CaseVerdict;
-  /** The sound verdict. */
+  /** The sound verdict, asserted. */
   readonly expected: CaseVerdict;
-  /**
-   * The open defect (RWF-050): the case asserts the record -- the exact
-   * wrong result, and its open FINDINGS entry -- never the wrong verdict as
-   * an expectation (AGENTS.md § G).
-   */
-  readonly openDefect?: { readonly observed: VerdictObservation };
 }
 
 const ENTRY = "src/index.js";
@@ -213,15 +206,6 @@ export function oracleCase(kase: Rwf050Case): OracleCase {
   };
 }
 
-/** The wrong result: `.run` attributed to `safeOp`, `parse` proven unreachable. */
-const FAMILY_C: VerdictObservation = {
-  verdict: "NOT_AFFECTED",
-  proofFamily: "C",
-  target: "vuln-lib#parse",
-  reachableSubgraphComplete: true,
-  unknownEdges: 0,
-};
-
 export const ALL_CASES: readonly Rwf050Case[] = [
   // The statement spelling the walk already handles: the contrast.
   {
@@ -239,7 +223,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "op.or",
@@ -248,7 +231,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "op.nullish",
@@ -257,7 +239,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "op.conditional-then",
@@ -266,7 +247,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "op.conditional-else",
@@ -275,7 +255,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "op.and-assign",
@@ -285,7 +264,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "op.or-assign",
@@ -295,7 +273,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "op.nullish-assign",
@@ -305,7 +282,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "decl.and",
@@ -314,7 +290,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "arg.and",
@@ -323,7 +298,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   // RWF-026's other refused (MAY) positions, measured alongside.
   {
@@ -333,7 +307,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "other.do-while-condition",
@@ -342,7 +315,6 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
   },
   {
     id: "other.for-incrementor",
@@ -351,6 +323,137 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { observed: FAMILY_C },
+  },
+  // Task BL-063: the other module-time MAY positions the MAY cutoff
+  // reaches -- class-definition time, a construction, a `switch` case
+  // test, a `try` with no `catch` -- each measured against real Node.
+  {
+    id: "bl063.static-field",
+    mechanism: "`class S { static x = FLAG && bail(); }`",
+    abrupt: `class S { static x = FLAG && bail(); }\nvoid S;\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "bl063.static-block",
+    mechanism: "`class S { static { FLAG && bail(); } }`",
+    abrupt: `class S { static { FLAG && bail(); } }\nvoid S;\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "bl063.class-field-key",
+    mechanism:
+      "`class K { [FLAG && bail()] = 1; }` (an instance field's computed KEY runs at definition time)",
+    abrupt: `class K { [FLAG && bail()] = 1; }\nvoid K;\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "bl063.class-method-key",
+    mechanism: '`class K { [FLAG ? bail() : "m"]() {} }`',
+    abrupt: `class K { [FLAG ? bail() : "m"]() {} }\nvoid K;\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "bl063.object-key",
+    mechanism: "`void { [FLAG && bail()]: 1 };`",
+    abrupt: `void { [FLAG && bail()]: 1 };\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "bl063.heritage",
+    mechanism: "`class H extends (FLAG ? bail() : Object) {}`",
+    abrupt: `class H extends (FLAG ? bail() : Object) {}\nvoid H;\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "bl063.new",
+    mechanism: "`FLAG && new Bail();` (a construction RWF-028 proves abrupt)",
+    prelude: `function Bail() { throw new Error("bail"); }\n`,
+    abrupt: `FLAG && new Bail();\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "bl063.switch-case-test",
+    mechanism: "`switch (0) { case FLAG && bail(): break; }`",
+    abrupt: `switch (0) { case FLAG && bail(): break; }\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "bl063.try-finally",
+    mechanism: "`try { FLAG && bail(); } finally {}` (no `catch`: not caught)",
+    abrupt: `try { FLAG && bail(); } finally {}\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  // Task BL-063: precision controls. Real Node never reaches `bail` at
+  // module time here, so `.run` is `safeOp` on every load and the later
+  // write keeps its authority.
+  {
+    id: "bl063.control.function-body",
+    mechanism: "`function f() { FLAG && bail(); }` (never called)",
+    abrupt: `function f() { FLAG && bail(); }\nvoid f;\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "bl063.control.arrow-body",
+    mechanism: "`const f = () => FLAG && bail();` (never called)",
+    abrupt: `const f = () => FLAG && bail();\nvoid f;\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "bl063.control.instance-field",
+    mechanism:
+      "`class I { f = FLAG && bail(); }` (an instance initializer runs per construction; never constructed)",
+    abrupt: `class I { f = FLAG && bail(); }\nvoid I;\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "bl063.control.caught",
+    mechanism:
+      "`try { FLAG && bail(); } catch {}` (caught within the statement)",
+    abrupt: `try { FLAG && bail(); } catch {}\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "bl063.control.for-break",
+    mechanism:
+      "`for (;; bail()) { break; }` (the incrementor runs only after the body completes; the body always breaks)",
+    abrupt: `for (;; bail()) { break; }\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "bl063.control.do-break",
+    mechanism:
+      "`do { break; } while (bail());` (the condition runs only after the body completes; the body always breaks)",
+    abrupt: `do { break; } while (bail());\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
   },
 ];
