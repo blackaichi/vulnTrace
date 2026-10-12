@@ -321,12 +321,29 @@ describe("RWF-016: excluded callable shapes", () => {
     ).toBeUndefined();
   });
 
-  it("still keeps authority when the call is the logical operator's conditional RIGHT operand", () => {
+  // BL-063 (RWF-050): the conditional RIGHT operand MAY be evaluated, and
+  // on every load that evaluates it the write below never runs. This row
+  // used to keep authority, the unsound attribution RWF-050 reproduced.
+  // Real Node (BL-063's measurement): a falsy `FLAG` throws.
+  it("refuses authority when the call is the logical operator's MAY-evaluated RIGHT operand (BL-063)", () => {
+    expect(
+      defaultExportName(
+        `${TWO}${BAIL_THROWS}const ok = FLAG || bail();\nmodule.exports = second;\n`,
+      ),
+    ).toBeUndefined();
+  });
+
+  // A PRECISION COST, not a claim about Node. `first` is a function, so
+  // `first || bail()` never calls `bail` and real Node always reaches the
+  // write below (BL-063's measurement). The cutoff has no value semantics
+  // and cannot tell a left operand that is always truthy from one that is
+  // not, so it withdraws: the verdict is `UNKNOWN`, never wrong.
+  it("withdraws authority for a RIGHT operand whose left is always truthy (a precision cost, BL-063)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const ok = first || bail();\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 });
 

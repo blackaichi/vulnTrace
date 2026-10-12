@@ -420,20 +420,25 @@ describe("RWF-024: nested and surrounding expression positions", () => {
 });
 
 describe("RWF-024: conditional / non-call key expressions stay OUT of scope", () => {
-  it('keeps authority for an unmodeled CONDITIONAL key (`flag ? bail() : "x"`) -- genuinely may not call bail', () => {
+  // BL-063 (RWF-050): these two used to keep authority because the key
+  // "genuinely may not call bail". It also genuinely MAY, and on every load
+  // that does, the literal is never built and nothing below runs: the
+  // unsound attribution RWF-050 reproduced. Real Node (BL-063's
+  // measurement): inside this reproducer's `if (FLAG)` both call `bail`.
+  it('refuses authority for a MAY-evaluated CONDITIONAL key (`flag ? bail() : "x"`) (BL-063)', () => {
     expect(
       defaultExportName(
         reproducer('  const o = {\n    [FLAG ? bail() : "x"]: 1,\n  };\n'),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for an unmodeled LOGICAL key (`flag && bail()`) -- genuinely may not call bail", () => {
+  it("refuses authority for a MAY-evaluated LOGICAL key (`flag && bail()`) (BL-063)", () => {
     expect(
       defaultExportName(
         reproducer("  const o = {\n    [FLAG && bail()]: 1,\n  };\n"),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   it("refuses for a NESTED-call key (`other(bail())`) -- the argument is required (RWF-026)", () => {

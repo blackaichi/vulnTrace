@@ -732,7 +732,11 @@ describe("RWF-019: key expressions the call is merely NESTED in, after RWF-026",
     });
   }
 
-  const conditional: ReadonlyArray<readonly [string, string]> = [
+  // BL-063 (RWF-050): conditional at runtime is MAY-evaluated, and on every
+  // load that evaluates `bail()` the class definition never completes.
+  // These rows used to keep authority, the unsound attribution RWF-050
+  // reproduced. Real Node (BL-063's measurement): a truthy `FLAG` throws.
+  const mayEvaluated: ReadonlyArray<readonly [string, string]> = [
     [
       "logical RHS (conditional at runtime)",
       "class C {\n  [FLAG && bail()] = 1;\n}",
@@ -741,6 +745,19 @@ describe("RWF-019: key expressions the call is merely NESTED in, after RWF-026",
       "ternary branch (conditional at runtime)",
       'class C {\n  [FLAG ? bail() : "x"] = 1;\n}',
     ],
+  ];
+
+  for (const [label, body] of mayEvaluated) {
+    it(`refuses authority for a MAY-evaluated ${label} inside the key (BL-063)`, () => {
+      expect(
+        defaultExportName(
+          `${TWO}${BAIL_THROWS}function wrap(a) {\n  return a;\n}\n${body}\nmodule.exports = second;\n`,
+        ),
+      ).toBeUndefined();
+    });
+  }
+
+  const conditional: ReadonlyArray<readonly [string, string]> = [
     [
       "throwing IIFE",
       'class C {\n  [(() => {\n    throw new Error("x");\n  })()] = 1;\n}',

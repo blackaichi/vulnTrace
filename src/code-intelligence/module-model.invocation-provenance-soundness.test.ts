@@ -548,8 +548,11 @@ describe("RWF-028 (33-34): interaction with RWF-026 and RWF-025", () => {
     ]) {
       expectRefused(mod(body));
     }
-    // Conditional / deferred: RWF-026's position rules are untouched by a
-    // callee suddenly being resolvable.
+    // MAY-evaluated (BL-063, RWF-050): a conditional or short-circuit
+    // position is a cutoff for the new provenance exactly as for a direct
+    // call. These rows used to keep authority, the unsound attribution
+    // RWF-050 reproduced. Real Node (BL-063's measurement, `FLAG` and `obj`
+    // free): each throws for some value.
     for (const body of [
       "const alias = bail;\nFLAG ? alias() : safeFn();",
       "const alias = bail;\nFLAG && alias();",
@@ -557,7 +560,7 @@ describe("RWF-028 (33-34): interaction with RWF-026 and RWF-025", () => {
       "const h = { bail };\nconst x = FLAG ?? h.bail();",
       "const alias = bail;\nconst x = obj?.m(alias());",
     ]) {
-      expectKept(mod(body));
+      expectRefused(mod(body));
     }
   });
 
@@ -733,19 +736,29 @@ describe("RWF-028: self-review attacks — nothing runtime-completable may lose 
     }
   });
 
-  it("keeps RWF-026's conditional and deferred positions closed to the new provenance", () => {
+  it("keeps the positions module evaluation never evaluates closed to the new provenance", () => {
+    // The `break`-guarded loop rows: the condition and the incrementor run
+    // only after the body completes or `continue`s, and it always breaks
+    // first (BL-063's `bodyAlwaysBreaks`; real Node never calls `alias`).
     for (const body of [
       "const alias = bail;\ndo {\n  break;\n} while (alias());",
       "const alias = bail;\nfor (let i = 0; i < 1; alias()) {\n  break;\n}",
-      "const alias = bail;\nconst x = FLAG && alias();",
-      "const alias = bail;\nconst x = obj?.m(alias());",
       "const h = { bail };\nclass C {\n  m() {\n    h.bail();\n  }\n}",
       "const h = { bail };\nfunction f(x = h.bail()) {}",
       "const alias = bail;\nclass C {\n  f = alias();\n}",
     ]) {
       expectKept(mod(body));
     }
-    // ...while the REQUIRED positions stay open to it.
+    // ...while a MAY-evaluated position is a cutoff for it (BL-063,
+    // RWF-050; these two used to keep authority; real Node throws for a
+    // truthy `FLAG` and a non-nullish `obj`)...
+    for (const body of [
+      "const alias = bail;\nconst x = FLAG && alias();",
+      "const alias = bail;\nconst x = obj?.m(alias());",
+    ]) {
+      expectRefused(mod(body));
+    }
+    // ...and the REQUIRED positions stay open to it.
     for (const body of [
       "const alias = bail;\nclass C {\n  static f = alias();\n}",
       "const alias = bail;\nfor (const q of alias()) {\n}",

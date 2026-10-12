@@ -224,26 +224,25 @@ describe("RWF-026 fixture: a resolvable local throwing call in a REQUIRED expres
     }
   });
 
-  it("keeps the later export attributable when the call sits in CONDITIONAL / DEFERRED positions (the control that makes this sound rather than merely conservative)", async () => {
+  it("withdraws the later export when the call sits in a MAY-evaluated position (BL-063, RWF-050)", async () => {
     // `fixture-lib/conditional` holds the identical call in a logical
     // RIGHT operand, an arrow body, a default parameter and a class
-    // INSTANCE field. None runs during module evaluation, so
-    // `module.exports = safeOp` really is reached on every load -- proven
-    // in-process in the ground-truth fixture's `c.js`. Treating any of
-    // them like a required position would withdraw authority from an
-    // export that is genuinely reached, which is a false refusal rather
-    // than conservatism.
+    // INSTANCE field. This test used to assert NOT_AFFECTED, on the claim
+    // that none of them runs during module evaluation. The logical RIGHT
+    // operand does: with `FIXTURE_LIB_MODE=fast` and `FIXTURE_LIB_FLAG`
+    // set, real Node calls `bail` there and the load ends before
+    // `module.exports = safeOp` (measured by BL-063) -- RWF-050's false
+    // NOT_AFFECTED. The other three are deferred and are asserted
+    // end to end by `tests/oracle/rwf050-may-execute-operand.test.ts`'s
+    // `bl063.control.*` cases.
     const { finding } = await scan({
       module: "fixture-lib/conditional",
       export: "default",
       entrypoint: CONDITIONAL_ENTRYPOINT,
     });
 
-    expect(finding?.verdict).toBe("NOT_AFFECTED");
-    expect(finding?.evidence?.confirmedUnreachableTarget).toMatchObject({
-      reachableSubgraphComplete: true,
-      target: { module: "fixture-lib/conditional", export: "default" },
-    });
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
   });
 
   it("still proves a genuinely unreachable, DEFINITELY REACHED whole-module export -> NOT_AFFECTED (Family C control)", async () => {
