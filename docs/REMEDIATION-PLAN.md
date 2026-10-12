@@ -1796,6 +1796,21 @@ review). Full record: FINDINGS RWF-050 (BL-063 status update).
   invocation, in any position. Two records in the same file; a small
   `module-model.ts` fix, no decision needed.
 
+**BL-065 additions** (task `BL-065`, 2026-10-12). RWF-095 is fixed: a
+tagged template is a call of its tag in `isDefinitelyAbruptInvocation`
+(same identity and body proofs), and the MAY check visits it. Full
+record: FINDINGS RWF-095 (BL-065 status update).
+
+- **Differentials.** `node scripts/differential.mjs` against `36d0b73`, 139 corpus cases: graph 0, proof 0, verdict 0 (none into `NOT_AFFECTED`, none unmeasured). A zero corpus differential is not evidence of soundness (OPEN-DEBTS D-12), the oracle cases are.
+- **`BL-066`** (RWF-096, found by BL-065's independent audit): a
+  concise-bodied arrow that can only throw is never proven abrupt. Two
+  open-soundness-defect records (`tests/oracle/rwf096-callee-summary.test.ts`);
+  `module-model.ts`, no decision needed.
+- **`BL-067`** (RWF-097, same audit): the callee summary sees only a
+  literal `throw` or a bare invocation statement, so a definitely-abrupt
+  call in a required expression position or a default parameter of a
+  callee body is not seen. Three records in the same file.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

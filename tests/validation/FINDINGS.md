@@ -269,7 +269,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-092 | `vuln-lib` (synthetic fixture) | An OSV event naming two kinds (`{fixed, last_affected}`, `{limit, fixed}`), which OSV forbids, was parsed by a union of non-strict schemas that kept the first matching kind and silently dropped the other, narrowing the range | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | RWF-093 | `nv` (`file:` dependency, real npm 10.9.0 lockfile) | A lockfile entry with a `name` and no `version` (a `file:` dependency whose manifest declares none) was dropped by the dependency graph; not a workspace member, so nothing else named it | silent drop — see below | **Fixed** (B-4) — see below |
 | RWF-094 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A module-time statement that MAY throw through a callee no proof reaches (`maybe(FLAG)` with a local function that throws on one path, `JSON.parse(...)`) is not a module-evaluation cutoff, so a later export write stays authoritative though a module already holding the exports object observes the earlier one | false NOT_AFFECTED (family C), reproduced against real Node by BL-063 — see below | Open (lane E, backlog `BL-064`) |
-| RWF-095 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A TAGGED TEMPLATE whose tag is a proven-abrupt local callee (`` bail`x`; ``, `` FLAG && bail`x`; ``) is not a definitely-abrupt invocation: `isDefinitelyAbruptInvocation` recognises only calls and constructions, so it is never a module-evaluation cutoff | false NOT_AFFECTED (family C), found by BL-063's independent audit, reproduced against real Node — see below | Open (lane E, backlog `BL-065`) |
+| RWF-095 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A TAGGED TEMPLATE whose tag is a proven-abrupt local callee (`` bail`x`; ``, `` FLAG && bail`x`; ``) is not a definitely-abrupt invocation: `isDefinitelyAbruptInvocation` recognises only calls and constructions, so it is never a module-evaluation cutoff | false NOT_AFFECTED (family C), found by BL-063's independent audit, reproduced against real Node — see below | **Fixed** (BL-065) — see below |
+| RWF-096 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A CONCISE-bodied arrow that can only throw (`const ac = () => bail();`) is never proven abrupt: the callee summary refuses it before reading its body, on a false "trivially never abrupt" premise, so `ac();` and `` ac`x`; `` are never module-evaluation cutoffs | false NOT_AFFECTED (family C), found by BL-065's independent audit, reproduced against real Node — see below | Open (lane E, backlog `BL-066`) |
+| RWF-097 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary proves a block body abrupt only from a literal `throw` or a BARE invocation statement: a definitely-abrupt call in a required expression position of a statement (`function w() { ok(bail()); }`) or in a default parameter initializer (`function dp(a, b = bail())`) is not seen, so invoking the callable is not a cutoff | false NOT_AFFECTED (family C), found by BL-065's independent audit, reproduced against real Node — see below | Open (lane E, backlog `BL-067`) |
 
 ---
 
@@ -20668,3 +20670,114 @@ Both pinned as open-soundness-defect records (`RWF-095`, `D-17`, expected
 `UNKNOWN`). **Fix:** treat a `TaggedTemplateExpression` whose tag resolves
 through `resolveExactLocalCallable` like a call (backlog `BL-065`; no
 decision needed).
+
+**Status update (task BL-065, 2026-10-12): Fixed.** This supersedes the
+"Open" status above.
+
+- **The fix** (`src/code-intelligence/module-model.ts`):
+  `isDefinitelyAbruptInvocation` treats a `TaggedTemplateExpression` as a
+  call of its tag: the same `resolveExactLocalCallable` identity proof
+  (so the same `async`/generator refusal) and the same
+  `callableAlwaysThrows` body proof. `mayEndModuleEvaluation`'s MAY check
+  (BL-063) visits a tagged template as it visits a call. Real Node v22.11.0
+  grounds the semantics: the tag, then every substitution, is evaluated,
+  then the tag is called with the member's receiver as `this`; an `async`
+  tag rejects and completes normally; `` new T`x` `` is `` new (T`x`) ``.
+- **Reproductions flipped.** Both records are deleted and assert
+  `UNKNOWN` with real Node calling the target
+  (`tests/oracle/rwf095-tagged-template-tag.test.ts`). Seven more tag
+  forms, each measured as a further live false `NOT_AFFECTED` on the base,
+  assert `UNKNOWN` too: an object-member tag, a one-hop alias, a
+  block-bodied arrow, a template with a substitution, a declarator
+  initializer, a static field (MAY) and a wrapper callable whose body is
+  the template. `` new Bail`x`; `` is a guard: it was already `UNKNOWN` on
+  the base for an unrelated reason (`unsupported_computed_callee`). Five
+  precision controls keep `NOT_AFFECTED` (an `async` tag, a function body,
+  a caught template, a tag that completes, an instance field).
+- **Mutations.** Disabling the predicate's tagged-template branch fails
+  the nine fix cases (`rwf095.tagged-template`,
+  `rwf095.tagged-template-may`, `bl065.member-tag`, `bl065.alias-tag`,
+  `bl065.arrow-tag`, `bl065.substitution`, `bl065.declarator`,
+  `bl065.static-field`, `bl065.wrapper`); removing it from the MAY check
+  only fails `rwf095.tagged-template-may` and `bl065.static-field` (the
+  required positions still answer through RWF-026's MUST relation).
+- **Differentials.** `node scripts/differential.mjs` against `36d0b73`, 139 corpus cases: graph 0, proof 0, verdict 0 (none into `NOT_AFFECTED`, none unmeasured). A zero corpus differential is not evidence of soundness (OPEN-DEBTS D-12), the oracle cases are.
+- **Independent audit:** CERTIFIED (62 tag programs probed against real
+  Node and the analyzer, head against base: 38 moved from authority kept
+  to withdrawn, none the other way). Two tag programs now withdraw though
+  Node never calls the target (`` l: try { bail`x`; } finally { break l; } ``,
+  and a member tag after a method that rewrites the member); both mirror
+  their call forms, which already withdraw on the base: precision costs,
+  not claims. Its pre-existing findings are RWF-096 and RWF-097, below,
+  and further invocation syntaxes that behave exactly as their call forms
+  (`` (0, bail)`x` ``, a conditional tag, `bail.call()`, a two-hop alias,
+  a method-shorthand member): RWF-094's family or documented bounds.
+
+---
+
+## RWF-096 — A concise-bodied arrow that can only throw is never proven abrupt
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (multi-valued provenance collapsed to one value, as RWF-050: the module stops at the invocation on every load, and the analyzer keeps only the later write)
+**Proof family affected:** C (measured)
+**Severity:** P0 / critical soundness
+**Fix lane:** E (ADR 0009 § 1 clause 3)
+
+**Discovered:** by task BL-065's independent audit; measured by BL-065.
+`callableAlwaysThrows` (`module-model.ts`) refuses an arrow whose body is
+not a block before reading it. Its doc comment (`cannotCompleteNormally`)
+justified that as "`() => expr` can only ever complete by returning the
+expression's value, so it is trivially never abrupt". The premise is
+false: the expression can throw (`() => bail()` always does). Corrected
+in BL-065's fix commit. Pre-existing since RWF-016.
+
+**Reproduction (real Node v22, H-0 oracle harness).**
+`tests/oracle/rwf096-callee-summary.test.ts`, RWF-050's fixture, with
+`const ac = () => bail();`:
+
+| statement between the writes | real Node calls `parse` | analyzer |
+| --- | --- | --- |
+| `ac();` | yes | **`NOT_AFFECTED`**, family C |
+| `` ac`x`; `` | yes | **`NOT_AFFECTED`**, family C |
+
+Both pinned as open-soundness-defect records (`RWF-096`, `D-17`, expected
+`UNKNOWN`). **Fix direction:** read a concise body as an expression that
+must be evaluated (RWF-026's `necessarilyEvaluatesAbruptly` at the
+callable's depth). Backlog `BL-066`.
+
+---
+
+## RWF-097 — The callee summary sees only a literal `throw` or a bare invocation statement
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (as RWF-096)
+**Proof family affected:** C (measured)
+**Severity:** P0 / critical soundness
+**Fix lane:** E (ADR 0009 § 1 clause 3)
+
+**Discovered:** by task BL-065's independent audit; measured by BL-065.
+`classifyAbruptOutcome` (`module-model.ts`) proves a statement of a
+callable's body abrupt only when it is a `throw`, or an expression
+statement that IS a definitely-abrupt invocation (RWF-028). A
+definitely-abrupt call in a REQUIRED position of a statement (an argument,
+a substitution: RWF-026's positions, which the module-scope MUST relation
+already walks) answers "normal", and so does a default parameter
+initializer, which a call that omits the argument evaluates before the
+body. Pre-existing since RWF-028.
+
+**Reproduction (real Node v22, H-0 oracle harness).**
+`tests/oracle/rwf096-callee-summary.test.ts`, RWF-050's fixture:
+
+| callable, and the statement between the writes | real Node calls `parse` | analyzer |
+| --- | --- | --- |
+| `function w() { ok(bail()); }`, `w();` | yes | **`NOT_AFFECTED`**, family C |
+| `` function w() { ok`${bail`x`}`; } ``, `w();` | yes | **`NOT_AFFECTED`**, family C |
+| `function dp(a, b = bail()) { return 1; }`, `dp();` | yes | **`NOT_AFFECTED`**, family C |
+
+All three pinned as open-soundness-defect records (`RWF-097`, `D-17`,
+expected `UNKNOWN`). **Fix direction:** ask RWF-026's required-position
+walk, at the callable's depth, for every statement of the body; a default
+parameter needs the call site's argument count, which only the invocation
+knows. Backlog `BL-067`.

@@ -1197,6 +1197,22 @@ proven-abrupt callee is never a cutoff; two records; backlog `BL-065`, no
 decision needed). This entry still stands: lanes E and C (C-2..C-5)
 remain, and RWF-094 and RWF-095 join lane E's open findings.
 
+**Progress, added by task `BL-065` (2026-10-12).** Task BL-065
+(`docs/tasks/BL-065-tagged-template-abrupt-tag.md`) fixed `RWF-095`: a
+tagged template is a call of its tag, so a proven-abrupt tag ends the
+definitely-reached region in a required or a MAY position
+(`module-model.ts`). The two records are deleted and assert `UNKNOWN`,
+with seven more tag forms measured and asserted the same way. Its
+independent audit (CERTIFIED) found two further live family-C false
+`NOT_AFFECTED`s of this entry in the callee summary, both pre-existing:
+`RWF-096` (a concise-bodied arrow that can only throw is never proven
+abrupt, on a false "trivially never abrupt" comment, now corrected;
+backlog `BL-066`) and `RWF-097` (a definitely-abrupt call in a required
+expression position or a default parameter of a callee body is not seen;
+backlog `BL-067`). Five open-soundness-defect records. This entry still
+stands: lanes E and C (C-2..C-5) remain, and RWF-094, RWF-096 and RWF-097
+are lane E's open findings from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
