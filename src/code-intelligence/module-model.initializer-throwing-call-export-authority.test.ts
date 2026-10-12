@@ -340,20 +340,24 @@ describe("RWF-017: scope, shadowing and aliasing must not be guessed at", () => 
 });
 
 describe("RWF-017: initializer expression forms that do NOT guarantee the call", () => {
-  it("keeps authority for a CONDITIONAL (ternary) initializer", () => {
+  // BL-063 (RWF-050): not guaranteed, but MAY-evaluated, and on every load
+  // that calls `bail` the write below never runs. These two used to keep
+  // authority, the unsound attribution RWF-050 reproduced. Real Node
+  // (BL-063's measurement): a truthy `FLAG` throws in both.
+  it("refuses authority for a MAY-evaluated CONDITIONAL (ternary) initializer (BL-063)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const x = FLAG ? bail() : first;\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
-  it("keeps authority for a short-circuiting `&&` initializer", () => {
+  it("refuses authority for a MAY-evaluated short-circuiting `&&` initializer (BL-063)", () => {
     expect(
       defaultExportName(
         `${TWO}${BAIL_THROWS}const x = FLAG && bail();\nmodule.exports = second;\n`,
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 
   // The three cases below were RWF-017's documented arbitrary-expression

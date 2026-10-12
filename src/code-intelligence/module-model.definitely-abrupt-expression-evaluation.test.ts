@@ -222,20 +222,18 @@ describe("RWF-026: a definitely-abrupt call in a REQUIRED expression position wi
  * `bail` either never called or its exception handled, so the later write
  * really is the module's exported value and MUST keep its authority. A
  * regression here is a false AFFECTED / a lost negative proof.
+ *
+ * **Correction (BL-063, RWF-050).** This table used to open with nine
+ * short-circuit, conditional-arm and logical-assignment rows and close with
+ * two optional-chain rows, under the claim above. The claim was false for
+ * them: each is evaluated at module time on SOME load, and on that load
+ * `bail` throws and the later write never runs (RWF-050, a live false
+ * `NOT_AFFECTED`). They moved to {@link MAY_EVALUATED}, which asserts the
+ * withdrawal. What is left here is never evaluated at module time.
  */
 const REFUSED: ReadonlyArray<readonly [string, string]> = [
-  // Short-circuiting operands
-  ["logical && RIGHT operand", "const x = FLAG && bail();"],
-  ["logical || RIGHT operand", "const x = FLAG || bail();"],
-  ["logical ?? RIGHT operand", "const x = FLAG ?? bail();"],
-  ["conditional TRUE arm", "const x = FLAG ? bail() : safe();"],
-  ["conditional FALSE arm", "const x = FLAG ? safe() : bail();"],
-  ["both conditional arms abrupt", "const x = FLAG ? bail() : bail();"],
-  ["logical assignment ||= RHS", "z ||= bail();"],
-  ["logical assignment &&= RHS", "z &&= bail();"],
-  ["logical assignment ??= RHS", "z ??= bail();"],
-
-  // Loop positions that need body-completion reasoning
+  // Loop positions after a body that always breaks: never reached
+  // (BL-063's `bodyAlwaysBreaks`).
   ["for UPDATE expression", "for (; ; bail()) {\n    break;\n  }"],
   ["do/while CONDITION", "do {\n    break;\n  } while (bail());"],
 
@@ -263,10 +261,6 @@ const REFUSED: ReadonlyArray<readonly [string, string]> = [
   ],
   ["throwing IIFE", "(() => bail())();"],
 
-  // Optional-chain guarded positions
-  ["optional-chain guarded ARGUMENT", "const x = obj?.m(bail());"],
-  ["optional-chain guarded INDEX", "const x = obj?.[bail()];"],
-
   // Caught exceptions
   [
     "call argument caught by try/catch",
@@ -287,10 +281,83 @@ const REFUSED: ReadonlyArray<readonly [string, string]> = [
   ["destructuring assignment target", "({ [safeKey()]: z } = obj);"],
 ];
 
-describe("RWF-026: a definitely-abrupt call in a CONDITIONAL or DEFERRED position keeps later export authority", () => {
+describe("RWF-026: a definitely-abrupt call in a DEFERRED position keeps later export authority", () => {
   for (const [label, body] of REFUSED) {
     it(`keeps authority for a ${label}`, () => {
       expect(defaultExportName(reproducer(body))).toBe("second");
+    });
+  }
+});
+
+// ---------------------------------------------------------------------
+// MAY-evaluated positions -- authority must be WITHDRAWN (BL-063).
+// ---------------------------------------------------------------------
+
+/**
+ * Real Node's answer for one MAY row, measured by BL-063 with `FLAG` and
+ * `MODE` free (true, false, undefined, null, 0, 1, "x"):
+ *
+ * - `"throws"`: some load calls `bail` and the write below never runs --
+ *   the cutoff is sound, and keeping authority was RWF-050's false
+ *   `NOT_AFFECTED`;
+ * - `"ends"`: some load ends module evaluation at this statement by
+ *   another exception before `bail` is reached (still a sound cutoff);
+ * - `"precision-cost"`: no load reaches `bail`, because the operand is
+ *   correlated with its own guard or a constant. The cutoff has no value
+ *   semantics, so it withdraws: the verdict is `UNKNOWN`, never wrong, and
+ *   the row records the cost rather than asserting a claim about Node.
+ */
+type MayGroundTruth = "throws" | "ends" | "precision-cost";
+
+/**
+ * BL-063 (RWF-050): a definitely-abrupt call in a position evaluated on
+ * SOME module-time load is a cutoff, as `if (FLAG) bail();` always was.
+ * The first eleven rows were REFUSED rows until BL-063; where the old text
+ * correlated the operand with the reproducer's `if (FLAG)` guard, the row
+ * now reads a second free variable `MODE`, and the correlated spelling is
+ * kept below as a precision-cost row.
+ */
+const MAY_EVALUATED: ReadonlyArray<readonly [string, string, MayGroundTruth]> =
+  [
+    ["logical && RIGHT operand", "const x = FLAG && bail();", "throws"],
+    ["logical || RIGHT operand", "const x = MODE || bail();", "throws"],
+    ["logical ?? RIGHT operand", "const x = MODE ?? bail();", "throws"],
+    ["conditional TRUE arm", "const x = FLAG ? bail() : safe();", "throws"],
+    ["conditional FALSE arm", "const x = MODE ? safe() : bail();", "throws"],
+    [
+      "both conditional arms abrupt",
+      "const x = FLAG ? bail() : bail();",
+      "throws",
+    ],
+    ["logical assignment ||= RHS", "let w = MODE;\n  w ||= bail();", "throws"],
+    ["logical assignment &&= RHS", "z &&= bail();", "throws"],
+    ["logical assignment ??= RHS", "let w = MODE;\n  w ??= bail();", "throws"],
+    ["optional-chain guarded ARGUMENT", "const x = obj?.m(bail());", "throws"],
+    ["optional-chain guarded INDEX", "const x = obj?.[bail()];", "throws"],
+    // The correlated spellings the rows above replaced.
+    [
+      "|| RIGHT operand under its own truthy guard",
+      "const x = FLAG || bail();",
+      "precision-cost",
+    ],
+    [
+      "?? RIGHT operand under its own non-nullish guard",
+      "const x = FLAG ?? bail();",
+      "precision-cost",
+    ],
+    [
+      "conditional FALSE arm under its own truthy guard",
+      "const x = FLAG ? safe() : bail();",
+      "precision-cost",
+    ],
+    ["||= RHS on a target that is always 1", "z ||= bail();", "precision-cost"],
+    ["??= RHS on a target that is always 1", "z ??= bail();", "precision-cost"],
+  ];
+
+describe("BL-063: a definitely-abrupt call in a MAY-evaluated position withdraws later export authority", () => {
+  for (const [label, body, groundTruth] of MAY_EVALUATED) {
+    it(`withdraws authority for a ${label} (real Node: ${groundTruth})`, () => {
+      expect(defaultExportName(reproducer(body))).toBeUndefined();
     });
   }
 });
@@ -300,22 +367,13 @@ describe("RWF-026: a definitely-abrupt call in a CONDITIONAL or DEFERRED positio
 // ---------------------------------------------------------------------
 
 describe("RWF-026: the required/conditional boundary, as adjacent pairs", () => {
+  // BL-063 (RWF-050) removed four pairs from this table: a logical RIGHT
+  // operand (`||` and `&&`), a LOGICAL assignment's RHS and an
+  // OPTIONAL-CHAIN guarded index are MAY-evaluated at module time, so for
+  // the cutoff they are no longer on the other side of a boundary from
+  // their required neighbours. Both halves now withdraw; see the next
+  // describe. What is left is the boundary between module time and never.
   const pairs: ReadonlyArray<readonly [string, string, string]> = [
-    [
-      "logical operand",
-      "const x = bail() || safe();",
-      "const x = FLAG || bail();",
-    ],
-    [
-      "logical operand (&&)",
-      "const x = bail() && safe();",
-      "const x = FLAG && bail();",
-    ],
-    [
-      "assignment RHS vs LOGICAL assignment RHS",
-      "z = bail();",
-      "z ||= bail();",
-    ],
     [
       "loop TEST vs loop UPDATE",
       "for (; bail(); ) {\n    break;\n  }",
@@ -336,6 +394,35 @@ describe("RWF-026: the required/conditional boundary, as adjacent pairs", () => 
       "foo(bail());",
       "const cb = () => foo(bail());",
     ],
+  ];
+
+  for (const [label, required, refused] of pairs) {
+    it(`${label}: the required half withdraws, the never-evaluated half does not`, () => {
+      expect(defaultExportName(reproducer(required))).toBeUndefined();
+      expect(defaultExportName(reproducer(refused))).toBe("second");
+    });
+  }
+});
+
+describe("BL-063: the pairs RWF-026 drew across the required/MAY line both withdraw", () => {
+  // Real Node (BL-063's measurement): each MAY half calls `bail` on some
+  // load (`MODE` free; `obj` is `{}`, never nullish).
+  const pairs: ReadonlyArray<readonly [string, string, string]> = [
+    [
+      "logical operand",
+      "const x = bail() || safe();",
+      "const x = MODE || bail();",
+    ],
+    [
+      "logical operand (&&)",
+      "const x = bail() && safe();",
+      "const x = FLAG && bail();",
+    ],
+    [
+      "assignment RHS vs LOGICAL assignment RHS",
+      "z = bail();",
+      "let w = MODE;\n  w ||= bail();",
+    ],
     [
       "index expression vs OPTIONAL-CHAIN guarded index",
       "const x = obj[bail()];",
@@ -343,10 +430,10 @@ describe("RWF-026: the required/conditional boundary, as adjacent pairs", () => 
     ],
   ];
 
-  for (const [label, required, refused] of pairs) {
-    it(`${label}: the required half withdraws, the conditional half does not`, () => {
+  for (const [label, required, mayEvaluated] of pairs) {
+    it(`${label}: the required half and the MAY half both withdraw`, () => {
       expect(defaultExportName(reproducer(required))).toBeUndefined();
-      expect(defaultExportName(reproducer(refused))).toBe("second");
+      expect(defaultExportName(reproducer(mayEvaluated))).toBeUndefined();
     });
   }
 });
@@ -570,12 +657,15 @@ describe("RWF-026: deeply nested required positions still resolve", () => {
     ).toBeUndefined();
   });
 
-  it("keeps authority when that same nesting ends in a CONDITIONAL position", () => {
+  // BL-063 (RWF-050): this row used to keep authority. A conditional
+  // position is still MAY-evaluated at module time, so it withdraws; real
+  // Node (BL-063's measurement) calls `bail` for a truthy `FLAG`.
+  it("withdraws when that same nesting ends in a MAY-evaluated position (BL-063)", () => {
     expect(
       defaultExportName(
         reproducer("const x = foo([{ a: `${safe() + (FLAG && bail())}` }]);"),
       ),
-    ).toBe("second");
+    ).toBeUndefined();
   });
 });
 
@@ -595,26 +685,12 @@ describe("RWF-026: self-review attacks -- nothing conditional or deferred may wi
   const ASYNC_GEN =
     'async function ab() {\n  throw new Error("x");\n}\nfunction* gb() {\n  throw new Error("x");\n}\n';
 
+  // BL-063 (RWF-050): the conditional-arm, short-circuit and optional-chain
+  // rows that used to open and close this matrix moved to `mayAttacks`
+  // below. They are MAY-evaluated at module time, so withdrawing is the
+  // sound answer; what this matrix still guards is the line between module
+  // time and never.
   const attacks: ReadonlyArray<readonly [string, string]> = [
-    // A conditional branch must never be treated as mandatory, however
-    // required-looking the expression nested inside it is.
-    [
-      "conditional arm holding an object literal",
-      "const x = FLAG ? { a: bail() } : 0;",
-    ],
-    ["conditional arm holding an array", "const x = FLAG ? [bail()] : 0;"],
-    [
-      "conditional arm holding a call argument",
-      "const x = FLAG ? foo(bail()) : 0;",
-    ],
-    ["conditional arm holding a template", "const x = FLAG ? `${bail()}` : 0;"],
-    // A short-circuit operand, likewise, at any nesting depth.
-    [
-      "logical && RHS holding an object literal",
-      "const x = FLAG && { a: bail() };",
-    ],
-    ["logical || RHS holding a call", "const x = FLAG || foo(bail());"],
-    ["logical ?? RHS holding an array", "const x = FLAG ?? [bail()];"],
     // A function boundary is never crossed, even from a required position.
     ["arrow passed as a required ARGUMENT", "foo(() => bail());"],
     [
@@ -674,14 +750,6 @@ describe("RWF-026: self-review attacks -- nothing conditional or deferred may wi
       "reassigned callee in a for-of RHS",
       "bail = safe;\n  for (const q of bail()) {\n  }",
     ],
-    // Optional-chain guards.
-    ["optional-chain guarded ARGUMENT, one link", "const x = obj?.m(bail());"],
-    ["optional-chain guarded INDEX, one link", "const x = obj?.[bail()];"],
-    [
-      "optional-chain guarded ARGUMENT, several links",
-      "const x = obj?.a.b(bail());",
-    ],
-    ["optional CALL on an unproven callee", "const x = obj.m?.(bail());"],
     // The two open callee axes stay open.
     [
       "P0-B conditional-throw callee in a required ARGUMENT",
@@ -743,6 +811,77 @@ describe("RWF-026: self-review attacks -- nothing conditional or deferred may wi
     });
   }
 
+  // BL-063 (RWF-050): these eleven used to keep authority. Each is
+  // evaluated at module time on some load; the label is real Node's answer
+  // (see {@link MayGroundTruth}; `obj` is `{}`).
+  const mayAttacks: ReadonlyArray<readonly [string, string, MayGroundTruth]> = [
+    [
+      "conditional arm holding an object literal",
+      "const x = FLAG ? { a: bail() } : 0;",
+      "throws",
+    ],
+    [
+      "conditional arm holding an array",
+      "const x = FLAG ? [bail()] : 0;",
+      "throws",
+    ],
+    [
+      "conditional arm holding a call argument",
+      "const x = FLAG ? foo(bail()) : 0;",
+      "throws",
+    ],
+    [
+      "conditional arm holding a template",
+      "const x = FLAG ? `${bail()}` : 0;",
+      "throws",
+    ],
+    [
+      "logical && RHS holding an object literal",
+      "const x = FLAG && { a: bail() };",
+      "throws",
+    ],
+    [
+      "logical || RHS holding a call, under its own truthy guard",
+      "const x = FLAG || foo(bail());",
+      "precision-cost",
+    ],
+    [
+      "logical ?? RHS holding an array, under its own non-nullish guard",
+      "const x = FLAG ?? [bail()];",
+      "precision-cost",
+    ],
+    [
+      "optional-chain guarded ARGUMENT, one link",
+      "const x = obj?.m(bail());",
+      "throws",
+    ],
+    [
+      "optional-chain guarded INDEX, one link",
+      "const x = obj?.[bail()];",
+      "throws",
+    ],
+    [
+      "optional-chain guarded ARGUMENT, several links",
+      "const x = obj?.a.b(bail());",
+      "ends",
+    ],
+    [
+      "optional CALL on a callee that is always undefined",
+      "const x = obj.m?.(bail());",
+      "precision-cost",
+    ],
+  ];
+
+  for (const [label, body, groundTruth] of mayAttacks) {
+    it(`withdraws authority for a MAY-evaluated ${label} (BL-063; real Node: ${groundTruth})`, () => {
+      expect(
+        defaultExportName(
+          `${TWO}${BAIL_THROWS}${HELPERS}${ASYNC_GEN}if (FLAG) {\n  module.exports = first;\n  ${body}\n}\nmodule.exports = second;\n`,
+        ),
+      ).toBeUndefined();
+    });
+  }
+
   const stillRequired: ReadonlyArray<readonly [string, string]> = [
     ["a conditional's own CONDITION", "const x = foo(bail()) ? 1 : 0;"],
     [
@@ -768,4 +907,82 @@ describe("RWF-026: self-review attacks -- nothing conditional or deferred may wi
       expect(defaultExportName(reproducer(body))).toBeUndefined();
     });
   }
+});
+
+/**
+ * BL-063's `bodyAlwaysBreaks`: a `for` incrementor or a `do`/`while`
+ * condition is never evaluated when the loop body always leaves by
+ * `break` first, and is a MAY cutoff otherwise. Every row was run under
+ * real Node with `FLAG` and `MODE` free; the label is its answer (see
+ * {@link MayGroundTruth}; `"never"` means no load calls `bail`).
+ */
+describe("BL-063: the loop positions reached only after the body completes", () => {
+  const rows: ReadonlyArray<
+    readonly [string, string, MayGroundTruth | "never", "keeps" | "withdraws"]
+  > = [
+    [
+      "a `continue` before the `break` reaches the incrementor",
+      "for (; ; bail()) {\n    if (FLAG) continue;\n    break;\n  }",
+      "throws",
+      "withdraws",
+    ],
+    [
+      "a `continue` before the `break` reaches the do/while condition",
+      "do {\n    if (FLAG) continue;\n    break;\n  } while (bail());",
+      "throws",
+      "withdraws",
+    ],
+    [
+      "a guarded `break` lets the body complete",
+      "for (; ; bail()) {\n    if (MODE) break;\n  }",
+      "throws",
+      "withdraws",
+    ],
+    [
+      "a labeled `continue` from an inner loop targets this one",
+      "outer: for (; ; bail()) {\n    for (; ;) {\n      continue outer;\n    }\n  }",
+      "throws",
+      "withdraws",
+    ],
+    [
+      "both `if` arms break (the rule is narrow: a precision cost)",
+      "for (; ; bail()) {\n    if (MODE) {\n      break;\n    } else {\n      break;\n    }\n  }",
+      "precision-cost",
+      "withdraws",
+    ],
+    ["a bare `break` body", "for (; ; bail()) break;", "never", "keeps"],
+    [
+      "a completing statement, then `break`",
+      "for (; ; bail()) {\n    safe();\n    break;\n  }",
+      "never",
+      "keeps",
+    ],
+    [
+      "a `continue` inside a nested function, then `break`",
+      "for (; ; bail()) {\n    const f = () => {\n      for (; ;) {\n        continue;\n      }\n    };\n    void f;\n    break;\n  }",
+      "never",
+      "keeps",
+    ],
+  ];
+
+  for (const [label, body, groundTruth, outcome] of rows) {
+    it(`${outcome} authority: ${label} (real Node: ${groundTruth})`, () => {
+      const name = defaultExportName(reproducer(body));
+      if (outcome === "keeps") {
+        expect(name).toBe("second");
+      } else {
+        expect(name).toBeUndefined();
+      }
+    });
+  }
+
+  it("keeps authority for an INSTANCE field nested in a STATIC field's class expression (real Node: never)", () => {
+    expect(
+      defaultExportName(
+        reproducer(
+          "class C {\n    static f = class {\n      g = bail();\n    };\n  }",
+        ),
+      ),
+    ).toBe("second");
+  });
 });

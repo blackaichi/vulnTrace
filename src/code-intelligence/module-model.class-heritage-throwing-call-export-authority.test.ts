@@ -461,9 +461,23 @@ describe("RWF-020: nested heritage expressions, after RWF-026", () => {
     });
   }
 
-  const conditional: ReadonlyArray<readonly [string, string]> = [
+  // BL-063 (RWF-050): a logical RHS and a conditional arm MAY call `bail`
+  // at class-definition time, and on every load that does, the class
+  // definition never completes. These rows used to keep authority; that
+  // was the unsound attribution RWF-050 reproduced. Real Node (BL-063's
+  // measurement): inside this reproducer's `if (FLAG)` both call `bail`.
+  const mayEvaluated: ReadonlyArray<readonly [string, string]> = [
     ["logical RHS", "  class C extends (FLAG && bail()) {}\n"],
     ["conditional", "  class C extends (FLAG ? bail() : Base) {}\n"],
+  ];
+
+  for (const [label, body] of mayEvaluated) {
+    it(`refuses authority for a MAY-evaluated ${label} heritage expression (BL-063)`, () => {
+      expect(defaultExportName(reproducer(body))).toBeUndefined();
+    });
+  }
+
+  const conditional: ReadonlyArray<readonly [string, string]> = [
     [
       "throwing IIFE",
       "  class C extends (() => { throw new Error(); })() {}\n",

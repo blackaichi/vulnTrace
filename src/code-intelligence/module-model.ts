@@ -939,12 +939,19 @@ function firstModuleEvaluationCutoff(
     return cached.start;
   }
 
+  // BL-063: a definitely-abrupt call can sit in ANY module-time expression,
+  // so a file that has a callable it could reach needs the expression walk.
+  // A file with none provably has no such call anywhere (see
+  // {@link fileHasDefinitelyAbruptCallable}), which keeps the walk off the
+  // hot path exactly as before.
+  const abruptCalls = fileHasDefinitelyAbruptCallable(sourceFile);
   const scanExpressions =
+    abruptCalls ||
     mayContainClassDefinitionTimeEvaluation(sourceFile) ||
     mayContainObjectLiteralComputedKeyEvaluation(sourceFile);
   let start: number | undefined;
   for (const statement of sourceFile.statements) {
-    if (mayEndModuleEvaluation(statement, scanExpressions)) {
+    if (mayEndModuleEvaluation(statement, scanExpressions, abruptCalls)) {
       start = statement.getStart(sourceFile);
       break;
     }
@@ -1000,6 +1007,21 @@ function firstModuleEvaluationCutoff(
  *   body would be if inlined at the call site, and is caught by an
  *   enclosing `try`/`catch` under the identical rule
  *   {@link isCaughtWithin} already applies to a literal `throw`.
+ *
+ * **The relation is MAY, for expressions as for statements (BL-063,
+ * RWF-050).** The named positions above are where RWF-016 … RWF-026 proved
+ * the call NECESSARILY runs; they still answer, but they are no longer
+ * the limit. Any call or construction {@link isDefinitelyAbruptCall}
+ * proves can only throw, anywhere this walk reaches at module time, is a
+ * cutoff: `FLAG && bail();` is the same program as `if (FLAG) bail();`,
+ * and on every load that evaluates `bail()` nothing below it runs. The
+ * MUST relation ({@link necessarilyEvaluatesAbruptly}) answered "does this
+ * statement necessarily end evaluation?", which is the wrong question for
+ * a cutoff; a conditional arm, a short-circuit operand, a logical
+ * assignment's right-hand side, an optional-chain-guarded argument, a
+ * `do`/`while` condition and a `for` incrementor were each a live false
+ * `NOT_AFFECTED` under it. The positions module evaluation never
+ * evaluates are excluded by {@link isNeverEvaluatedAtModuleTime}.
  *
  * What is deliberately NOT modeled, because the answer would need
  * semantics this relation does not have:
@@ -1068,11 +1090,36 @@ function firstModuleEvaluationCutoff(
 function mayEndModuleEvaluation(
   statement: ts.Statement,
   scanExpressions: boolean,
+  abruptCalls: boolean,
 ): boolean {
   let found = false;
 
   function visit(node: ts.Node): void {
     if (found) {
+      return;
+    }
+    // BL-063 (RWF-050): the MAY relation, for expressions as for
+    // statements. A call or construction {@link isDefinitelyAbruptCall}
+    // proves can only throw ends module evaluation on every load that
+    // evaluates it, so wherever this walk reaches one -- a `&&`'s right
+    // operand, a conditional arm, a logical assignment's right-hand side,
+    // an optional-chain-guarded argument, a `do`/`while` condition, a
+    // `for` incrementor -- it is a cutoff, exactly as `if (flag) bail();`
+    // already is. Whether the position is NECESSARILY evaluated is
+    // RWF-026's MUST question and is not asked here: "may end" needs only
+    // "may be evaluated at module time", which is what reaching it in this
+    // walk means. A function-like node's body and parameters are never
+    // reached (the stop below); the two other positions this walk does
+    // reach but module evaluation never evaluates are excluded by
+    // {@link isNeverEvaluatedAtModuleTime}.
+    if (
+      abruptCalls &&
+      (ts.isCallExpression(node) || ts.isNewExpression(node)) &&
+      isDefinitelyAbruptCall(node) &&
+      !isCaughtWithin(node, statement) &&
+      !isNeverEvaluatedAtModuleTime(node, statement)
+    ) {
+      found = true;
       return;
     }
     // Asked BEFORE the function-like stop below, and that order is the
@@ -1098,6 +1145,13 @@ function mayEndModuleEvaluation(
       return;
     }
     if (ts.isFunctionLike(node)) {
+      // BL-063: a method's or accessor's computed KEY runs when the class
+      // or object literal is defined, whatever the body does later; for
+      // the MAY relation it is walked like any other module-time
+      // expression (`[flag && bail()]() {}`). The body is not.
+      if (node.name !== undefined && ts.isComputedPropertyName(node.name)) {
+        visit(node.name);
+      }
       return;
     }
     if (
@@ -1118,6 +1172,110 @@ function mayEndModuleEvaluation(
 
   visit(statement);
   return found;
+}
+
+/**
+ * Whether `node`, reached by {@link mayEndModuleEvaluation}'s walk inside
+ * the top-level statement `boundary`, sits in a position module
+ * evaluation never evaluates (BL-063). The walk does not enter
+ * function-like nodes; these are the two positions outside one that it
+ * does enter:
+ *
+ * - **an instance field's initializer** (`class C { f = bail(); }`). It
+ *   runs per construction, not when the class is defined (RWF-018's line),
+ *   so defining the class runs nothing there. A `static` field's runs at
+ *   definition time and is not excluded.
+ * - **a `for` incrementor or a `do`/`while` condition whose loop body
+ *   always leaves by `break` first** (`for (;; bail()) { break; }`,
+ *   `do { break; } while (bail());`). Both run only after the body
+ *   completes normally or `continue`s (ForBodyEvaluation and
+ *   DoWhileStatement's evaluation: a `break` completion ends the loop
+ *   before either is evaluated); see {@link bodyAlwaysBreaks}.
+ *
+ * Asked only for the MAY call check, never for `return`/`throw` or the
+ * MUST predicates: those keep the walk's earlier reach unchanged.
+ */
+function isNeverEvaluatedAtModuleTime(
+  node: ts.Node,
+  boundary: ts.Statement,
+): boolean {
+  let child: ts.Node = node;
+  let parent: ts.Node | undefined = node.parent as ts.Node | undefined;
+
+  while (parent !== undefined && child !== boundary) {
+    if (
+      ts.isPropertyDeclaration(parent) &&
+      parent.initializer === child &&
+      ts
+        .getModifiers(parent)
+        ?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) !==
+        true
+    ) {
+      return true;
+    }
+    if (
+      ts.isForStatement(parent) &&
+      parent.incrementor === child &&
+      bodyAlwaysBreaks(parent.statement)
+    ) {
+      return true;
+    }
+    if (
+      ts.isDoStatement(parent) &&
+      parent.expression === child &&
+      bodyAlwaysBreaks(parent.statement)
+    ) {
+      return true;
+    }
+    child = parent;
+    parent = parent.parent as ts.Node | undefined;
+  }
+
+  return false;
+}
+
+/**
+ * Whether a loop body always ends its iteration with a `break` before it
+ * can complete normally or `continue` (BL-063), so that a `for`
+ * incrementor or a `do`/`while` condition after it is never evaluated.
+ *
+ * Narrow by construction: the body is a `break`, or a block with a `break`
+ * among its own statements and no `continue` anywhere in the statements
+ * before it (outside function bodies, and whatever loop the `continue`
+ * targets). The statements before the `break` either complete normally
+ * (so the `break` runs and leaves the loop), or complete abruptly by
+ * `break` (the loop is left), `return` or `throw` (the module is left).
+ * Only a `continue` can reach the incrementor or condition, and any one
+ * refuses. A labeled `break` is fine: every label that can enclose it
+ * labels this loop or a statement around it, and leaving either leaves
+ * the loop.
+ */
+function bodyAlwaysBreaks(body: ts.Statement): boolean {
+  if (ts.isBreakStatement(body)) {
+    return true;
+  }
+  if (!ts.isBlock(body)) {
+    return false;
+  }
+  for (const statement of body.statements) {
+    if (ts.isBreakStatement(statement)) {
+      return true;
+    }
+    if (containsContinue(statement)) {
+      return false;
+    }
+  }
+  return false;
+}
+
+function containsContinue(node: ts.Node): boolean {
+  if (ts.isContinueStatement(node)) {
+    return true;
+  }
+  if (ts.isFunctionLike(node)) {
+    return false;
+  }
+  return ts.forEachChild(node, containsContinue) === true;
 }
 
 /**
@@ -3238,12 +3396,18 @@ const MAX_EXPRESSION_EVALUATION_DEPTH = 100;
  * x ||= e | x &&= e | x ??= e -- the LHS REFERENCE only; `e` is NOT required
  * ```
  *
- * **Explicitly refused, each for a stated reason:**
+ * **Explicitly refused, each for a stated reason.** Refused means "not
+ * NECESSARILY evaluated", never "not a cutoff": every refused position that
+ * is still evaluated at module time is a cutoff through
+ * {@link mayEndModuleEvaluation}'s MAY check (BL-063, RWF-050). An earlier
+ * version of this comment said the refused positions keep a later
+ * export's authority; for a module-time position that was false, and it
+ * was a live false `NOT_AFFECTED`.
  *
  * - **A logical operator's RIGHT operand** (`flag && bail()`). It runs
  *   only for some values of the left operand, and this relation has no
  *   value semantics to decide which — so the expression CAN complete
- *   normally and no cutoff may be claimed.
+ *   normally and no MUST claim may be made.
  * - **A conditional expression's ARMS** (`flag ? bail() : safe()`, and
  *   `flag ? bail() : other()` alike). Neither arm is required. Joining two
  *   independently-abrupt arms into one proof is multi-path completion
@@ -4623,9 +4787,12 @@ function isDefinitelyAbruptClassHeritage(node: ts.Node): boolean {
  *                             them (see FINDINGS.md)
  * ```
  *
- * These are the only constructs {@link mayEndModuleEvaluation} treats as
- * able to end module evaluation, alongside the pre-existing `return`/
- * uncaught-`throw` pair.
+ * This is the MUST half of {@link mayEndModuleEvaluation}'s answer. Since
+ * BL-063 it is no longer the only way a call ends module evaluation there:
+ * a proven-abrupt call in any module-time position, required or not, is a
+ * cutoff through that walk's MAY check, so the "refused" rows above (and
+ * the `do`/`while` condition and `for` incrementor below) are cutoffs too,
+ * for that reason rather than this one.
  */
 function isDefinitelyAbruptCallStatement(node: ts.Node): boolean {
   if (ts.isExpressionStatement(node)) {

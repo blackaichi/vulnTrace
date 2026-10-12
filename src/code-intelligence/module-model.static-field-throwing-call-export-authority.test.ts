@@ -539,11 +539,28 @@ describe("RWF-018: expression positions inside the initializer, after RWF-026", 
     });
   }
 
-  // Still refused, and these are the precision boundary RWF-026 keeps:
-  // none of them is evaluated on every path through the initializer.
-  const conditional: ReadonlyArray<readonly [string, string]> = [
+  // BL-063 (RWF-050): neither is evaluated on every path through the
+  // initializer, but each MAY be, at class-definition time, and on every
+  // load that evaluates `bail()` the class definition never completes.
+  // These rows used to keep authority, the unsound attribution RWF-050
+  // reproduced. Real Node (BL-063's measurement): a truthy `FLAG` throws.
+  const mayEvaluated: ReadonlyArray<readonly [string, string]> = [
     ["logical RHS", "class C {\n  static x = FLAG && bail();\n}"],
     ["ternary branch", "class C {\n  static x = FLAG ? bail() : 1;\n}"],
+  ];
+
+  for (const [label, body] of mayEvaluated) {
+    it(`refuses authority for a MAY-evaluated ${label} (BL-063)`, () => {
+      expect(
+        defaultExportName(
+          `${TWO}${BAIL_THROWS}function wrap(a) {\n  return a;\n}\n${body}\nmodule.exports = second;\n`,
+        ),
+      ).toBeUndefined();
+    });
+  }
+
+  // Still refused: a function boundary, never crossed.
+  const conditional: ReadonlyArray<readonly [string, string]> = [
     [
       "throwing IIFE",
       'class C {\n  static x = (() => {\n    throw new Error("x");\n  })();\n}',
