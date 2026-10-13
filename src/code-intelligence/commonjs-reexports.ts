@@ -188,7 +188,9 @@ function staticRequireSpecifier(node: ts.Node): string | undefined {
 }
 
 /** `exports.X = ` / `module.exports.X = `'s property name, or `undefined`. Mirrors source-index.ts's `describeCommonJsExportTarget` for the property form only. */
-function commonJsExportPropertyName(left: ts.Expression): string | undefined {
+export function commonJsExportPropertyName(
+  left: ts.Expression,
+): string | undefined {
   // P0-Z: the element-access spelling of the same two forms --
   // `exports["X"] = ` / `module.exports["X"] = `. This mirror must accept
   // exactly what `describeCommonJsExportTarget` accepts, or the two
@@ -241,7 +243,7 @@ function commonJsExportPropertyName(left: ts.Expression): string | undefined {
 }
 
 /** `module.exports = ...` (the whole-module reassignment), never `module.exports.foo = ...`. */
-function isModuleExportsAssignmentTarget(left: ts.Expression): boolean {
+export function isModuleExportsAssignmentTarget(left: ts.Expression): boolean {
   return (
     ts.isPropertyAccessExpression(left) &&
     ts.isIdentifier(left.expression) &&

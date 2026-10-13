@@ -370,32 +370,34 @@ describe("P1-A2: multiple same-named siblings and traversal order", () => {
 // ---------------------------------------------------------------------------
 
 describe("P1-A2: duplicate writes to the same public name", () => {
-  it("binds the LAST write, not the stale first one, and not the sibling", async () => {
+  // BL-064 (RWF-094). The second write's own value,
+  // `require("./safe").safeImpl`, is evaluated after the first write and
+  // may throw (a load failure, a getter); the module required by the first
+  // write holds `module.parent`, so it observes the first value. Neither
+  // write is authoritative any more: the answer is UNKNOWN, still bound to
+  // neither the stale write nor the sibling. The last-write-wins precision
+  // control, a last value that provably completes, is asserted one layer
+  // down (`export-forwarding.test.ts`, `commonjs-reexports.test.ts`).
+  it("binds NEITHER the stale first write nor the sibling (UNKNOWN since BL-064)", async () => {
     const { finding } = await scan({
       entrypoint: "src/dupwrite-consumer.cjs",
       packageName: "dupwrite-lib",
       packageInstance: "dupwrite-lib",
     });
 
-    expect(finding?.verdict).toBe("AFFECTED");
-    expect(resolvedTarget(finding)).toContain(
-      inPackage("dupwrite-lib", "safe.js"),
-    );
+    expect(finding?.verdict).toBe("UNKNOWN");
     expect(pathMentions(finding, "dupwrite-lib", "dangerous.js")).toBe(false);
     expect(pathMentions(finding, "dupwrite-lib", "other.js")).toBe(false);
   });
 
-  it("binds the LAST write in the reverse direction too", async () => {
+  it("binds NEITHER write in the reverse direction either (UNKNOWN since BL-064)", async () => {
     const { finding } = await scan({
       entrypoint: "src/dupreverse-consumer.cjs",
       packageName: "dupreverse-lib",
       packageInstance: "dupreverse-lib",
     });
 
-    expect(finding?.verdict).toBe("AFFECTED");
-    expect(resolvedTarget(finding)).toContain(
-      inPackage("dupreverse-lib", "dangerous.js"),
-    );
+    expect(finding?.verdict).toBe("UNKNOWN");
     expect(pathMentions(finding, "dupreverse-lib", "safe.js")).toBe(false);
     expect(pathMentions(finding, "dupreverse-lib", "other.js")).toBe(false);
   });

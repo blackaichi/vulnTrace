@@ -250,7 +250,9 @@ const CASES: readonly Rwf050Case[] = [
     abrupt: "dp(...[1, 2]);\n",
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // BL-064 (RWF-094): a spread argument is outside the completion grammar, so
+    // the writes compete across an unproven call (precision only).
+    expected: "UNKNOWN",
   },
   // A parameter-shadowed callee (`function sh(bail, b = bail())`) is not a
   // control here: the call graph answers a call of a parameter `unknown`
@@ -266,7 +268,9 @@ const CASES: readonly Rwf050Case[] = [
     abrupt: "w();\n",
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // BL-064 (RWF-094): a body-local callee is outside the completion grammar, so
+    // the writes compete across an unproven call (precision only).
+    expected: "UNKNOWN",
   },
   {
     id: "bl066.control.default-writes-function",

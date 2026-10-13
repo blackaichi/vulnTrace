@@ -452,7 +452,9 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     abrupt: `for (;; bail()) { break; }\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // BL-064 (RWF-094): a loop is outside the completion grammar, so
+    // the writes compete across an unproven statement (precision only).
+    expected: "UNKNOWN",
   },
   {
     id: "bl063.control.do-break",
@@ -461,6 +463,8 @@ export const ALL_CASES: readonly Rwf050Case[] = [
     abrupt: `do { break; } while (bail());\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // BL-064 (RWF-094): a loop is outside the completion grammar, so
+    // the writes compete across an unproven statement (precision only).
+    expected: "UNKNOWN",
   },
 ];

@@ -208,7 +208,7 @@ describe("RWF-027 fixture: a heritage call whose EVERY ending prevents the class
     expect(finding?.evidence?.path ?? []).toHaveLength(0);
   });
 
-  it("keeps the later export attributable when EVERY multi-path factory keeps a good ending (the control that makes this sound rather than merely aggressive)", async () => {
+  it("never proves NOT_AFFECTED when every multi-path factory keeps a good ending but the writes compete across an unproven block (UNKNOWN since BL-064)", async () => {
     // `fixture-lib/valid-multipath` holds `throwOrBase` (throw + a class),
     // `invalidOrBase` (1 + a class), `invalidOrNull` (1 + `null`, which
     // `extends` ACCEPTS), `throwOrNull`, `invalidOrUnknown` (one
@@ -237,17 +237,22 @@ describe("RWF-027 fixture: a heritage call whose EVERY ending prevents the class
     // in the file to mask it. End-to-end fixtures prove verdict and proof
     // behavior; the focused module-model matrix proves the path-summary
     // overreach controls.
+    //
+    // **BL-064 (RWF-094).** The `if` block between the two writes of
+    // `module.exports` is outside the completion grammar (a heritage call,
+    // a `void` read), and the file references `require`, so it can be
+    // observed after an abrupt completion between the writes: authority
+    // is withdrawn and the verdict is UNKNOWN, never NOT_AFFECTED. The
+    // per-factory overreach controls below this layer are unaffected
+    // (`module-model.multipath-class-definition-completion.test.ts`).
     const { finding } = await scan({
       module: "fixture-lib/valid-multipath",
       export: "default",
       entrypoint: VALID_ENTRYPOINT,
     });
 
-    expect(finding?.verdict).toBe("NOT_AFFECTED");
-    expect(finding?.evidence?.confirmedUnreachableTarget).toMatchObject({
-      reachableSubgraphComplete: true,
-      target: { module: "fixture-lib/valid-multipath", export: "default" },
-    });
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(finding?.evidence?.confirmedUnreachableTarget).toBeUndefined();
   });
 
   it("still proves a genuinely unreachable, DEFINITELY REACHED whole-module export -> NOT_AFFECTED (Family C control)", async () => {
