@@ -268,12 +268,13 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-091 | `vuln-lib` (synthetic fixture) | The OSV normalizer paired a SEMVER range's events in array order, while OSV's specification sorts them by version before evaluating (a sorted array is only recommended): `[{introduced: 2.0.0}, {fixed: 1.0.0}]` declared `2.5.0` out of range, which the specification calls affected | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | RWF-092 | `vuln-lib` (synthetic fixture) | An OSV event naming two kinds (`{fixed, last_affected}`, `{limit, fixed}`), which OSV forbids, was parsed by a union of non-strict schemas that kept the first matching kind and silently dropped the other, narrowing the range | silent drop (false "not applicable") — see below | **Fixed** (B-2) — see below |
 | RWF-093 | `nv` (`file:` dependency, real npm 10.9.0 lockfile) | A lockfile entry with a `name` and no `version` (a `file:` dependency whose manifest declares none) was dropped by the dependency graph; not a workspace member, so nothing else named it | silent drop — see below | **Fixed** (B-4) — see below |
-| RWF-094 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A module-time statement that MAY throw through a callee no proof reaches (`maybe(FLAG)` with a local function that throws on one path, `JSON.parse(...)`) is not a module-evaluation cutoff, so a later export write stays authoritative though a module already holding the exports object observes the earlier one | false NOT_AFFECTED (family C), reproduced against real Node by BL-063 — see below | Open (lane E, backlog `BL-064`) |
+| RWF-094 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A module-time statement that MAY throw through a callee no proof reaches (`maybe(FLAG)` with a local function that throws on one path, `JSON.parse(...)`) is not a module-evaluation cutoff, so a later export write stays authoritative though a module already holding the exports object observes the earlier one | false NOT_AFFECTED (family C), reproduced against real Node by BL-063 — see below | **Fixed** (BL-064) — see below |
 | RWF-095 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A TAGGED TEMPLATE whose tag is a proven-abrupt local callee (`` bail`x`; ``, `` FLAG && bail`x`; ``) is not a definitely-abrupt invocation: `isDefinitelyAbruptInvocation` recognises only calls and constructions, so it is never a module-evaluation cutoff | false NOT_AFFECTED (family C), found by BL-063's independent audit, reproduced against real Node — see below | **Fixed** (BL-065) — see below |
 | RWF-096 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A CONCISE-bodied arrow that can only throw (`const ac = () => bail();`) is never proven abrupt: the callee summary refuses it before reading its body, on a false "trivially never abrupt" premise, so `ac();` and `` ac`x`; `` are never module-evaluation cutoffs | false NOT_AFFECTED (family C), found by BL-065's independent audit, reproduced against real Node — see below | **Fixed** (BL-066) — see below |
 | RWF-097 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary proves a block body abrupt only from a literal `throw` or a BARE invocation statement: a definitely-abrupt call in a required expression position of a statement (`function w() { ok(bail()); }`) or in a default parameter initializer (`function dp(a, b = bail())`) is not seen, so invoking the callable is not a cutoff | false NOT_AFFECTED (family C), found by BL-065's independent audit, reproduced against real Node — see below | **Fixed** (BL-066, with BL-067 folded in) — see below |
-| RWF-098 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary still refuses invocations real Node never completes: an argument that is certainly `undefined` (`dp(1, undefined)`, `dp(1, void 0)`) runs the default but only OMITTED arguments are counted; a destructuring parameter's nested default (`function dd({ a = bail() } = {})`) is not read; unconditional self-recursion (`function rec() { rec(); }`) is refused on RWF-028's false premise that it "never throws" (V8 throws a `RangeError`); and a third wrapper hop is refused by RWF-028's documented depth bound | false NOT_AFFECTED (family C), found and reproduced against real Node by BL-066 — see below | Open (lane E, backlog `BL-068`) |
+| RWF-098 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary still refuses invocations real Node never completes: an argument that is certainly `undefined` (`dp(1, undefined)`, `dp(1, void 0)`) runs the default but only OMITTED arguments are counted; a destructuring parameter's nested default (`function dd({ a = bail() } = {})`) is not read; unconditional self-recursion (`function rec() { rec(); }`) is refused on RWF-028's false premise that it "never throws" (V8 throws a `RangeError`); and a third wrapper hop is refused by RWF-028's documented depth bound | false NOT_AFFECTED (family C), found and reproduced against real Node by BL-066 — see below | Open, narrowed (BL-064 closed its five verdict-level records; the unit records are backlog `BL-068`) — see below |
 | RWF-099 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary over-claims that an invocation cannot complete normally: a loop, `switch` or `try`/`finally` containing a `return` is "normal", so a later throw decides; a `catch` that may run and return is ignored; a nested block's `var` or Annex-B function declaration does not shadow the callee name; a reassignment of the callee inside a function body is not seen. BL-066 widened the reach of each (required positions, `return`, concise bodies) | precision (an over-claimed cutoff withdraws authority toward `UNKNOWN`); a false `AFFECTED` through RWF-021's widened roots is possible but not measured; found by BL-066's independent audit | Open (lane E, backlog `BL-069`) |
+| RWF-100 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | When the whole-module export is refused (`module.exports = { run: dangerousOp }` after a cutoff or an unproven statement), an earlier `exports.run = safeOp` on the replaced object stayed the only `run` binding and was attributed | false NOT_AFFECTED (family C) — see below | **Fixed** (BL-064) — see below |
 
 ---
 
@@ -20641,6 +20642,110 @@ callable declared inside a class static block (`class A { static { const
 b = () => { throw e; }; b(); } }`) is not resolved, so even its
 unconditional call keeps authority: the identity side of the same gap.
 
+**Status update (task BL-064, 2026-10-13): Fixed.** This supersedes the
+"Open" status above, and answers "Why it needs a decision": the project
+owner was offered option (a) (ADR 0009 § 1 clause 4 amended), (b) point
+fixes, or (c) folding it into E-1, gave the go without choosing, and
+BL-064 took the recommended (a), recorded as a decision record in ADR 0009
+for the owner to confirm or drop.
+
+- **The fix** (`src/code-intelligence/module-model.ts`,
+  `competingWritesCannotBeObservedApart`, consulted by
+  `isDefinitelyReachedExportAssignment`): the last write of an export keeps
+  its authority only when nothing can observe the module's objects, or
+  every evaluation between the FIRST competing write and its own
+  completion is proven to complete normally, by a closed grammar.
+  Anything outside it withdraws toward `UNKNOWN`.
+- **Measured premises (real Node v22.11.0).** No cycle is needed: a child
+  required BEFORE both writes reads the earlier value through
+  `module.parent.exports` after the load throws. A module with no holder
+  is deleted from `require.cache` and `module.children`, and a re-require
+  evaluates it afresh, so "who can observe" is a census of the file's own
+  references (`require`, `import()`, `eval`, the wrapper's `arguments`,
+  module-scope `this`, `module`/`exports` other than as export write
+  bases, a TypeScript `import = require`). The `this` and `arguments` of a
+  class `extends` clause and of a computed key are the enclosing scope's.
+- **Competing writes.** A write of a provable primitive (TypeScript's
+  `exports.x = void 0`) is not one. A whole-module write competes for a
+  property only if its value can carry that name: an object literal's own
+  keys (all names if it has a spread, a computed key, `__proto__` or an
+  accessor), a function value's intrinsics plus every `fn.P =` and
+  `this.P =` the file spells, provided the function never escapes and is
+  never reassigned; any other value carries every name. A write inside a
+  function body opens the window at the start of the file.
+- **The grammar.** Declarations; literals; function values; classes
+  without heritage, computed keys or static blocks; reads out of their
+  temporal dead zone; `typeof`; `void`, `!`, `,`, `&&`, `||`, `??`, `===`,
+  `!==`, `?:`; object and array literals without spreads; `if`; a `try`
+  with a `catch`; export writes and non-intrinsic member writes on a
+  contained module function; calls and tagged templates of an exact module
+  callable whose body completes, up to three calls deep (a recursion
+  always reaches the bound: unbounded recursion throws a `RangeError`,
+  RWF-098), with `async` callees completing and generators initializing
+  their parameters; a default parameter the call supplies with a defined
+  value is skipped. Function declarations in blocks (Annex B) are refused.
+- **What can make a write fail.** When code in the file may tamper with
+  the export objects or the prototypes (`Object`, `Reflect`, `Function`,
+  `globalThis`, `Proxy`, `__proto__`, `constructor`, a `this` handed on,
+  the exports object handed to code or to a foreign method), and an
+  earlier statement may have run it (it is not proven, or holds a `try`),
+  every window withdraws. A property write onto an export object the file
+  does not shape (after `module.exports = require(...)`, or a literal with
+  an accessor) is never proven to complete.
+- **Reproductions flipped.** The five open-soundness-defect records are
+  deleted and assert `UNKNOWN` with real Node calling the target
+  (`tests/oracle/rwf094-may-throw-statement.test.ts`), with four more
+  shapes measured as live false `NOT_AFFECTED` on the base (a property
+  read of `undefined`, a `try`/`finally`, a nested callee, a temporal-dead-
+  zone read) and five precision controls that keep `NOT_AFFECTED` (a
+  completing callee, a caught statement, an `if` on `typeof` of an
+  undeclared global, an `async` callee, a primitive first write). RWF-098's
+  five verdict-level records are the same fixture and are closed too (see
+  RWF-098's status update). 87 unit tests in
+  `src/code-intelligence/module-model.competing-write-window.test.ts`.
+- **Mutations.** 24, each caught by a named test in that file (the window
+  disabled, the census disabled, the primitive and carried-name rules, the
+  deferred window, the opening chain, the last value, the TDZ, the `catch`
+  requirement, the depth bound, the escape rule, default skipping, the
+  async-generator rule, property reads, intrinsic member writes, the memo,
+  the stale-property withdrawal, the tampering census, Annex B, the
+  `import = require` census, the async-caller taint, `eval` as tampering,
+  inherited names in the stale-property rule).
+- **Precision cost, measured** (`scripts/bl064-competing-write-window-corpus.mjs`
+  against `089ff3b`): 93 of 8,659 CommonJS export bindings in
+  `node_modules` (ajv's TypeScript-emitted entries, debug, zod, fast-uri,
+  find-up, ignore), 9 of 441 in the validation corpus (all in RWB-08's
+  `debug`, none on its finding's path), 1 of 213 in adversarial v2, 10 of
+  568 in `fixtures/`; no other change. Eight hermetic tests and four oracle
+  controls that asserted attribution across an unproven statement now
+  assert the withdrawal (named "since BL-064").
+- **Differentials.** `node scripts/differential.mjs` against `089ff3b`,
+  139 corpus cases: graph 0, proof 0, verdict 0 (none into
+  `NOT_AFFECTED`, none unmeasured). A zero corpus differential is not
+  evidence of soundness (OPEN-DEBTS D-12); the oracle cases are.
+- **Independent audit.** First round BLOCKED, with nine findings measured
+  against real Node, each fixed here and pinned by a test: a withdrawn
+  whole-module write left a stale property write standing in its place
+  (found pre-existing too: RWF-100, below); an opening chain's outer links
+  were not checked; an `async function*` was taken as `async`; Annex B
+  block functions; census holes (`this` in `extends` and computed keys,
+  `import = require`); a false premise that a write in the window cannot
+  throw; a property-export alias of a function; an unmemoized callee proof
+  (24.6 s on a generated file; now one evaluation per callee and calling
+  statement, gated by an operation count); and three overclaiming
+  comments. Second round BLOCKED on three model-level holes, each saved
+  downstream end to end (`UNKNOWN`) and fixed here: a call of an `async`
+  callee was taken as running only proven code (its body runs up to its
+  first `await`); `eval` was not counted as tampering; the stale-property
+  rule ignored names inherited through a tampered prototype. Third round:
+  CERTIFIED.
+- **Accepted bounds, not modelled.** Code outside the file (a preload, a
+  loader patching `Module.prototype._compile`); the deprecated
+  `fn.caller.arguments` of a sloppy-mode foreign caller; running out of
+  stack or memory at a proven statement. Writers the file does not spell
+  (aliases, parameters, `Object.assign`/`defineProperty`, other modules,
+  stale export objects) stay ADR 0009 § 1 clause 1's, E-1's.
+
 ---
 
 ## RWF-095 — A tagged template whose tag is a proven-abrupt callee is not a module-evaluation cutoff
@@ -20959,6 +21064,21 @@ and a decision that makes every unproven statement between competing
 writes a cutoff (`BL-064`) closes them all at once. Backlog `BL-068`, after
 `BL-064`'s decision.
 
+**Status update (task BL-064, 2026-10-13): the five verdict-level records
+are closed; the callee summary's refusals stand.** Each of the five oracle
+cases puts the refused invocation between two competing writes of
+`exports.run`, and BL-064's window (RWF-094's status update) withdraws the
+later write unless that invocation is proven to COMPLETE, which none of
+the five is (a default that may run, a destructuring parameter, a
+recursion, which always reaches the completion proof's depth bound, and a
+four-body chain). All five now assert `UNKNOWN` with real Node calling the
+target (`tests/oracle/rwf098-callee-summary-bounds.test.ts`). The two unit
+records in `module-model.invocation-provenance-soundness.test.ts` (11)
+stay open: each has a SINGLE whole-module write, so no earlier value can be
+observed and BL-064 does not move them, and no verdict impact of that
+shape is measured. Whether the abrupt summary should still recognise
+these invocations is backlog `BL-068`, narrowed to that question.
+
 ---
 
 ## RWF-099 — The callee summary over-claims an invocation that real Node completes
@@ -21002,3 +21122,48 @@ yields `NOT_AFFECTED`. With no configured entrypoint symbol, RWF-021's
 widened roots include the earlier writes, so an over-claimed cutoff could
 reach an `AFFECTED` through a write real Node overwrites. Backlog `BL-069`
 measures that first.
+
+---
+
+## RWF-100 — A withdrawn whole-module write leaves a stale property write attributed in its place
+
+**Status:** **Fixed** (BL-064)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (multi-valued provenance collapsed to one value)
+**Proof family affected:** C (measured)
+**Severity:** P0 / critical soundness
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-064's independent audit, measured against real
+Node v22.11.0 and the analyzer end to end. When
+`selectAuthoritativeWholeModuleExport` refuses the last
+`module.exports = { run: dangerousOp }` (a cutoff before it, or BL-064's
+window), `buildExportBindings` published only the withdrawn default, so an
+earlier `exports.run = safeOp`, written to the object the literal replaces,
+was the only `run` binding left and `mapExportsToFunctions` attributed
+`run` to `safeOp`.
+
+| file | real Node calls `parse` | base `089ff3b` | BL-064 head before the fix |
+| --- | --- | --- | --- |
+| `exports.run = safeOp; if (FLAG) bail(); module.exports = { run: dangerousOp };`, app `require("wrap").run("x")` | yes, on every load that completes (`FLAG` false) | **`NOT_AFFECTED`** | **`NOT_AFFECTED`** |
+| the same with `console.log("x");` in place of the `if` | yes, on every load | `AFFECTED` | **`NOT_AFFECTED`** |
+
+The first is pre-existing; the second is BL-064's own first version
+extending it.
+
+**Fix (task BL-064).** When the whole-module export is not authoritative,
+every CommonJS property binding whose name some whole-module write can
+carry (`carries`, RWF-094's status update) is withdrawn too. A value that
+cannot carry the name (`if (flag) module.exports = {}`) keeps the property
+write attributed (RWF-014's control, unchanged). Pinned by
+`module-model.competing-write-window.test.ts` ("(1) a withdrawn
+whole-module write withdraws the stale property writes it may replace").
+
+**Not closed: the authoritative case.** When the whole-module write IS
+authoritative, a stale property write it replaces is still attributed
+(`exports.run = safeOp; function main(){} main.run = dangerousOp;
+module.exports = main;`, app `require("wrap").run("x")`: real Node calls
+`parse`, the analyzer answers `NOT_AFFECTED` on the base and on BL-064's
+head; measured by BL-064's second audit round). That is PRM-61's stale
+export object, ADR 0009 § 1, lane E (REMEDIATION-PLAN maps it to E-2).
+

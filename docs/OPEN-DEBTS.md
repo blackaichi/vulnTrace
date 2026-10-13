@@ -1236,6 +1236,26 @@ backlog `BL-069`, which first measures whether one reaches a false
 `AFFECTED`). This entry still stands: lanes E and C (C-2..C-5) remain, and
 RWF-094 and RWF-098 are lane E's open findings from this family.
 
+**Progress, added by task `BL-064` (2026-10-13).** Task BL-064
+(`docs/tasks/BL-064-may-throw-statement-cutoff.md`) fixed `RWF-094` under
+option (a), an amendment to ADR 0009 § 1 clause 4 with a decision record
+for the project owner: when the module's objects can be observed, the
+last write of an export keeps its authority only if every evaluation
+between the first competing write and its completion is proven to
+complete, by a closed grammar (`competingWritesCannotBeObservedApart`,
+`module-model.ts`). The five records are deleted and assert `UNKNOWN`,
+with four more shapes measured and asserted the same way; RWF-098's five
+verdict-level records, the same fixture, are closed too (its two
+single-write unit records stay with `BL-068`). Its independent audit
+blocked the first version on nine measured findings, all fixed, one of
+them pre-existing: `RWF-100`, a refused whole-module write left a stale
+property write attributed in its place, a live family-C false
+`NOT_AFFECTED`, fixed here. Measured precision cost: about 1 % of
+CommonJS export bindings in `node_modules`, none on a validation finding's
+path; corpus differential zero. This entry still stands: lanes E and C
+(C-2..C-5) remain, with RWF-098's unit records and RWF-099 from this
+family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
