@@ -1,14 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { runOracleCase } from "../../src/testing/oracle/case.js";
-import { toVerdictObservation } from "../../src/testing/oracle/scan.js";
-import {
-  loadDefectRegisters,
-  openSoundnessDefectProblems,
-  VERDICT_DOMAIN,
-  type OpenSoundnessDefect,
-  type Verdict,
-  type VerdictObservation,
-} from "../../src/testing/open-soundness-defect.js";
 import {
   TARGET_MARKER,
   oracleCase,
@@ -39,24 +30,19 @@ import {
  *   `MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH`, RWF-028's documented bound.
  *
  * Same fixture as RWF-050 (`rwf050-may-execute-operand.cases.ts`). Each case
- * is an open-soundness-defect record -- the exact wrong result, never the
- * wrong verdict as an expectation (AGENTS.md § G). A fix deletes the record
- * and asserts `expected`.
+ * was an open-soundness-defect record until task BL-064
+ * (docs/tasks/BL-064-may-throw-statement-cutoff.md) closed the family: the
+ * statement between the two writes of `exports.run` is not PROVEN to
+ * complete, so neither write is authoritative (ADR 0009 § 1 clause 4, as
+ * amended). Each now asserts `UNKNOWN`. The callee summary itself still
+ * refuses these shapes; its two unit-level authority records (a single
+ * write, no competing one) stay open for backlog `BL-068`.
  */
 
 // One macrotask turn before each case (backlog BL-033).
 beforeEach(async () => {
   await new Promise((resolve) => setImmediate(resolve));
 });
-
-/** The wrong result: `.run` attributed to `safeOp`, `parse` proven unreachable. */
-const FAMILY_C: VerdictObservation = {
-  verdict: "NOT_AFFECTED",
-  proofFamily: "C",
-  target: "vuln-lib#parse",
-  reachableSubgraphComplete: true,
-  unknownEdges: 0,
-};
 
 const DP = "function dp(a, b = bail()) { return 1; }\n";
 
@@ -111,29 +97,14 @@ const CASES: readonly Rwf050Case[] = [
 ];
 
 describe.each(CASES.map((c) => [c.id, c] as const))("%s", (_id, kase) => {
-  it(`RWF-098: ${kase.mechanism} -- open, expected ${kase.expected}`, async () => {
-    const result = await runOracleCase(oracleCase(kase));
+  it(`RWF-098: ${kase.mechanism} -- ${kase.expected}`, async () => {
+    const result = await runOracleCase({
+      ...oracleCase(kase),
+      expectation: { verdict: kase.expected, calledMarker: TARGET_MARKER },
+    });
     expect(
       result.variant.groundTruth.calledMarkers.has(TARGET_MARKER),
       "real Node's ground truth",
     ).toBe(kase.called);
-    const coverage = result.variant.scan.output?.coverage;
-    expect(coverage).toBeDefined();
-    const record: OpenSoundnessDefect<Verdict, VerdictObservation> = {
-      caseId: kase.id,
-      rwf: "RWF-098",
-      debt: "D-17",
-      admissible: [kase.expected],
-      expected: kase.expected,
-      observed: FAMILY_C,
-    };
-    expect(
-      openSoundnessDefectProblems(
-        record,
-        VERDICT_DOMAIN,
-        toVerdictObservation(result.variant.scan.findings[0], coverage!),
-        loadDefectRegisters(),
-      ),
-    ).toEqual([]);
   });
 });

@@ -64,6 +64,8 @@ export interface Rwf050Case {
   readonly abrupt: string;
   /** Extra top-level declarations before the first write (a `let` a logical assignment reads). */
   readonly prelude?: string;
+  /** The first write of `exports.run`, when not `exports.run = dangerousOp;` (BL-064). */
+  readonly first?: string;
   /** Whether real Node calls the target. */
   readonly called: boolean;
   /** The analyzer's verdict on the base commit, measured. */
@@ -88,7 +90,11 @@ const LIB: Readonly<Record<string, string>> = {
 };
 
 /** `wrap/index.js` with `abrupt` between the dangerous and the safe write. */
-function wrapIndex(abrupt: string, prelude = ""): string {
+function wrapIndex(
+  abrupt: string,
+  prelude = "",
+  first = "exports.run = dangerousOp;\n",
+): string {
   return (
     `const lib = require("vuln-lib");\n` +
     `function dangerousOp(x) { return lib.parse(x); }\n` +
@@ -97,7 +103,7 @@ function wrapIndex(abrupt: string, prelude = ""): string {
     `const FLAG = !process.env.VT_RWF050_OFF;\n` +
     prelude +
     `exports.b = require("./b");\n` +
-    `exports.run = dangerousOp;\n` +
+    first +
     abrupt +
     `exports.run = safeOp;\n`
   );
@@ -111,6 +117,7 @@ const WRAP_B =
 function wrapFiles(
   abrupt: string,
   prelude?: string,
+  first?: string,
 ): Readonly<Record<string, string>> {
   return {
     "node_modules/wrap/package.json": JSON.stringify({
@@ -118,7 +125,7 @@ function wrapFiles(
       version: "1.0.0",
       main: "index.js",
     }),
-    "node_modules/wrap/index.js": wrapIndex(abrupt, prelude),
+    "node_modules/wrap/index.js": wrapIndex(abrupt, prelude, first),
     "node_modules/wrap/b.js": WRAP_B,
   };
 }
@@ -201,7 +208,7 @@ export function oracleCase(kase: Rwf050Case): OracleCase {
     },
     variant: {
       name: "case",
-      project: project(wrapFiles(kase.abrupt, kase.prelude), APP),
+      project: project(wrapFiles(kase.abrupt, kase.prelude, kase.first), APP),
     },
   };
 }
