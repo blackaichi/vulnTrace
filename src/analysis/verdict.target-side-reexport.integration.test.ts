@@ -291,20 +291,24 @@ describe("P1-A1 target-side re-export: stale/ambiguous bindings fail closed", ()
     }
   });
 
-  it("resolves a duplicated export to the LAST write, which is what Node publishes", async () => {
+  it("resolves a duplicated export to NEITHER write when the last one's value may throw (UNKNOWN since BL-064)", async () => {
+    // BL-064 (RWF-094): `require("./impl").harmless` is evaluated after
+    // the first write and may throw, and `./impl` holds `module.parent`,
+    // so it may observe `dangerous`. The stale first write must still not
+    // be the target.
     const { finding, graph } = await scan({
       entrypoint: "src/duplicate-reachable.cjs",
       packageName: "duplicate-lib",
       target: "vulnerable",
     });
 
-    const harmless = graph.nodes.find(
-      (n) => n.name === "harmless" && n.module.includes("duplicate-lib"),
+    const dangerous = graph.nodes.find(
+      (n) => n.name === "dangerous" && n.module.includes("duplicate-lib"),
     );
-    expect(harmless).toBeDefined();
-    expect(finding?.verdict).toBe("AFFECTED");
-    expect(evidencePath(finding).at(-1) ?? "").toContain(
-      `:${harmless?.location?.line}`,
+    expect(dangerous).toBeDefined();
+    expect(finding?.verdict).toBe("UNKNOWN");
+    expect(evidencePath(finding).at(-1) ?? "").not.toContain(
+      `:${dangerous?.location?.line}`,
     );
   });
 });

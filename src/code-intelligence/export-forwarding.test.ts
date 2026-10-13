@@ -125,10 +125,14 @@ describe("CommonJS forwarding hops", () => {
   });
 
   it("forwards the LAST of duplicate export writes, never the stale first", () => {
+    // BL-064 (RWF-094): the last write's value is read before the write
+    // completes, so it is a `const` read here -- `require("./impl").harmless`
+    // inside the second write may throw (a load failure, a getter) and leave
+    // `dangerous` published to `./impl`, which holds `module.parent`.
     expect(
       commonJsExportForwardingHop(
         modelOf(
-          `exports.vulnerable = require("./impl").dangerous;\nexports.vulnerable = require("./impl").harmless;`,
+          `const harmless = require("./impl").harmless;\nexports.vulnerable = require("./impl").dangerous;\nexports.vulnerable = harmless;`,
         ),
         "vulnerable",
       ),
@@ -137,6 +141,17 @@ describe("CommonJS forwarding hops", () => {
       exportName: "harmless",
       syntax: "commonjs",
     });
+  });
+
+  it("forwards NEITHER duplicate write when the last one's value may throw after the first is observable (BL-064, RWF-094)", () => {
+    expect(
+      commonJsExportForwardingHop(
+        modelOf(
+          `exports.vulnerable = require("./impl").dangerous;\nexports.vulnerable = require("./impl").harmless;`,
+        ),
+        "vulnerable",
+      ),
+    ).toBeUndefined();
   });
 
   it("refuses a DYNAMIC (computed) specifier", () => {

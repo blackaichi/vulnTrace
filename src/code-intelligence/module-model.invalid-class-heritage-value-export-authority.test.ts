@@ -698,11 +698,23 @@ describe("RWF-022: every export surface loses authority alike", () => {
   });
 
   it("KEEPS a require re-export when the heritage value is VALID", () => {
+    // BL-064 (RWF-094): with no earlier competing write, only the heritage
+    // decides whether the final write is reached.
+    expect(
+      defaultReExportSpecifier(
+        `${MAKE_BASE}if (FLAG) {\n  class C extends makeBase() {}\n}\nmodule.exports = require("safe-twin");\n`,
+      ),
+    ).toBe("safe-twin");
+  });
+
+  it("withdraws it when an earlier competing write is observable and the final write's own `require` may throw (BL-064, RWF-094)", () => {
+    // `require("safe-twin")` may throw after the branch's write, and
+    // `nested-vulnerable` holds `module.parent`: it observes that write.
     expect(
       defaultReExportSpecifier(
         `${MAKE_BASE}if (FLAG) {\n  module.exports = require("nested-vulnerable");\n  class C extends makeBase() {}\n}\nmodule.exports = require("safe-twin");\n`,
       ),
-    ).toBe("safe-twin");
+    ).toBeUndefined();
   });
 });
 

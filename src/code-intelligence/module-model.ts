@@ -1,10 +1,12 @@
 import ts from "typescript";
 import type { SourceLocation } from "../domain/graph.js";
 import {
+  commonJsExportPropertyName,
   commonJsModuleReExportOrigin,
   commonJsPropertyExportRhs,
   commonJsPropertyReExportOrigin,
   declaresCommonJsAmbientShadow,
+  isModuleExportsAssignmentTarget,
   refusesLocalIdentifierProvenance,
   resolveCommonJsReExportExpression,
   resolveLocalValue,
@@ -783,7 +785,11 @@ function chasedValueFunctionLocation(
  */
 function isDefinitelyReachedExportAssignment(rhs: ts.Expression): boolean {
   const node = exportAssignmentStatementNode(rhs);
-  return node !== undefined && isDefinitelyReachedModuleScopeStatement(node);
+  return (
+    node !== undefined &&
+    isDefinitelyReachedModuleScopeStatement(node) &&
+    competingWritesCannotBeObservedApart(rhs)
+  );
 }
 
 /**
@@ -897,6 +903,2248 @@ function isDefinitelyReachedModuleScopeStatement(node: ts.Node): boolean {
   const sourceFile = node.getSourceFile();
   const cutoff = firstModuleEvaluationCutoff(sourceFile);
   return cutoff === undefined || node.getStart(sourceFile) < cutoff;
+}
+
+/* ------------------------------------------------------------------ *
+ * BL-064 (RWF-094): the competing-write window                         *
+ * ------------------------------------------------------------------ */
+
+/**
+ * The key a competing export write is filed under: an exported property
+ * name, or {@link WHOLE_MODULE_EXPORT} for a write that replaces the
+ * whole exported value (`module.exports = X`, `export = X`).
+ */
+const WHOLE_MODULE_EXPORT: unique symbol = Symbol("whole-module-export");
+type CompetingWriteKey = string | typeof WHOLE_MODULE_EXPORT;
+
+/** One write of an export this file spells, at the position it runs from. */
+interface CompetingWriteSite {
+  readonly key: CompetingWriteKey;
+  /** The assignment (or `export =`) node itself. */
+  readonly node: ts.Node;
+  /** The index in `sourceFile.statements` of the top-level statement holding it. */
+  readonly statementIndex: number;
+  /**
+   * Whether it runs later than its statement, or never: inside a function
+   * body or an instance field initializer.
+   */
+  readonly deferred: boolean;
+  /**
+   * Whether the value written is provably a primitive (`void 0`, a
+   * literal). An observer of a primitive reaches no code through it, so
+   * such a write opens no window (TypeScript's `exports.x = void 0;`
+   * preamble).
+   */
+  readonly primitive: boolean;
+  /**
+   * For a whole-module write, the property names the new export object
+   * can hold: the keys an object literal spells, or `"all"` for any other
+   * value (a function's statics, a prototype, a spread, a computed key).
+   */
+  readonly carries: ReadonlySet<string> | "all";
+}
+
+/** {@link competingWriteSites}' answer, indexed for the window query. */
+interface CompetingWriteSites {
+  /** Every site, in source order. */
+  readonly all: readonly CompetingWriteSite[];
+  /** The sites of each exported property name. */
+  readonly byName: ReadonlyMap<string, readonly CompetingWriteSite[]>;
+  /** The whole-module sites. */
+  readonly wholeModule: readonly CompetingWriteSite[];
+}
+
+const competingWriteSitesBySourceFile = new WeakMap<
+  ts.SourceFile,
+  CompetingWriteSites
+>();
+
+/**
+ * Every export write this file spells, wherever it is (BL-064): the
+ * property forms {@link commonJsExportPropertyName} reads and the
+ * whole-module forms. A form neither reads (an alias, `Object.assign`,
+ * `Object.defineProperty`) is E-1's un-enumerable writer, not this
+ * relation's.
+ */
+function competingWriteSites(sourceFile: ts.SourceFile): CompetingWriteSites {
+  const cached = competingWriteSitesBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const sites: CompetingWriteSite[] = [];
+  sourceFile.statements.forEach((statement, statementIndex) => {
+    function visit(node: ts.Node, deferred: boolean): void {
+      let key: CompetingWriteKey | undefined;
+      let value: ts.Expression | undefined;
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      ) {
+        const left = unwrapParentheses(node.left);
+        key =
+          commonJsExportPropertyName(left) ??
+          (isModuleExportsAssignmentTarget(left)
+            ? WHOLE_MODULE_EXPORT
+            : undefined);
+        value = node.right;
+      } else if (ts.isExportAssignment(node) && node.isExportEquals) {
+        key = WHOLE_MODULE_EXPORT;
+        value = node.expression;
+      }
+      if (key !== undefined && value !== undefined) {
+        sites.push({
+          key,
+          node,
+          statementIndex,
+          deferred,
+          primitive: isPrimitiveValue(unwrapValue(value)),
+          carries:
+            key === WHOLE_MODULE_EXPORT
+              ? propertiesCarriedBy(unwrapValue(value))
+              : "all",
+        });
+      }
+      const nested =
+        deferred ||
+        ts.isFunctionLike(node) ||
+        (ts.isPropertyDeclaration(node) && !isStaticClassElement(node));
+      ts.forEachChild(node, (child) => visit(child, nested));
+    }
+    visit(statement, false);
+  });
+  const byName = new Map<string, CompetingWriteSite[]>();
+  const wholeModule: CompetingWriteSite[] = [];
+  for (const site of sites) {
+    if (site.key === WHOLE_MODULE_EXPORT) {
+      wholeModule.push(site);
+    } else {
+      const known = byName.get(site.key);
+      if (known === undefined) {
+        byName.set(site.key, [site]);
+      } else {
+        known.push(site);
+      }
+    }
+  }
+  const indexed = { all: sites, byName, wholeModule };
+  competingWriteSitesBySourceFile.set(sourceFile, indexed);
+  return indexed;
+}
+
+function isStaticClassElement(node: ts.ClassElement): boolean {
+  return (
+    ts.canHaveModifiers(node) &&
+    (ts
+      .getModifiers(node)
+      ?.some((modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword) ??
+      false)
+  );
+}
+
+/**
+ * The property names every object carries from `Object.prototype`, and
+ * every function from its own intrinsics and `Function.prototype`. None
+ * holds package code; they are listed so that a write of one of these
+ * names is never treated as uncontested.
+ */
+const OBJECT_INTRINSIC_NAMES: readonly string[] = [
+  "__proto__",
+  "__defineGetter__",
+  "__defineSetter__",
+  "__lookupGetter__",
+  "__lookupSetter__",
+  "constructor",
+  "hasOwnProperty",
+  "isPrototypeOf",
+  "propertyIsEnumerable",
+  "toLocaleString",
+  "toString",
+  "valueOf",
+];
+const FUNCTION_INTRINSIC_NAMES: readonly string[] = [
+  ...OBJECT_INTRINSIC_NAMES,
+  "apply",
+  "arguments",
+  "bind",
+  "call",
+  "caller",
+  "length",
+  "name",
+  "prototype",
+];
+
+/**
+ * The property names a whole-module export value can carry when it is
+ * written (BL-064), so that it competes only with the later writes of
+ * those names:
+ *
+ * - an object literal: its keys, unless it has a spread, a computed key
+ *   or a `__proto__` (each can supply any name);
+ * - a function or arrow expression: a fresh object, so only its
+ *   intrinsics;
+ * - an identifier naming exactly one module-scope function declaration,
+ *   or `const` function or arrow, that nothing in the file reassigns and
+ *   that never escapes ({@link moduleFunctionEscapes}): its intrinsics,
+ *   every `P` the file writes as `name.P = ...` anywhere, and every `P` it
+ *   writes as `this.P = ...` anywhere (a method called on it runs with
+ *   `this` bound to it); a computed write, or any other use of `this`,
+ *   carries every name;
+ * - anything else: `"all"`.
+ *
+ * A name a writer this file does not spell can set (an alias, a
+ * parameter, `Object.assign`, another module) is the un-enumerable writer
+ * of ADR 0009 § 1 clause 1, E-1's, exactly as it is for every attribution
+ * today.
+ */
+function propertiesCarriedBy(
+  value: ts.Expression,
+): ReadonlySet<string> | "all" {
+  const node = unwrapParentheses(value);
+  if (ts.isFunctionExpression(node) || ts.isArrowFunction(node)) {
+    return new Set(FUNCTION_INTRINSIC_NAMES);
+  }
+  if (ts.isIdentifier(node)) {
+    return propertiesCarriedByModuleFunction(node);
+  }
+  if (!ts.isObjectLiteralExpression(node)) {
+    return "all";
+  }
+  const names = new Set<string>(OBJECT_INTRINSIC_NAMES);
+  for (const property of node.properties) {
+    const name = property.name;
+    if (
+      name === undefined ||
+      ts.isComputedPropertyName(name) ||
+      ts.isPrivateIdentifier(name)
+    ) {
+      return "all";
+    }
+    const text = ts.isIdentifier(name)
+      ? name.text
+      : exactCommonJsExportPropertyName(name);
+    if (
+      text === undefined ||
+      text === "__proto__" ||
+      ts.isGetAccessorDeclaration(property) ||
+      ts.isSetAccessorDeclaration(property)
+    ) {
+      // An accessor makes a later write of its name run code, or throw.
+      return "all";
+    }
+    names.add(text);
+  }
+  return names;
+}
+
+/**
+ * Whether `name` is exactly one module-scope function declaration, or
+ * `const` bound to a function or arrow expression, that nothing in the
+ * file reassigns: a binding that always holds that one function object.
+ */
+function isUnreassignedModuleFunction(
+  sourceFile: ts.SourceFile,
+  name: string,
+): boolean {
+  const binding = moduleScopeBindings(sourceFile).get(name);
+  return (
+    binding !== undefined &&
+    binding.count === 1 &&
+    (binding.kind === "function" || binding.kind === "const") &&
+    topLevelCallableCandidates(sourceFile).has(name) &&
+    !isNameAssignedWithin(sourceFile, name) &&
+    !moduleFunctionEscapes(sourceFile, name)
+  );
+}
+
+const escapingModuleFunctionsBySourceFile = new WeakMap<
+  ts.SourceFile,
+  Map<string, boolean>
+>();
+
+/**
+ * Whether any reference spelled `name` in the file can hand the function
+ * object to code that may change it (`Object.freeze(fn)`,
+ * `Object.defineProperty(fn, ...)`, an alias, an argument, a return):
+ * every reference must be a callee, a member access's base, a `typeof`
+ * operand, a declaration's own name, or the value of an assignment chain
+ * whose every link writes an export target, `exports`, or a member of
+ * `name` itself. Counted by spelling over the whole file, so a shadowing
+ * binding only makes it more likely to answer `true`.
+ */
+function moduleFunctionEscapes(
+  sourceFile: ts.SourceFile,
+  name: string,
+): boolean {
+  let byName = escapingModuleFunctionsBySourceFile.get(sourceFile);
+  if (byName === undefined) {
+    byName = new Map();
+    escapingModuleFunctionsBySourceFile.set(sourceFile, byName);
+  }
+  const cached = byName.get(name);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let escapes = false;
+  function visit(node: ts.Node): void {
+    if (escapes) {
+      return;
+    }
+    if (ts.isIdentifier(node) && node.text === name) {
+      if (!isContainedModuleFunctionReference(node, name)) {
+        escapes = true;
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  byName.set(name, escapes);
+  return escapes;
+}
+
+function isContainedModuleFunctionReference(
+  node: ts.Identifier,
+  name: string,
+): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  if (parent === undefined || isNonReferenceName(node, parent)) {
+    return true;
+  }
+  if (
+    ((ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isVariableDeclaration(parent)) &&
+      parent.name === node) ||
+    (ts.isCallExpression(parent) && parent.expression === node) ||
+    ((ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent)) &&
+      parent.expression === node) ||
+    ts.isTypeOfExpression(parent)
+  ) {
+    return true;
+  }
+  // The value of an assignment chain: `exports = module.exports = fn;`,
+  // `fn.self = fn;`.
+  let value: ts.Node = node;
+  let link = parent;
+  let sawLink = false;
+  while (
+    ts.isBinaryExpression(link) &&
+    link.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    link.right === value
+  ) {
+    const target = unwrapParentheses(link.left);
+    const ownMember =
+      (ts.isPropertyAccessExpression(target) ||
+        ts.isElementAccessExpression(target)) &&
+      ts.isIdentifier(target.expression) &&
+      target.expression.text === name;
+    // A property export (`exports.helper = fn`) is an alias of the
+    // function under another name, through which it can be written
+    // (`exports.helper.run = d`), so it is not one (BL-064's audit,
+    // finding 7).
+    if (!(
+      isModuleExportsAssignmentTarget(target) ||
+      (ts.isIdentifier(target) && target.text === "exports") ||
+      ownMember
+    )) {
+      return false;
+    }
+    sawLink = true;
+    value = link;
+    link = link.parent;
+  }
+  return sawLink && ts.isExpressionStatement(link);
+}
+
+/**
+ * What one `this` does to the object it is bound to: `undefined` for a
+ * property read (`this.p`, `this[k]`, a method call `this.m()`), the name
+ * for a write of an exact key (`this.p = v`, `this["p"] += v`), and
+ * `"other"` for anything else (a computed write, an argument, an alias).
+ */
+function thisMemberWrite(node: ts.Node): string | "other" | undefined {
+  const access = node.parent as ts.Node | undefined;
+  if (
+    access === undefined ||
+    !(
+      (ts.isPropertyAccessExpression(access) ||
+        ts.isElementAccessExpression(access)) &&
+      access.expression === node
+    )
+  ) {
+    return "other";
+  }
+  const assignment = access.parent as ts.Node | undefined;
+  const isWrite =
+    assignment !== undefined &&
+    ((ts.isBinaryExpression(assignment) &&
+      isAssignmentOperatorToken(assignment.operatorToken.kind) &&
+      assignment.left === access) ||
+      ((ts.isPrefixUnaryExpression(assignment) ||
+        ts.isPostfixUnaryExpression(assignment)) &&
+        assignment.operand === access) ||
+      ts.isDeleteExpression(assignment));
+  if (!isWrite) {
+    return undefined;
+  }
+  const name = ts.isPropertyAccessExpression(access)
+    ? access.name.text
+    : exactCommonJsExportPropertyName(access.argumentExpression);
+  return name ?? "other";
+}
+
+/** {@link propertiesCarriedBy} for an identifier value. */
+function propertiesCarriedByModuleFunction(
+  identifier: ts.Identifier,
+): ReadonlySet<string> | "all" {
+  const sourceFile = identifier.getSourceFile();
+  const name = identifier.text;
+  if (!isUnreassignedModuleFunction(sourceFile, name)) {
+    return "all";
+  }
+  const names = new Set<string>(FUNCTION_INTRINSIC_NAMES);
+  let every = false;
+  function visit(node: ts.Node): void {
+    if (every) {
+      return;
+    }
+    // A method called on the function -- through its name or through any
+    // alias of the export -- runs with `this` bound to it, so every
+    // `this.P = ...` in the file may set `P` on it, and any other use of
+    // `this` (an argument, an alias, a computed write) may set anything.
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      const written = thisMemberWrite(node);
+      if (written === "other") {
+        every = true;
+      } else if (written !== undefined) {
+        names.add(written);
+      }
+      return;
+    }
+    if (
+      ts.isBinaryExpression(node) &&
+      isAssignmentOperatorToken(node.operatorToken.kind)
+    ) {
+      const target = unwrapParentheses(node.left);
+      if (
+        (ts.isPropertyAccessExpression(target) ||
+          ts.isElementAccessExpression(target)) &&
+        ts.isIdentifier(unwrapParentheses(target.expression)) &&
+        (unwrapParentheses(target.expression) as ts.Identifier).text === name
+      ) {
+        const written = ts.isPropertyAccessExpression(target)
+          ? target.name.text
+          : exactCommonJsExportPropertyName(target.argumentExpression);
+        if (written === undefined) {
+          every = true;
+          return;
+        }
+        names.add(written);
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  return every ? "all" : names;
+}
+
+/** A value that is provably a primitive, whatever its evaluation did first. */
+function isPrimitiveValue(value: ts.Expression): boolean {
+  const node = unwrapParentheses(value);
+  return (
+    ts.isVoidExpression(node) ||
+    ts.isStringLiteralLike(node) ||
+    ts.isNumericLiteral(node) ||
+    ts.isBigIntLiteral(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword
+  );
+}
+
+/** The index of the top-level statement holding `node`, or `undefined`. */
+function topLevelStatementIndex(node: ts.Node): number | undefined {
+  let current: ts.Node = node;
+  while (current.parent !== undefined && !ts.isSourceFile(current.parent)) {
+    current = current.parent;
+  }
+  if (current.parent === undefined) {
+    return undefined;
+  }
+  const index = (current.parent as ts.SourceFile).statements.indexOf(
+    current as ts.Statement,
+  );
+  return index < 0 ? undefined : index;
+}
+
+/**
+ * Whether the export write whose right-hand side is `rhs` keeps its
+ * authority against the file's OTHER writes of the same export (BL-064,
+ * RWF-094; ADR 0009 § 1 clause 4 as amended by BL-064).
+ *
+ * An uncaught module-scope throw leaves the exports object holding
+ * whatever was written last before it, and a module that already holds
+ * the object observes that value: a module in a require cycle, any child
+ * this module required (through `module.parent`), anything the object
+ * escaped to. Measured against real Node: a child required BEFORE both
+ * writes, with no cycle at all, reads the earlier value through
+ * `module.parent.exports` after the load throws. So who can observe is
+ * not a usable condition (almost every module requires something first),
+ * and the condition is on the evaluation instead:
+ *
+ * the LAST write of `x` keeps its authority only when every evaluation
+ * between the completion of the FIRST competing write of `x` and the
+ * completion of this one is proven to complete normally
+ * ({@link statementCompletesNormally},
+ * {@link expressionCompletesNormally}). Anything else may throw -- a call
+ * no proof reaches, a builtin, a property read -- and leave the earlier
+ * value published, which is a second value the export can hold.
+ *
+ * The competing writes of a property `x` are every write of `x` and every
+ * whole-module write; those of the whole-module value are every write.
+ * A write of a provable primitive is not one (observing it reaches
+ * nothing). A DEFERRED competing write (inside a function body) may run
+ * at any point before this one, so the window opens at the start of the
+ * file. A competing write in the same statement that is not a link of
+ * this write's own assignment chain is refused outright.
+ *
+ * Fails closed: a right-hand side this relation cannot place answers
+ * `false`, which withdraws authority toward `UNKNOWN`. A withdrawn
+ * whole-module write also withdraws every property write it may replace
+ * ({@link buildExportBindings}), so withdrawing one write never leaves a
+ * stale one standing in its place. "Proven to complete" assumes the
+ * engine does not run out of stack or memory at that statement: a
+ * module loaded near the stack limit can throw a `RangeError` anywhere,
+ * an accepted bound.
+ */
+function competingWritesCannotBeObservedApart(rhs: ts.Expression): boolean {
+  const write = rhs.parent as ts.Node | undefined;
+  if (write === undefined) {
+    return false;
+  }
+  let key: CompetingWriteKey | undefined;
+  if (
+    ts.isBinaryExpression(write) &&
+    write.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    write.right === rhs
+  ) {
+    const left = unwrapParentheses(write.left);
+    key =
+      commonJsExportPropertyName(left) ??
+      (isModuleExportsAssignmentTarget(left) ? WHOLE_MODULE_EXPORT : undefined);
+  } else if (ts.isExportAssignment(write) && write.isExportEquals) {
+    key = WHOLE_MODULE_EXPORT;
+  }
+  const last = topLevelStatementIndex(write);
+  if (key === undefined || last === undefined) {
+    return false;
+  }
+  const sourceFile = write.getSourceFile();
+  if (!exportObjectsMayBeObserved(sourceFile)) {
+    return true;
+  }
+  const statements = sourceFile.statements;
+  const lastStatement = statements[last]!;
+  const chain = assignmentChainOf(lastStatement);
+
+  // Code that can make a write fail, or set a name no write spells
+  // ({@link exportWritesMayFail}), matters only once it may have RUN
+  // before this write: some earlier top-level statement is not proven to
+  // complete, or is a `try` (whose block runs anything). Then every
+  // whole-module write can carry any name, and any window withdraws.
+  const tainted =
+    exportWritesMayFail(sourceFile) &&
+    firstUnguardedStatementFrom(sourceFile) < last;
+  const sites = competingWriteSites(sourceFile);
+  const competitors =
+    key === WHOLE_MODULE_EXPORT
+      ? sites.all
+      : [
+          ...(sites.byName.get(key) ?? []),
+          ...sites.wholeModule.filter(
+            (site) =>
+              tainted || site.carries === "all" || site.carries.has(key),
+          ),
+        ];
+  let first: number | undefined;
+  for (const site of competitors) {
+    if (site.primitive || site.node === write) {
+      continue;
+    }
+    if (site.deferred) {
+      first = -1;
+      break;
+    }
+    if (site.statementIndex === last) {
+      if (!chain.includes(site.node)) {
+        return false;
+      }
+      continue;
+    }
+    if (site.statementIndex < last) {
+      first = Math.min(first ?? site.statementIndex, site.statementIndex);
+    }
+  }
+  if (first === undefined) {
+    return true;
+  }
+  if (tainted) {
+    return false;
+  }
+  // The first competing write's own statement: only further links of its
+  // assignment chain may run after the write, or it must complete whole.
+  if (first >= 0) {
+    const opening = statements[first]!;
+    const links = assignmentChainOf(opening);
+    if (
+      links.length === 0
+        ? !statementCompletesNormally(opening, first)
+        : !links.every(
+            (link) =>
+              ts.isExportAssignment(link) ||
+              (ts.isBinaryExpression(link) &&
+                isCompletingWriteTarget(link.left, first)),
+          )
+    ) {
+      // BL-064 (its independent audit, finding 2): an outer link of the
+      // opening chain runs after the competing write it holds
+      // (`holder.y = exports.run = d;`), so its target is checked too.
+      return false;
+    }
+  }
+  if (firstNonCompletingStatementFrom(sourceFile, first + 1) < last) {
+    return false;
+  }
+  // This write's own statement: its value, then the chain's writes.
+  return chainCompletesNormally(lastStatement, last);
+}
+
+const nonCompletingStatementsBySourceFile = new WeakMap<
+  ts.SourceFile,
+  readonly number[]
+>();
+
+/**
+ * The index of the first top-level statement at or after `from` that
+ * {@link statementCompletesNormally} does not prove, or the statement
+ * count when there is none. Every statement is classified once per file,
+ * on the first window query, so a window check is one comparison however
+ * many exports ask.
+ */
+function firstNonCompletingStatementFrom(
+  sourceFile: ts.SourceFile,
+  from: number,
+): number {
+  let next = nonCompletingStatementsBySourceFile.get(sourceFile);
+  if (next === undefined) {
+    const statements = sourceFile.statements;
+    const computed: number[] = new Array<number>(statements.length + 1);
+    computed[statements.length] = statements.length;
+    for (let i = statements.length - 1; i >= 0; i -= 1) {
+      computed[i] = statementCompletesNormally(statements[i]!, i)
+        ? computed[i + 1]!
+        : i;
+    }
+    nonCompletingStatementsBySourceFile.set(sourceFile, computed);
+    next = computed;
+  }
+  return next[Math.max(0, from)]!;
+}
+
+const exportObjectsMayBeObservedBySourceFile = new WeakMap<
+  ts.SourceFile,
+  boolean
+>();
+
+/**
+ * Whether anything outside this module's evaluation can hold its `module`
+ * or exports object, and so observe an intermediate export value after an
+ * abrupt completion (BL-064). Measured against real Node: a module whose
+ * load throws is deleted from `require.cache` and spliced out of its
+ * parent's `module.children`, so without such a holder nothing ever sees
+ * the half-written object again, and a re-require evaluates afresh.
+ *
+ * A holder needs a reference, so this is a census of the references this
+ * file gives out, over the WHOLE file (a function body may run at module
+ * time). It is a census of this file's own text, and its bounds are
+ * accepted, not modelled: code outside the file that patches the loader
+ * (`Module.prototype._compile`, a preload), and the deprecated
+ * `fn.caller.arguments` of a sloppy-mode caller (a foreign function the
+ * module calls at module scope can read the wrapper's `arguments`). The
+ * references counted: any `require` (every module it loads holds `module.parent`, and
+ * `require.cache` holds the module), a dynamic `import()`, any `eval`,
+ * the wrapper's `arguments` or module-scope `this`, and any `module` or
+ * `exports` reference other than the base of an export write target
+ * (`exports.x =`, `module.exports.x =`, `module.exports =`) or a
+ * rebinding of `exports` itself. Over-approximate in the safe direction:
+ * a reference that escapes nowhere still counts.
+ */
+function exportObjectsMayBeObserved(sourceFile: ts.SourceFile): boolean {
+  const cached = exportObjectsMayBeObservedBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let observed = false;
+  function visit(node: ts.Node, inOwnThisScope: boolean): void {
+    if (observed) {
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      if (escapesExportObjects(node, inOwnThisScope)) {
+        observed = true;
+      }
+      return;
+    }
+    if (node.kind === ts.SyntaxKind.ThisKeyword && !inOwnThisScope) {
+      observed = true;
+      return;
+    }
+    if (
+      ts.isCallExpression(node) &&
+      node.expression.kind === ts.SyntaxKind.ImportKeyword
+    ) {
+      observed = true;
+      return;
+    }
+    // TypeScript's `import x = require("...")` and an ES import compiled
+    // to CommonJS load a module without spelling `require` (BL-064's
+    // audit, finding 5c).
+    if (
+      (ts.isImportEqualsDeclaration(node) &&
+        ts.isExternalModuleReference(node.moduleReference)) ||
+      ts.isImportDeclaration(node) ||
+      (ts.isExportDeclaration(node) && node.moduleSpecifier !== undefined)
+    ) {
+      observed = true;
+      return;
+    }
+    // A class's `extends` clause, its decorators and every computed key
+    // (a class member's or an object-literal method's) are evaluated in
+    // the ENCLOSING scope, so its `this` and `arguments` are the outer
+    // ones (BL-064's audit, finding 5a); they are visited first, with the
+    // outer flag, before the body is visited with its own.
+    if (ts.isClassLike(node)) {
+      node.heritageClauses?.forEach((clause) => visit(clause, inOwnThisScope));
+      ts.getDecorators(node)?.forEach((d) => visit(d, inOwnThisScope));
+      for (const member of node.members) {
+        if (
+          member.name !== undefined &&
+          ts.isComputedPropertyName(member.name)
+        ) {
+          visit(member.name, inOwnThisScope);
+        }
+        if (ts.canHaveDecorators(member)) {
+          ts.getDecorators(member)?.forEach((d) => visit(d, inOwnThisScope));
+        }
+      }
+    } else if (
+      ts.isFunctionLike(node) &&
+      node.name !== undefined &&
+      ts.isComputedPropertyName(node.name)
+    ) {
+      visit(node.name, inOwnThisScope);
+    }
+    // A non-arrow function, a class body and an object literal's method
+    // bind their own `this` and `arguments`.
+    const ownScope =
+      inOwnThisScope ||
+      (ts.isFunctionLike(node) && !ts.isArrowFunction(node)) ||
+      ts.isClassLike(node);
+    ts.forEachChild(node, (child) => visit(child, ownScope));
+  }
+  visit(sourceFile, false);
+  exportObjectsMayBeObservedBySourceFile.set(sourceFile, observed);
+  return observed;
+}
+
+const exportWritesMayFailBySourceFile = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * Whether code in this file may make a later export write -- or a member
+ * write on a module function -- throw, or give a name a value no write
+ * spells (BL-064's independent audit, finding 6): the `module` or exports
+ * object handed to code (any `module`/`exports` reference other than the
+ * base of an export write target or a rebinding of `exports`, which also
+ * covers `Object.freeze(exports)` and `exports.m()` running `m` with
+ * `this === exports`), module-scope `this`, or the builtins and keys that
+ * reach the prototypes and property attributes (`Object`, `Reflect`,
+ * `Function`, `globalThis`, `global`, `Proxy`, `__proto__`, `constructor`,
+ * `setPrototypeOf`, `getPrototypeOf`). When it can, any window between
+ * competing writes withdraws authority. Over-approximate in the safe
+ * direction; tampering by code outside this file (a preload, a loader) is
+ * outside every file census and is an accepted bound.
+ */
+function exportWritesMayFail(sourceFile: ts.SourceFile): boolean {
+  const cached = exportWritesMayFailBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let hazard = false;
+  function visit(node: ts.Node, inOwnThisScope: boolean): void {
+    if (hazard) {
+      return;
+    }
+    if (node.kind === ts.SyntaxKind.ThisKeyword) {
+      // Module-scope `this` is the exports object; any other `this` may be
+      // it too (a method called as `exports.m()`), so it must only ever be
+      // a member access's base, never handed on.
+      if (!inOwnThisScope || !isMemberAccessBase(node)) {
+        hazard = true;
+      }
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      if (TAMPERING_KEYS.has(node.text)) {
+        hazard = true;
+        return;
+      }
+      const parent = node.parent as ts.Node | undefined;
+      if (parent === undefined || isNonReferenceName(node, parent)) {
+        return;
+      }
+      if (
+        TAMPERING_GLOBALS.has(node.text) ||
+        // The wrapper's `arguments` holds `exports` and `module`.
+        (node.text === "arguments" && !inOwnThisScope) ||
+        (node.text === "exports" && !isExportsObjectContained(node)) ||
+        (node.text === "module" && !isModuleObjectContained(node))
+      ) {
+        hazard = true;
+      }
+      return;
+    }
+    if (
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+      TAMPERING_KEYS.has(node.text)
+    ) {
+      hazard = true;
+      return;
+    }
+    const ownScope =
+      inOwnThisScope ||
+      (ts.isFunctionLike(node) && !ts.isArrowFunction(node)) ||
+      ts.isClassLike(node);
+    ts.forEachChild(node, (child) => visit(child, ownScope));
+  }
+  visit(sourceFile, false);
+  exportWritesMayFailBySourceFile.set(sourceFile, hazard);
+  return hazard;
+}
+
+/** Whether `node` is the object of a member access (`node.p`, `node[k]`), read, written or called. */
+function isMemberAccessBase(node: ts.Node): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  return (
+    parent !== undefined &&
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent)) &&
+    parent.expression === node
+  );
+}
+
+/**
+ * Whether this `exports` reference keeps the object in this file's hands
+ * (for {@link exportWritesMayFail}): a member access's base, or the target
+ * of a rebinding of `exports` itself. A method called on it gets it as
+ * `this`, which the `this` rule covers.
+ */
+function isExportsObjectContained(node: ts.Identifier): boolean {
+  const parent = node.parent as ts.Node;
+  return (
+    (isMemberAccessBase(node) && !callsForeignExportMethod(parent)) ||
+    (ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.left === node)
+  );
+}
+
+/**
+ * Whether `access` (`exports.m`, `module.exports.m`) is called as a
+ * method whose value this file does not prove is its own function: the
+ * method runs with the exports object as `this`, so a foreign one holds
+ * it. Proven when every write of `m` the file spells is a function or
+ * arrow value, or a module function binding; their own `this` uses are
+ * the `this` rule's.
+ */
+function callsForeignExportMethod(access: ts.Node): boolean {
+  const call = access.parent as ts.Node | undefined;
+  if (
+    call === undefined ||
+    !(
+      (ts.isCallExpression(call) && call.expression === access) ||
+      (ts.isTaggedTemplateExpression(call) && call.tag === access)
+    )
+  ) {
+    return false;
+  }
+  if (!ts.isPropertyAccessExpression(access)) {
+    return true;
+  }
+  const sourceFile = access.getSourceFile();
+  const values = exportPropertyWriteValues(sourceFile).get(access.name.text);
+  if (values === undefined || values.length === 0) {
+    return true;
+  }
+  const callables = topLevelCallableCandidates(sourceFile);
+  return !values.every((written) => {
+    const value = unwrapParentheses(unwrapValue(written));
+    return (
+      ts.isFunctionExpression(value) ||
+      ts.isArrowFunction(value) ||
+      (ts.isIdentifier(value) && callables.has(value.text))
+    );
+  });
+}
+
+const exportPropertyWriteValuesBySourceFile = new WeakMap<
+  ts.SourceFile,
+  ReadonlyMap<string, readonly ts.Expression[]>
+>();
+
+/**
+ * The values every `exports.x = v` / `module.exports.x = v` in the file
+ * writes, by name, wherever it is. Its own walk, so that
+ * {@link exportWritesMayFail} never depends on {@link competingWriteSites}
+ * (which depends on it).
+ */
+function exportPropertyWriteValues(
+  sourceFile: ts.SourceFile,
+): ReadonlyMap<string, readonly ts.Expression[]> {
+  const cached = exportPropertyWriteValuesBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const values = new Map<string, ts.Expression[]>();
+  function visit(node: ts.Node): void {
+    if (
+      ts.isBinaryExpression(node) &&
+      node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+    ) {
+      const name = commonJsExportPropertyName(unwrapParentheses(node.left));
+      if (name !== undefined) {
+        const known = values.get(name);
+        if (known === undefined) {
+          values.set(name, [node.right]);
+        } else {
+          known.push(node.right);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(sourceFile);
+  exportPropertyWriteValuesBySourceFile.set(sourceFile, values);
+  return values;
+}
+
+/**
+ * {@link isExportsObjectContained} for `module`: any member access but
+ * `module.exports` is not the exports object at all; `module.exports`
+ * must itself be a member access's base or a write target.
+ */
+function isModuleObjectContained(node: ts.Identifier): boolean {
+  const parent = node.parent as ts.Node;
+  if (!ts.isPropertyAccessExpression(parent) || parent.expression !== node) {
+    return false;
+  }
+  if (parent.name.text !== "exports") {
+    // `module.parent`, `module.children`, `module.require`: not this
+    // module's exports object, but the module object itself is not handed
+    // on either.
+    return true;
+  }
+  const outer = parent.parent as ts.Node;
+  return (
+    (isMemberAccessBase(parent) && !callsForeignExportMethod(outer)) ||
+    (ts.isBinaryExpression(outer) &&
+      outer.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      outer.left === parent)
+  );
+}
+
+/** The globals through which code reaches property attributes and the prototypes. */
+const TAMPERING_GLOBALS: ReadonlySet<string> = new Set([
+  "eval",
+  "Object",
+  "Reflect",
+  "Function",
+  "globalThis",
+  "global",
+  "Proxy",
+]);
+
+/** The property keys that reach a prototype, wherever they are spelled. */
+const TAMPERING_KEYS: ReadonlySet<string> = new Set([
+  "__proto__",
+  "constructor",
+  "setPrototypeOf",
+  "getPrototypeOf",
+]);
+
+/** {@link exportObjectsMayBeObserved}'s test for one identifier. */
+function escapesExportObjects(
+  node: ts.Identifier,
+  inOwnThisScope: boolean,
+): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  if (parent === undefined || isNonReferenceName(node, parent)) {
+    return false;
+  }
+  switch (node.text) {
+    case "require":
+    case "eval":
+      return true;
+    case "arguments":
+      return !inOwnThisScope;
+    case "exports":
+      return !(
+        isExportWriteTargetBase(node) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          parent.left === node)
+      );
+    case "module":
+      return !(
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === node &&
+        parent.name.text === "exports" &&
+        (isExportWriteTargetBase(parent) ||
+          (ts.isBinaryExpression(parent.parent) &&
+            parent.parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+            parent.parent.left === parent))
+      );
+    default:
+      return false;
+  }
+}
+
+/** Whether `object` is the base of an export property write target (`object.x = v`, `object["x"] = v`). */
+function isExportWriteTargetBase(object: ts.Expression): boolean {
+  const access = object.parent as ts.Node | undefined;
+  if (
+    access === undefined ||
+    !(
+      (ts.isPropertyAccessExpression(access) ||
+        ts.isElementAccessExpression(access)) &&
+      access.expression === object
+    )
+  ) {
+    return false;
+  }
+  const assignment = access.parent as ts.Node | undefined;
+  return (
+    assignment !== undefined &&
+    ts.isBinaryExpression(assignment) &&
+    assignment.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    assignment.left === access &&
+    commonJsExportPropertyName(access) !== undefined
+  );
+}
+
+/** An identifier in a position that names a property or member, not a binding reference. */
+function isNonReferenceName(node: ts.Identifier, parent: ts.Node): boolean {
+  return (
+    (ts.isPropertyAccessExpression(parent) && parent.name === node) ||
+    (ts.isQualifiedName(parent) && parent.right === node) ||
+    ((ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isEnumMember(parent)) &&
+      parent.name === node) ||
+    (ts.isLabeledStatement(parent) && parent.label === node) ||
+    ((ts.isBreakStatement(parent) || ts.isContinueStatement(parent)) &&
+      parent.label === node)
+  );
+}
+
+const firstUnguardedStatementBySourceFile = new WeakMap<
+  ts.SourceFile,
+  number
+>();
+
+/**
+ * The index of the first top-level statement that may run code this file
+ * does not prove: one {@link statementCompletesNormally} does not prove,
+ * or one holding a `try` (its block runs anything, the `catch` only stops
+ * the throw). The statement count when there is none.
+ */
+function firstUnguardedStatementFrom(sourceFile: ts.SourceFile): number {
+  const cached = firstUnguardedStatementBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const statements = sourceFile.statements;
+  // An `async` callee's call is proven to COMPLETE, but its body runs
+  // synchronously up to its first `await`, so it may run anything
+  // (BL-064's second audit round, finding 1): while the file has one, a
+  // statement that invokes anything is not guarded.
+  const hasAsyncCallable = [
+    ...topLevelCallableCandidates(sourceFile).values(),
+  ].some((fn) => isAsyncCallable(fn));
+  let index = statements.length;
+  for (let i = 0; i < statements.length; i += 1) {
+    const statement = statements[i]!;
+    if (
+      !statementCompletesNormally(statement, i) ||
+      containsTryStatement(statement) ||
+      (hasAsyncCallable && containsInvocation(statement))
+    ) {
+      index = i;
+      break;
+    }
+  }
+  firstUnguardedStatementBySourceFile.set(sourceFile, index);
+  return index;
+}
+
+/** Whether a statement holds a call or a tagged template outside any function. */
+function containsInvocation(statement: ts.Statement): boolean {
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found || ts.isFunctionLike(node)) {
+      return;
+    }
+    if (ts.isCallExpression(node) || ts.isTaggedTemplateExpression(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(statement);
+  return found;
+}
+
+/** Whether a statement holds a `try` outside any function. */
+function containsTryStatement(statement: ts.Statement): boolean {
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found || ts.isFunctionLike(node)) {
+      return;
+    }
+    if (ts.isTryStatement(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(statement);
+  return found;
+}
+
+/**
+ * The `=` links of a top-level statement that is nothing but an
+ * assignment chain (`exports.a = exports.b = v;`, `export = v;`),
+ * outermost first; empty for any other statement.
+ */
+function assignmentChainOf(statement: ts.Statement): ts.Node[] {
+  if (ts.isExportAssignment(statement) && statement.isExportEquals) {
+    return [statement];
+  }
+  if (!ts.isExpressionStatement(statement)) {
+    return [];
+  }
+  const links: ts.Node[] = [];
+  let current: ts.Expression = unwrapParentheses(statement.expression);
+  while (
+    ts.isBinaryExpression(current) &&
+    current.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  ) {
+    links.push(current);
+    current = unwrapParentheses(current.right);
+  }
+  return links;
+}
+
+/**
+ * Whether a statement that is an assignment chain completes normally:
+ * its innermost value does, and every link writes a target whose write
+ * cannot throw here ({@link isCompletingWriteTarget}).
+ */
+function chainCompletesNormally(
+  statement: ts.Statement,
+  statementIndex: number,
+): boolean {
+  if (ts.isExportAssignment(statement)) {
+    return (
+      statement.isExportEquals === true &&
+      expressionCompletesNormally(
+        statement.expression,
+        moduleCompletionScope(statement.getSourceFile(), statementIndex),
+      )
+    );
+  }
+  const links = assignmentChainOf(statement);
+  if (links.length === 0) {
+    return false;
+  }
+  for (const link of links) {
+    if (
+      !ts.isBinaryExpression(link) ||
+      !isCompletingWriteTarget(link.left, statementIndex)
+    ) {
+      return false;
+    }
+  }
+  const innermost = links.at(-1) as ts.BinaryExpression;
+  return expressionCompletesNormally(
+    innermost.right,
+    moduleCompletionScope(statement.getSourceFile(), statementIndex),
+  );
+}
+
+/**
+ * Whether writing `target` cannot throw at module time: an export
+ * property (`exports.x`, `module.exports.x`, their bracket forms),
+ * `module.exports` itself, or a module-scope `var`/`let` binding already
+ * declared. An export property write can throw on an export object made
+ * non-extensible, given an accessor or replaced by a primitive, or on a
+ * setter inherited from a prototype: code that can do any of that is
+ * what {@link exportWritesMayFail} looks for, and when the file has any,
+ * every window withdraws before this is asked. A stale export object is
+ * E-1's.
+ */
+function isCompletingWriteTarget(
+  target: ts.Expression,
+  statementIndex: number,
+): boolean {
+  const left = unwrapParentheses(target);
+  const sourceFile = left.getSourceFile();
+  const bindings = moduleScopeBindings(sourceFile);
+  if (isModuleExportsAssignmentTarget(left)) {
+    return !bindings.has("exports") && !bindings.has("module");
+  }
+  if (commonJsExportPropertyName(left) !== undefined) {
+    // After a whole-module write of a value this file does not shape (a
+    // `require` result, a call, a literal with an accessor), the export
+    // object is another module's or runs code on a write: a setter or a
+    // read-only property there makes this write throw.
+    return (
+      !bindings.has("exports") &&
+      !bindings.has("module") &&
+      !competingWriteSites(sourceFile).wholeModule.some(
+        (site) =>
+          !site.primitive &&
+          site.carries === "all" &&
+          (site.deferred || site.statementIndex < statementIndex),
+      )
+    );
+  }
+  const member = ts.isPropertyAccessExpression(left)
+    ? left.name.text
+    : ts.isElementAccessExpression(left)
+      ? exactCommonJsExportPropertyName(left.argumentExpression)
+      : undefined;
+  if (
+    member !== undefined &&
+    (ts.isPropertyAccessExpression(left) ||
+      ts.isElementAccessExpression(left)) &&
+    ts.isIdentifier(left.expression) &&
+    !FUNCTION_INTRINSIC_NAMES.includes(member)
+  ) {
+    // `fn.P = v` on a function object: extensible, and `P` none of the
+    // non-writable intrinsics (`name`, `length`, `prototype`, ...), so the
+    // write defines or overwrites an ordinary data property. The binding
+    // must be readable here and always hold that function.
+    return (
+      isUnreassignedModuleFunction(sourceFile, left.expression.text) &&
+      moduleScopeReadCompletes(sourceFile, left.expression.text, statementIndex)
+    );
+  }
+  if (ts.isIdentifier(left)) {
+    const binding = bindings.get(left.text);
+    if (binding === undefined) {
+      // `exports = module.exports = fn`: the wrapper's own parameter.
+      return COMMONJS_WRAPPER_PARAMETERS.has(left.text);
+    }
+    return (
+      binding.count === 1 &&
+      (binding.kind === "var" ||
+        (binding.kind === "let" && binding.statementIndex < statementIndex))
+    );
+  }
+  return false;
+}
+
+/** One module-scope binding: how it is declared, where, and how often. */
+interface ModuleScopeBinding {
+  readonly kind: "function" | "var" | "let" | "const" | "class" | "other";
+  /** The top-level statement that declares it (the first one). */
+  readonly statementIndex: number;
+  readonly count: number;
+}
+
+const moduleScopeBindingsBySourceFile = new WeakMap<
+  ts.SourceFile,
+  ReadonlyMap<string, ModuleScopeBinding>
+>();
+
+/**
+ * The bindings the module scope declares (BL-064): top-level function,
+ * class and `let`/`const` declarations, `var` anywhere outside a function
+ * body (hoisted), and anything else (an import, an enum, a namespace) as
+ * `"other"`, which no read is proven safe for.
+ */
+function moduleScopeBindings(
+  sourceFile: ts.SourceFile,
+): ReadonlyMap<string, ModuleScopeBinding> {
+  const cached = moduleScopeBindingsBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const bindings = new Map<string, ModuleScopeBinding>();
+  function add(
+    name: string,
+    kind: ModuleScopeBinding["kind"],
+    statementIndex: number,
+  ): void {
+    const known = bindings.get(name);
+    bindings.set(
+      name,
+      known === undefined
+        ? { kind, statementIndex, count: 1 }
+        : {
+            kind: known.kind === kind ? kind : "other",
+            statementIndex: known.statementIndex,
+            count: known.count + 1,
+          },
+    );
+  }
+  function addBindingName(
+    name: ts.BindingName,
+    kind: ModuleScopeBinding["kind"],
+    statementIndex: number,
+  ): void {
+    if (ts.isIdentifier(name)) {
+      add(name.text, kind, statementIndex);
+      return;
+    }
+    for (const element of name.elements) {
+      if (ts.isBindingElement(element)) {
+        addBindingName(element.name, kind, statementIndex);
+      }
+    }
+  }
+  function collectVars(node: ts.Node, statementIndex: number): void {
+    if (ts.isFunctionDeclaration(node) && node.name !== undefined) {
+      // A function declaration in a block (Annex B): in sloppy mode it
+      // also writes a function-scoped binding when the block runs, so no
+      // read or call of the name is proven (BL-064's audit, finding 4).
+      add(node.name.text, "other", statementIndex);
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) {
+      return;
+    }
+    if (
+      ts.isVariableDeclarationList(node) &&
+      (node.flags & ts.NodeFlags.BlockScoped) === 0
+    ) {
+      for (const declaration of node.declarations) {
+        addBindingName(declaration.name, "var", statementIndex);
+      }
+    }
+    ts.forEachChild(node, (child) => collectVars(child, statementIndex));
+  }
+  sourceFile.statements.forEach((statement, statementIndex) => {
+    if (hasDeclareModifier(statement)) {
+      // No runtime binding at all: a read of it is a `ReferenceError`.
+      if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          addBindingName(declaration.name, "other", statementIndex);
+        }
+      } else if (
+        (ts.isFunctionDeclaration(statement) ||
+          ts.isClassDeclaration(statement)) &&
+        statement.name !== undefined
+      ) {
+        add(statement.name.text, "other", statementIndex);
+      }
+      return;
+    }
+    if (ts.isFunctionDeclaration(statement)) {
+      if (statement.name !== undefined && statement.body !== undefined) {
+        add(statement.name.text, "function", statementIndex);
+      }
+      return;
+    }
+    if (ts.isClassDeclaration(statement)) {
+      if (statement.name !== undefined) {
+        add(statement.name.text, "class", statementIndex);
+      }
+      return;
+    }
+    if (ts.isVariableStatement(statement)) {
+      const flags = statement.declarationList.flags;
+      if ((flags & ts.NodeFlags.BlockScoped) !== 0) {
+        const kind = (flags & ts.NodeFlags.Const) !== 0 ? "const" : "let";
+        for (const declaration of statement.declarationList.declarations) {
+          addBindingName(declaration.name, kind, statementIndex);
+        }
+        return;
+      }
+    }
+    if (ts.isImportDeclaration(statement)) {
+      const clause = statement.importClause;
+      if (clause?.name !== undefined) {
+        add(clause.name.text, "other", statementIndex);
+      }
+      const named = clause?.namedBindings;
+      if (named !== undefined && ts.isNamespaceImport(named)) {
+        add(named.name.text, "other", statementIndex);
+      } else if (named !== undefined) {
+        for (const element of named.elements) {
+          add(element.name.text, "other", statementIndex);
+        }
+      }
+      return;
+    }
+    if (
+      (ts.isEnumDeclaration(statement) ||
+        ts.isModuleDeclaration(statement) ||
+        ts.isImportEqualsDeclaration(statement)) &&
+      ts.isIdentifier(statement.name)
+    ) {
+      add(statement.name.text, "other", statementIndex);
+      return;
+    }
+    collectVars(statement, statementIndex);
+  });
+  moduleScopeBindingsBySourceFile.set(sourceFile, bindings);
+  return bindings;
+}
+
+function hasDeclareModifier(statement: ts.Statement): boolean {
+  return (
+    ts.canHaveModifiers(statement) &&
+    (ts
+      .getModifiers(statement)
+      ?.some((modifier) => modifier.kind === ts.SyntaxKind.DeclareKeyword) ??
+      false)
+  );
+}
+
+/** The CommonJS wrapper's parameters, readable whenever nothing declares them. */
+const COMMONJS_WRAPPER_PARAMETERS: ReadonlySet<string> = new Set([
+  "exports",
+  "require",
+  "module",
+  "__filename",
+  "__dirname",
+]);
+
+/** Global value properties that are non-writable and non-configurable. */
+const IMMUTABLE_GLOBAL_VALUES: ReadonlySet<string> = new Set([
+  "undefined",
+  "NaN",
+  "Infinity",
+]);
+
+/**
+ * Whether reading `name` at module scope, in the top-level statement
+ * `statementIndex`, cannot throw: a hoisted function or `var`, a
+ * `let`/`const`/`class` an EARLIER top-level statement declared (reaching
+ * this statement means that one completed, so the binding is out of its
+ * temporal dead zone), an undeclared CommonJS wrapper parameter, or an
+ * immutable global value. Anything else may be a `ReferenceError`.
+ */
+function moduleScopeReadCompletes(
+  sourceFile: ts.SourceFile,
+  name: string,
+  statementIndex: number,
+): boolean {
+  const binding = moduleScopeBindings(sourceFile).get(name);
+  if (binding === undefined) {
+    return (
+      COMMONJS_WRAPPER_PARAMETERS.has(name) || IMMUTABLE_GLOBAL_VALUES.has(name)
+    );
+  }
+  switch (binding.kind) {
+    case "function":
+    case "var":
+      return true;
+    case "let":
+    case "const":
+    case "class":
+      return binding.count === 1 && binding.statementIndex < statementIndex;
+    case "other":
+      return false;
+  }
+}
+
+/**
+ * Where a completion proof is evaluated (BL-064): the top-level statement
+ * whose evaluation is being proven (it decides which module-scope
+ * `let`/`const`/`class` bindings are out of their temporal dead zone),
+ * the bindings of the blocks and function bodies entered on the way, and
+ * the callee summary's bound.
+ */
+interface CompletionScope {
+  readonly sourceFile: ts.SourceFile;
+  readonly statementIndex: number;
+  /** Every name a block or function body entered here declares. */
+  readonly declared: ReadonlySet<string>;
+  /** The subset of {@link declared} provably initialized at this point. */
+  readonly initialized: ReadonlySet<string>;
+  /** Whether this is inside a function body being proven (`arguments` and `return` are its own). */
+  readonly inFunction: boolean;
+  /** How many calls deep the proof is; a recursion always reaches the bound, so it is never proven (V8 throws a `RangeError`, RWF-098). */
+  readonly depth: number;
+}
+
+/** How many nested calls the completion proof follows, as {@link MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH} bounds the abrupt one. */
+const MAX_COMPLETION_CALL_DEPTH = 3;
+
+function moduleCompletionScope(
+  sourceFile: ts.SourceFile,
+  statementIndex: number,
+): CompletionScope {
+  return {
+    sourceFile,
+    statementIndex,
+    declared: new Set(),
+    initialized: new Set(),
+    inFunction: false,
+    depth: 0,
+  };
+}
+
+/** Whether reading `name` here cannot throw (a `ReferenceError`, a temporal dead zone). */
+function readCompletes(name: string, scope: CompletionScope): boolean {
+  if (scope.initialized.has(name)) {
+    return true;
+  }
+  if (scope.declared.has(name)) {
+    return false;
+  }
+  if (name === "arguments") {
+    // The function's own, or the CommonJS wrapper's: never unresolvable.
+    return moduleScopeBindings(scope.sourceFile).get(name) === undefined;
+  }
+  return moduleScopeReadCompletes(scope.sourceFile, name, scope.statementIndex);
+}
+
+/** Whether `typeof name` cannot throw: only a binding in its temporal dead zone can. */
+function typeofCompletes(name: string, scope: CompletionScope): boolean {
+  if (scope.initialized.has(name)) {
+    return true;
+  }
+  if (scope.declared.has(name)) {
+    return false;
+  }
+  const binding = moduleScopeBindings(scope.sourceFile).get(name);
+  return binding === undefined || readCompletes(name, scope);
+}
+
+/** The block-scoped names a statement list declares directly. */
+function blockScopedNamesOf(statements: readonly ts.Statement[]): string[] {
+  const names: string[] = [];
+  function addName(name: ts.BindingName): void {
+    if (ts.isIdentifier(name)) {
+      names.push(name.text);
+      return;
+    }
+    for (const element of name.elements) {
+      if (ts.isBindingElement(element)) {
+        addName(element.name);
+      }
+    }
+  }
+  for (const statement of statements) {
+    if (
+      ts.isVariableStatement(statement) &&
+      (statement.declarationList.flags & ts.NodeFlags.BlockScoped) !== 0
+    ) {
+      for (const declaration of statement.declarationList.declarations) {
+        addName(declaration.name);
+      }
+    } else if (
+      (ts.isClassDeclaration(statement) ||
+        ts.isFunctionDeclaration(statement)) &&
+      statement.name !== undefined
+    ) {
+      names.push(statement.name.text);
+    }
+  }
+  return names;
+}
+
+/**
+ * The scope inside a nested block: its own block-scoped names are
+ * declared and, until their statement runs, NOT initialized (they shadow
+ * whatever outer binding shares the name).
+ */
+function enterBlock(
+  statements: readonly ts.Statement[],
+  scope: CompletionScope,
+): CompletionScope {
+  const own = blockScopedNamesOf(statements);
+  if (own.length === 0) {
+    return scope;
+  }
+  const initialized = new Set(scope.initialized);
+  for (const name of own) {
+    initialized.delete(name);
+  }
+  return {
+    ...scope,
+    declared: new Set([...scope.declared, ...own]),
+    initialized,
+  };
+}
+
+/**
+ * Whether a statement list completes normally, or by a `return` inside a
+ * function body being proven. Evaluated in order: a `let`/`const`/`class`
+ * is initialized for the statements after its own.
+ */
+function statementListCompletes(
+  statements: readonly ts.Statement[],
+  outer: CompletionScope,
+): boolean {
+  const scope = enterBlock(statements, outer);
+  const initialized = new Set(scope.initialized);
+  for (const statement of statements) {
+    const here: CompletionScope = { ...scope, initialized };
+    if (ts.isReturnStatement(statement) && scope.inFunction) {
+      return (
+        statement.expression === undefined ||
+        expressionCompletesNormally(statement.expression, here)
+      );
+    }
+    if (!statementCompletes(statement, here)) {
+      return false;
+    }
+    if (ts.isVariableStatement(statement)) {
+      for (const declaration of statement.declarationList.declarations) {
+        if (ts.isIdentifier(declaration.name)) {
+          initialized.add(declaration.name.text);
+        }
+      }
+    } else if (
+      ts.isClassDeclaration(statement) &&
+      statement.name !== undefined
+    ) {
+      initialized.add(statement.name.text);
+    }
+  }
+  return true;
+}
+
+/** A statement in a nested position: a block's list, or a lone `if` branch. */
+function nestedStatementCompletes(
+  statement: ts.Statement,
+  scope: CompletionScope,
+): boolean {
+  return ts.isBlock(statement)
+    ? statementListCompletes(statement.statements, scope)
+    : statementListCompletes([statement], scope);
+}
+
+const statementCompletionByNode = new WeakMap<ts.Statement, boolean>();
+
+/**
+ * Whether evaluating the top-level statement `statement` (index
+ * `statementIndex`) provably completes normally (BL-064), by
+ * {@link statementCompletes}' closed grammar. Memoized per statement: the
+ * answer depends only on the statement and its own index.
+ */
+function statementCompletesNormally(
+  statement: ts.Statement,
+  statementIndex: number,
+): boolean {
+  const cached = statementCompletionByNode.get(statement);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const result = statementCompletes(
+    statement,
+    moduleCompletionScope(statement.getSourceFile(), statementIndex),
+  );
+  statementCompletionByNode.set(statement, result);
+  return result;
+}
+
+/**
+ * Whether evaluating `statement` provably completes normally (BL-064). A
+ * CLOSED grammar; everything outside it answers `false`, which withdraws
+ * authority, never grants it:
+ *
+ * - a function declaration, an empty statement, a type-only or `declare`
+ *   declaration;
+ * - an expression statement whose expression completes
+ *   ({@link expressionCompletesNormally}), or, at module scope, an export
+ *   write chain that does ({@link chainCompletesNormally});
+ * - a variable statement whose every declarator binds a plain identifier
+ *   (a destructuring pattern can throw) to nothing or to an expression
+ *   that completes;
+ * - a class declaration that completes ({@link classCompletesNormally});
+ * - a block, or an `if` whose condition and branches complete;
+ * - a `try` with a `catch` (whatever the `try` block does, the `catch`
+ *   receives it) whose binding is a plain identifier or absent, whose
+ *   `catch` block completes and whose `finally` block, if any, completes;
+ *   a `try`/`finally` whose two blocks complete.
+ *
+ * A `throw`, a loop, a `switch`, a label and a module-scope `return` (the
+ * reachability gate's) are outside it.
+ */
+function statementCompletes(
+  statement: ts.Statement,
+  scope: CompletionScope,
+): boolean {
+  if (ts.isFunctionDeclaration(statement)) {
+    // Hoisted, and runs nothing, at the top of a file or a function body;
+    // in a nested block (Annex B) it writes a binding when the block runs.
+    const parent = statement.parent as ts.Node;
+    return (
+      ts.isSourceFile(parent) ||
+      (ts.isBlock(parent) &&
+        parent.parent !== undefined &&
+        ts.isFunctionLike(parent.parent))
+    );
+  }
+  if (
+    ts.isEmptyStatement(statement) ||
+    ts.isInterfaceDeclaration(statement) ||
+    ts.isTypeAliasDeclaration(statement) ||
+    hasDeclareModifier(statement)
+  ) {
+    return true;
+  }
+  if (ts.isExpressionStatement(statement)) {
+    if (assignmentChainOf(statement).length > 0) {
+      return (
+        !scope.inFunction &&
+        scope.declared.size === 0 &&
+        chainCompletesNormally(statement, scope.statementIndex)
+      );
+    }
+    return expressionCompletesNormally(statement.expression, scope);
+  }
+  if (ts.isVariableStatement(statement)) {
+    return statement.declarationList.declarations.every(
+      (declaration) =>
+        ts.isIdentifier(declaration.name) &&
+        (declaration.initializer === undefined ||
+          expressionCompletesNormally(declaration.initializer, scope)),
+    );
+  }
+  if (ts.isClassDeclaration(statement)) {
+    return classCompletesNormally(statement, scope);
+  }
+  if (ts.isBlock(statement)) {
+    return statementListCompletes(statement.statements, scope);
+  }
+  if (ts.isIfStatement(statement)) {
+    return (
+      expressionCompletesNormally(statement.expression, scope) &&
+      nestedStatementCompletes(statement.thenStatement, scope) &&
+      (statement.elseStatement === undefined ||
+        nestedStatementCompletes(statement.elseStatement, scope))
+    );
+  }
+  if (ts.isTryStatement(statement)) {
+    const handler = statement.catchClause;
+    const finallyCompletes =
+      statement.finallyBlock === undefined ||
+      statementListCompletes(statement.finallyBlock.statements, scope);
+    if (handler === undefined) {
+      return (
+        statementListCompletes(statement.tryBlock.statements, scope) &&
+        finallyCompletes
+      );
+    }
+    const binding = handler.variableDeclaration?.name;
+    if (binding !== undefined && !ts.isIdentifier(binding)) {
+      return false;
+    }
+    const catchScope: CompletionScope =
+      binding === undefined
+        ? scope
+        : {
+            ...scope,
+            declared: new Set([...scope.declared, binding.text]),
+            initialized: new Set([...scope.initialized, binding.text]),
+          };
+    return (
+      // A `return` in the `try` block of a module-scope statement ends
+      // module evaluation: the reachability gate's question, refused here.
+      (scope.inFunction || !containsModuleReturn(statement.tryBlock)) &&
+      statementListCompletes(handler.block.statements, catchScope) &&
+      finallyCompletes
+    );
+  }
+  return false;
+}
+
+/** Whether a module-scope block holds a `return` outside any function. */
+function containsModuleReturn(block: ts.Block): boolean {
+  let found = false;
+  function visit(node: ts.Node): void {
+    if (found || ts.isFunctionLike(node)) {
+      return;
+    }
+    if (ts.isReturnStatement(node)) {
+      found = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(block);
+  return found;
+}
+
+/**
+ * Whether defining this class provably completes: no `extends` (it
+ * evaluates an expression and checks it), no decorator, no computed key,
+ * no static block, and every static field initializer completes. Instance
+ * field initializers and method bodies do not run at definition.
+ */
+function classCompletesNormally(
+  node: ts.ClassLikeDeclaration,
+  scope: CompletionScope,
+): boolean {
+  if (
+    (node.heritageClauses?.some(
+      (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+    ) ??
+      false) ||
+    ts.getDecorators(node) !== undefined
+  ) {
+    return false;
+  }
+  for (const member of node.members) {
+    if (
+      ts.isClassStaticBlockDeclaration(member) ||
+      (ts.canHaveDecorators(member) &&
+        ts.getDecorators(member) !== undefined) ||
+      (member.name !== undefined && ts.isComputedPropertyName(member.name))
+    ) {
+      return false;
+    }
+    if (
+      ts.isPropertyDeclaration(member) &&
+      isStaticClassElement(member) &&
+      member.initializer !== undefined &&
+      !expressionCompletesNormally(member.initializer, scope)
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether evaluating `expression` provably completes normally (BL-064). A
+ * CLOSED grammar:
+ *
+ * - a literal, a template without substitutions, `this`;
+ * - a function, arrow or completing class value (creating a closure runs
+ *   nothing);
+ * - a read {@link readCompletes} proves, and `typeof` of any identifier
+ *   not in its temporal dead zone;
+ * - `void`, `typeof` and `!` of one that completes (none converts its
+ *   operand by user code), and `,`, `&&`, `||`, `??`, `===`, `!==` and
+ *   `?:` of ones that complete (`false && e` and `true || e` never
+ *   evaluate `e`);
+ * - an object literal of non-computed keys whose values complete, with
+ *   methods and accessors (their bodies do not run), and no spread;
+ *   an array literal of completing elements, no spread;
+ * - a call or tagged template {@link invocationCompletes} proves.
+ *
+ * Everything else -- a property read (a getter, `undefined.x`), any other
+ * operator (a `valueOf`), `new`, a template with substitutions (a
+ * `toString`), a spread (an iterator), any other call -- may throw.
+ */
+function expressionCompletesNormally(
+  expression: ts.Expression,
+  scope: CompletionScope,
+): boolean {
+  const node = unwrapParentheses(expression);
+  switch (node.kind) {
+    case ts.SyntaxKind.NumericLiteral:
+    case ts.SyntaxKind.BigIntLiteral:
+    case ts.SyntaxKind.StringLiteral:
+    case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+    case ts.SyntaxKind.RegularExpressionLiteral:
+    case ts.SyntaxKind.TrueKeyword:
+    case ts.SyntaxKind.FalseKeyword:
+    case ts.SyntaxKind.NullKeyword:
+    case ts.SyntaxKind.ThisKeyword:
+    case ts.SyntaxKind.FunctionExpression:
+    case ts.SyntaxKind.ArrowFunction:
+      return true;
+    default:
+      break;
+  }
+  const recurse = (inner: ts.Expression): boolean =>
+    expressionCompletesNormally(inner, scope);
+  if (ts.isIdentifier(node)) {
+    return readCompletes(node.text, scope);
+  }
+  if (ts.isClassExpression(node)) {
+    return classCompletesNormally(node, scope);
+  }
+  if (ts.isTypeOfExpression(node)) {
+    const operand = unwrapParentheses(node.expression);
+    return ts.isIdentifier(operand)
+      ? typeofCompletes(operand.text, scope)
+      : recurse(operand);
+  }
+  if (ts.isVoidExpression(node)) {
+    return recurse(node.expression);
+  }
+  if (
+    ts.isPrefixUnaryExpression(node) &&
+    node.operator === ts.SyntaxKind.ExclamationToken
+  ) {
+    return recurse(node.operand);
+  }
+  if (ts.isBinaryExpression(node)) {
+    const left = unwrapParentheses(node.left);
+    switch (node.operatorToken.kind) {
+      case ts.SyntaxKind.AmpersandAmpersandToken:
+        return (
+          left.kind === ts.SyntaxKind.FalseKeyword ||
+          (recurse(left) && recurse(node.right))
+        );
+      case ts.SyntaxKind.BarBarToken:
+        return (
+          left.kind === ts.SyntaxKind.TrueKeyword ||
+          (recurse(left) && recurse(node.right))
+        );
+      case ts.SyntaxKind.CommaToken:
+      case ts.SyntaxKind.QuestionQuestionToken:
+      case ts.SyntaxKind.EqualsEqualsEqualsToken:
+      case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+        return recurse(left) && recurse(node.right);
+      default:
+        return false;
+    }
+  }
+  if (ts.isConditionalExpression(node)) {
+    return (
+      recurse(node.condition) &&
+      recurse(node.whenTrue) &&
+      recurse(node.whenFalse)
+    );
+  }
+  if (ts.isObjectLiteralExpression(node)) {
+    return node.properties.every((property) => {
+      if (
+        property.name !== undefined &&
+        ts.isComputedPropertyName(property.name)
+      ) {
+        return false;
+      }
+      if (ts.isPropertyAssignment(property)) {
+        return recurse(property.initializer);
+      }
+      if (ts.isShorthandPropertyAssignment(property)) {
+        return (
+          property.objectAssignmentInitializer === undefined &&
+          recurse(property.name)
+        );
+      }
+      return (
+        ts.isMethodDeclaration(property) ||
+        ts.isGetAccessorDeclaration(property) ||
+        ts.isSetAccessorDeclaration(property)
+      );
+    });
+  }
+  if (ts.isArrayLiteralExpression(node)) {
+    return node.elements.every(
+      (element) =>
+        ts.isOmittedExpression(element) ||
+        (!ts.isSpreadElement(element) && recurse(element)),
+    );
+  }
+  if (ts.isCallExpression(node)) {
+    return (
+      node.questionDotToken === undefined &&
+      node.arguments.every(
+        (argument) => !ts.isSpreadElement(argument) && recurse(argument),
+      ) &&
+      invocationCompletes(node.expression, scope, node.arguments)
+    );
+  }
+  if (ts.isTaggedTemplateExpression(node)) {
+    // The template object itself is created without user code; the
+    // substitutions are evaluated, then the tag is called.
+    return (
+      (ts.isNoSubstitutionTemplateLiteral(node.template) ||
+        node.template.templateSpans.every((span) =>
+          recurse(span.expression),
+        )) &&
+      invocationCompletes(node.tag, scope, undefined)
+    );
+  }
+  return false;
+}
+
+/**
+ * Whether calling `callee` provably completes normally (BL-064), its
+ * arguments already proven: `callee` is an identifier naming exactly one
+ * module-scope function declaration, or `const` function or arrow, that
+ * nothing anywhere in the file reassigns and no inner scope here shadows,
+ * readable here; and {@link calleeCompletes} proves its body.
+ */
+function invocationCompletes(
+  calleeExpression: ts.Expression,
+  scope: CompletionScope,
+  supplied: readonly ts.Expression[] | undefined,
+): boolean {
+  const callee = unwrapParentheses(calleeExpression);
+  if (
+    !ts.isIdentifier(callee) ||
+    scope.declared.has(callee.text) ||
+    !readCompletes(callee.text, scope)
+  ) {
+    return false;
+  }
+  const sourceFile = scope.sourceFile;
+  const binding = moduleScopeBindings(sourceFile).get(callee.text);
+  if (
+    binding === undefined ||
+    binding.count !== 1 ||
+    (binding.kind !== "function" && binding.kind !== "const") ||
+    isNameAssignedWithin(sourceFile, callee.text)
+  ) {
+    return false;
+  }
+  const fn = topLevelCallableCandidates(sourceFile).get(callee.text);
+  return fn !== undefined && calleeCompletes(fn, scope, supplied);
+}
+
+/**
+ * Whether one call of `fn`, with arguments that completed, completes
+ * normally (BL-064), within {@link MAX_COMPLETION_CALL_DEPTH} nested calls
+ * (a recursion always reaches the bound, so it is never proven: unbounded
+ * recursion throws a `RangeError`, RWF-098):
+ *
+ * - an `async` function: a throw anywhere in it, its parameters included,
+ *   rejects the promise it returns instead (RWF-016's reason);
+ * - a generator: its parameters are initialized at the call (each must
+ *   complete), and its body does not run;
+ * - any other: each parameter is a plain identifier (a pattern can throw)
+ *   whose default, if any, completes, and its body completes
+ *   ({@link statementListCompletes}), reading its own parameters and
+ *   declarations once initialized, and module-scope bindings readable at
+ *   the calling statement.
+ */
+const calleeCompletionByCallable = new WeakMap<
+  LocalCallable,
+  Map<string, boolean>
+>();
+
+/** The number of callee bodies {@link calleeCompletes} has evaluated (not answered from its memo), for the operation-count gate. */
+let calleeCompletionEvaluations = 0;
+
+export function calleeCompletionEvaluationCount(): number {
+  return calleeCompletionEvaluations;
+}
+
+function calleeCompletes(
+  fn: LocalCallable,
+  outer: CompletionScope,
+  supplied: readonly ts.Expression[] | undefined,
+): boolean {
+  if (outer.depth >= MAX_COMPLETION_CALL_DEPTH) {
+    return false;
+  }
+  // The answer depends only on the callee, the calling top-level
+  // statement (which module bindings are initialized), the depth reached
+  // and which defaults the arguments skip (BL-064's audit, finding 8).
+  const mask = fn.parameters
+    .map((_parameter, position) =>
+      suppliesDefinedValue(supplied?.[position]) ? "1" : "0",
+    )
+    .join("");
+  const key = `${outer.statementIndex}|${outer.depth}|${mask}`;
+  let memo = calleeCompletionByCallable.get(fn);
+  if (memo === undefined) {
+    memo = new Map();
+    calleeCompletionByCallable.set(fn, memo);
+  }
+  const known = memo.get(key);
+  if (known !== undefined) {
+    return known;
+  }
+  calleeCompletionEvaluations += 1;
+  const answer = computeCalleeCompletes(fn, outer, supplied);
+  memo.set(key, answer);
+  return answer;
+}
+
+function computeCalleeCompletes(
+  fn: LocalCallable,
+  outer: CompletionScope,
+  supplied: readonly ts.Expression[] | undefined,
+): boolean {
+  if (isAsyncCallable(fn) && !isGeneratorCallable(fn)) {
+    // An `async function*` initializes its parameters synchronously, like
+    // any generator (BL-064's independent audit, finding 3); only a plain
+    // `async` function turns every throw into a rejection.
+    return true;
+  }
+  const body = fn.body;
+  if (body === undefined) {
+    return false;
+  }
+  const declared = new Set<string>(ts.isArrowFunction(fn) ? [] : ["arguments"]);
+  const initialized = new Set<string>(declared);
+  for (const parameter of fn.parameters) {
+    if (!ts.isIdentifier(parameter.name)) {
+      return false;
+    }
+    declared.add(parameter.name.text);
+  }
+  const hoisted = ts.isBlock(body) ? functionHoistedNames(body) : [];
+  for (const name of hoisted) {
+    declared.add(name);
+    initialized.add(name);
+  }
+  if (ts.isBlock(body)) {
+    // Annex B block functions: declared, never proven initialized.
+    for (const name of blockFunctionNames(body)) {
+      declared.add(name);
+      initialized.delete(name);
+    }
+  }
+  const scope: CompletionScope = {
+    sourceFile: outer.sourceFile,
+    statementIndex: outer.statementIndex,
+    declared,
+    initialized,
+    inFunction: true,
+    depth: outer.depth + 1,
+  };
+  for (const [position, parameter] of fn.parameters.entries()) {
+    const name = (parameter.name as ts.Identifier).text;
+    if (
+      parameter.initializer !== undefined &&
+      !suppliesDefinedValue(supplied?.[position]) &&
+      !expressionCompletesNormally(parameter.initializer, {
+        ...scope,
+        initialized: new Set(initialized),
+      })
+    ) {
+      return false;
+    }
+    initialized.add(name);
+  }
+  if (isGeneratorCallable(fn)) {
+    return true;
+  }
+  return ts.isBlock(body)
+    ? statementListCompletes(body.statements, {
+        ...scope,
+        initialized: new Set(initialized),
+      })
+    : expressionCompletesNormally(body, {
+        ...scope,
+        initialized: new Set(initialized),
+      });
+}
+
+/**
+ * Whether an argument provably supplies a value other than `undefined`,
+ * so the parameter's default is never evaluated: a literal other than
+ * `undefined`, a function, class, object or array value. Passed in an
+ * argument list, never through a spread (refused before this is asked).
+ */
+function suppliesDefinedValue(argument: ts.Expression | undefined): boolean {
+  if (argument === undefined) {
+    return false;
+  }
+  const node = unwrapParentheses(argument);
+  return (
+    ts.isNumericLiteral(node) ||
+    ts.isBigIntLiteral(node) ||
+    ts.isStringLiteralLike(node) ||
+    ts.isRegularExpressionLiteral(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isClassExpression(node) ||
+    ts.isObjectLiteralExpression(node) ||
+    ts.isArrayLiteralExpression(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    node.kind === ts.SyntaxKind.NullKeyword
+  );
+}
+
+/**
+ * The names a function body binds before its first statement runs: its
+ * top-level function declarations and every `var`, outside nested
+ * functions (both are hoisted; a `var` starts as `undefined`).
+ */
+function functionHoistedNames(body: ts.Block): string[] {
+  const names: string[] = [];
+  for (const statement of body.statements) {
+    if (ts.isFunctionDeclaration(statement) && statement.name !== undefined) {
+      names.push(statement.name.text);
+    }
+  }
+  function visit(node: ts.Node): void {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) {
+      return;
+    }
+    if (
+      ts.isVariableDeclarationList(node) &&
+      (node.flags & ts.NodeFlags.BlockScoped) === 0
+    ) {
+      for (const declaration of node.declarations) {
+        if (ts.isIdentifier(declaration.name)) {
+          names.push(declaration.name.text);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  }
+  body.statements.forEach(visit);
+  return names;
+}
+
+/** The names function declarations in nested blocks of `body` bind (Annex B), outside nested functions. */
+function blockFunctionNames(body: ts.Block): string[] {
+  const names: string[] = [];
+  function visit(node: ts.Node, nested: boolean): void {
+    if (ts.isFunctionDeclaration(node)) {
+      if (nested && node.name !== undefined) {
+        names.push(node.name.text);
+      }
+      return;
+    }
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) {
+      return;
+    }
+    ts.forEachChild(node, (child) => visit(child, true));
+  }
+  body.statements.forEach((statement) => visit(statement, false));
+  return names;
+}
+
+function isAsyncCallable(fn: LocalCallable): boolean {
+  return (
+    ts.canHaveModifiers(fn) &&
+    (ts
+      .getModifiers(fn)
+      ?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword) ??
+      false)
+  );
+}
+
+function isGeneratorCallable(fn: LocalCallable): boolean {
+  return (
+    (ts.isFunctionDeclaration(fn) || ts.isFunctionExpression(fn)) &&
+    fn.asteriskToken !== undefined
+  );
 }
 
 /**
@@ -5770,6 +8018,44 @@ function buildExportBindings(
       );
     } else if (observed) {
       results.push(ambiguousWholeModuleExport(observed));
+      // BL-064 (its independent audit, finding 1): a whole-module write
+      // this file cannot settle may or may not replace the object the
+      // property writes went to, so where its value can carry a name, that
+      // name may be published with ITS value instead. Leaving the property
+      // write attributed let a withdrawn `module.exports = { run: dangerous }`
+      // hand `run` to a stale `exports.run = safe`. A value that cannot
+      // carry the name (`module.exports = {}`) publishes nothing callable
+      // under it, so the property write keeps its attribution.
+      const wholeSites = competingWriteSites(sourceFile).wholeModule;
+      // Code that may reach the prototypes (`Object.prototype.run = d`)
+      // lets any value carry any name, inherited (second audit round,
+      // finding 3).
+      const tampered = exportWritesMayFail(sourceFile);
+      const mayCarry = (name: string | undefined): boolean =>
+        wholeSites.some(
+          (site) =>
+            !site.primitive &&
+            (tampered ||
+              site.carries === "all" ||
+              name === undefined ||
+              site.carries.has(name)),
+        );
+      for (const [i, binding] of results.entries()) {
+        if (
+          binding.syntax === "commonjs" &&
+          binding.kind === "named" &&
+          binding.exportAttributionWithdrawn !== true &&
+          mayCarry(binding.exportedName)
+        ) {
+          results[i] = {
+            kind: binding.kind,
+            syntax: binding.syntax,
+            exportedName: binding.exportedName,
+            exportAttributionWithdrawn: true,
+            location: binding.location,
+          };
+        }
+      }
     }
   }
 

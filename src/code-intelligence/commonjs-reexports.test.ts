@@ -129,12 +129,33 @@ describe("CommonJS re-export origins: the supported static forms (RWF-004a A-F)"
   });
 
   it("last-write-wins on a re-assigned exports property, matching Node", () => {
+    // BL-064 (RWF-094): a property read as the last write's value may
+    // throw (a getter) after the first write, so it withdraws; a `const`
+    // read cannot, so the last write keeps its origin.
+    expect(
+      originOf(
+        `const second = require("./second");\nexports.vulnerable = require("./first").vulnerable;\nexports.vulnerable = second.vulnerable;`,
+        "vulnerable",
+      ),
+    ).toBeUndefined();
+    expect(
+      originOf(
+        `const vulnerable = require("./second").vulnerable;\nexports.vulnerable = require("./first").vulnerable;\nexports.vulnerable = vulnerable;`,
+        "vulnerable",
+      ),
+    ).toEqual({ specifier: "./second", importedName: "vulnerable" });
+  });
+
+  it("withdraws the origin when the last write's own value may throw after the first write is observable (BL-064, RWF-094)", () => {
+    // `require("./second")` may fail to load, or `.vulnerable` be a
+    // throwing getter, after `./first` -- which holds `module.parent` --
+    // already observes `exports.vulnerable` as `./first`'s.
     expect(
       originOf(
         `exports.vulnerable = require("./first").vulnerable;\nexports.vulnerable = require("./second").vulnerable;`,
         "vulnerable",
       ),
-    ).toEqual({ specifier: "./second", importedName: "vulnerable" });
+    ).toBeUndefined();
   });
 
   it("accepts a top-level `var` that is declared once and never reassigned", () => {
