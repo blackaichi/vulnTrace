@@ -1161,7 +1161,7 @@ function mayEndModuleEvaluation(
     if (
       ts.isReturnStatement(node) ||
       (ts.isThrowStatement(node) && !isCaughtWithin(node, statement)) ||
-      ((isDefinitelyAbruptCallStatement(node) ||
+      ((isDefinitelyAbruptCallStatement(node, abruptCalls) ||
         isDefinitelyAbruptStaticFieldInitializer(node) ||
         isDefinitelyAbruptClassHeritage(node)) &&
         !isCaughtWithin(node, statement))
@@ -2234,6 +2234,42 @@ const MAX_PROVENANCE_HOPS = 1;
 function resolveInvocationTargetIdentity(
   callee: ts.Expression,
 ): LocalCallable | undefined {
+  // BL-066: memoized per callee node. The answer is a fact of the source
+  // text and of per-file facts that are themselves cached (reassignments,
+  // candidates, confined object bindings), so it never changes; the callee
+  // summary re-reads a body inside every recursion it cannot store, and
+  // must not re-resolve the body's call sites each time.
+  const cached = invocationTargetIdentityByCallee.get(callee);
+  if (cached !== undefined) {
+    return cached ?? undefined;
+  }
+  invocationTargetResolutions += 1;
+  const resolved = computeInvocationTargetIdentity(callee);
+  invocationTargetIdentityByCallee.set(callee, resolved ?? null);
+  return resolved;
+}
+
+/** {@link resolveInvocationTargetIdentity}'s answers; `null` records "resolves to nothing". */
+const invocationTargetIdentityByCallee = new WeakMap<
+  ts.Expression,
+  LocalCallable | null
+>();
+
+let invocationTargetResolutions = 0;
+
+/**
+ * How many callee expressions {@link resolveInvocationTargetIdentity} has
+ * resolved rather than answered from its memo (BL-066). Exposed so a test
+ * can assert that a call site is resolved once, however often the callee
+ * summary re-reads the body it is in.
+ */
+export function invocationTargetResolutionCount(): number {
+  return invocationTargetResolutions;
+}
+
+function computeInvocationTargetIdentity(
+  callee: ts.Expression,
+): LocalCallable | undefined {
   const unwrapped = unwrapParentheses(callee);
 
   if (ts.isIdentifier(unwrapped)) {
@@ -2853,13 +2889,34 @@ function mergeAbruptOutcomes(
  * and a labeled statement (unwrapped to the statement it labels, since a
  * label alone changes nothing about how the statement itself completes).
  *
- * Everything else — loops, `switch`, plain expression/variable statements,
- * `debugger`, an empty statement, a `try` WITH a `finally` — answers
- * `"normal"` by construction: not "this statement completes normally" but
- * "this relation proves nothing about how it completes", which is the
- * safe default for {@link classifyAbruptSequence}'s purposes either way
- * (a sequence only ever needs to know whether a statement forces
- * `"throws"`/`"returns"`, never whether it forces `"normal"`).
+ * Before any of that, the positions the statement NECESSARILY evaluates
+ * are asked (BL-066, RWF-097): an expression statement's expression, a
+ * declarator's initializer, an `if`/`switch`/`while` header, a `for`
+ * initializer and test, a `for`-`of`/`in` right-hand side — the module
+ * scope's own MUST relation ({@link statementHeaderCannotCompleteNormally}),
+ * asked at this body's depth — and a `return`'s expression. A
+ * definitely-abrupt call in any of them means the statement throws before
+ * it can complete or transfer control: `ok(bail());`, `const v = bail();`,
+ * `if (bail()) {}` and `return bail();` are each `"throws"`, exactly as a
+ * literal `throw` written in their place. RWF-028 had read only the bare
+ * invocation statement (`bail();`).
+ *
+ * Everything else — loops, `switch`, plain expression/variable statements
+ * whose required positions prove nothing, `debugger`, an empty statement,
+ * a `try` WITH a `finally` — answers `"normal"` by construction: "this
+ * relation proves nothing about how it completes, so the next statement
+ * decides". That is NOT neutral when the construct contains a `return`
+ * (`for (;;) { return 1; } ok(bail());` completes under real Node, yet a
+ * later throw decides `"throws"`): it over-claims abruptness. An earlier
+ * version of this comment called it "the safe default either way". It is
+ * the fail-closed direction — an over-claimed throw withdraws a later
+ * write's authority, toward `UNKNOWN` — and it is deliberately kept:
+ * answering `"returns"` for every construct that MIGHT return would also
+ * drop proofs real Node confirms (`for (const x of []) { return 1; }
+ * bail();` throws). A precision cost, RWF-099 (BL-066).
+ *
+ * `depth` is the number of callable bodies entered; it is what keeps the
+ * recursion bounded — see {@link callableAlwaysThrows}.
  */
 function classifyAbruptOutcome(
   statement: ts.Statement,
@@ -2868,19 +2925,16 @@ function classifyAbruptOutcome(
   if (ts.isThrowStatement(statement)) {
     return "throws";
   }
-  if (ts.isReturnStatement(statement)) {
-    return "returns";
-  }
-  // RWF-028's ONE addition to this relation: a bare call statement whose
-  // callee this file's own text proves can only ever throw is an
-  // uncaught abrupt completion of the enclosing body, exactly as a
-  // literal `throw` written in its place would be. `depth` is what keeps
-  // it bounded — see {@link callableAlwaysThrows}.
-  if (
-    ts.isExpressionStatement(statement) &&
-    isDefinitelyAbruptInvocation(statement.expression, depth)
-  ) {
+  if (statementHeaderCannotCompleteNormally(statement, depth)) {
     return "throws";
+  }
+  if (ts.isReturnStatement(statement)) {
+    // The expression is evaluated BEFORE control returns: `return bail();`
+    // never returns.
+    return statement.expression !== undefined &&
+      expressionCannotCompleteNormally(statement.expression, 0, depth)
+      ? "throws"
+      : "returns";
   }
   if (ts.isBlock(statement)) {
     return classifyAbruptSequence(statement.statements, depth);
@@ -2907,10 +2961,14 @@ function classifyAbruptOutcome(
     if (statement.catchClause === undefined) {
       return tryOutcome;
     }
-    // The `catch` only ever runs when the `try` block throws on every
-    // path; when it might not (`"returns"` or `"normal"`), the `catch`'s
-    // own body is irrelevant to how the `try` statement as a whole
-    // completes.
+    // When the `try` block is not proven to throw on every path
+    // (`"returns"` or `"normal"`), its outcome is taken as the statement's.
+    // The `catch` can still run on a path that throws, and may return
+    // there (`try { maybe(); } catch { return 1; } bail();` completes when
+    // `maybe` throws): an over-claim in the fail-closed direction, kept for
+    // the reason the doc comment above gives. An earlier version of this
+    // comment said the `catch` "only ever runs when the try block throws
+    // on every path", which is false; RWF-099 (BL-066).
     if (tryOutcome !== "throws") {
       return tryOutcome;
     }
@@ -2976,17 +3034,26 @@ function classifyAbruptSequence(
  *   nontermination, which would require reasoning this relation
  *   deliberately does not attempt (see RWF-016's remaining-limitations
  *   note in tests/validation/FINDINGS.md);
- * - an `async`/generator function ({@link isAsyncOrGeneratorCallable});
- * - an arrow function with a concise (non-block) body — its body is not
- *   inspected. An earlier version of this comment said `() => expr` is
- *   "trivially never abrupt"; that is false (`() => bail()` always
- *   throws), and the refusal is a live false `NOT_AFFECTED`, RWF-096
- *   (backlog `BL-066`), found by BL-065's independent audit.
+ * - an `async`/generator function ({@link isAsyncOrGeneratorCallable}).
+ *
+ * An arrow with a CONCISE body is read like any other (BL-066): its body
+ * is an expression the call must evaluate, so it is asked RWF-026's
+ * required-position question. An earlier version of this comment said
+ * `() => expr` is "trivially never abrupt" and the body was never read;
+ * that was false (`() => bail()` always throws), and a live false
+ * `NOT_AFFECTED`, RWF-096.
+ *
+ * Asked with NO arguments supplied, so every default parameter
+ * initializer counts as evaluated: this is the per-file gate's question
+ * ({@link fileHasDefinitelyAbruptCallable}), "can SOME invocation of `fn`
+ * be proven abrupt?", and the call that supplies nothing is the one under
+ * which the most is evaluated. An invocation asks with its own count
+ * ({@link isDefinitelyAbruptInvocation}).
  */
 function cannotCompleteNormally(
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
 ): boolean {
-  return callableAlwaysThrows(fn, 0);
+  return callableAlwaysThrows(fn, 0, 0);
 }
 
 /**
@@ -3012,20 +3079,31 @@ function cannotCompleteNormally(
  * iteration to convergence, and no cross-file propagation — just a
  * counter that runs out, plus {@link callablesInProgress} to stop a
  * self- or mutually-recursive body from being chased at all.
+ *
+ * The bound is not free: `h3();` above really does throw under real Node,
+ * so the refusal is a live false `NOT_AFFECTED`, RWF-098 (backlog
+ * `BL-068`), measured by BL-066. The bound still carries the cost where
+ * the memo cannot ({@link callableAlwaysThrows}): an answer computed
+ * inside a recursion is never stored, and without the bound a recursive
+ * call graph is re-read exponentially (BL-066's mutation test of the
+ * depth threading never finished).
  */
 const MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH = 3;
 
 /**
  * The callable bodies {@link callableAlwaysThrows} is CURRENTLY inside.
  *
- * `function helper() { helper(); }` never completes, but it never throws
- * either — it exhausts the stack, and "recursion that does not terminate"
- * is exactly the nontermination reasoning {@link cannotCompleteNormally}
- * documents that it refuses to do. Re-entering a body already on this set
- * answers `false` outright, so a recursive or mutually-recursive callable
- * is refused on its own merits rather than accidentally proven by running
- * out of {@link MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH} somewhere down the
- * chain.
+ * Re-entering a body already on this set answers `false` outright, so a
+ * recursive or mutually-recursive callable is refused rather than
+ * summarized, and the summary terminates.
+ *
+ * An earlier version of this comment justified the refusal by saying
+ * `function helper() { helper(); }` "never throws either — it exhausts the
+ * stack". That premise is false: V8 throws
+ * `RangeError: Maximum call stack size exceeded`, a catchable throw
+ * (measured by BL-066), so the module stops there exactly as at a `throw`.
+ * The refusal is therefore a live false `NOT_AFFECTED`, RWF-098 (backlog
+ * `BL-068`), not a deliberate nontermination boundary.
  */
 const callablesInProgress = new Set<ts.Node>();
 
@@ -3033,14 +3111,53 @@ const callablesInProgress = new Set<ts.Node>();
  * {@link cannotCompleteNormally}'s bounded recursive core (RWF-028).
  *
  * `depth` is the number of callable bodies already entered on the way
- * here; `0` is a call written at module scope. Everything else about the
- * proof is {@link classifyAbruptSequence}'s, unchanged: `async`/generator
- * callables and concise-bodied arrows are refused before a single
- * statement is read.
+ * here; `0` is a call written at module scope. `async`/generator callables
+ * are refused before anything is read. Then, in the order the language
+ * evaluates them (BL-066):
+ *
+ * 1. the default parameter initializers the invocation runs
+ *    ({@link evaluatedDefaultParameterCannotCompleteNormally}), given the
+ *    number of arguments it supplies (`suppliedArguments`; `undefined`
+ *    when a spread makes it unknowable);
+ * 2. the body: a block through {@link classifyAbruptSequence}, a concise
+ *    body as an expression through RWF-026's required-position walk.
+ *
+ * Either one proven abrupt is enough: a default that throws ends the call
+ * before the body runs, and a default that completes lets the body run.
+ *
+ * **Memoized where no recursion was refused (BL-066).** Without a memo
+ * the summary is recomputed along every call path, so a file whose
+ * callables call K others costs on the order of K³ body reads per
+ * callable, and the per-file gate asks it of every callable in the file —
+ * measured by BL-066 on its base at 5 s (standalone) for a 42 KB file of
+ * bare call statements, and far worse once every required position is
+ * read. An answer is cached, per callable, depth and effective argument
+ * count, only when its computation met NO {@link callablesInProgress}
+ * refusal anywhere inside (an answer computed inside a recursion that did
+ * meet one depends on what was in progress, and is not stored). The
+ * in-progress check still comes first, so a callable is never answered
+ * from the cache while its own body is being read.
+ *
+ * What a stored answer is: a SOUND one, built only from proof steps on the
+ * source text — every `true` is a valid proof that the invocation cannot
+ * complete normally. It is not always the answer a fresh query would give:
+ * a sub-answer served from the cache can hide a cycle a fresh query would
+ * refuse, and a truer sub-answer can turn a `try`/`catch` from `"throws"`
+ * into the catch's `"returns"` ({@link classifyAbruptOutcome} is not
+ * monotone there), so an answer can depend on the order queries were made
+ * in. That order is fixed for a given file, so a scan is deterministic.
+ *
+ * Inside a recursion nothing is stored, so there the cost is bounded only
+ * by {@link MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH} (polynomial in the fan-out,
+ * not linear); call-site resolution is memoized separately
+ * ({@link resolveInvocationTargetIdentity}), so no call site is resolved
+ * twice. {@link calleeSummaryEvaluationCount} counts the reads that are not
+ * answered from the cache, for the structural performance test.
  */
 function callableAlwaysThrows(
   fn: ts.FunctionDeclaration | ts.FunctionExpression | ts.ArrowFunction,
   depth: number,
+  suppliedArguments: number | undefined,
 ): boolean {
   if (depth >= MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH) {
     return false;
@@ -3049,18 +3166,163 @@ function callableAlwaysThrows(
     return false;
   }
   const body = fn.body;
-  if (body === undefined || !ts.isBlock(body)) {
+  if (body === undefined) {
     return false;
   }
   if (callablesInProgress.has(fn)) {
+    calleeSummaryRecursionRefusals += 1;
     return false;
   }
+
+  // Supplying at least as many arguments as there are parameters, and an
+  // unknowable count, both run no default: one answer.
+  const effectiveArguments = Math.min(
+    suppliedArguments ?? fn.parameters.length,
+    fn.parameters.length,
+  );
+  const key = `${depth}:${effectiveArguments}`;
+  let cache = calleeSummaryCache.get(fn);
+  const cached = cache?.get(key);
+  if (cached !== undefined) {
+    return cached;
+  }
+
+  calleeSummaryEvaluations += 1;
+  const refusalsBefore = calleeSummaryRecursionRefusals;
+  let result: boolean;
   callablesInProgress.add(fn);
   try {
-    return classifyAbruptSequence(body.statements, depth + 1) === "throws";
+    const bodyDepth = depth + 1;
+    result =
+      evaluatedDefaultParameterCannotCompleteNormally(
+        fn,
+        effectiveArguments,
+        bodyDepth,
+      ) ||
+      (ts.isBlock(body)
+        ? classifyAbruptSequence(body.statements, bodyDepth) === "throws"
+        : expressionCannotCompleteNormally(body, 0, bodyDepth));
   } finally {
     callablesInProgress.delete(fn);
   }
+
+  if (calleeSummaryRecursionRefusals === refusalsBefore) {
+    if (cache === undefined) {
+      cache = new Map();
+      calleeSummaryCache.set(fn, cache);
+    }
+    cache.set(key, result);
+  }
+  return result;
+}
+
+/** {@link callableAlwaysThrows}'s exact answers, per callable; see its doc comment. */
+const calleeSummaryCache = new WeakMap<ts.Node, Map<string, boolean>>();
+
+/** How many times {@link callablesInProgress} has refused a re-entry. */
+let calleeSummaryRecursionRefusals = 0;
+
+let calleeSummaryEvaluations = 0;
+
+/**
+ * How many callee summaries have been computed rather than answered from
+ * the cache (BL-066). Exposed so a test can assert the cost grows with the
+ * number of callables, not with the number of call paths — see
+ * {@link callableAlwaysThrows}.
+ */
+export function calleeSummaryEvaluationCount(): number {
+  return calleeSummaryEvaluations;
+}
+
+/**
+ * Whether invoking `fn` with `suppliedArguments` arguments necessarily
+ * evaluates a default parameter initializer that cannot complete normally
+ * (BL-066, RWF-097).
+ *
+ * A parameter's initializer runs when its argument is `undefined`, which
+ * is certain for every parameter at or beyond the number of arguments
+ * supplied — measured under real Node v22 for
+ * `function dp(a, b = bail())`: `dp()`, `dp(1)` and `` dp`x` `` (one
+ * argument, the strings array) throw; `dp(1, 2)` completes. An argument
+ * that is supplied but evaluates to `undefined` runs the default too; this
+ * relation does not claim it (no value semantics), which only costs
+ * precision. A spread argument (`dp(...xs)`) makes the count unknowable,
+ * and nothing is claimed.
+ *
+ * Positions are counted over RUNTIME parameters: a TypeScript `this`
+ * parameter is erased by compilation and shifts nothing
+ * (`function f(this: T, b = bail())` compiles to `function f(b = bail())`).
+ * A rest parameter has no initializer and ends the list. A destructuring
+ * PATTERN's own nested defaults depend on the value destructured and are
+ * not read; only a parameter's own initializer is.
+ *
+ * The initializer is asked RWF-026's required-position question at the
+ * callee's body depth, from its own position, so a name in it resolves
+ * through the parameter scope ({@link scopeDeclares} sees the callee's
+ * parameters; its body's declarations are not ancestors of a parameter):
+ * in `function sh(bail, b = bail())`, `bail` is the parameter and nothing
+ * is proven.
+ */
+function evaluatedDefaultParameterCannotCompleteNormally(
+  fn: LocalCallable,
+  suppliedArguments: number | undefined,
+  depth: number,
+): boolean {
+  if (suppliedArguments === undefined) {
+    return false;
+  }
+  let position = 0;
+  for (const parameter of fn.parameters) {
+    if (isTypeScriptThisParameter(parameter)) {
+      continue;
+    }
+    if (parameter.dotDotDotToken !== undefined) {
+      return false;
+    }
+    if (
+      position >= suppliedArguments &&
+      parameter.initializer !== undefined &&
+      expressionCannotCompleteNormally(parameter.initializer, 0, depth)
+    ) {
+      return true;
+    }
+    position += 1;
+  }
+  return false;
+}
+
+/** A TypeScript `this` parameter: a type annotation only, erased at runtime. */
+function isTypeScriptThisParameter(
+  parameter: ts.ParameterDeclaration,
+): boolean {
+  return ts.isIdentifier(parameter.name) && parameter.name.text === "this";
+}
+
+/**
+ * How many arguments `invocation` supplies to its callee (BL-066):
+ * `undefined` when a spread argument makes the count unknowable.
+ *
+ * ```text
+ * f(a, b)        -- 2
+ * f(...xs)       -- unknowable
+ * tag`a${x}b`    -- 2: the strings array, then one per substitution
+ * new C          -- 0: no argument list at all
+ * ```
+ */
+function suppliedArgumentCount(
+  invocation:
+    ts.CallExpression | ts.NewExpression | ts.TaggedTemplateExpression,
+): number | undefined {
+  if (ts.isTaggedTemplateExpression(invocation)) {
+    return (
+      1 +
+      (ts.isTemplateExpression(invocation.template)
+        ? invocation.template.templateSpans.length
+        : 0)
+    );
+  }
+  const args = invocation.arguments ?? [];
+  return args.some(ts.isSpreadElement) ? undefined : args.length;
 }
 
 /**
@@ -3152,7 +3414,11 @@ function isDefinitelyAbruptInvocation(
     if (target === undefined) {
       return false;
     }
-    return callableAlwaysThrows(target, depth);
+    return callableAlwaysThrows(
+      target,
+      depth,
+      suppliedArgumentCount(unwrapped),
+    );
   }
 
   // BL-065 (RWF-095): a tagged template CALLS its tag -- the tag, then
@@ -3164,7 +3430,11 @@ function isDefinitelyAbruptInvocation(
     if (target === undefined) {
       return false;
     }
-    return callableAlwaysThrows(target, depth);
+    return callableAlwaysThrows(
+      target,
+      depth,
+      suppliedArgumentCount(unwrapped),
+    );
   }
 
   if (ts.isNewExpression(unwrapped)) {
@@ -3172,7 +3442,11 @@ function isDefinitelyAbruptInvocation(
     if (target === undefined || !isConstructableCallable(target)) {
       return false;
     }
-    return callableAlwaysThrows(target, depth);
+    return callableAlwaysThrows(
+      target,
+      depth,
+      suppliedArgumentCount(unwrapped),
+    );
   }
 
   return false;
@@ -3478,24 +3752,35 @@ function necessarilyEvaluatesAbruptly(expression: ts.Expression): boolean {
   if (!fileHasDefinitelyAbruptCallable(expression.getSourceFile())) {
     return false;
   }
-  return expressionCannotCompleteNormally(expression, 0);
+  return expressionCannotCompleteNormally(expression, 0, 0);
 }
 
+/**
+ * {@link necessarilyEvaluatesAbruptly}'s walk, without the per-file gate.
+ * `depth` bounds the expression nesting; `callableDepth` is the number of
+ * callable bodies entered on the way here (`0` at module scope), which
+ * every invocation the walk reaches is asked at — so the callee summary
+ * ({@link callableAlwaysThrows}) can ask this same question of a body, a
+ * concise body or a default parameter, inside the depth bound it already
+ * spends (BL-066). The summary must not go through the gate: the gate is
+ * computed BY the summary.
+ */
 function expressionCannotCompleteNormally(
   expression: ts.Expression,
   depth: number,
+  callableDepth: number,
 ): boolean {
   if (depth > MAX_EXPRESSION_EVALUATION_DEPTH) {
     return false;
   }
   // The one place a proof is ESTABLISHED; everything below only decides
   // whether a child position is required. Handles its own parentheses.
-  if (isDefinitelyAbruptCall(expression)) {
+  if (isDefinitelyAbruptInvocation(expression, callableDepth)) {
     return true;
   }
 
   const required = (child: ts.Expression): boolean =>
-    expressionCannotCompleteNormally(child, depth + 1);
+    expressionCannotCompleteNormally(child, depth + 1, callableDepth);
 
   // Evaluation-transparent wrappers: parentheses and TS's type-only forms,
   // none of which exist at runtime.
@@ -3629,7 +3914,7 @@ function expressionCannotCompleteNormally(
   }
 
   if (ts.isBinaryExpression(expression)) {
-    return binaryCannotCompleteNormally(expression, depth);
+    return binaryCannotCompleteNormally(expression, depth, callableDepth);
   }
 
   return false;
@@ -3643,9 +3928,10 @@ function expressionCannotCompleteNormally(
 function binaryCannotCompleteNormally(
   expression: ts.BinaryExpression,
   depth: number,
+  callableDepth: number,
 ): boolean {
   const required = (child: ts.Expression): boolean =>
-    expressionCannotCompleteNormally(child, depth + 1);
+    expressionCannotCompleteNormally(child, depth + 1, callableDepth);
   const operator = expression.operatorToken.kind;
 
   // Short-circuiting operators: the LEFT operand always runs, the right
@@ -3663,7 +3949,13 @@ function binaryCannotCompleteNormally(
     // evaluated — `obj[bail()] = v` and `bail().x = v` both throw without
     // ever reaching the RHS — so its own sub-expressions are required for
     // every assignment form alike.
-    if (assignmentReferenceCannotCompleteNormally(expression.left, depth)) {
+    if (
+      assignmentReferenceCannotCompleteNormally(
+        expression.left,
+        depth,
+        callableDepth,
+      )
+    ) {
       return true;
     }
     // LOGICAL assignment reads the target first and evaluates the RHS only
@@ -3706,10 +3998,11 @@ function binaryCannotCompleteNormally(
 function assignmentReferenceCannotCompleteNormally(
   target: ts.Expression,
   depth: number,
+  callableDepth: number,
 ): boolean {
   const unwrapped = unwrapParentheses(target);
   const required = (child: ts.Expression): boolean =>
-    expressionCannotCompleteNormally(child, depth + 1);
+    expressionCannotCompleteNormally(child, depth + 1, callableDepth);
 
   if (ts.isPropertyAccessExpression(unwrapped)) {
     return required(unwrapped.expression);
@@ -3767,11 +4060,16 @@ function assignmentReferenceCannotCompleteNormally(
  */
 function declarationListCannotCompleteNormally(
   list: ts.VariableDeclarationList,
+  callableDepth: number,
 ): boolean {
   for (const declaration of list.declarations) {
     if (
       declaration.initializer !== undefined &&
-      necessarilyEvaluatesAbruptly(declaration.initializer)
+      expressionCannotCompleteNormally(
+        declaration.initializer,
+        0,
+        callableDepth,
+      )
     ) {
       return true;
     }
@@ -4789,42 +5087,74 @@ function isDefinitelyAbruptClassHeritage(node: ts.Node): boolean {
 }
 
 /**
- * Whether executing `node` — one statement — necessarily invokes a local
- * callee that RWF-016 proves can only ever throw, so that the statement
- * cannot complete normally and module evaluation ends there (uncaught).
+ * Whether executing `node` — one statement at module scope — necessarily
+ * invokes a local callee that RWF-016 proves can only ever throw, so that
+ * the statement cannot complete normally and module evaluation ends there
+ * (uncaught).
  *
- * Two statement positions qualify, and they qualify for the SAME reason —
- * evaluating the statement necessarily performs the call:
+ * Every position qualifies that evaluating the statement necessarily
+ * evaluates, before any body or clause of it can run
+ * ({@link statementHeaderCannotCompleteNormally}):
  *
  * ```text
- * bail();                  -- RWF-016: a bare expression statement
- * const x = bail();        -- RWF-017: a variable declaration whose
- * let x = bail();             initializer is that call (`const`/`let`/`var`
- * var x = bail();             alike -- this is about the CALL SITE's
- *                             enclosing declaration, not about how `bail`
- *                             itself was declared)
- * if (bail()) { ... }      -- refused: the call is not itself a statement,
- *                             and this relation models statements
- * for (let x = bail();;) {} -- refused: a `for` initializer is a
- *                             declaration LIST, not a VariableStatement,
- *                             and loops are deliberately left to the
- *                             conservative treatment RWF-015 already gives
- *                             them (see FINDINGS.md)
+ * bail();                    -- RWF-016: a bare expression statement
+ * foo(bail());               -- RWF-026: any required operand of it
+ * const x = bail();          -- RWF-017: a declarator's initializer
+ *                               (`const`/`let`/`var` alike -- this is about
+ *                               the CALL SITE's enclosing declaration, not
+ *                               about how `bail` itself was declared)
+ * if (bail()) { ... }        -- RWF-026: an `if`/`switch`/`while` header
+ * for (let x = bail();;) {}  -- RWF-026: a `for` initializer and test
+ * for (const x of bail()) {} -- RWF-026: a `for`-`of`/`in` right-hand side
  * ```
+ *
+ * (An earlier version of this table listed the `if` and `for` rows as
+ * refused; RWF-026 had already made them required.)
  *
  * This is the MUST half of {@link mayEndModuleEvaluation}'s answer. Since
  * BL-063 it is no longer the only way a call ends module evaluation there:
  * a proven-abrupt call in any module-time position, required or not, is a
- * cutoff through that walk's MAY check, so the "refused" rows above (and
- * the `do`/`while` condition and `for` incrementor below) are cutoffs too,
- * for that reason rather than this one.
+ * cutoff through that walk's MAY check, so the `do`/`while` condition and
+ * the `for` incrementor (not asked here) are cutoffs too, for that reason
+ * rather than this one.
+ *
+ * `fileHasAbruptCallable` is the per-file gate
+ * ({@link fileHasDefinitelyAbruptCallable}), which the caller has already
+ * computed for the file this statement is in: this is asked of every node
+ * the walk visits, and a file with no always-throwing callable provably
+ * has no such call anywhere.
  */
-function isDefinitelyAbruptCallStatement(node: ts.Node): boolean {
+function isDefinitelyAbruptCallStatement(
+  node: ts.Node,
+  fileHasAbruptCallable: boolean,
+): boolean {
+  return (
+    fileHasAbruptCallable && statementHeaderCannotCompleteNormally(node, 0)
+  );
+}
+
+/**
+ * {@link isDefinitelyAbruptCallStatement}'s relation at any callable depth,
+ * without the per-file gate: whether a position `node` necessarily
+ * evaluates, before any body or clause of it runs, cannot complete
+ * normally. The callee summary asks it of every statement of a body
+ * ({@link classifyAbruptOutcome}, BL-066), where the gate must not be
+ * consulted: the gate is computed by the summary.
+ */
+function statementHeaderCannotCompleteNormally(
+  node: ts.Node,
+  callableDepth: number,
+): boolean {
+  const required = (expression: ts.Expression): boolean =>
+    expressionCannotCompleteNormally(expression, 0, callableDepth);
   if (ts.isExpressionStatement(node)) {
-    return necessarilyEvaluatesAbruptly(node.expression);
+    return required(node.expression);
   }
   if (ts.isVariableStatement(node)) {
-    return declarationListCannotCompleteNormally(node.declarationList);
+    return declarationListCannotCompleteNormally(
+      node.declarationList,
+      callableDepth,
+    );
   }
   // RWF-026's statement-HEADER positions. Each of these expressions is
   // evaluated by the act of reaching the statement, before any body or
@@ -4832,7 +5162,7 @@ function isDefinitelyAbruptCallStatement(node: ts.Node): boolean {
   // as a bare `bail();` would — and none of them needs any reasoning about
   // the statement's BODY, which is why no control-flow graph appears here.
   if (ts.isIfStatement(node) || ts.isSwitchStatement(node)) {
-    return necessarilyEvaluatesAbruptly(node.expression);
+    return required(node.expression);
   }
   if (ts.isWhileStatement(node)) {
     // The condition is evaluated BEFORE the first iteration, so reaching
@@ -4840,14 +5170,14 @@ function isDefinitelyAbruptCallStatement(node: ts.Node): boolean {
     // only after the body has completed, which would need body-completion
     // reasoning this relation does not have — so `ts.isDoStatement` is
     // deliberately absent here.
-    return necessarilyEvaluatesAbruptly(node.expression);
+    return required(node.expression);
   }
   if (ts.isForStatement(node)) {
     const initializer = node.initializer;
     if (initializer !== undefined) {
       const abruptInitializer = ts.isVariableDeclarationList(initializer)
-        ? declarationListCannotCompleteNormally(initializer)
-        : necessarilyEvaluatesAbruptly(initializer);
+        ? declarationListCannotCompleteNormally(initializer, callableDepth)
+        : required(initializer);
       if (abruptInitializer) {
         return true;
       }
@@ -4856,16 +5186,13 @@ function isDefinitelyAbruptCallStatement(node: ts.Node): boolean {
     // not run until an iteration has completed, and a body that `break`s,
     // `throw`s or `return`s means it may never run at all. It is
     // deliberately not consulted.
-    return (
-      node.condition !== undefined &&
-      necessarilyEvaluatesAbruptly(node.condition)
-    );
+    return node.condition !== undefined && required(node.condition);
   }
   if (ts.isForOfStatement(node) || ts.isForInStatement(node)) {
     // The right-hand side is evaluated before iteration begins — before
     // any iterator is obtained, and whether or not the loop ever runs a
     // body. Nothing about iterator protocol is modeled beyond that.
-    return necessarilyEvaluatesAbruptly(node.expression);
+    return required(node.expression);
   }
   return false;
 }
