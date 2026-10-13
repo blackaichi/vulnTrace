@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-066 (with `BL-067` folded in)
 - **Branch**: bl-066-concise-arrow-callee-summary
 - **Base SHA**: 1a93602ff6617752064a5de4db514db8ebf1434a
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): BL-066 task file — the callee summary reads a concise body, every required statement position and the default parameters a call runs`
+  - `test(BL-066): the callee summary against real Node — RWF-096, RWF-097`
+  - `fix(BL-066): the callee summary reads a concise body, every required statement position and the defaults a call runs — RWF-096, RWF-097`
+  - (this commit) `docs(BL-066): records — RWF-096 and RWF-097 fixed, RWF-098 and RWF-099 found, plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -136,20 +140,20 @@ invocation ends, and the analyzer keeps only the later write).
 
 ## Acceptance criteria
 
-- [ ] The five RWF-096/RWF-097 open-soundness-defect records are deleted
+- [x] The five RWF-096/RWF-097 open-soundness-defect records are deleted
       and their cases assert `UNKNOWN`, with real Node calling the target
-- [ ] The further required positions and the precision controls are
+- [x] The further required positions and the precision controls are
       oracle cases with loud fixtures, both controls and real-Node ground
       truth
-- [ ] Each new `UNKNOWN` case fails on the base commit and passes after
+- [x] Each new `UNKNOWN` case fails on the base commit and passes after
       the fix; each control keeps `NOT_AFFECTED`
-- [ ] Mutations that remove the concise-body read, the statement-position
+- [x] Mutations that remove the concise-body read, the statement-position
       read, and the default-parameter read are each caught by a named test,
       and so is one that ignores the supplied argument count
-- [ ] Only `module-model.ts` changed under `src/` (besides tests)
-- [ ] Graph, proof and verdict differentials reported separately; no
+- [x] Only `module-model.ts` changed under `src/` (besides tests)
+- [x] Graph, proof and verdict differentials reported separately; no
       verdict moves toward `NOT_AFFECTED`
-- [ ] All gates green; validation at exactly the five documented failures
+- [x] All gates green; validation at exactly the five documented failures
 
 ## Gates
 
@@ -161,3 +165,45 @@ scorecard.
 ## Report
 
 In the format of `AGENTS.md` section J.
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW` (the plan above is unchanged):
+
+- **Premises held.** All were re-measured as stated. One more was found:
+  a TypeScript `this` parameter is in the AST's `parameters` but erased at
+  runtime, so positions are counted over runtime parameters.
+- **Failing first: fifteen oracle cases and thirty-one unit rows.** The 15
+  `UNKNOWN` oracle cases fail on the base; the 8 controls and the IIFE
+  guard pass there. The planned parameter-shadow control
+  (`function sh(bail, b = bail())`) is `UNKNOWN` end to end on the base for
+  an unrelated reason (the call graph answers a call of a parameter
+  `unsupported_callee_binding`); it is a unit row instead, and the oracle
+  control is a body-local shadow. `(() => bail())();` is a guard,
+  `UNKNOWN` on the base for RWF-015's documented reason.
+- **Scope added, required: a memo.** The change made the summary's
+  pre-existing super-linear cost far worse (measured: a 204 KB nested-call
+  file from 1.7 s to 131 s under the test runner). The summary now caches
+  answers computed outside a recursion and call-site resolutions, pinned by
+  `module-model.callee-summary.performance.test.ts`. Real bundles stay
+  within about 23 % of the base (rollup, vite, typescript). A STOP
+  condition named "a structural blow-up a bound does not already contain";
+  the memo removes it rather than stopping.
+- **Scope added, records only.** RWF-098 (found by this task: a
+  certainly-`undefined` argument, a pattern's nested default,
+  self-recursion — RWF-028's "never throws" premise is false, V8 throws a
+  `RangeError` — and the third wrapper hop), five oracle records and two
+  RWF-028 unit assertions that pinned the wrong answer converted to
+  records; RWF-099 (found by the independent audit: over-claims of
+  abruptness, precision). Backlog `BL-068`, `BL-069`.
+- **Doc comments corrected** in the fix commit:
+  `isDefinitelyAbruptCallStatement`'s stale "refused" rows,
+  `cannotCompleteNormally`'s concise-arrow bullet, `callablesInProgress`'s
+  "never throws" premise, the depth bound's cost note, and
+  `classifyAbruptOutcome`'s "safe default either way" and "the catch only
+  ever runs when the try block throws on every path".
+- **Mutations.** Fourteen; thirteen caught by named tests, and M11 (the
+  callable depth not threaded) by the suite never finishing. M10 (the gate
+  asking with an unknowable count) survives as an equivalent mutant: every
+  proof bottoms out in a `throw`-bodied callable that is itself a gate
+  candidate.

@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-12, by `BL-065`.
+**Last updated:** 2026-10-13, by `BL-066`.
 
 ## Objective
 
@@ -182,7 +182,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   REMEDIATION-PLAN § 5a, "BL-063 additions". `BL-065` fixed RWF-095 (a
   tagged template is a call of its tag); its audit found RWF-096 and
   RWF-097, two more gaps in the callee summary (backlog `BL-066`,
-  `BL-067`). REMEDIATION-PLAN § 5a, "BL-065 additions".
+  `BL-067`). REMEDIATION-PLAN § 5a, "BL-065 additions". `BL-066` (with
+  `BL-067` folded in) fixed both: the callee summary reads a concise body,
+  every required statement position, a `return`'s expression and the
+  default parameters an invocation runs, memoized (which also
+  removes a pre-existing super-linear cost). It found RWF-098, the
+  summary's remaining refusals of invocations real Node never completes
+  (backlog `BL-068`, after `BL-064`'s decision). REMEDIATION-PLAN § 5a,
+  "BL-066 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -213,30 +220,34 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`BL-065` — A tagged template of a proven-abrupt callee is a
-definitely-abrupt invocation
-([task file](tasks/BL-065-tagged-template-abrupt-tag.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner.
-`BL-063` merged as PR #98; ADR 0009 § 8's decision record (option (a))
-is still for the owner to confirm or drop.
+`BL-066` — The callee summary reads a concise body, every required
+statement position and the default parameters a call runs (`BL-067`
+folded in) ([task file](tasks/BL-066-callee-summary-required-positions.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner. `BL-065`
+merged as PR #99. ADR 0009 § 8's decision record (option (a), from
+`BL-063`) is still for the owner to confirm or drop.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-065`:
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-066`:
 `BL-064` (RWF-094) needs a project-owner decision first (precision versus
 soundness, likely an ADR 0009 § 1 clause 4 amendment, a candidate to fold
-into E-1); `BL-066` and `BL-067` (RWF-096, RWF-097: small,
-`module-model.ts` only, no decision needed) are ready; then lane E
-(`E-1`). The P1 gaps `BL-057` and `BL-058` (small,
-`module-resolver.ts` only, from C-1), `BL-048` (RWF-074), `BL-050`
-(RWF-076), `BL-040`, `BL-043` and `BL-051` (live family-A false
+into E-1), and `BL-068` (RWF-098) follows it, since that decision may
+close RWF-098 outright; then lane E (`E-1`). The P1 gaps `BL-057` and
+`BL-058` (small, `module-resolver.ts` only, from C-1), `BL-048` (RWF-074),
+`BL-050` (RWF-076), `BL-040`, `BL-043` and `BL-051` (live family-A false
 `NOT_AFFECTED`s) are candidates to reorder ahead of lane E.
 
 ## Recently discovered
 
-From `BL-065`'s independent audit: `BL-066` (P0: RWF-096, a concise-bodied
-arrow that can only throw is never proven abrupt; the comment calling it
-"trivially never abrupt" was false and is corrected) and `BL-067` (P0:
-RWF-097, the callee summary misses a definitely-abrupt call in a required
-expression position or a default parameter). Five open-soundness-defect
-records in `tests/oracle/rwf096-callee-summary.test.ts`.
+From `BL-066`: `BL-068` (P0: RWF-098, four shapes the callee summary still
+refuses though real Node never completes them — a certainly-`undefined`
+argument, a destructuring parameter's nested default, unconditional
+self-recursion, the third wrapper hop). RWF-028's record and code comment
+said self-recursion "never throws"; V8 throws a `RangeError`. Five
+open-soundness-defect records in
+`tests/oracle/rwf098-callee-summary-bounds.test.ts`, and two RWF-028 unit
+assertions that pinned the wrong answer converted to records. From its
+independent audit: `BL-069` (P2: RWF-099, the summary over-claims
+abruptness real Node contradicts; measure first whether it reaches a false
+`AFFECTED`).

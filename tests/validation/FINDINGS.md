@@ -270,8 +270,10 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-093 | `nv` (`file:` dependency, real npm 10.9.0 lockfile) | A lockfile entry with a `name` and no `version` (a `file:` dependency whose manifest declares none) was dropped by the dependency graph; not a workspace member, so nothing else named it | silent drop — see below | **Fixed** (B-4) — see below |
 | RWF-094 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A module-time statement that MAY throw through a callee no proof reaches (`maybe(FLAG)` with a local function that throws on one path, `JSON.parse(...)`) is not a module-evaluation cutoff, so a later export write stays authoritative though a module already holding the exports object observes the earlier one | false NOT_AFFECTED (family C), reproduced against real Node by BL-063 — see below | Open (lane E, backlog `BL-064`) |
 | RWF-095 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A TAGGED TEMPLATE whose tag is a proven-abrupt local callee (`` bail`x`; ``, `` FLAG && bail`x`; ``) is not a definitely-abrupt invocation: `isDefinitelyAbruptInvocation` recognises only calls and constructions, so it is never a module-evaluation cutoff | false NOT_AFFECTED (family C), found by BL-063's independent audit, reproduced against real Node — see below | **Fixed** (BL-065) — see below |
-| RWF-096 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A CONCISE-bodied arrow that can only throw (`const ac = () => bail();`) is never proven abrupt: the callee summary refuses it before reading its body, on a false "trivially never abrupt" premise, so `ac();` and `` ac`x`; `` are never module-evaluation cutoffs | false NOT_AFFECTED (family C), found by BL-065's independent audit, reproduced against real Node — see below | Open (lane E, backlog `BL-066`) |
-| RWF-097 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary proves a block body abrupt only from a literal `throw` or a BARE invocation statement: a definitely-abrupt call in a required expression position of a statement (`function w() { ok(bail()); }`) or in a default parameter initializer (`function dp(a, b = bail())`) is not seen, so invoking the callable is not a cutoff | false NOT_AFFECTED (family C), found by BL-065's independent audit, reproduced against real Node — see below | Open (lane E, backlog `BL-067`) |
+| RWF-096 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A CONCISE-bodied arrow that can only throw (`const ac = () => bail();`) is never proven abrupt: the callee summary refuses it before reading its body, on a false "trivially never abrupt" premise, so `ac();` and `` ac`x`; `` are never module-evaluation cutoffs | false NOT_AFFECTED (family C), found by BL-065's independent audit, reproduced against real Node — see below | **Fixed** (BL-066) — see below |
+| RWF-097 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary proves a block body abrupt only from a literal `throw` or a BARE invocation statement: a definitely-abrupt call in a required expression position of a statement (`function w() { ok(bail()); }`) or in a default parameter initializer (`function dp(a, b = bail())`) is not seen, so invoking the callable is not a cutoff | false NOT_AFFECTED (family C), found by BL-065's independent audit, reproduced against real Node — see below | **Fixed** (BL-066, with BL-067 folded in) — see below |
+| RWF-098 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary still refuses invocations real Node never completes: an argument that is certainly `undefined` (`dp(1, undefined)`, `dp(1, void 0)`) runs the default but only OMITTED arguments are counted; a destructuring parameter's nested default (`function dd({ a = bail() } = {})`) is not read; unconditional self-recursion (`function rec() { rec(); }`) is refused on RWF-028's false premise that it "never throws" (V8 throws a `RangeError`); and a third wrapper hop is refused by RWF-028's documented depth bound | false NOT_AFFECTED (family C), found and reproduced against real Node by BL-066 — see below | Open (lane E, backlog `BL-068`) |
+| RWF-099 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary over-claims that an invocation cannot complete normally: a loop, `switch` or `try`/`finally` containing a `return` is "normal", so a later throw decides; a `catch` that may run and return is ignored; a nested block's `var` or Annex-B function declaration does not shadow the callee name; a reassignment of the callee inside a function body is not seen. BL-066 widened the reach of each (required positions, `return`, concise bodies) | precision (an over-claimed cutoff withdraws authority toward `UNKNOWN`); a false `AFFECTED` through RWF-021's widened roots is possible but not measured; found by BL-066's independent audit | Open (lane E, backlog `BL-069`) |
 
 ---
 
@@ -20746,6 +20748,20 @@ Both pinned as open-soundness-defect records (`RWF-096`, `D-17`, expected
 must be evaluated (RWF-026's `necessarilyEvaluatesAbruptly` at the
 callable's depth). Backlog `BL-066`.
 
+
+**Status update (task BL-066, 2026-10-13): Fixed.** This supersedes the
+"Open" status above. Fixed together with RWF-097 (below), by one change to
+the callee summary; the full record is RWF-097's status update.
+
+- **The fix** (`src/code-intelligence/module-model.ts`): `callableAlwaysThrows`
+  reads a concise body as an expression the call must evaluate, through
+  RWF-026's required-position walk at the callee's depth.
+- **Reproductions flipped.** Both records are deleted and assert `UNKNOWN`
+  with real Node calling the target (`tests/oracle/rwf096-callee-summary.test.ts`),
+  with two more concise shapes (a required operand, a wrapper hop through a
+  concise arrow) and three concise controls that keep `NOT_AFFECTED` (a
+  short-circuited call, a completing call, an `async` arrow).
+
 ---
 
 ## RWF-097 — The callee summary sees only a literal `throw` or a bare invocation statement
@@ -20781,3 +20797,208 @@ expected `UNKNOWN`). **Fix direction:** ask RWF-026's required-position
 walk, at the callable's depth, for every statement of the body; a default
 parameter needs the call site's argument count, which only the invocation
 knows. Backlog `BL-067`.
+
+**Status update (task BL-066, 2026-10-13): Fixed.** This supersedes the
+"Open" status above. `BL-067` was folded into task BL-066 by the project
+owner (`docs/tasks/BL-066-callee-summary-required-positions.md`).
+
+- **The fix** (`src/code-intelligence/module-model.ts`), one change to the
+  callee summary `callableAlwaysThrows`, measured against real Node v22.11.0:
+  - RWF-026's required-position walk now carries the callable depth, so the
+    summary asks it of a body without the per-file gate (which the summary
+    itself computes); the module-scope entry is unchanged.
+  - `classifyAbruptOutcome` asks, of every statement of a body, the
+    positions the module scope's own MUST relation already asks
+    (`statementHeaderCannotCompleteNormally`, factored out of
+    `isDefinitelyAbruptCallStatement`: an expression statement, a
+    declarator's initializer, an `if`/`switch`/`while` header, a `for`
+    initializer and test, a `for`-`of`/`in` right-hand side), and a
+    `return`'s expression: `return bail();` never returns.
+  - The default parameter initializers an invocation runs: every runtime
+    parameter at or beyond the number of arguments it supplies (a tagged
+    template supplies one plus one per substitution; `new C` none; a spread
+    makes the count unknowable and nothing is claimed). A TypeScript `this`
+    parameter is erased and shifts nothing. The per-file gate asks with no
+    arguments, the call under which the most is evaluated.
+  - **Memoized.** Without a memo the summary was recomputed on
+    every call path. Measured on the base: a 42 KB file of 300 callables,
+    each making ten bare local calls, took 5 s to model, and a 416 KB one
+    16 s (standalone; several times that under the test runner). Reading
+    every required position multiplied that again: under the runner, a
+    204 KB file of calls nested in argument positions went from 1.7 s on
+    the base to 131 s before the memo. An answer is cached per callable,
+    depth and effective argument count only when its computation met no
+    recursion refusal (a sound answer from proof steps on the source text;
+    it can depend on query order, which is fixed per file), and each call
+    site's resolution is cached once. After (standalone): the two bare-call
+    files model in 0.3 s and 1.6 s; the nested-call shape costs 1.2 s for
+    204 KB against 0.2 s on the base (it now reads positions the base never
+    read). Without recursion the summary count is linear in the callables;
+    inside a recursion nothing is stored, so there the cost is bounded only
+    by the depth bound — polynomial in the fan-out, not linear (the
+    independent audit's 44 KB file of 200 self-recursive callables with
+    fan-out 16 took 24 s under the runner before the resolution memo,
+    1.9 s standalone after, against 0.6 s on the base). Real bundles, base
+    against head (standalone): `rollup/dist/shared/rollup.js` 449 / 551 ms,
+    `vite` `chunks/config.js` 567 / 594 ms, `typescript/lib/typescript.js`
+    407 / 418 ms. Pinned structurally by
+    `module-model.callee-summary.performance.test.ts`: without recursion,
+    summaries per callable, not per call path (deleting the answer memo
+    fails it); with recursion, no call site resolved twice (deleting the
+    resolution memo fails it).
+  - Two doc comments corrected: `isDefinitelyAbruptCallStatement`'s table
+    listed `if (bail())` and `for (let x = bail();;)` as refused, which
+    RWF-026 had already made required; and `cannotCompleteNormally`'s
+    concise-arrow bullet (RWF-096).
+- **Reproductions flipped.** The three records are deleted and assert
+  `UNKNOWN` with real Node calling the target
+  (`tests/oracle/rwf096-callee-summary.test.ts`). Seven more shapes, each a
+  further live false `NOT_AFFECTED` on the base, assert `UNKNOWN` too: a
+  declarator initializer, a `return` expression, an `if` condition in a
+  body; a default parameter run by too few arguments, by a tagged template,
+  by a construction, of a concise arrow, and by a call inside a body. Five
+  more controls keep `NOT_AFFECTED`: every default supplied, a spread
+  argument, a default that only writes a function, a body that catches,
+  and a body whose own binding shadows `bail`. `(() => bail())();` is a
+  guard, `UNKNOWN` on the base for RWF-015's documented reason (the call
+  graph does not resolve an IIFE's callee). A unit matrix
+  (`module-model.callee-summary-required-positions.test.ts`, 49 programs,
+  each run under real Node by BL-066) adds the other statement headers,
+  object-member and block-scoped callees, `new C` without parentheses, the
+  parameter-shadowed default (`function sh(bail, b = bail())`, which the
+  call graph answers `unknown` end to end), a TypeScript `this` parameter
+  in both directions, the MAY positions BL-063 reaches, and the memo's
+  exactness.
+- **Mutations** (each caught by a named test; full list in the task's
+  pull request): dropping the concise-body read, the statement positions,
+  the `return` expression or the default parameters; ignoring the supplied
+  count, the spread or the `this` parameter; miscounting a tagged template
+  or `new C`; an answer memo that never stores, one that also stores
+  answers computed inside a recursion, and a resolution memo that never
+  answers. Not threading the callable depth through the expression walk
+  makes the summary unbounded: the suite never finished. One equivalent mutant survives: the gate
+  asking with an unknowable count instead of none — every proof bottoms out
+  in a `throw`-bodied callable that is itself a gate candidate.
+- **Differentials.** `node scripts/differential.mjs` against `1a93602`, 139 corpus cases: graph 0, proof 0, verdict 0 (none into `NOT_AFFECTED`, none removed, none unmeasured). A zero corpus differential is not evidence of soundness (OPEN-DEBTS D-12); the oracle cases are.
+- **Independent audit:** CERTIFIED, no soundness-blocking finding (60
+  probe programs under real Node v22.11.0 and the analyzer, head against
+  base; no probe moved from authority withdrawn to kept). Its findings, all
+  acted on: (1) the "linear" cost claim was false for recursive call
+  graphs (24 s for a 44 KB self-recursive file) — call-site resolution is
+  now memoized too, the claims are corrected above, and a recursion case is
+  pinned structurally; (2) the memo comment claimed a stored answer equals
+  a fresh one — corrected to "a sound answer", which can depend on query
+  order; (3)–(4), (6) over-claims of abruptness real Node contradicts, now
+  reached through more positions, and two false comments behind them
+  (corrected) — RWF-099, below; (5) misses already recorded (RWF-098, the
+  documented refusals of `.call` and `new` on an arrow).
+- **Found while measuring:** RWF-098, below — the summary's remaining
+  refusals of invocations real Node never completes, none introduced by
+  this task.
+
+---
+
+## RWF-098 — The callee summary's remaining refusals of an invocation real Node never completes
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (as RWF-096: the module stops at the invocation on every load, and the analyzer keeps only the later write)
+**Proof family affected:** C (measured)
+**Severity:** P0 / critical soundness
+**Fix lane:** E (ADR 0009 § 1 clause 3)
+
+**Discovered:** by task BL-066 while drafting its precision controls, and
+measured by it against real Node v22.11.0. Each shape answers the same on
+BL-066's base (`1a93602`) and head; none is introduced by BL-066, and none
+was in its scope. The callee summary (`callableAlwaysThrows`,
+`module-model.ts`) proves only MUST-throw invocations it can read, and
+refuses these:
+
+| callable, and the statement between the writes | real Node calls `parse` | analyzer |
+| --- | --- | --- |
+| `function dp(a, b = bail())`, `dp(1, undefined);` | yes | **`NOT_AFFECTED`**, family C |
+| the same, `dp(1, void 0);` | yes | **`NOT_AFFECTED`**, family C |
+| `function dd({ a = bail() } = {}) { return a; }`, `dd();` | yes | **`NOT_AFFECTED`**, family C |
+| `function rec() { rec(); }`, `rec();` | yes | **`NOT_AFFECTED`**, family C |
+| `h1 -> bail`, `h2 -> h1`, `h3 -> h2`, `h3();` | yes | **`NOT_AFFECTED`**, family C |
+
+All five are pinned as open-soundness-defect records (`RWF-098`, `D-17`,
+expected `UNKNOWN`) in `tests/oracle/rwf098-callee-summary-bounds.test.ts`.
+
+- **A certainly-`undefined` argument.** A default runs for an `undefined`
+  argument, not only an omitted one; BL-066 counts only omitted ones (no
+  value semantics). `void e` is certainly `undefined`; the identifier
+  `undefined` is too unless a binding shadows it (a parameter, a local, an
+  import may be named `undefined`).
+- **A destructuring parameter's nested default.** `dd()` runs the outer
+  default `{}`, which has no `a`, so `a = bail()` runs; BL-066 reads only a
+  parameter's own initializer.
+- **Unconditional self-recursion. A false premise, in code and in this
+  file.** RWF-028's record (above) and `callablesInProgress`'s doc comment
+  say `function helper() { helper(); }` "never completes, but it never
+  throws either". False: V8 throws `RangeError: Maximum call stack size
+  exceeded`, a catchable throw (measured), so module evaluation ends there
+  exactly as at a `throw`. Two assertions of
+  `module-model.invocation-provenance-soundness.test.ts` (11) pinned the
+  wrong answer as expected; BL-066 replaces them with open-soundness-defect
+  records under an authority domain (the third assertion of (11), a
+  recursion with a base case, completes and stays).
+- **The third wrapper hop.** RWF-028's `MAX_CALLABLE_ABRUPT_SUMMARY_DEPTH`
+  is a documented bound, but its refusal is a live false `NOT_AFFECTED`,
+  not only a precision cost; the bound test in the same file pinned it as
+  expected and is replaced the same way. (A depth bound is still needed
+  for cost: inside a recursion BL-066's memo stores nothing, so there the
+  summary's cost grows as the fan-out to the power of the bound. Raising
+  the bound is a cost decision, not a free fix.)
+
+**Why it is not fixed here.** The first two are value semantics of an
+argument or a pattern; the last two change RWF-028's recorded design (what
+a recursion refusal and the depth bound mean). All four are RWF-094's
+family — an invocation that ends evaluation for a reason no proof reaches —
+and a decision that makes every unproven statement between competing
+writes a cutoff (`BL-064`) closes them all at once. Backlog `BL-068`, after
+`BL-064`'s decision.
+
+---
+
+## RWF-099 — The callee summary over-claims an invocation that real Node completes
+
+**Status:** Open
+**Failure class:** precision (over-claimed abrupt completion; a possible false `AFFECTED`, not measured)
+**Defect class:** A (the shadowing gaps: a name is matched past a binding that shadows it) and C (a reassignment inside a function body: a binding with several values treated as one)
+**Proof family affected:** none directly (a withdrawal moves toward `UNKNOWN`)
+**Severity:** P2 / precision
+**Fix lane:** E (ADR 0009 § 1 clause 3)
+
+**Discovered:** by task BL-066's independent audit, measured against real
+Node v22.11.0 and the analyzer, head against BL-066's base `1a93602`. In
+every row real Node completes and the later `module.exports = second`
+runs; the analyzer withdraws its authority. Each mechanism predates BL-066
+(the bare `bail();` form already over-claimed on the base); BL-066 made it
+reachable through required positions, `return` and concise bodies.
+
+| mechanism | example (inside a callable invoked at module time) |
+| --- | --- |
+| a loop, `switch` or `try`/`finally` containing `return` is "normal" | `for (;;) { return 1; } ok(bail());` |
+| a `catch` may run and return | `try { maybe(); } catch { return 1; } bail();` |
+| a nested block's `var` does not shadow | `if (ok()) { var bail = ok; } ok(bail());` |
+| an Annex-B block function does not shadow | `{ function bail() { return 1; } } return bail();` |
+| a reassignment inside a function body is not seen | `function patch() { bail = ok; }`, `patch(); w();` |
+| a `with` object may supply the name | `with (o) { const w = () => bail(); w(); }` |
+
+**Why it is not fixed by BL-066.** The first two rows cannot be withdrawn
+by answering "may return" for every construct that contains a `return`:
+that would also drop proofs real Node confirms (`for (const x of []) {
+return 1; } bail();` throws), moving those toward `NOT_AFFECTED`, and
+telling them apart needs control-flow reasoning this relation does not
+have. The others are the identity proof's (`scopeDeclares`,
+`reassignedModuleReachableNames`), outside BL-066's boundary. Two code
+comments claimed the first two were safe ("the safe default either way";
+"the catch only ever runs when the try block throws on every path"); both
+were false and are corrected by BL-066.
+
+**Possible false `AFFECTED`, not measured.** Withdrawn authority never
+yields `NOT_AFFECTED`. With no configured entrypoint symbol, RWF-021's
+widened roots include the earlier writes, so an over-claimed cutoff could
+reach an `AFFECTED` through a write real Node overwrites. Backlog `BL-069`
+measures that first.
