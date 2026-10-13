@@ -1832,6 +1832,29 @@ record: FINDINGS RWF-097 (BL-066 status update).
   nested-block shadows and past a reassignment inside a function body.
   Measure first whether it reaches a false `AFFECTED`.
 
+**BL-064 additions** (task `BL-064`, 2026-10-13). RWF-094 is fixed under
+option (a): ADR 0009 § 1 clause 4 is amended (every evaluation between the
+first competing write of an export and the last write's completion is
+proven to complete, whenever the module's objects can be observed), with
+a decision record in the ADR for the owner to confirm or drop; RWF-100,
+found by its audit, is fixed with it. Full record: FINDINGS RWF-094
+(BL-064 status update).
+
+- **Precision cost, measured** by
+  `scripts/bl064-competing-write-window-corpus.mjs`; the controls BL-064
+  inverted are named "since BL-064" in their tests.
+- **Differentials.** `node scripts/differential.mjs` against `089ff3b`, 139 corpus cases: graph 0, proof 0, verdict 0 (none into `NOT_AFFECTED`, none removed, none unmeasured). A zero corpus differential is not evidence of soundness (OPEN-DEBTS D-12); the oracle cases are.
+- **What BL-064 binds.** E-1's precision acceptance names those controls
+  as BL-064 left them (ADR 0009, decision record). E-1's write set must
+  keep this window: its observation points (§ 1 clause 4) include an
+  unproven evaluation between competing writes.
+- **`BL-068`** is narrowed: RWF-098's verdict-level records are closed;
+  its two single-write unit records remain.
+- **`BL-070`** (precision, found by BL-064): shapes real Node completes
+  that the completion grammar does not prove (a loop that always breaks,
+  a callee bound in a function body, a spread of an array literal, a
+  `var`-bound function).
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

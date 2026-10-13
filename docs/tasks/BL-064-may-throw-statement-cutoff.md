@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-064
 - **Branch**: bl-064-may-throw-statement-cutoff
 - **Base SHA**: 089ff3b3a32fbc2b9549c97f08655a9832158715
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `docs(tasks): BL-064 task file — an evaluation not proven to complete between two competing writes of an export withdraws its attribution`
+  - `test(BL-064): an evaluation between two competing writes, against real Node — RWF-094, RWF-098`
+  - `fix(BL-064): an evaluation not proven to complete between competing writes withdraws the export — RWF-094, RWF-100`
+  - (this commit) `docs(BL-064): records — RWF-094 fixed, RWF-098 narrowed, RWF-100 found and fixed, ADR 0009 amendment, plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -134,3 +138,48 @@ exactly `RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`.
 ## Report
 
 In the format of `AGENTS.md` section J.
+
+## Outcome
+
+### Acceptance criteria
+
+- [x] The five RWF-094 records are deleted and assert `UNKNOWN`, against
+      real Node (`tests/oracle/rwf094-may-throw-statement.test.ts`, with
+      four more shapes measured on the base).
+- [x] Controls stay `NOT_AFFECTED` where real Node never calls the target,
+      including a primitive first write and a proven-complete statement
+      between the writes (five controls in the same file).
+- [x] The amendment is recorded in ADR 0009, with a decision record.
+- [x] The precision cost is measured and reported (corpus differential
+      zero; `scripts/bl064-competing-write-window-corpus.mjs`: 93 of 8,659
+      export bindings in `node_modules`, 9 of 441 in the validation corpus,
+      none on a validation finding's path).
+- [x] RWF-094's FINDINGS entry has a status update; RWF-098's too; RWF-100
+      is registered; the records, backlog, progress and scorecard are
+      updated.
+- [x] Every gate in `AGENTS.md` § I passes, the validation baseline is
+      unchanged, and the independent audit certifies (see the pull
+      request; round 3 CERTIFIED).
+
+### Deviations from this file (`AGENTS.md` § D)
+
+- **An observability gate.** "What to do" step 2 applied the window to
+  every file. Measured: 273 hermetic tests then failed, nearly all
+  precision controls in files nothing can observe; real Node deletes a
+  failed module from `require.cache` and `module.children`, so without a
+  holder no earlier value is ever seen. The window applies only when the
+  file's own census says its objects can be observed.
+- **Narrowed competitors.** A whole-module write competes for a property
+  only if its value can carry the name (measured: RWB-08's real `debug`
+  went `AFFECTED` → `UNKNOWN` without it, though `debug.humanize` is
+  `undefined` before its write).
+- **A wider grammar** than listed (`try`/`catch`, `if`, `typeof`, nested
+  completing callees to depth 3, `async` callees, supplied defaults,
+  tagged templates), so that the real-Node oracle controls of BL-063,
+  BL-065 and BL-066 keep `NOT_AFFECTED`; four of them could not be kept
+  and now assert `UNKNOWN` (backlog `BL-070`).
+- **Audit-driven additions** (two BLOCKED rounds, all inside this task's
+  scope): RWF-100's stale-property withdrawal, a census of code that may
+  make a write fail, Annex B refusals, a memoized callee proof.
+- **RWF-098** is closed at the verdict level here rather than by `BL-068`,
+  which is narrowed to its two single-write unit records and lowered to P2.

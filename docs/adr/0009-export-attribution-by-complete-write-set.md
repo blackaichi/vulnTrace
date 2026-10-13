@@ -254,6 +254,70 @@ for BL-063 without choosing between (a) and (b) (a separate amendment
 task); BL-063 took the recommended option, said so in its pull request,
 and the record can be dropped without touching the fix.
 
+## Amendment — § 1 clause 4 extended to every evaluation between competing writes (task BL-064, 2026-10-13)
+
+**What was found.** RWF-094 (found by BL-063, reproduced against real
+Node): a module-time statement that MAY throw through anything no proof
+reaches (`maybe(FLAG)`, `JSON.parse(...)`, a construction running a
+throwing field, a getter read) between two writes of an export left the
+earlier write published, and a module already holding the exports object
+called it; the analyzer kept the later write and answered `NOT_AFFECTED`
+(family C). Clause 3 decides only what the abrupt-completion machinery
+PROVES; clause 4 named an observation point only BETWEEN the writes. BL-064
+measured that the observation needs no cycle: a child module the file
+required BEFORE both writes reads the earlier value through
+`module.parent.exports` after the load throws.
+
+**The amendment.** Clause 4 reads, in addition:
+
+> 4a. when this file's `module` or exports object can be observed at all
+> (the file references `require`, a dynamic `import()`, `eval`, the
+> wrapper's `arguments`, module-scope `this`, or `module`/`exports` other
+> than as the base of an export write target), every evaluation between
+> the completion of the FIRST competing write of `x` and the completion of
+> the LAST is proven to complete normally, by a closed grammar. A
+> competing write is a write of `x` the file spells, or a whole-module
+> write whose value can carry `x`; a write of a provable primitive is not
+> one; a deferred one (inside a function body) opens the window at the
+> start of the file.
+
+When nothing can observe the objects, Node deletes a failed module from
+`require.cache` and from its parent's `module.children`, and a re-require
+evaluates it afresh (measured), so the last write stays authoritative
+exactly as before. The grammar, the census and the competing-write rules
+are `competingWritesCannotBeObservedApart` and its helpers in
+`module-model.ts`; anything outside the grammar withdraws attribution
+(`UNKNOWN`), never grants it. When code in the file may tamper with the
+export objects or the prototypes and may have run before the last write,
+every window withdraws; a refused whole-module write also withdraws every
+property write whose name it can carry (RWF-100). Writers the file does not spell (aliases,
+parameters, `Object.assign`/`defineProperty`, other modules, stale export
+objects) stay clause 1's un-enumerable writers, E-1's.
+
+## Decision record — option (a) for RWF-094 (taken by task BL-064, 2026-10-13; the project owner confirms it by merging, or drops it)
+
+**The choice.** The project owner was offered (a) this amendment, (b)
+narrow point fixes (a multi-path completion proof for a local callee, a
+proof for an abrupt instance field) that leave builtins and dependency
+calls between competing writes a live false `NOT_AFFECTED`, or (c) folding
+the question into E-1; (a) was recommended, and the owner gave the go
+without choosing. BL-064 took (a), as BL-063 did for its own record.
+
+**The precision acceptance it binds.** Measured by
+`scripts/bl064-competing-write-window-corpus.mjs` against the base: of
+8,659 CommonJS export bindings in `node_modules`, 93 lose attribution
+(ajv's TypeScript-emitted entries, debug, zod, fast-uri, find-up,
+ignore); 9 of 441 in the validation corpus (RWB-08's `debug`, none on its
+finding's path); 1 of 213 in adversarial v2; 10 of 568 in `fixtures/` (the
+duplicate-write and heritage fixtures). The corpus
+differential is zero on graph, proof and verdict. Eight hermetic tests and
+four oracle controls that asserted attribution across an unproven
+statement between competing writes now assert the withdrawal: as with
+BL-063's record, E-1's precision acceptance names those controls as BL-064
+left them, and restoring one is not a precision regression for E-1 to
+repair. Dropping this record means reverting the amendment, which reopens
+RWF-094.
+
 ## Rationale
 
 Every export-model defect found so far picked *one* write and trusted it.

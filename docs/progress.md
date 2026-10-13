@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-13, by `BL-066`.
+**Last updated:** 2026-10-13, by `BL-064`.
 
 ## Objective
 
@@ -189,7 +189,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   removes a pre-existing super-linear cost). It found RWF-098, the
   summary's remaining refusals of invocations real Node never completes
   (backlog `BL-068`, after `BL-064`'s decision). REMEDIATION-PLAN § 5a,
-  "BL-066 additions".
+  "BL-066 additions". `BL-064` fixed RWF-094 under option (a), an ADR 0009
+  § 1 clause 4 amendment with a decision record for the owner: when the
+  module's objects can be observed, an export's last write keeps its
+  authority only if everything between the first competing write and it
+  is proven to complete (`competingWritesCannotBeObservedApart`). It
+  closed RWF-098's verdict-level records, and its audit's RWF-100 (a
+  stale property write attributed in place of a refused whole-module
+  write). REMEDIATION-PLAN § 5a, "BL-064 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -220,34 +227,34 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`BL-066` — The callee summary reads a concise body, every required
-statement position and the default parameters a call runs (`BL-067`
-folded in) ([task file](tasks/BL-066-callee-summary-required-positions.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner. `BL-065`
-merged as PR #99. ADR 0009 § 8's decision record (option (a), from
-`BL-063`) is still for the owner to confirm or drop.
+`BL-064` — An evaluation not proven to complete between two competing
+writes of an export withdraws its attribution
+([task file](tasks/BL-064-may-throw-statement-cutoff.md)):
+`READY_FOR_REVIEW`, its pull request awaiting the project owner, with two
+decision records for the owner to confirm or drop in ADR 0009 (BL-063's
+option (a) and BL-064's option (a)). `BL-066` merged as PR #100.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-066`:
-`BL-064` (RWF-094) needs a project-owner decision first (precision versus
-soundness, likely an ADR 0009 § 1 clause 4 amendment, a candidate to fold
-into E-1), and `BL-068` (RWF-098) follows it, since that decision may
-close RWF-098 outright; then lane E (`E-1`). The P1 gaps `BL-057` and
-`BL-058` (small, `module-resolver.ts` only, from C-1), `BL-048` (RWF-074),
-`BL-050` (RWF-076), `BL-040`, `BL-043` and `BL-051` (live family-A false
-`NOT_AFFECTED`s) are candidates to reorder ahead of lane E.
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-064`:
+lane E (`E-1`), which must keep BL-064's window as one of its observation
+points. The P1 gaps `BL-057` and `BL-058` (small, `module-resolver.ts`
+only, from C-1), `BL-048` (RWF-074), `BL-050` (RWF-076), `BL-040`,
+`BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
+candidates to reorder ahead of lane E. `BL-068` is narrowed to RWF-098's
+single-write unit records (P2).
 
 ## Recently discovered
 
-From `BL-066`: `BL-068` (P0: RWF-098, four shapes the callee summary still
+From `BL-064`: `RWF-100` (found by its audit, a live family-C false
+`NOT_AFFECTED` partly pre-existing: a refused whole-module write left a
+stale property write attributed; fixed in `BL-064`) and `BL-070` (P4,
+precision: shapes real Node completes that the completion grammar does
+not prove). `BL-068` is narrowed and lowered to P2.
+
+From `BL-066`: `BL-068` (RWF-098, four shapes the callee summary still
 refuses though real Node never completes them — a certainly-`undefined`
 argument, a destructuring parameter's nested default, unconditional
-self-recursion, the third wrapper hop). RWF-028's record and code comment
-said self-recursion "never throws"; V8 throws a `RangeError`. Five
-open-soundness-defect records in
-`tests/oracle/rwf098-callee-summary-bounds.test.ts`, and two RWF-028 unit
-assertions that pinned the wrong answer converted to records. From its
-independent audit: `BL-069` (P2: RWF-099, the summary over-claims
-abruptness real Node contradicts; measure first whether it reaches a false
-`AFFECTED`).
+self-recursion, the third wrapper hop). From its independent audit:
+`BL-069` (P2: RWF-099, the summary over-claims abruptness real Node
+contradicts; measure first whether it reaches a false `AFFECTED`).
