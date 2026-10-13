@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { buildModuleModel, mapExportsToFunctions } from "./module-model.js";
 import { indexSourceFile } from "./source-index.js";
+import {
+  loadDefectRegisters,
+  openSoundnessDefectProblems,
+  type OpenSoundnessDefect,
+  type OutcomeDomain,
+} from "../testing/open-soundness-defect.js";
 
 /**
  * RWF-028 (P0-E): the permanent matrix for INVOCATION / PROVENANCE
@@ -81,6 +87,40 @@ function expectRefused(text: string): void {
 /** Authority must be KEPT — this program completes normally under real node. */
 function expectKept(text: string): void {
   expect(defaultExportName(text)).toBe("second");
+}
+
+/** Whether the later write's authority is withdrawn (`undefined`) or kept (its name). */
+type Authority = "withdrawn" | "kept";
+
+const AUTHORITY_DOMAIN: OutcomeDomain<Authority, string | undefined> = {
+  name: "authority",
+  admits: (pattern, outcome) =>
+    pattern === "withdrawn" ? outcome === undefined : outcome !== undefined,
+};
+
+/**
+ * RWF-098 (found by BL-066): real Node throws before the later write, so
+ * authority must be WITHDRAWN, but the analyzer keeps it. An
+ * open-soundness-defect record, never an expectation (AGENTS.md § G): the
+ * fix deletes it and asserts `expectRefused` instead.
+ */
+function expectOpenRwf098(caseId: string, text: string): void {
+  const record: OpenSoundnessDefect<Authority, string | undefined> = {
+    caseId,
+    rwf: "RWF-098",
+    debt: "D-17",
+    admissible: ["withdrawn"],
+    expected: "withdrawn",
+    observed: "second",
+  };
+  expect(
+    openSoundnessDefectProblems(
+      record,
+      AUTHORITY_DOMAIN,
+      defaultExportName(text),
+      loadDefectRegisters(),
+    ),
+  ).toEqual([]);
 }
 
 // ---------------------------------------------------------------------
@@ -198,12 +238,18 @@ describe("RWF-028 (7-11): C08, the bounded transitive wrapper", () => {
   });
 
   it("(11) refuses RECURSION rather than summarizing it", () => {
-    // `helper()` never completes, but it never THROWS either — it
-    // exhausts the stack, which is nontermination reasoning this
-    // analyzer deliberately does not do.
-    expectKept(modNoThrow("function helper() {\n  helper();\n}\nhelper();"));
+    // Correction (BL-066, RWF-098). This test used to say `helper()`
+    // "never THROWS either -- it exhausts the stack" and expect authority
+    // KEPT. False: V8 throws `RangeError: Maximum call stack size
+    // exceeded`, so real Node never reaches the later write. The two
+    // unconditional recursions are open-soundness-defect records now.
+    expectOpenRwf098(
+      "rwf028.11.self-recursion",
+      modNoThrow("function helper() {\n  helper();\n}\nhelper();"),
+    );
     // Mutual recursion, same answer.
-    expectKept(
+    expectOpenRwf098(
+      "rwf028.11.mutual-recursion",
       modNoThrow(
         "function a1() {\n  b1();\n}\nfunction b1() {\n  a1();\n}\na1();",
       ),
@@ -222,7 +268,9 @@ describe("RWF-028 (7-11): C08, the bounded transitive wrapper", () => {
     const three = `${two}function w3() {\n  w2();\n}\n`;
     expectRefused(mod(`${one}w1();`));
     expectRefused(mod(`${two}w2();`));
-    expectKept(mod(`${three}w3();`));
+    // Correction (BL-066, RWF-098): `w3()` throws under real Node, so the
+    // refusal at the bound is a live defect, not an expectation.
+    expectOpenRwf098("rwf028.third-wrapper-hop", mod(`${three}w3();`));
   });
 });
 

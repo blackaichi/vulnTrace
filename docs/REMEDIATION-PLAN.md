@@ -1811,6 +1811,27 @@ record: FINDINGS RWF-095 (BL-065 status update).
   call in a required expression position or a default parameter of a
   callee body is not seen. Three records in the same file.
 
+**BL-066 additions** (task `BL-066`, `BL-067` folded in, 2026-10-13).
+RWF-096 and RWF-097 are fixed: the callee summary reads a concise body,
+every position a body statement necessarily evaluates (the module scope's
+own MUST relation, at the callee's depth), a `return`'s expression, and the
+default parameters an invocation runs; it is memoized (answers outside a recursion, and call-site resolutions). Full
+record: FINDINGS RWF-097 (BL-066 status update).
+
+- **Differentials.** `node scripts/differential.mjs` against `1a93602`, 139 corpus cases: graph 0, proof 0, verdict 0 (none into `NOT_AFFECTED`, none removed, none unmeasured). A zero corpus differential is not evidence of soundness (OPEN-DEBTS D-12); the oracle cases are.
+- **`BL-068`** (RWF-098, found by BL-066): the summary's remaining refusals
+  of invocations real Node never completes — a certainly-`undefined`
+  argument, a destructuring parameter's nested default, unconditional
+  self-recursion (a `RangeError`; RWF-028's "never throws" premise is
+  false) and the third wrapper hop. Five open-soundness-defect records
+  (`tests/oracle/rwf098-callee-summary-bounds.test.ts`) and two converted
+  RWF-028 unit assertions. RWF-094's family: placed after `BL-064`'s
+  decision, which may close them all at once.
+- **`BL-069`** (RWF-099, found by BL-066's independent audit, precision):
+  the summary over-claims abruptness in constructs that may `return`, past
+  nested-block shadows and past a reassignment inside a function body.
+  Measure first whether it reaches a false `AFFECTED`.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

@@ -1213,6 +1213,29 @@ backlog `BL-067`). Five open-soundness-defect records. This entry still
 stands: lanes E and C (C-2..C-5) remain, and RWF-094, RWF-096 and RWF-097
 are lane E's open findings from this family.
 
+**Progress, added by task `BL-066` (2026-10-13).** Task BL-066
+(`docs/tasks/BL-066-callee-summary-required-positions.md`, with `BL-067`
+folded in) fixed `RWF-096` and `RWF-097`: the callee summary reads a
+concise body, every position a body statement necessarily evaluates, a
+`return`'s expression, and the default parameters an invocation runs
+(`module-model.ts`). The five records are deleted and assert `UNKNOWN`,
+with seven more shapes measured and asserted the same way. The summary is
+now memoized, which also removes a pre-existing super-linear
+cost (measured: 16 s for a 416 KB file of local calls on the base, 1.6 s
+after). Measuring its controls found `RWF-098`, four further live family-C
+false `NOT_AFFECTED`s of this entry, all pre-existing: a certainly-`undefined`
+argument, a destructuring parameter's nested default, unconditional
+self-recursion (RWF-028's "never throws" premise is false: V8 throws a
+`RangeError`), and the third wrapper hop (RWF-028's documented depth
+bound). Five open-soundness-defect records, and two RWF-028 unit
+assertions that pinned the wrong answer are now records; backlog `BL-068`,
+after `BL-064`'s decision. Its independent audit (CERTIFIED) found
+`RWF-099`, a precision finding: the summary over-claims abruptness real
+Node contradicts (pre-existing mechanisms BL-066 gave a wider reach;
+backlog `BL-069`, which first measures whether one reaches a false
+`AFFECTED`). This entry still stands: lanes E and C (C-2..C-5) remain, and
+RWF-094 and RWF-098 are lane E's open findings from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
