@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-14, by `E-2`.
+**Last updated:** 2026-10-14, by `BL-074`.
 
 ## Objective
 
@@ -211,6 +211,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   five live false `NOT_AFFECTED`s and a false `AFFECTED`) is fixed at no
   measured precision cost; its audit blocked on RWF-106, which shares
   RWF-103's open decision. REMEDIATION-PLAN § 5a, "E-2 additions".
+  `BL-074` took that decision's recommended option (b), module-graph-aware
+  (ADR 0009 decision record, for the owner to confirm by merging): a load
+  whose module can hand back this file's exports object, or the object its
+  whole-module re-export forwards, is an alias of it wherever its value
+  flows (`load-reach.ts`). RWF-103 and RWF-106 closed: 34 live false
+  `NOT_AFFECTED`s; precision 1,251 of 5,061 `node_modules` export bindings
+  (option (a) would cost 1,640), no corpus verdict moved.
+  REMEDIATION-PLAN § 5a, "BL-074 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -241,26 +249,37 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`E-2` — Forwarding hops consult the write set
-([task file](tasks/E-2-forwarding-write-set.md)): `BLOCKED`,
-`NEEDS_DECISION`. RWF-105 is fixed and every gate is green, but its
-independent audit blocked on RWF-106 (a write reaching the forwarded
-object through a load result's dataflow is still forwarded), whose fix is
-RWF-103's open per-file or module-graph-aware choice. The work is
-committed and pushed on the branch; no pull request yet. `E-1` merged as
-PR #102.
+`BL-074` — A load's result that may be an export object of this file,
+through any dataflow ([task file](tasks/BL-074-load-result-dataflow.md)):
+`READY_FOR_REVIEW`, with BL-076 folded in. `E-2` merged as PR #103 (with
+its audit's RWF-106 left to BL-074).
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `E-2`:
-`E-3` (entrypoint roots), `E-4`, `E-5`. `BL-074` (RWF-103) and `BL-075`
-(RWF-104), both P0, wait on the owner's decision. The P1 gaps `BL-057` and `BL-058` (small, `module-resolver.ts`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-074`:
+`BL-075` (RWF-104, P0, waits on the owner's decision: drop the builtin
+reader allow-lists, or decide builtin patching over the module closure),
+`BL-079` (RWF-108, P0, at E-4's boundary), `E-3` (entrypoint roots),
+`E-4`, `E-5`. `BL-078` (RWF-107) and `BL-080` (RWF-109) need precision
+decisions. The P1 gaps `BL-057` and `BL-058` (small, `module-resolver.ts`
 only, from C-1), `BL-048` (RWF-074), `BL-050` (RWF-076), `BL-040`,
 `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of the rest of lane E. `BL-068` is narrowed to RWF-098's
 single-write unit records (P2).
 
 ## Recently discovered
+
+From `BL-074`: its independent audit found `RWF-107` (`BL-078`, P1,
+masked: what a call through a load returns is not followed; the fix is a
+measured precision trade-off) and `RWF-108` (`BL-079`, P0, live,
+pre-existing: another module stores this file's exports object on a third
+module's object, which this file loads and writes through), `RWF-109`
+(`BL-080`, P1, masked: a registry member reached through a key computed
+at run time), and the assignment-value, sloppy-`this` and stack-frame
+routes BL-074 closes. `BL-077` (P3,
+precision): narrow the withdrawals TypeScript's emit helpers and a tainted
+`typescript` closure cause. RWF-103's premise that the per-file rule
+withdraws "nearly every TypeScript-emitted file" is corrected (32.4%).
 
 From `E-2`: `RWF-105` (the forwarding hop forwarded a name the file
 writes onto the object it forwards; five live family-C false
