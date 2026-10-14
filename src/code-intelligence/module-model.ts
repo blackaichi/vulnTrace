@@ -207,6 +207,38 @@ export interface ExportBinding {
    * {@link entrypointRootCandidates}.
    */
   readonly exportAttributionWithdrawn?: boolean;
+  /**
+   * On a CommonJS whole-module export whose value is another module's
+   * ({@link commonJsReExport}, `module.exports = require("./lib")`): the
+   * names this file's export write set records it may write onto that object
+   * (task E-2; ADR 0009 § 1's "the same determination gates the
+   * forwarding hop"). The object is the other module's own exports, so
+   * such a write replaces what the forwarded name holds:
+   *
+   * ```js
+   * module.exports = require("./safe");
+   * [module.exports.run] = [require("./danger").run];  // run is danger's
+   * ```
+   *
+   * A plain `=` write leaves a named binding the hop already refuses on;
+   * a write E-1's census can only withdraw ({@link ExportWriteSet.withdrawn})
+   * leaves none, and forwarding `run` to `./safe` was RWF-105's false
+   * NOT_AFFECTED. Every name withdrawn is here, and every `=` write not
+   * provably on a stale object.
+   *
+   * Bounded by the census: a write reaching the forwarded object through a
+   * load result's dataflow the census does not follow
+   * (`patch(require("./safe"))`, `[require("./safe")][0].run = …`) is not
+   * here, and the hop still forwards its name -- RWF-106, open, which
+   * shares RWF-103's undecided fix.
+   *
+   * Set by {@link applyExportWriteSet} on every whole-module re-export it
+   * keeps. Purely internal analysis state, read by exactly one consumer,
+   * export-forwarding.ts's `commonJsExportForwardingHop`, which refuses to
+   * forward a name listed here -- and refuses every name when it is
+   * absent, since an absent record is a write set nobody consulted.
+   */
+  readonly forwardingShadowedNames?: ReadonlySet<string>;
   readonly location: SourceLocation;
 }
 
@@ -5530,9 +5562,29 @@ function applyExportWriteSet(
     decide(name, bindings);
   }
 
+  // E-2 (RWF-105): the names a forward of the final object must not
+  // answer for -- every name the census withdraws, and every `=` write
+  // that may reach the final object. See
+  // {@link ExportBinding.forwardingShadowedNames}.
+  const shadowed = new Set(set.withdrawn);
+  for (const write of set.propertyWrites) {
+    const object = objectOf.get(write);
+    if (finalObject < 0 || object === finalObject || object === -1) {
+      shadowed.add(write.name);
+    }
+  }
+
   const emitted = new Set<string>();
   const collapsed: ExportBinding[] = [];
   for (const binding of results) {
+    if (
+      binding.syntax === "commonjs" &&
+      binding.kind === "default" &&
+      binding.commonJsReExport !== undefined
+    ) {
+      collapsed.push({ ...binding, forwardingShadowedNames: shadowed });
+      continue;
+    }
     if (
       binding.syntax !== "commonjs" ||
       binding.kind !== "named" ||

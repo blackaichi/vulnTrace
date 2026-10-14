@@ -100,41 +100,66 @@ export function esmExportForwardingHop(
  * Every negative outcome is a refusal to hop, never a guess — which is
  * what makes ambiguous and unsupported forwarding degrade to the caller's
  * existing unresolved/UNKNOWN result rather than to a fabricated target.
+ *
+ * Both rules consult the export write set (task E-2; ADR 0009 § 1: "the
+ * same determination gates the forwarding hop"), through the model E-1
+ * built from it, never by re-reading a spelling:
+ *
+ * - rule 1 forwards only when every own binding of the name carries the
+ *   same origin -- one binding, on the model's decided path -- so no
+ *   stale or withdrawn write is chosen by being first (PRM-61);
+ * - rule 2 never forwards a name this file may itself write onto the
+ *   object it forwards (`ExportBinding.forwardingShadowedNames` in
+ *   module-model.ts): `module.exports = require("./lib");
+ *   [module.exports.foo] = [other]` publishes `other` under `foo`, on
+ *   `./lib`'s own exports object (RWF-105). A whole-module re-export
+ *   carrying no such record is a write set nobody consulted, and forwards
+ *   nothing; so is a file with more than one whole-module binding.
  */
 export function commonJsExportForwardingHop(
   model: ModuleModel,
   exportName: string,
 ): ExportForwardingHop | undefined {
-  const own = model.exports.find(
+  const own = model.exports.filter(
     (exp) =>
       exp.syntax === "commonjs" &&
       exp.kind === "named" &&
       exp.exportedName === exportName,
   );
-  if (own) {
-    const origin = own.commonJsReExport;
-    return origin === undefined
-      ? undefined
-      : {
+  if (own.length > 0) {
+    const origin = own[0]!.commonJsReExport;
+    const agreed =
+      origin !== undefined &&
+      own.every(
+        (exp) =>
+          exp.exportAttributionWithdrawn !== true &&
+          exp.commonJsReExport !== undefined &&
+          exp.commonJsReExport.specifier === origin.specifier &&
+          exp.commonJsReExport.importedName === origin.importedName,
+      );
+    return agreed
+      ? {
           specifier: origin.specifier,
           exportName: origin.importedName ?? "default",
           syntax: "commonjs",
-        };
+        }
+      : undefined;
   }
 
-  const whole = model.exports.find(
-    (exp) =>
-      exp.syntax === "commonjs" &&
-      exp.kind === "default" &&
-      exp.commonJsReExport !== undefined,
+  const wholes = model.exports.filter(
+    (exp) => exp.syntax === "commonjs" && exp.kind === "default",
   );
+  const whole = wholes.length === 1 ? wholes[0] : undefined;
   const origin = whole?.commonJsReExport;
-  if (!origin) {
+  const shadowed = whole?.forwardingShadowedNames;
+  if (!origin || shadowed === undefined) {
     return undefined;
   }
 
   if (origin.importedName === undefined) {
-    return { specifier: origin.specifier, exportName, syntax: "commonjs" };
+    return shadowed.has(exportName)
+      ? undefined
+      : { specifier: origin.specifier, exportName, syntax: "commonjs" };
   }
 
   return exportName === "default"
