@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-074 (with BL-076 folded in)
 - **Branch**: `bl-074-load-result-dataflow`
 - **Base SHA**: `c22b090c70f34ac27fd8cd54d4e6e52890542c63` (E-2's merge, PR #103)
-- **Commits**: filled in by the last commit
+- **Commits**:
+  - `docs(tasks): BL-074 task file — a load's result that may be an export object of this file, through any dataflow`
+  - `test(BL-074): a load's result through any dataflow, against real Node — RWF-103, RWF-106`
+  - `fix(BL-074): a load that may hand back an export object of this file is censused wherever it flows — RWF-103, RWF-106`
+  - (this commit) `docs(BL-074): records — RWF-103 and RWF-106 fixed, RWF-107..109 found, ADR 0009 decision record (option (b)), plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -190,3 +194,63 @@ compared case by case with OPEN-DEBTS D-09's five known failures.
 
 In the format of `AGENTS.md` § J. Report the decision taken (option (b))
 as a deviation the project owner confirms by merging.
+
+## Corrections and outcome (appended by the last commit)
+
+- **A premise of "What to do" step 2 was false.** It lists "a member
+  call's receiver, a callee" among the confined uses. What such a call
+  RETURNS may be this file's exports object (`module.exports = () =>
+  require("./index")`; `require("./other").valueOf()`): RWF-107, found by
+  the independent audit, masked end to end. Following every call result
+  costs 35 of 967 corpus attributions instead of 3 and turns the RWF-094 /
+  BL-064 oracle suites' negative controls `UNKNOWN`, a precision decision
+  for the owner: left open, pinned by an open-soundness-defect record,
+  backlog `BL-078`.
+- **The step 3 taint list was widened and narrowed during the task.**
+  Widened: a caller's stack frame (`fn.caller`, `prepareStackTrace`,
+  `getThis`, `getFunction`; audit finding 4) and any use of a global-object
+  binding that reads a code-evaluating, registry or self-named member, a
+  computed member, or hands the object on. Narrowed, each with its argument
+  in `load-reach.ts`: `loader_capability_escape` (every capability it
+  follows is already the registry scan's) and `Function("return this")()`
+  bound to a name (lodash's global idiom; without it VAL-001 moved
+  `AFFECTED` → `UNKNOWN`).
+- **Confinement gained two rules:** an assignment's own value is followed
+  (audit finding 1: `set(a = require(…))`, `a = b = require(…)`, six live
+  false `NOT_AFFECTED`s, pre-existing); an own-property write
+  (`exports.b = require("./b")`) is confined only in a file that never
+  reads its export objects back (`exportObjectsAreWriteOnly`), which kept
+  the RWF-050 / RWF-094 fixtures' controls `NOT_AFFECTED`.
+- **The independent audit** blocked in round 1 (findings 1–4). Findings 1
+  and 4 are fixed here; 2 is RWF-107 (above); 3 is RWF-108 (live,
+  pre-existing, at E-4's boundary, backlog `BL-079`). Round 2 blocked on a
+  sloppy function's `this` as the global object
+  (`g().process.mainModule`, live, pre-existing) and on frame names
+  spelled other than as a literal member (`Reflect.get(fn, "caller")`,
+  `const { caller } = fn`, `defineProperty(Error, "prepareStackTrace")`):
+  both closed by tainting a closure member that spells a registry- or
+  frame-reaching member name anywhere (`REGISTRY_REACHING_MEMBER_NAMES`).
+  A key computed at run time spells none: RWF-109 (masked, backlog
+  `BL-080`). Round 3 blocked on four live spellings of that global object
+  (two destructuring-assignment keys, a concatenated and a template key;
+  RWF-109's "masked" was false for them): closed at the root, a sloppy
+  function's `this` is possibly the global object (`thisMayBeGlobalObject`),
+  and object-literal key positions are name-tainted; RWF-109 is narrowed to
+  a caller's frame read through a run-time key, measured masked. Round 4
+  was interrupted before any probe ran; from reading the code it found
+  that a directive is recognised by its raw text (`"use\x20strict"` is no
+  directive, confirmed in real Node), fixed. A fresh reviewer re-ran
+  round 4 and blocked on three live spellings: a `this` captured by a
+  strict arrow, a class heritage clause or a class computed key inside the
+  sloppy function. Only the BINDING function decides `this`
+  (`thisBindingFunction`), fixed; and a frame reached by enumerating keys
+  (`Object.getOwnPropertyDescriptors(g)`) widens RWF-109 (masked).
+- **Performance.** The reach graph first parsed every file again (and
+  each closure member a third time), which made the call graph about 1.5x
+  slower on the lodash fixture and tripped vitest's worker RPC timeout in
+  `npm run test:foundation` (all tests passing; the base passed cleanly).
+  `LoadReachGraph.indexOf` now parses each file once per scan and the call
+  graph shares it: lodash 2.37 s against the base's 2.30 s, and both gates
+  exit 0.
+- **RWF-103's premise corrected:** the per-file rule withdraws 32.4% of
+  `node_modules` attributions, not "nearly every TypeScript-emitted file".

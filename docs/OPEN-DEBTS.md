@@ -1298,6 +1298,30 @@ RWF-103's open decision (backlog `BL-076`, with `BL-074`). This entry
 still stands: lanes E (E-3..E-5) and C (C-2..C-5) remain, with RWF-098's
 unit records, RWF-099, RWF-101..104 and RWF-106 from this family.
 
+**Progress, added by task `BL-074` (2026-10-14).** Task BL-074
+(`docs/tasks/BL-074-load-result-dataflow.md`) closes RWF-103 and RWF-106
+(BL-076 folded in) with the module-graph-aware rule the owner's go took
+(ADR 0009, "Decision record — option (b) for RWF-103 and RWF-106"): a load
+whose module can hand back this file's exports object, or the object its
+whole-module re-export forwards, is an alias of it wherever its value
+flows (`src/code-intelligence/load-reach.ts`; the census in
+`module-model.ts`). Thirty-four live family-C false `NOT_AFFECTED`s
+measured against real Node are closed
+(`tests/oracle/bl074-load-result-dataflow.test.ts`), nineteen of them
+spellings the findings had not recorded, fourteen found by its independent
+audit and review (four blocked rounds). The audit also found `RWF-107` (a call result through
+a load not followed, masked, backlog `BL-078`, a precision decision),
+`RWF-108` (another module storing this file's exports object on a third
+module's object, live, pre-existing, backlog `BL-079`) and `RWF-109` (a
+caller frame read through a key computed at run time, masked,
+backlog `BL-080`). Precision cost,
+with a decision record for the owner: 1,251 of 5,061 export bindings in
+`node_modules`, 3 of 967 in the corpora, no corpus verdict moved,
+validation equal to the D-09 baseline; the narrowing is backlog `BL-077`.
+This entry still stands: lanes E (E-3..E-5) and C (C-2..C-5) remain, with
+RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-104, RWF-107, RWF-109 and
+RWF-108 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

@@ -1912,6 +1912,39 @@ PRM-61 (E-2 status update) and RWF-105.
   is RWF-103's open choice, so it waits on the owner's decision for
   `BL-074`, and may fold into it or into E-2.
 
+**BL-074 additions** (task `BL-074`, 2026-10-14). RWF-103 and RWF-106
+are closed by the module-graph-aware rule (option (b); ADR 0009, decision
+record of 2026-10-14). `buildModuleModel(index, reach)` takes the file's
+`LoadReach`; the call graph prepares it for every file it resolves to
+(`preparingResolver`) and attaches its `LoadReachGraph` to the graph it
+returns, and the verdict reaches the same graph through the scan's
+resolver (`loadReachGraphFor`). A model built without one applies the
+per-file rule. Full record: FINDINGS RWF-103 and RWF-106 (BL-074 status
+updates).
+
+- **Differentials.** `node scripts/differential.mjs` against `c22b090`,
+  139 corpus cases: graph 1 (RWB-05, four edges withdrawn to
+  `unresolved_target`), proof 1 (the same finding, `UNKNOWN` unchanged),
+  verdict 0 (none into `NOT_AFFECTED`, none removed, none unmeasured).
+- **Precision, measured** by `scripts/bl074-load-result-dataflow-corpus.mjs`:
+  (b) loses 1,251 of 5,061 export bindings in `node_modules` and 3 of 967 in
+  the corpora; (a) would lose 1,640 and 36.
+- **What BL-074 binds.** Writes by other modules onto an export object
+  stay E-4's; a dynamic `import()` of this file stays E-1's accepted bound;
+  builtin patching stays `BL-075` (RWF-104).
+- **`BL-077`** (precision, discovered in BL-074): narrow the escapes the
+  corpus measured (TypeScript's `__importStar`/`__importDefault` emit
+  helpers, a tainted `typescript` closure).
+- **`BL-078`** (RWF-107, P1, masked, found by BL-074's audit): follow what
+  a call through a load returns; a precision decision first (35 of 967
+  corpus attributions instead of 3).
+- **`BL-079`** (RWF-108, P0, live, found by BL-074's audit): a module that
+  another module makes hold this file's exports object; at E-4's boundary.
+- **`BL-080`** (RWF-109, P1, masked, found by BL-074's audit, rounds 2–4):
+  a caller's frame read through a key computed or enumerated at run time does not taint
+  the graph (the global-object spellings are fixed in BL-074); a precision
+  decision first.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

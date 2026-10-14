@@ -415,6 +415,96 @@ STALE `exports` also stops the forward (`[exports.run] = [x]` after
 on the corpora by `scripts/e2-forwarding-write-set-corpus.mjs` (task E-2's
 record in FINDINGS RWF-105).
 
+## Decision record — option (b) for RWF-103 and RWF-106 (taken by task BL-074, 2026-10-14; the project owner confirms it by merging, or drops it)
+
+**The choice.** E-1's and E-2's reports offered the project owner two
+sound rules for a load's result that reaches a write through dataflow the
+per-file census does not follow (RWF-103: this file's own exports object,
+handed back; RWF-106: the object a whole-module re-export forwards):
+(a) a per-file rule, any load result that leaves the census's routes
+withdraws the file; (b) a module-graph-aware rule, only a load that can
+return such an object counts. The owner gave the go without choosing;
+BL-074 took the recommended (b), which is § 4's "a cyclic `require` that
+cannot reach back … does not split the write set" applied to the census.
+
+**The rule.** A load *may yield an export object* of file F when it may
+load F itself (E-1's `mayLoadThisFile`, unchanged), when it has no literal
+specifier resolved from F, or when the module graph cannot rule it out
+(`src/code-intelligence/load-reach.ts`): the specifier is unresolved,
+declaration-only or a registry builtin (`module`, `process`, `vm`,
+`inspector`, `repl`, `worker_threads`), or resolves to a module whose
+static load closure (every literal `require` anywhere, every import and
+re-export source) contains F or a module F's whole-module write installs,
+or is tainted (a member unreadable or unparsable, a closure-widening
+construct, a load the closure does not follow as an edge, a loader-registry
+or global-object reference that may reach another module, an unresolved
+load, a registry builtin, the 4,096-file bound). F's whole-module write of
+any value no load names (a call's result, a reassigned binding) makes
+every load count. Such a load's value, and every value read from it through
+members, must be **confined** -- a member chain's base (a write there
+withdraws its name, as E-1 already did), a member call's receiver, a
+callee, an inert use, a binding every reference of which is confined, the
+whole-module write itself, or an own-property write in a file that never
+reads its export objects back -- or the file is un-enumerable: every
+CommonJS name withdrawn, the forward refused. A consumer with no graph
+context applies (a).
+
+**Two narrowings, each with its argument.** The closure-widening reason
+`loader_capability_escape` is not taint: every capability it follows comes
+from the ambient `module` or `require`, `require("module")`,
+`module.constructor` or `process.mainModule`, which the registry scan
+taints wherever they are used other than inertly. And `function_constructor`
+at a `Function("return this")()` whose value only initializes a binding is
+not taint: the literal body evaluates nothing but the global object, and
+the registry scan taints every use of a binding it recognises as the global
+object -- an ambient global name, the idiom, a `this` whose binding
+function (the nearest non-arrow function, past arrows, class headers,
+decorators and computed names) is not a class member and is not strict
+code, or a binding of one -- that reads a code-evaluating, registry or self-named member, a
+computed member, or hands the object on; and any closure member that
+spells a registry- or frame-reaching member name (`mainModule`,
+`getBuiltinModule`, `dlopen`, `eval`, `Function`, `caller`,
+`prepareStackTrace`, `getThis`, `getFunction`) as a member, a key or a
+string, whatever it reads it from. A caller's frame read through a key
+computed at run time spells no name (RWF-109, masked). Without the second, VAL-001's `lodash.template` moved
+`AFFECTED` → `UNKNOWN` (through `lodash.templatesettings`).
+
+**The precision acceptance it binds.** Measured by
+`scripts/bl074-load-result-dataflow-corpus.mjs` against E-2's merge: of
+5,061 attributed exports in `node_modules`, (b) loses 1,251 (24.7%) and
+(a) would lose 1,640 (32.4%); of 967 in the corpora, (b) loses 3 (all in
+the validation fixtures, no verdict moves) and (a) 36. In `node_modules`
+(b)'s cost is therefore three quarters of (a)'s -- the decision's premise
+that (b) is much cheaper holds on the corpora, not on this tree's
+dependencies: the owner's call to confirm. (b)'s cost is concentrated:
+`@babel/types` and `eslint` (349 and 160: a sloppy function's `this`
+handed on or read by a computed member, which may be the global object),
+zod's `v4` core and schemas (TypeScript's
+`__importStar(require("./x"))` handing a cyclic sibling to a helper),
+`ts-api-utils` and `@typescript-eslint` (`require("typescript")` handed on,
+and TypeScript's own closure is tainted by its dynamic loads). The corpus
+differential: verdict 0 changed, graph 1 case (RWB-05, four edges into
+`call-bind-apply-helpers` and `qs` withdrawn to `unresolved_target`, its
+`UNKNOWN` unchanged), validation equal to the D-09 baseline. The narrowing
+is backlog `BL-077`. Dropping this record means reverting to (a) -- every
+escaping load result withdraws the file -- or reopening the thirty-four
+live shapes it closes.
+
+**What it does not decide.** The census does not follow what a call
+through a load returns (RWF-107, masked: following it costs 35 of 967
+corpus attributions instead of 3, the owner's call, backlog `BL-078`), and
+a module made by another module to hold this file's exports object is not
+in the graph (RWF-108, live, at E-4's boundary, backlog `BL-079`), and a
+caller's frame read through a key computed at run time does not taint the
+graph (RWF-109, masked, backlog `BL-080`). Its independent audit (four
+blocked rounds) found all three, and found the assignment-value,
+sloppy-`this`, destructuring-key and statically spelled stack-frame routes
+this record closes.
+
+**RWF-103's premise corrected.** RWF-103 recorded that the per-file rule
+"withdraws nearly every TypeScript-emitted file". Measured, (a) loses
+32.4% of `node_modules` attributions: a large cost, not nearly all.
+
 ## Rationale
 
 Every export-model defect found so far picked *one* write and trusted it.

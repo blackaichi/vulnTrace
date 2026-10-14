@@ -277,10 +277,13 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-100 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | When the whole-module export is refused (`module.exports = { run: dangerousOp }` after a cutoff or an unproven statement), an earlier `exports.run = safeOp` on the replaced object stayed the only `run` binding and was attributed | false NOT_AFFECTED (family C) — see below | **Fixed** (BL-064) — see below |
 | RWF-101 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | `exports.run = run; var run = function () {…}` attributes `run` to the function, though the export is written while `run` is still `undefined` (RWF-012's alias chase ignores evaluation order) | fabricated edge; false `AFFECTED` — see below | Open |
 | RWF-102 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export model attributes `exports.run = safeOp` although the file installs an accessor or a frozen data property of `run` on `Object.prototype` reached without spelling an ambient `X.prototype` (`Object.getPrototypeOf(exports)`, `Object.getPrototypeOf({})`, `exports.constructor.prototype`, `exports.__proto__`, `const O = Object; O.prototype`, `Reflect.getPrototypeOf`) | fabricated attribution, masked by the call graph's `escaped_value` backstop (no false `NOT_AFFECTED` measured) — see below | Open |
-| RWF-103 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A load's result that may be this file's own exports object handed back (a `require` cycle through another module, `module.parent.exports`) reaches a member write through dataflow the per-file census does not follow (a local helper's return, an object or array member, a parameter, `for…of`, a destructuring assignment, a getter), so `exports.run = safeOp` stays attributed | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-103 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A load's result that may be this file's own exports object handed back (a `require` cycle through another module, `module.parent.exports`) reaches a member write through dataflow the per-file census does not follow (a local helper's return, an object or array member, a parameter, `for…of`, a destructuring assignment, a getter), so `exports.run = safeOp` stays attributed | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-074) — see below |
 | RWF-104 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census trusts a builtin reader (`Object.keys(exports)`, `instanceof Object`) unless THIS file spells the builtin's name in a write or hand-off; a builtin reached through `.constructor` (`({}).constructor.keys = …`, `exports.constructor.keys = …`), or patched by another module the file loads, makes the "reader" write the export | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
 | RWF-105 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The CommonJS forwarding hop forwards a name through a whole-module re-export (`module.exports = require("./safe")`) although the file writes that name onto the forwarded object in a form E-1's census can only withdraw (`[module.exports.run] = […]`, a `for-of` or compound write, `const e = module.exports; e.run = …`, `Object.assign`) | false NOT_AFFECTED (family C) and a fabricated edge (false AFFECTED), pre-existing on the base — see below | **Fixed** (E-2) — see below |
-| RWF-106 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The forwarding hop forwards a name through a whole-module re-export (`module.exports = require("./safe")`) although the file writes that name onto the same object through a load result's dataflow the census does not follow (`patch(require("./safe"))` with `o.run = …` inside, `[require("./safe")][0].run = …`, an object holder, `for…of`, `.map`) | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-106 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The forwarding hop forwards a name through a whole-module re-export (`module.exports = require("./safe")`) although the file writes that name onto the same object through a load result's dataflow the census does not follow (`patch(require("./safe"))` with `o.run = …` inside, `[require("./safe")][0].run = …`, an object holder, `for…of`, `.map`) | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-074) — see below |
+| RWF-107 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | BL-074's census treats a load's value as confined when it is called, constructed or the receiver of a member call, without following what the call RETURNS, which may be this file's exports object (`module.exports = () => require("./index")` then `set(require("./g")())`; `require("./other").valueOf()`) | fabricated attribution at the model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
+| RWF-108 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | Another module stores this file's exports object on a third module's exports object (`require("wrap/store").lib = require("wrap")` in the app), and this file's own load of the third module then writes through it (`patch(require("./store").lib)`): the static load closure of `./store` does not contain this file, so BL-074's graph answers "cannot reach back" | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-109 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | BL-074's module graph taints a closure member that spells a frame-reaching member name (`caller`, `getThis`, …), but a key computed at run time spells none: a getter returning `g[k].arguments[0]` with `k` = `"cal" + "ler"` (the module wrapper's `exports`) answers "cannot reach back". Narrowed by BL-074 (status update below): the global-object spellings first recorded here were live and are fixed | wrong reach answer at the graph, masked end to end by the call graph for the frame spelling (no false `NOT_AFFECTED` measured) — see below | Open |
 
 ---
 
@@ -21403,7 +21406,7 @@ reader allow-lists.
 
 ## RWF-103 — A load's result reaches a member write through dataflow the per-file export census does not follow
 
-**Status:** Open
+**Status:** Fixed (BL-074) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** C (multi-valued provenance collapsed: a value that may be this module's own exports object)
 **Proof family affected:** C
@@ -21436,6 +21439,63 @@ withdraws nearly every TypeScript-emitted file (`__importStar(require(…))`);
 the alternative is module-graph-aware: only a load that can reach back to
 this file (ADR 0009 § 4) or is unresolved counts. Decision for the project
 owner (task E-1's report).
+
+**Status update (task BL-074, 2026-10-14): Fixed, by the module-graph-aware
+rule.** The owner gave the go without choosing; BL-074 took the
+recommended option (b) (ADR 0009, "Decision record — option (b) for
+RWF-103 and RWF-106"). A load whose module can return this file's exports
+object -- its static load closure contains the file, or is tainted (the
+loader registry, a closure-widening construct, a caller's stack frame, an
+unresolved load), or it has no literal specifier -- is an alias of the
+object wherever its value flows: anywhere but a member chain, a call or
+an inert use withdraws the whole file (`loadResultEscapes`,
+`src/code-intelligence/module-model.ts`; the graph,
+`src/code-intelligence/load-reach.ts`). Measured against real Node with
+`tests/oracle/bl074-load-result-dataflow.test.ts`: the seven recorded
+spellings, and eight more -- a two-hop cycle, a member of a load
+(`holder.js`: `exports.self = require("./index")`), the registry with no
+static path back (`module.parent.exports`), a load stored as an own
+export property and read back (`exports.self.run = …`), and four found by
+BL-074's independent audit (an assignment's own value handed on,
+`set(a = require("./other"))`, a chained `a = b = require(…)`, an
+assignment in an array element, and `set(exports.b = require(…))`) -- each
+`NOT_AFFECTED` on BL-074's base `c22b090` while Node calls `parse`, each
+`UNKNOWN` now. The two masked spellings stay `UNKNOWN`.
+
+**Correction.** This record said the per-file rule "withdraws nearly every
+TypeScript-emitted file". Measured by
+`scripts/bl074-load-result-dataflow-corpus.mjs`, it would withdraw 1,640
+of 5,061 attributed exports in `node_modules` (32.4%): large, not nearly
+all. The rule taken withdraws 1,251 (24.7%); see the ADR record.
+
+Round 2 of the audit added a sixteenth, `rwf103.sloppy-this-main-module`
+(`function g() { return this; } g().process.mainModule.children[0].exports`
+in the loaded module, the global object reached as a sloppy `this`), now
+closed by tainting a closure member that spells a registry- or
+frame-reaching member name wherever it reads it. Round 3 added four more,
+each through the same global object reached as a sloppy `this`:
+`({ mainModule: mm } = root.process)`, `({ mainModule } = root.process)`,
+`root.process["main" + "Module"]` and ``root.process[`${a}Module`]``, each
+`NOT_AFFECTED` on the base while Node calls `parse`. They are closed at
+their root: a `this` in a non-arrow function outside a class, in a file
+that is neither an ES module nor under a `"use strict"` prologue, is
+possibly the global object (`thisMayBeGlobalObject`), so any use of it
+other than a plain member read -- a computed member, `return this`, a
+binding read by a computed member -- taints the module. A fresh review
+(round 4) found three more, each `NOT_AFFECTED` on the base while Node
+calls `parse`: the `this` captured by a strict arrow inside the sloppy
+function, by a class's heritage clause, and by a class's computed key.
+Only the function that BINDS `this` decides it (the spec's
+OrdinaryCallBindThis): the rule now finds that function past arrows,
+class headers, decorators and computed names (`thisBindingFunction`) and
+applies strictness from it outward.
+
+**"Fixed" covers** every spelling the census and the graph model, as
+measured above; it does not cover what a call through a load returns
+(RWF-107, masked), a third module made to hold this file's exports object
+by another module (RWF-108, live), a caller's frame read through a key
+computed at run time (RWF-109, masked), writes by other modules (E-4), or
+a dynamic `import()` of this file (E-1's accepted bound).
 
 ---
 
@@ -21539,7 +21599,7 @@ RWF-106 (below), RWF-103's mechanism.
 
 ## RWF-106 — The forwarding hop forwards a name the file writes onto the forwarded object through a load result's dataflow
 
-**Status:** Open
+**Status:** Fixed (BL-074) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** C (multi-valued provenance collapsed: the forwarded object's property treated as holding only the far module's value)
 **Proof family affected:** C
@@ -21573,3 +21633,148 @@ every forward of the file, or withdraws the file) or a module-graph-aware
 one (only a load that can resolve to the forwarded module, or is
 unresolved, counts). Decision for the project owner, with RWF-103 (task
 E-2's report; backlog `BL-076`).
+
+**Status update (task BL-074, 2026-10-14): Fixed, with RWF-103 (BL-076
+folded into BL-074).** The module-graph context counts as a target every
+module a whole-module write installs (`module.exports = require("./safe")`
+forwards `./safe`'s object), so a load of `./safe`, or of any module whose
+static closure contains it (`alias.js`: `module.exports =
+require("./safe")`), is an alias of the forwarded object wherever it
+flows; a load that escapes the census makes the file un-enumerable, and
+`applyExportWriteSet` then keeps no origin on the whole-module binding,
+so `commonJsExportForwardingHop` forwards nothing (`export-forwarding.ts`
+is unchanged). The whole-module write itself is the identity walk's and is
+not an escape. Measured against real Node
+(`tests/oracle/bl074-load-result-dataflow.test.ts`, `rwf106.*`): the eight
+recorded spellings, a load of a module that forwards `./safe`, and two
+found by BL-074's independent audit (a chained assignment and an
+assignment's own value handed on), each `NOT_AFFECTED` on BL-074's base
+`c22b090` while Node calls `parse`, each `UNKNOWN` now. The control
+`patch(require("./plain"))` keeps the forward (`NOT_AFFECTED`).
+
+---
+
+## RWF-107 — What a call through a load's result returns is not followed by the census
+
+**Status:** Open
+**Failure class:** fabricated attribution, masked by the call graph (no false `NOT_AFFECTED` measured)
+**Defect class:** C (multi-valued provenance collapsed: a call's result assumed not to be an export object)
+**Proof family affected:** C (if unmasked)
+**Severity:** P1 / a model-level fabricated attribution; a soundness defect though no verdict moves (AGENTS.md § E)
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-074's independent audit. `loadValueIsConfined`
+(`module-model.ts`) counts a load's value confined when it is called,
+constructed or the receiver of a member call, and does not follow what
+the call returns. With `g.js` = `module.exports = () =>
+require("./index")` (or `gm.js` = `exports.get = () =>
+require("./index")`), `set(require("./g")())`, `const g =
+require("./g"); set(g())`, `set(gm.get())`, `set(new
+(require("./g"))())` and `set(require("./g")?.get?.())` keep `exports.run =
+safe` attributed at the model, under the per-file rule and under a context
+in which every load reaches back; `require("./other").valueOf()` returns
+the exports object in real Node. End to end every spelling measured is
+`UNKNOWN`, masked by the call graph (`unsupported_computed_callee`,
+`unsupported_call_result_receiver`, `unresolved_target`). The task file's
+specification stated the premise ("a member call's receiver, a callee …
+confined"); the premise is false.
+
+**Why not fixed in BL-074.** Following every call result is the sound
+fix, and it is a measured precision trade-off for the project owner: on
+the corpora, (b) would lose 35 of 967 attributed exports instead of 3, and
+the RWF-094/BL-064 oracle suites' negative controls go `NOT_AFFECTED` →
+`UNKNOWN` (`wrap/b.js`'s `return w.run(x)` over a cyclic load). Backlog
+`BL-078`. Pinned by an open-soundness-defect record in
+`src/code-intelligence/module-model.load-call-result.open-defect.test.ts`.
+
+---
+
+## RWF-108 — Another module stores this file's exports object on a third module's object, which this file then loads and writes through
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (multi-valued provenance collapsed: a module's object assumed not to hold this file's exports object)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1; the boundary of E-4's writes by other modules)
+
+**Discovered:** by task BL-074's independent audit, against real Node
+v22.11.0 with the oracle harness. `store.js` = `module.exports = {}`;
+`wrap/index.js`: `exports.run = safeOp; exports.init = function () {
+patch(require("./store").lib); };`; the app: `const s =
+require("wrap/store"); const w = require("wrap"); s.lib = w; w.init();
+w.run("x");`. Real Node calls `parse`; the analyzer answers `NOT_AFFECTED`
+on BL-074's base `c22b090` and on BL-074.
+
+**Cause.** BL-074's module graph decides that a load cannot return this
+file's exports object from the load's static closure: a module holds the
+object only by loading this file, through the registry, or through taint.
+Any module's exports object is mutable, though, so another module can store
+this file's object on it; the write through it is then this file's own
+code, through this file's own load. The census's documented bound ("writes
+by other modules … E-4") does not plainly cover the aliasing write being
+another module's while the write onto the object is this file's.
+
+**What it needs.** Either E-4 names this case and the property writes of
+other modules onto a module object enter the graph (a module whose object
+another module writes may hold any object), or the census treats every
+property read from a load as possibly an export object (a precision
+decision). Backlog `BL-079`.
+
+---
+
+## RWF-109 — A registry member reached through a key computed at run time does not taint BL-074's module graph
+
+**Status:** Open
+**Failure class:** wrong reach answer at the module graph, masked by the call graph (no false `NOT_AFFECTED` measured)
+**Defect class:** B (correct binding, wrong runtime-value semantics: a value the graph does not recognise as the global object)
+**Proof family affected:** C (if unmasked)
+**Severity:** P1 / masked; a P0 class if a spelling escapes the call graph's `dynamic_member_access` / `unsupported_*` edges
+**Fix lane:** E (ADR 0009 § 4)
+
+**Discovered:** by task BL-074, closing its independent audit's round-2
+finding 1. The graph taints a closure member that spells a member name
+reaching the loader registry or a caller's frame (`mainModule`,
+`getBuiltinModule`, `dlopen`, `eval`, `Function`, `caller`,
+`prepareStackTrace`, `getThis`, `getFunction`) as a member, a literal key,
+a destructuring key or any string, so it no longer needs to recognise
+every way to reach the global object (a sloppy function's `this` is one it
+does not). A key built at run time spells no name: `function g() { return
+this; } var root = g(); var p = ["pro", "cess"].join(""), m = ["main",
+"Module"].join(""); module.exports = Reflect.get(Reflect.get(root, p),
+m).children[0].exports;` (or `root[p][m]`) answers "cannot reach back"
+(`fileReachesLoaderRegistry` false, no closure-widening construct). End to
+end the shape is `UNKNOWN` (`tests/oracle/bl074-load-result-dataflow.test.ts`,
+`rwf109.computed-keys-masked`), only because the call graph does not
+resolve the computed reads; the graph's answer is pinned by
+open-soundness-defect records in `src/code-intelligence/load-reach.test.ts`.
+The same class covers the frame names (`fn[k]` with `k` = `"caller"`).
+
+**What it needs.** A closure member that reads a member through a key
+computed at run time, from a value that may be the global object, `process`
+or a function, taints -- a precision decision, since most `o[k]` reads are
+none of those. Backlog `BL-080`.
+
+**Correction and status update (task BL-074, round 3 of its audit,
+2026-10-14).** "Masked end to end" was false for the global-object
+spellings: `root.process["main" + "Module"]` and
+``root.process[`${a}Module`]`` (with `root` a sloppy `this`) escape the
+call graph and answer `NOT_AFFECTED` while Node calls `parse`; only
+`["main", "Module"].join("")` and `Reflect.get` were masked. Those
+spellings are fixed in BL-074 at their root -- a sloppy `this` is
+possibly the global object, and any use of a global object other than a
+plain member read taints -- and are RWF-103 cases now
+(`rwf103.sloppy-this-*`). What remains is a CALLER FRAME read through a
+run-time key (`g[k]` with `k` = `"cal" + "ler"`, `Reflect.get(g, k)`):
+the graph answers "cannot reach back" (open-soundness-defect records in
+`load-reach.test.ts`), and end to end it is `UNKNOWN` on BL-074's base and
+head through the call graph (`rwf109.frame-key-masked`). Severity stays P1
+while masked; any spelling that escapes the call graph makes it P0.
+BL-074's round-4 review added an ENUMERATED key to the same class: a getter
+reading `Object.values(Object.getOwnPropertyDescriptors(g))` and picking
+the caller by its arity spells no name either (real Node returns the
+loading module's `exports`; the graph answers "cannot reach back"; `UNKNOWN`
+end to end through the call graph). So does `Object.assign(Error, {
+prepareStackTrace(e, s) {…} })`, a hook installed under a method name,
+though reading a frame from it still needs `getThis` / `getFunction`
+reached the same way.
