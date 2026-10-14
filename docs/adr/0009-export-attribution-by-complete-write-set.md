@@ -375,6 +375,46 @@ cost, is backlog `BL-072`. Dropping this record means narrowing the census
 before merging, which reopens the shapes it closes until a narrower rule is
 audited.
 
+## Implementation note — E-2 (task E-2, 2026-10-14)
+
+No decision changes; this records where § 8's E-2 row was closed.
+
+**PRM-61 was closed by E-1, through the model the hop reads.** Measured
+against real Node on E-2's base (E-1's merge): both reproduced shapes and
+the false-`AFFECTED` order answer `UNKNOWN` or a correct `AFFECTED`, because
+E-1's write set leaves one named binding per name on its decided path and
+drops writes to a stale export object. The § 8 row's "PRM-61 (both shapes,
+and its false `AFFECTED`)" therefore flipped with E-1, not E-2.
+
+**What E-2 gates.** § 1's "the same determination gates the forwarding
+hop" was still unimplemented: a whole-module re-export
+(`module.exports = require("./lib")`) forwarded every name with no own
+binding, including a name the file writes onto that very object in a form
+the census can only withdraw (RWF-105, a live false `NOT_AFFECTED` and a
+false `AFFECTED`). `applyExportWriteSet` now records, on the whole-module
+re-export it keeps, every name the write set withdraws and every `=` write
+not provably on a stale object (`ExportBinding.forwardingShadowedNames`);
+`commonJsExportForwardingHop` forwards none of those names, forwards
+nothing from a re-export without the record, and forwards an own name only
+when every own binding of it carries one origin. The `call-graph.ts` and
+`verdict.ts` consumers are unchanged, as § 8 requires.
+
+**Not closed: the census bound (RWF-106).** The forwarded object is the
+far module's exports object, so every load of that module returns it. A
+write through a load result's dataflow the census does not follow
+(`patch(require("./lib"))` writing `o.foo`, an array or object holder,
+`for…of`) is not recorded, and the hop still forwards the name: E-2's
+independent audit measured eight such shapes as live false `NOT_AFFECTED`s,
+pre-existing. Its sound fix is RWF-103's open choice (a per-file rule, or a
+module-graph-aware one), which this note does not decide.
+
+**Precision.** A destructuring, `for-of`, compound or `Object.assign`
+write is withdrawn without its object being placed, so one aimed at the
+STALE `exports` also stops the forward (`[exports.run] = [x]` after
+`module.exports = require("./lib")`): sound, coarser than Node. Measured
+on the corpora by `scripts/e2-forwarding-write-set-corpus.mjs` (task E-2's
+record in FINDINGS RWF-105).
+
 ## Rationale
 
 Every export-model defect found so far picked *one* write and trusted it.

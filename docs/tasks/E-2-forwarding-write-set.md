@@ -2,11 +2,12 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: BLOCKED (`NEEDS_DECISION`: see "Outcome" below)
 - **Backlog ID**: E-2
 - **Branch**: `e-2-forwarding-write-set`
 - **Base SHA**: `4bb6c86a864484ac8178262a775685d63e75cc19` (E-1's merge, PR #102)
-- **Commits**: filled in by the last commit
+- **Commits**: `8a0f42c` (task file), `6f6f0b0` (oracle suite), `441ab99`
+  (fix and unit tests), and the records commit that carries this line
 - **Superseded by**: —
 
 ## Project context
@@ -155,3 +156,28 @@ D-09, and `node scripts/differential.mjs` against the base.
 ## Report
 
 In the format of `AGENTS.md` section J, in that order.
+
+## Outcome (2026-10-14)
+
+Implemented as specified; every gate green (validation equal to the D-09
+baseline; the three differentials zero against `4bb6c86`; 0 of 885
+forwarding hops change on the corpora). The independent audit returned
+**BLOCKED** on `RWF-106`: a write reaching the forwarded object through a
+load result's dataflow the census does not follow
+(`patch(require("./safe"))`, `[require("./safe")][0].run = …`) is still
+forwarded, a live false `NOT_AFFECTED` pre-existing on the base,
+re-measured by this task. Its sound fix is RWF-103's open choice (a
+per-file rule or a module-graph-aware one), so the task stops here under
+`docs/WORKFLOW.md` § 1.5 for the owner's decision (backlog `BL-076`, with
+`BL-074`). The audit's other findings: RWF-103 measured again through
+`for…of` and parameter flows (already recorded), and the records'
+overclaim of RWF-105's reach, corrected (FINDINGS RWF-105 "Bound", the
+`forwardingShadowedNames` comment, ADR 0009's E-2 note).
+
+Acceptance criteria as of this outcome: RWF-105's shapes `UNKNOWN`, failed
+on the base — yes; PRM-61 pinned — yes; precision controls kept — yes;
+fail-closed on an absent record and disagreeing own bindings — yes;
+mutations caught (nine, each by a named test) — yes; ADR 0009 § 8's two
+forwarding tests green — yes; differentials reported, none into
+`NOT_AFFECTED`, validation at baseline — yes; records updated — yes. Not
+met: the independent audit's certification.

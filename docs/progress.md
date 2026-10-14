@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-14, by `E-1`.
+**Last updated:** 2026-10-14, by `E-2`.
 
 ## Objective
 
@@ -203,9 +203,14 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   binding, never by name. 45 live false `NOT_AFFECTED`s closed
   (PRM-26..30, 62, 63), with a decision record in ADR 0009 for its
   precision cost (3.9 % of `node_modules` export bindings; ten
-  adversarial-v2 holder findings to `UNKNOWN`); awaiting the owner's
-  decision on RWF-103 and RWF-104. REMEDIATION-PLAN § 5a,
-  "E-1 additions".
+  adversarial-v2 holder findings to `UNKNOWN`); RWF-103 and RWF-104 await
+  the owner's decision (`BL-074`, `BL-075`). REMEDIATION-PLAN § 5a,
+  "E-1 additions". `E-2` gated the forwarding hop on the same write set:
+  PRM-61's shapes had already been closed by E-1's model (measured), and
+  the hop's fall-through for a name the write set withdraws (RWF-105,
+  five live false `NOT_AFFECTED`s and a false `AFFECTED`) is fixed at no
+  measured precision cost; its audit blocked on RWF-106, which shares
+  RWF-103's open decision. REMEDIATION-PLAN § 5a, "E-2 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -236,26 +241,34 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`E-1` — The `ExportWriteKind` write set; lexical identity; lexical
-computed-key constants ([task file](tasks/E-1-export-write-set.md)):
-`IN_PROGRESS`, `NEEDS_DECISION`: its independent audit's third round
-found two live false `NOT_AFFECTED` classes pre-existing on the base that
-a per-file census cannot close without a precision decision (RWF-103: a
-load's result that may be this file's exports object, through any
-dataflow; RWF-104: builtin readers patched outside the file's spelling).
-The work so far is committed on the branch, no pull request yet. `BL-064`
-merged as PR #101.
+`E-2` — Forwarding hops consult the write set
+([task file](tasks/E-2-forwarding-write-set.md)): `BLOCKED`,
+`NEEDS_DECISION`. RWF-105 is fixed and every gate is green, but its
+independent audit blocked on RWF-106 (a write reaching the forwarded
+object through a load result's dataflow is still forwarded), whose fix is
+RWF-103's open per-file or module-graph-aware choice. The work is
+committed and pushed on the branch; no pull request yet. `E-1` merged as
+PR #102.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `E-1`:
-`E-2` (forwarding hops consult the write set), then `E-3`..`E-5`. The P1 gaps `BL-057` and `BL-058` (small, `module-resolver.ts`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `E-2`:
+`E-3` (entrypoint roots), `E-4`, `E-5`. `BL-074` (RWF-103) and `BL-075`
+(RWF-104), both P0, wait on the owner's decision. The P1 gaps `BL-057` and `BL-058` (small, `module-resolver.ts`
 only, from C-1), `BL-048` (RWF-074), `BL-050` (RWF-076), `BL-040`,
 `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of the rest of lane E. `BL-068` is narrowed to RWF-098's
 single-write unit records (P2).
 
 ## Recently discovered
+
+From `E-2`: `RWF-105` (the forwarding hop forwarded a name the file
+writes onto the object it forwards; five live family-C false
+`NOT_AFFECTED`s and a false `AFFECTED`, pre-existing; fixed in `E-2`).
+PRM-61 turned out to be closed already by E-1's model. Its audit found
+`RWF-106` (`BL-076`, P0, pre-existing: the hop forwards a name written
+onto the forwarded object through a load result's dataflow), which waits
+on the RWF-103 decision.
 
 From `E-1`: `RWF-101` (an export written before its `var` initializer
 runs is attributed to the initializer; a fabricated edge and false

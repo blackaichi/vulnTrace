@@ -1885,6 +1885,33 @@ acceptance").
   owner's decision (a per-file rule at a large precision cost, or a
   module-graph-aware one) and may fold into E-1.
 
+**E-2 additions** (task `E-2`, 2026-10-14). The CommonJS forwarding hop
+consults E-1's write set (`ExportBinding.forwardingShadowedNames`, set by
+`applyExportWriteSet`); the `call-graph.ts` and `verdict.ts` consumers are
+unchanged. PRM-61 was measured closed already on E-2's base by E-1's model
+(ADR 0009, "Implementation note — E-2"); RWF-105, found by E-2 (a name
+the file writes onto the object a whole-module re-export forwards, in a
+form the census can only withdraw), is fixed. Full record: FINDINGS
+PRM-61 (E-2 status update) and RWF-105.
+
+- **Differentials.** `node scripts/differential.mjs` against `4bb6c86`,
+  139 corpus cases: graph 0, proof 0, verdict 0 (none into
+  `NOT_AFFECTED`, none removed, none unmeasured). A corpus differential is
+  not evidence of soundness (OPEN-DEBTS D-12); the 17 oracle cases are.
+- **Precision, measured** by `scripts/e2-forwarding-write-set-corpus.mjs`:
+  0 of 885 forwarding hops change on the corpora (682 in `node_modules`).
+  The one known cost is a destructuring, `for-of`, compound or
+  `Object.assign` write to the stale `exports`, which the census does not
+  place (`cost.stale-destructuring-write`).
+- **What E-2 binds.** A whole-module re-export without the record forwards
+  nothing; E-4's writes by other modules (a member write on a sibling's
+  loaded object) are still outside the hop's census.
+- **`BL-076`** (RWF-106, P0, found by E-2's independent audit, which
+  blocked on it): a write reaching the forwarded object through a load
+  result's dataflow the census does not follow is still forwarded. Its fix
+  is RWF-103's open choice, so it waits on the owner's decision for
+  `BL-074`, and may fold into it or into E-2.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None
