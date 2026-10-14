@@ -199,7 +199,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-37 | `vuln-lib` (synthetic fixture) | A tagged-template call (`` tag`x` ``) gets no call-graph edge at all | false NOT_AFFECTED — see below | **Fixed** (A-1) — see below |
 | PRM-38 | `vuln-lib` (synthetic fixture) | Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | PRM-60 | `vuln-lib` (synthetic fixture) | `unsupported_*` reasons are treated as never widening the closure, but four capability-receiver shapes let them load a new module | false NOT_AFFECTED — see below | Open |
-| PRM-61 | `vuln-lib` (synthetic fixture) | Export forwarding resolves to the first "own" binding of a name, which a later `module.exports` replacement or property write can make stale | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below | Open |
+| PRM-61 | `vuln-lib` (synthetic fixture) | Export forwarding resolves to the first "own" binding of a name, which a later `module.exports` replacement or property write can make stale | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below | **Fixed** (E-1's model; the hop gated by E-2) — see below |
 | PRM-62 | `vuln-lib` (synthetic fixture) | An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value | false NOT_AFFECTED — see below | **Fixed** (E-1) — see below |
 | PRM-63 | `vuln-lib` (synthetic fixture) | Several ways of replacing/mutating `module.exports` (bracket member write, module-alias write, `Object.assign(module.exports, …)`) are not recognized as export writes | false NOT_AFFECTED (for the uncompensated shapes) — see below | **Fixed** (E-1) — see below |
 | PRM-64 | `foo` (synthetic workspace fixture) | A versionless package instance is evaluated only against advisories its own (missing) version would filter to | silent drop — see below | **Fixed** (B-4) — see below |
@@ -279,6 +279,8 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-102 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export model attributes `exports.run = safeOp` although the file installs an accessor or a frozen data property of `run` on `Object.prototype` reached without spelling an ambient `X.prototype` (`Object.getPrototypeOf(exports)`, `Object.getPrototypeOf({})`, `exports.constructor.prototype`, `exports.__proto__`, `const O = Object; O.prototype`, `Reflect.getPrototypeOf`) | fabricated attribution, masked by the call graph's `escaped_value` backstop (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-103 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A load's result that may be this file's own exports object handed back (a `require` cycle through another module, `module.parent.exports`) reaches a member write through dataflow the per-file census does not follow (a local helper's return, an object or array member, a parameter, `for…of`, a destructuring assignment, a getter), so `exports.run = safeOp` stays attributed | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
 | RWF-104 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census trusts a builtin reader (`Object.keys(exports)`, `instanceof Object`) unless THIS file spells the builtin's name in a write or hand-off; a builtin reached through `.constructor` (`({}).constructor.keys = …`, `exports.constructor.keys = …`), or patched by another module the file loads, makes the "reader" write the export | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-105 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The CommonJS forwarding hop forwards a name through a whole-module re-export (`module.exports = require("./safe")`) although the file writes that name onto the forwarded object in a form E-1's census can only withdraw (`[module.exports.run] = […]`, a `for-of` or compound write, `const e = module.exports; e.run = …`, `Object.assign`) | false NOT_AFFECTED (family C) and a fabricated edge (false AFFECTED), pre-existing on the base — see below | **Fixed** (E-2) — see below |
+| RWF-106 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The forwarding hop forwards a name through a whole-module re-export (`module.exports = require("./safe")`) although the file writes that name onto the same object through a load result's dataflow the census does not follow (`patch(require("./safe"))` with `o.run = …` inside, `[require("./safe")][0].run = …`, an object holder, `for…of`, `.map`) | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
 
 ---
 
@@ -17720,6 +17722,22 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-60 F
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-61 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+**Status update (task E-2, 2026-10-14): Fixed -- by E-1's model; the hop
+is now gated too.** Re-measured against real Node v22.11.0 on E-2's base
+`4bb6c86` (E-1's merge): neither reproduced shape is live. `exports.run =
+require("./safe").run; module.exports = require("./danger");` answers
+`UNKNOWN` (real Node calls `parse`), the order that gave the false
+`AFFECTED` answers `UNKNOWN`, and `module.exports = require("./danger");
+exports.run = require("./safe").run;` answers a correct `AFFECTED`: E-1's
+write set (`applyExportWriteSet`) leaves at most one named binding per
+name on its decided path and drops a write to a stale export object, so
+the hop's first-match `find` no longer had a stale binding to find. ADR
+0009 § 8's E-2 row therefore named a closed shape. The hop itself still
+did not consult the write set, which left RWF-105 (below) live; E-2 gates
+it: an own name forwards only when every own binding carries one origin,
+and a whole-module re-export forwards no name the write set records. The
+three shapes are `prm61.*` in `tests/oracle/e2-forwarding-write-set.test.ts`.
+
 ---
 
 ## PRM-62 — An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value
@@ -21447,3 +21465,111 @@ it. Sound options: drop the reader allow-lists (an export object handed
 to `Object.keys` withdraws the file), or decide it at the closure (no
 module of the closure may patch a builtin). Decision for the project owner
 (task E-1's report).
+
+---
+
+## RWF-105 — The forwarding hop forwards a name the file writes onto the object it forwards
+
+**Status:** Fixed (E-2)
+**Failure class:** false `NOT_AFFECTED`; a fabricated edge (false `AFFECTED`)
+**Defect class:** C (multi-valued provenance collapsed: the forwarded object's property treated as holding only the far module's value)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1, § 8's E-2 row)
+
+**Discovered:** by task E-2, re-measuring PRM-61 on its base `4bb6c86`
+(E-1's merge) against real Node v22.11.0 with the oracle harness. In
+`wrap/index.js`, after `module.exports = require("./safe");` (`safe.js`
+exports a `run` calling `safe`, `danger.js` one calling `parse`), the app
+calling `require("wrap").run("x")`:
+
+| Write after the re-export | Real Node | Base |
+| --- | --- | --- |
+| `[module.exports.run] = [require("./danger").run];` | calls `parse` | `NOT_AFFECTED` |
+| `({ run: module.exports.run } = require("./danger"));` | calls `parse` | `NOT_AFFECTED` |
+| `for (module.exports.run of [require("./danger").run]);` | calls `parse` | `NOT_AFFECTED` |
+| `const e = module.exports; e.run = require("./danger").run;` | calls `parse` | `NOT_AFFECTED` |
+| `delete module.exports.run; module.exports.run \|\|= function (x) { return lib.parse(x); };` | calls `parse` | `NOT_AFFECTED` |
+
+and the reverse, `module.exports = require("./danger"); Object.assign(
+module.exports, { run: require("./safe").run });`: real Node calls `safe`,
+the base answers `AFFECTED` with the path `index.js → danger.js:2 →
+parse` (a fabricated edge). `Object.assign`, `Object.defineProperty` and
+`Reflect.set` writing `danger`'s `run` were `UNKNOWN` on the base only
+through the call graph's `escaped_value` backstop.
+
+**Cause.** `commonJsExportForwardingHop` forwarded every name with no own
+binding through the whole-module re-export. A plain `=` write leaves a
+named binding the hop refuses on, but a write E-1's census can only
+withdraw (`ExportWriteSet.withdrawn`) leaves none, so the hop sent the
+name to `./safe` -- whose own exports object this file had just written.
+`./safe`'s model does not see the write (a write by another module, E-4's
+surface), so family C certified `safe`'s `run`.
+
+**Fix (task E-2).** `applyExportWriteSet` records, on the whole-module
+re-export it keeps, every name the write set withdraws and every `=` write
+not provably on a stale object (`ExportBinding.forwardingShadowedNames`);
+the hop forwards none of those names, forwards nothing from a re-export
+without the record, and forwards an own name only when every own binding of
+it carries one origin. All six shapes answer `UNKNOWN`
+(`tests/oracle/e2-forwarding-write-set.test.ts`, `rwf105.*`); the unit
+relation is pinned in `src/code-intelligence/export-forwarding.test.ts`
+("E-2: the CommonJS hop consults the export write set").
+
+**Precision.** The census withdraws a destructuring, `for-of`, compound or
+`Object.assign` write without placing its object, so one aimed at the
+stale `exports` stops the forward too (`cost.stale-destructuring-write`:
+real Node calls `safe`, `NOT_AFFECTED` on the base, `UNKNOWN` now). Measured
+by `scripts/e2-forwarding-write-set-corpus.mjs` against the base: 0 of 885
+forwarding hops change (682 in `node_modules`, 79 in `fixtures/`, 14 in
+adversarial v2, 110 in the validation fixtures, none in adversarial v1).
+
+**Bound (E-2's independent audit).** "Fixed" covers the names the census
+records: every withdrawn name, and every `=` write not provably on a stale
+object. E-2's audit measured six more shapes it closes through E-1's
+`require-result-member-write` (`require("wrap").run = …`,
+`require("./index").run = …`, `const s = require("./safe"); s.run = …`, an
+alias of `s`, `let x; x = require("./safe"); x.run = …`, a ternary of a
+load), each a false `NOT_AFFECTED` on the base and `UNKNOWN` on E-2. A
+write that reaches the forwarded object through a load result's dataflow
+the census does not follow is not recorded and is still forwarded: that is
+RWF-106 (below), RWF-103's mechanism.
+
+---
+
+## RWF-106 — The forwarding hop forwards a name the file writes onto the forwarded object through a load result's dataflow
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (multi-valued provenance collapsed: the forwarded object's property treated as holding only the far module's value)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1); the same decision as RWF-103
+
+**Discovered:** by task E-2's independent audit, against real Node
+v22.11.0 with the oracle harness (two shapes re-measured by E-2 itself).
+In `wrap/index.js`, with `module.exports = require("./safe");` before or
+after the write, the app calling `require("wrap").run("x")`:
+`function patch(o) { o.run = require("./danger").run; }
+patch(require("./safe"));`, `const arr = [require("./safe")]; arr[0].run =
+…`, `[require("./safe")][0].run = …`, `for (const o of
+[require("./safe")]) o.run = …`, `const h = { s: require("./safe") };
+h.s.run = …`, `const { s } = { s: require("./safe") }; s.run = …`,
+`[require("./safe")].map((m) => (m.run = …))` and a rest-parameter
+`patch` -- real Node calls `parse`; the analyzer answers `NOT_AFFECTED` on
+E-2's base `4bb6c86` and on its head. `forwardingShadowedNames` is empty
+and the hop forwards `run` to `./safe`.
+
+**Cause.** The object a whole-module re-export forwards IS the far
+module's exports object, so every load of that module returns it. E-1's
+census treats a load's result as possibly an export object only on
+syntactic routes (`require-result-member-write`: a member chain, a binding
+declared, assigned or destructured from a load); any other flow of a load's
+result is uncensused. This is RWF-103's mechanism (there, a load handed
+back the file's OWN exports object through a cycle; here the forwarded
+object needs no cycle), and its sound fixes are RWF-103's options: a
+per-file rule (any load result that escapes the syntactic routes refuses
+every forward of the file, or withdraws the file) or a module-graph-aware
+one (only a load that can resolve to the forwarded module, or is
+unresolved, counts). Decision for the project owner, with RWF-103 (task
+E-2's report; backlog `BL-076`).

@@ -1280,6 +1280,24 @@ to the D-09 baseline. Found `RWF-101` (a false `AFFECTED`, backlog
 lanes E (E-2..E-5) and C (C-2..C-5) remain, with RWF-098's unit records,
 RWF-099, RWF-101..104 from this family.
 
+**Progress, added by task `E-2` (2026-10-14).** Task E-2
+(`docs/tasks/E-2-forwarding-write-set.md`) gates the CommonJS forwarding
+hop on E-1's write set (ADR 0009 § 1, "the same determination gates the
+forwarding hop"). PRM-61, the finding its plan row named, was measured
+closed already on its base by E-1's model; the hop itself still
+forwarded, through a whole-module re-export, a name the file writes onto
+the forwarded object in a form the census can only withdraw: `RWF-105`,
+five live family-C false `NOT_AFFECTED`s and a false `AFFECTED`,
+pre-existing, found and fixed by E-2 (`tests/oracle/e2-forwarding-write-set.test.ts`).
+Measured precision cost on the corpora: 0 of 885 forwarding hops. Its
+independent audit blocked on `RWF-106`, a live family-C false
+`NOT_AFFECTED` pre-existing on the base: a write that reaches the
+forwarded object through a load result's dataflow the census does not
+follow (`patch(require("./lib"))`) is still forwarded. Its fix shares
+RWF-103's open decision (backlog `BL-076`, with `BL-074`). This entry
+still stands: lanes E (E-3..E-5) and C (C-2..C-5) remain, with RWF-098's
+unit records, RWF-099, RWF-101..104 and RWF-106 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
