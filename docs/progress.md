@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-13, by `BL-064`.
+**Last updated:** 2026-10-14, by `E-1`.
 
 ## Objective
 
@@ -196,7 +196,16 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   is proven to complete (`competingWritesCannotBeObservedApart`). It
   closed RWF-098's verdict-level records, and its audit's RWF-100 (a
   stale property write attributed in place of a refused whole-module
-  write). REMEDIATION-PLAN § 5a, "BL-064 additions".
+  write). REMEDIATION-PLAN § 5a, "BL-064 additions". `E-1` opened lane
+  E: an export is attributed only when the file's complete write set (a
+  closed `ExportWriteKind` census of every reference to its export
+  objects) determines one effective write, and its local resolves by
+  binding, never by name. 45 live false `NOT_AFFECTED`s closed
+  (PRM-26..30, 62, 63), with a decision record in ADR 0009 for its
+  precision cost (3.9 % of `node_modules` export bindings; ten
+  adversarial-v2 holder findings to `UNKNOWN`); awaiting the owner's
+  decision on RWF-103 and RWF-104. REMEDIATION-PLAN § 5a,
+  "E-1 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -227,24 +236,35 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`BL-064` — An evaluation not proven to complete between two competing
-writes of an export withdraws its attribution
-([task file](tasks/BL-064-may-throw-statement-cutoff.md)):
-`READY_FOR_REVIEW`, its pull request awaiting the project owner, with two
-decision records for the owner to confirm or drop in ADR 0009 (BL-063's
-option (a) and BL-064's option (a)). `BL-066` merged as PR #100.
+`E-1` — The `ExportWriteKind` write set; lexical identity; lexical
+computed-key constants ([task file](tasks/E-1-export-write-set.md)):
+`IN_PROGRESS`, `NEEDS_DECISION`: its independent audit's third round
+found two live false `NOT_AFFECTED` classes pre-existing on the base that
+a per-file census cannot close without a precision decision (RWF-103: a
+load's result that may be this file's exports object, through any
+dataflow; RWF-104: builtin readers patched outside the file's spelling).
+The work so far is committed on the branch, no pull request yet. `BL-064`
+merged as PR #101.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-064`:
-lane E (`E-1`), which must keep BL-064's window as one of its observation
-points. The P1 gaps `BL-057` and `BL-058` (small, `module-resolver.ts`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `E-1`:
+`E-2` (forwarding hops consult the write set), then `E-3`..`E-5`. The P1 gaps `BL-057` and `BL-058` (small, `module-resolver.ts`
 only, from C-1), `BL-048` (RWF-074), `BL-050` (RWF-076), `BL-040`,
 `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
-candidates to reorder ahead of lane E. `BL-068` is narrowed to RWF-098's
+candidates to reorder ahead of the rest of lane E. `BL-068` is narrowed to RWF-098's
 single-write unit records (P2).
 
 ## Recently discovered
+
+From `E-1`: `RWF-101` (an export written before its `var` initializer
+runs is attributed to the initializer; a fabricated edge and false
+`AFFECTED`, backlog `BL-071`, P2) and `BL-072` (P3, precision: narrow the
+file-wide withdrawals, chiefly a class method handing its `this` on).
+Its audit's seventeen further live shapes are fixed in `E-1`; it also
+found `RWF-102` (`BL-073`, P1, masked), `RWF-103` (`BL-074`) and `RWF-104`
+(`BL-075`), two P0 live classes pre-existing on the base that need the
+owner's decision.
 
 From `BL-064`: `RWF-100` (found by its audit, a live family-C false
 `NOT_AFFECTED` partly pre-existing: a refused whole-module write left a

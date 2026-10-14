@@ -1256,6 +1256,30 @@ path; corpus differential zero. This entry still stands: lanes E and C
 (C-2..C-5) remain, with RWF-098's unit records and RWF-099 from this
 family.
 
+**Progress, added by task `E-1` (2026-10-14).** Task E-1
+(`docs/tasks/E-1-export-write-set.md`), the first of lane E, implements
+ADR 0009 § 1, § 2 and § 4 in `module-model.ts`: an export's local resolves
+by the one declaration it binds to at the export's site, never by name
+(PRM-26, PRM-62); the literal rule (PRM-27) and lexical computed-key
+constants (PRM-28); and the export write set, a closed `ExportWriteKind`
+union over every reference the file makes to its export objects, anything
+outside it withdrawing every name of the file (PRM-29's `this` writes,
+PRM-30, PRM-63). Invariant `VT-INV-E-write-set`. 45 live family-C false
+`NOT_AFFECTED`s measured against real Node are closed
+(`tests/oracle/e1-export-write-set.test.ts`), seventeen of them found by
+its independent audit over three blocked rounds; PRM-103 was already
+closed by BL-064. The third round found RWF-103 and RWF-104, two live
+classes pre-existing on the base that a per-file census cannot close
+without the owner's precision decision (backlog `BL-074`, `BL-075`). Precision cost, with a decision record in ADR 0009 for
+the owner: 211 of 5,391 export bindings in `node_modules`, ten
+adversarial-v2 holder findings `AFFECTED` → `UNKNOWN` (none into
+`NOT_AFFECTED`; ADV2-055's expectation moves with them), validation equal
+to the D-09 baseline. Found `RWF-101` (a false `AFFECTED`, backlog
+`BL-071`) and `RWF-102` (masked, `BL-073`); the narrowing is backlog
+`BL-072`. This entry still stands:
+lanes E (E-2..E-5) and C (C-2..C-5) remain, with RWF-098's unit records,
+RWF-099, RWF-101..104 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

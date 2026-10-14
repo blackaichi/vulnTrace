@@ -318,6 +318,63 @@ left them, and restoring one is not a precision regression for E-1 to
 repair. Dropping this record means reverting the amendment, which reopens
 RWF-094.
 
+## Decision record — E-1's precision acceptance (taken by task E-1, 2026-10-14; the project owner confirms it by merging, or drops it)
+
+**What E-1 implements.** § 1 and § 2 as written: `mapExportsToFunctions`
+resolves an export's local by the one declaration it binds to at the
+export's site; every reference the file makes to its export objects is
+classified by the closed `ExportWriteKind` union, and a reference outside
+it withdraws every name of the file; § 4's literal rule as written,
+including "a spread anywhere in the literal withdraws the name" (the
+narrower "after the name's last definition" in E-1's task file is sound,
+`{ ...defaults, run: safe }` publishes `safe`, but this ADR decides, and
+E-1 implements the ADR). Its independent audit blocked three rounds; the
+first on eight more live false `NOT_AFFECTED`s, every one pre-existing (a
+self-load reaching the exports object other than as `require(…).x =`,
+`module.parent.children`, `instanceof` and loose equality and template
+coercion of an export object); the fixes widen the un-enumerable census:
+a load that may load this file is an alias of its exports object, `module`
+members are an allow-list, writes to builtin prototypes, `__proto__` writes
+on an export object, `__defineGetter__`/`__defineSetter__`,
+`process.mainModule` and the `module` builtin are un-enumerable. The
+second round measured nine more (a member write through ANY load's result,
+which a cycle can hand back; a builtin reader the file replaces;
+`process` through an alias or the global object), fixed; the third found
+RWF-103 and RWF-104, pre-existing classes this record does not decide.
+
+**The precision acceptance it binds.** Measured by
+`scripts/e1-export-write-set-corpus.mjs` against the base: of 5,391
+attributed CommonJS and ES-module exports in `node_modules`, 211 lose
+attribution (193 because the whole file withdraws: chiefly zod's
+`v3/types.cjs`, `@eslint-community/eslint-utils`, rollup and vite-node,
+where a class method hands its `this` on, or the file loads the `module`
+builtin), 3 are gained, and 107 move to a different function (the name
+`find` had landed on a same-named decoy); 3 of 198 in the validation
+corpus (no validation verdict moves); 12 of 290 in adversarial v2; 1 of
+420 in `fixtures/`; 0 of 75 in adversarial v1. The corpus differential:
+verdict 10 changed, **0 into `NOT_AFFECTED`**, all ten the secondary
+finding on `vt2-holder`'s own nested `vt2-vuln-lib` in the loader-capability
+cases ADV2-054, 055, 057–062, 064 and 066, `AFFECTED` → `UNKNOWN`: each holder
+evaluates code no census reads with its own `module` in scope
+(`module._compile`), installs a resolve hook, hands Node's `Module` out, or
+references `process.mainModule` (ADV2-064 through an alias of `process`),
+any of which can replace `module.exports.useHolder` after the static
+write. Nine of the ten cases
+already expect `UNKNOWN` for their selected (top-level) finding.
+
+**ADV2-055 under the export write set.** Its selected finding was the
+nested instance, expected `AFFECTED` for ADV2-054's loader-detection
+purpose; it now expects `UNKNOWN`, with the reason in
+`tests/adversarial/v2/expected.json`: `vt2-holder`'s top-level
+`module._compile(code, __filename)` evaluates code no census can read, as
+`vt2-holder`, with its `module` in scope, so no write of `useHolder` is
+established. ADV2-057's withdrawal (`process.mainModule.paths.unshift(…)`
+reads only `paths`) is sound but coarser than necessary: narrowing it, and
+the class-method `this` hand-off that causes most of the `node_modules`
+cost, is backlog `BL-072`. Dropping this record means narrowing the census
+before merging, which reopens the shapes it closes until a narrower rule is
+audited.
+
 ## Rationale
 
 Every export-model defect found so far picked *one* write and trusted it.
