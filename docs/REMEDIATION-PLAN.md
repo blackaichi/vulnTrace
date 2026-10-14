@@ -1855,6 +1855,36 @@ found by its audit, is fixed with it. Full record: FINDINGS RWF-094
   a callee bound in a function body, a spread of an array literal, a
   `var`-bound function).
 
+**E-1 additions** (task `E-1`, 2026-10-14). The write set, lexical
+identity and lexical computed-key constants are in `module-model.ts`;
+PRM-26..30, PRM-62 and PRM-63 are fixed, PRM-103 was already closed by
+BL-064 and is kept as a regression case. Full record: FINDINGS PRM-26 …
+PRM-63 (E-1 status updates), ADR 0009 (decision record "E-1's precision
+acceptance").
+
+- **Differentials.** `node scripts/differential.mjs` against `07a61e8`,
+  139 corpus cases: graph 13 cases changed (16 call sites withdrawn to
+  unknown), proof 11 (one with its verdict unchanged: RWB-05, a D-09 known
+  failure, whose `UNKNOWN` reasons now name `get-intrinsic`), verdict 10
+  (**none into `NOT_AFFECTED`**, none removed, none unmeasured): the
+  nested `vt2-vuln-lib` finding of ADV2-054, 055, 057–062, 064 and 066,
+  `AFFECTED` → `UNKNOWN`. Suite view: ADV2-055 only
+  (expectation moved, decision record). A corpus differential is not
+  evidence of soundness (OPEN-DEBTS D-12); the 79 oracle cases are.
+- **What E-1 binds.** E-2..E-5 consume the write set
+  (`exportWriteSet`, `applyExportWriteSet`) and must not re-derive an
+  export's write from one spelling. BL-064's window and BL-063's cutoff
+  are kept as observation points.
+- **`BL-071`** (RWF-101, found by E-1, false `AFFECTED`): RWF-012's alias
+  chase attributes an export written before its `var` initializer runs.
+- **`BL-072`** (precision, found by E-1): narrow the file-wide withdrawals
+  real Node does not need (a class method handing its `this` on;
+  `process.mainModule` read-only uses).
+- **`BL-073`** (RWF-102, P1, masked), **`BL-074`** (RWF-103, P0) and
+  **`BL-075`** (RWF-104, P0), found by E-1's audit; the last two need the
+  owner's decision (a per-file rule at a large precision cost, or a
+  module-graph-aware one) and may fold into E-1.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

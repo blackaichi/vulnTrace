@@ -6,7 +6,11 @@
 - **Backlog ID**: E-1
 - **Branch**: e-1-export-write-set
 - **Base SHA**: 07a61e86b916cc092d01257181cd64852640b280
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): E-1 task file — the export write set, lexical identity, lexical computed-key constants`
+  - `test(E-1): the export write set, against real Node — PRM-26, 27, 28, 29, 30, 62, 63, 103`
+  - `fix(E-1): an export is attributed only when its complete write set determines one effective write — PRM-26, 27, 28, 29, 30, 62, 63`
+  - `docs(E-1): records — PRM-26..30, 62, 63 fixed, RWF-101..104 found, ADR 0009 decision record, plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -180,3 +184,65 @@ failures (`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`, `VAL-003`).
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
 Task-specific: the per-shape base and head verdicts, and the measured
 precision cost (corpora and `node_modules`).
+
+## Outcome
+
+### Acceptance criteria
+
+- [x] Every one of the 25 live shapes asserts `UNKNOWN` or the correct
+      `AFFECTED`, with real Node's ground truth, failing on the base
+      (`tests/oracle/e1-export-write-set.test.ts`: 79 cases; 45 live false
+      `NOT_AFFECTED`s on the base, the task file's 25, three found while
+      building the census and seventeen found by the independent audit;
+      9 assert `AFFECTED`, 36 `UNKNOWN`).
+- [x] The already-sound shapes and the precision controls keep their
+      sound verdicts (17 already `UNKNOWN`, 11 `NOT_AFFECTED` controls, 4
+      `AFFECTED` controls; two false `AFFECTED`s on the base now
+      `NOT_AFFECTED`).
+- [x] `mapExportsToFunctions` resolves no export by name
+      (`exportLocalCallableLocation`); the name-lookup census has no
+      `open` entry left.
+- [x] `ExportWriteKind` is a closed union consumed by an exhaustive
+      `switch` (`const exhaustive: never`); a reference outside it is
+      `unenumerable`.
+- [x] `VT-INV-E-write-set` is registered with its owning tests
+      (`src/testing/foundation-invariants.ts`).
+- [x] Every RWF-013 … RWF-028 control, the P1-A2 and RWF-003 "LAST write"
+      tests and the `{ bail, bail: safeFn }` fixture stay green as BL-063
+      and BL-064 left them.
+- [x] Graph, proof and verdict differentials reported separately (against
+      `07a61e8`, 139 cases: graph 11, proof 9, verdict 9, none into
+      `NOT_AFFECTED`); validation matches the D-09 baseline case by case.
+- [ ] The independent audit certifies the change: **no**. Rounds 1 and
+      2 BLOCKED, every finding fixed; round 3 BLOCKED on two of its own
+      rules (fixed) and on RWF-103 and RWF-104, pre-existing classes that
+      need the owner's decision (`NEEDS_DECISION`).
+
+### Deviations from this file (`AGENTS.md` § D)
+
+- **The literal's spread rule** follows ADR 0009 § 4 ("a spread anywhere
+  in the literal withdraws the name"), not "What to do" step 3's "a spread
+  … after its last definition". Both are sound; the ADR decides (audit
+  finding 6).
+- **A wider census than listed**, driven by the independent audit's
+  measured false `NOT_AFFECTED`s (all pre-existing, all inside this
+  task's scope, the file's own writes to its export objects): a load that
+  may load this file is an alias of its exports object wherever it flows;
+  `module` members are an allow-list (`module.parent` reaches this
+  module); loose equality, template literals and `instanceof` of a
+  non-builtin hand the object to code; writes to builtin prototypes,
+  `__proto__` writes on an export object, `__defineGetter__`,
+  `process.mainModule` and the `module` builtin are un-enumerable; a write
+  on a final export object the file does not create as a plain one
+  attributes nothing. One identifier index per file replaces the
+  per-alias walks (audit finding 5, with an operation-count test).
+- **A verdict moved in a corpus**: ten adversarial-v2 holder findings go
+  `AFFECTED` → `UNKNOWN`, and ADV2-055's expectation with them. The STOP
+  condition names the validation corpus, which does not move; the cost is
+  stated in ADR 0009's decision record "E-1's precision acceptance" for
+  the owner to confirm or drop, as BL-063 and BL-064 did.
+- **Precision cost on `node_modules`**: 211 of 5,391 bindings (3.9 %),
+  above BL-064's 1 %. Recorded in the same decision record; the narrowing
+  is backlog `BL-072`.
+- **RWF-101** (found here, a false `AFFECTED` through RWF-012's alias
+  chase, outside the write set): registered, backlog `BL-071`, not fixed.

@@ -185,11 +185,11 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-23 | `vuln-lib` (synthetic fixture) | A truncated module-load closure (`traversal_truncated`) does not block families B/C, missing a closure-widening hook outside the truncated file set | false NOT_AFFECTED — see below | **Fixed** (V-2) — see below |
 | PRM-24 | `vuln-lib` (synthetic fixture) | A builtin loader that starts new execution (`cluster.fork`/`setupPrimary`) is not classified as a loader | false NOT_AFFECTED — see below | Open |
 | PRM-25 | `vuln-lib` (synthetic fixture) | A configured `{file, symbol}` entrypoint is matched by node-name text; an unmatched symbol still reports the entrypoint root complete | false NOT_AFFECTED and false AFFECTED — see below | **Fixed** (V-3) — see below |
-| PRM-26 | `vuln-lib` (synthetic fixture) | Export-to-function mapping takes the first same-named match in file-scan order, not the declaration the export site binds to | false NOT_AFFECTED — see below | Open |
-| PRM-27 | `vuln-lib` (synthetic fixture) | A later string-key or getter property in an object-literal export is ignored; the earlier plain-key value is still published | false NOT_AFFECTED — see below | Open |
-| PRM-28 | `vuln-lib` (synthetic fixture) | A computed export key (`[K]: danger`) is resolved against a same-file `const` binding chosen scope-blind | false NOT_AFFECTED — see below | Open |
-| PRM-29 | `vuln-lib` (synthetic fixture) | A property write inside a called `configure()` function is not seen as competing with the export map | false NOT_AFFECTED — see below | Open |
-| PRM-30 | `vuln-lib` (synthetic fixture) | A `module.exports = {...}` literal unpacking wins over a later `module.exports.run = danger` member write | false NOT_AFFECTED — see below | Open |
+| PRM-26 | `vuln-lib` (synthetic fixture) | Export-to-function mapping takes the first same-named match in file-scan order, not the declaration the export site binds to | false NOT_AFFECTED — see below | **Fixed** (E-1) — see below |
+| PRM-27 | `vuln-lib` (synthetic fixture) | A later string-key or getter property in an object-literal export is ignored; the earlier plain-key value is still published | false NOT_AFFECTED — see below | **Fixed** (E-1) — see below |
+| PRM-28 | `vuln-lib` (synthetic fixture) | A computed export key (`[K]: danger`) is resolved against a same-file `const` binding chosen scope-blind | false NOT_AFFECTED — see below | **Fixed** (E-1) — see below |
+| PRM-29 | `vuln-lib` (synthetic fixture) | A property write inside a called `configure()` function is not seen as competing with the export map | false NOT_AFFECTED — see below | **Fixed** (deferred writes: BL-064; `this` writes: E-1) — see below |
+| PRM-30 | `vuln-lib` (synthetic fixture) | A `module.exports = {...}` literal unpacking wins over a later `module.exports.run = danger` member write | false NOT_AFFECTED — see below | **Fixed** (E-1) — see below |
 | PRM-31 | `vuln-lib` (synthetic fixture) | Root-requirement materialization matches a candidate node by AST name text, so a same-named decoy elsewhere satisfies it | false NOT_AFFECTED — see below | **Fixed** (V-3) — see below |
 | PRM-32 | `vuln-lib` (synthetic fixture) | `this.X = ...` at module scope and an aliased `const api = module.exports; api.run = ...` are invisible to root-requirement detection | false NOT_AFFECTED — see below | Open |
 | PRM-33 | `vuln-lib` (synthetic fixture), tsconfig | Under `module: commonjs`, TypeScript's node10 module resolution is used at runtime and ignores the package's `exports` map | false NOT_AFFECTED — see below | **Fixed** (C-1) — see below |
@@ -200,15 +200,15 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-38 | `vuln-lib` (synthetic fixture) | Implicit protocol invocations (`toString`/`valueOf` coercion, thenable resolution, `Symbol.iterator`) invoke user code with no call-graph edge | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | PRM-60 | `vuln-lib` (synthetic fixture) | `unsupported_*` reasons are treated as never widening the closure, but four capability-receiver shapes let them load a new module | false NOT_AFFECTED — see below | Open |
 | PRM-61 | `vuln-lib` (synthetic fixture) | Export forwarding resolves to the first "own" binding of a name, which a later `module.exports` replacement or property write can make stale | false NOT_AFFECTED (one shape also gave a false AFFECTED on its first run) — see below | Open |
-| PRM-62 | `vuln-lib` (synthetic fixture) | An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value | false NOT_AFFECTED — see below | Open |
-| PRM-63 | `vuln-lib` (synthetic fixture) | Several ways of replacing/mutating `module.exports` (bracket member write, module-alias write, `Object.assign(module.exports, …)`) are not recognized as export writes | false NOT_AFFECTED (for the uncompensated shapes) — see below | Open |
+| PRM-62 | `vuln-lib` (synthetic fixture) | An ESM `let`-bound export reassigned after its declaration is attributed to its stale initial value | false NOT_AFFECTED — see below | **Fixed** (E-1) — see below |
+| PRM-63 | `vuln-lib` (synthetic fixture) | Several ways of replacing/mutating `module.exports` (bracket member write, module-alias write, `Object.assign(module.exports, …)`) are not recognized as export writes | false NOT_AFFECTED (for the uncompensated shapes) — see below | **Fixed** (E-1) — see below |
 | PRM-64 | `foo` (synthetic workspace fixture) | A versionless package instance is evaluated only against advisories its own (missing) version would filter to | silent drop — see below | **Fixed** (B-4) — see below |
 | PRM-65 | `vuln-lib` (synthetic fixture), paginated OSV response | The real `OsvProvider` sends one request with no `page_token`, so a paginated OSV response's later pages are silently never seen | silent drop — see below | **Fixed** (B-1) — see below |
 | PRM-66 | `bad` (synthetic workspace fixture) | A workspace member with a malformed manifest is silently skipped only when its lockfile entry is versionless | silent drop (versionless lock entry only) — see below | **Fixed** (B-4) — see below |
 | PRM-67 | `vuln-lib` (synthetic fixture) | `SUPPORTED_MODEL_EXCLUSIONS` omits `--conditions` and `--import`/preload flags, so the model's stated scope is false | disclosure — see below | Open |
 | PRM-101 | `vuln-lib` (synthetic fixture) | Site B hands a phantom target to reachability with no closure corroboration, certifying export-*-only code unreachable although its top level runs | false NOT_AFFECTED — see below | **Fixed** (V-1) — see below |
 | PRM-102 | `vuln-lib-fork` (synthetic fixture, manifest name mismatch) | Site A/B selection is keyed by advisory package NAME, not by exact `PackageInstance` | false NOT_AFFECTED (realistic for a lock entry whose manifest name differs from the queried name) — see below | **Fixed** (V-1) — see below |
-| PRM-103 | `vuln-lib` (synthetic fixture) | A cyclic `require` observes an intermediate `module.exports` value mid-cycle, but last-write-wins attribution only considers the final write | false NOT_AFFECTED — see below | Open |
+| PRM-103 | `vuln-lib` (synthetic fixture) | A cyclic `require` observes an intermediate `module.exports` value mid-cycle, but last-write-wins attribution only considers the final write | false NOT_AFFECTED — see below | **Fixed** (BL-064; measured by E-1) — see below |
 | PRM-104 | `vuln-lib` (synthetic fixture) | A `FunctionDeclaration` binding used as an export has no reassignment check, unlike the class/function-expression branches next to it | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | PRM-105 | `vuln-lib` (synthetic fixture) | Member access and call results are treated as opaque in the escape sweep, hiding a capability reached through `[x][0]`, `.at(0)`, a computed key or `Reflect.get` | false NOT_AFFECTED — see below | Open |
 | PRM-106 | `vuln-lib` (synthetic fixture) | `require.bind(...)` is deliberately excluded from the capability-receiver check | false NOT_AFFECTED — see below | Open |
@@ -275,6 +275,10 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-098 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary still refuses invocations real Node never completes: an argument that is certainly `undefined` (`dp(1, undefined)`, `dp(1, void 0)`) runs the default but only OMITTED arguments are counted; a destructuring parameter's nested default (`function dd({ a = bail() } = {})`) is not read; unconditional self-recursion (`function rec() { rec(); }`) is refused on RWF-028's false premise that it "never throws" (V8 throws a `RangeError`); and a third wrapper hop is refused by RWF-028's documented depth bound | false NOT_AFFECTED (family C), found and reproduced against real Node by BL-066 — see below | Open, narrowed (BL-064 closed its five verdict-level records; the unit records are backlog `BL-068`) — see below |
 | RWF-099 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The callee summary over-claims that an invocation cannot complete normally: a loop, `switch` or `try`/`finally` containing a `return` is "normal", so a later throw decides; a `catch` that may run and return is ignored; a nested block's `var` or Annex-B function declaration does not shadow the callee name; a reassignment of the callee inside a function body is not seen. BL-066 widened the reach of each (required positions, `return`, concise bodies) | precision (an over-claimed cutoff withdraws authority toward `UNKNOWN`); a false `AFFECTED` through RWF-021's widened roots is possible but not measured; found by BL-066's independent audit | Open (lane E, backlog `BL-069`) |
 | RWF-100 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | When the whole-module export is refused (`module.exports = { run: dangerousOp }` after a cutoff or an unproven statement), an earlier `exports.run = safeOp` on the replaced object stayed the only `run` binding and was attributed | false NOT_AFFECTED (family C) — see below | **Fixed** (BL-064) — see below |
+| RWF-101 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | `exports.run = run; var run = function () {…}` attributes `run` to the function, though the export is written while `run` is still `undefined` (RWF-012's alias chase ignores evaluation order) | fabricated edge; false `AFFECTED` — see below | Open |
+| RWF-102 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export model attributes `exports.run = safeOp` although the file installs an accessor or a frozen data property of `run` on `Object.prototype` reached without spelling an ambient `X.prototype` (`Object.getPrototypeOf(exports)`, `Object.getPrototypeOf({})`, `exports.constructor.prototype`, `exports.__proto__`, `const O = Object; O.prototype`, `Reflect.getPrototypeOf`) | fabricated attribution, masked by the call graph's `escaped_value` backstop (no false `NOT_AFFECTED` measured) — see below | Open |
+| RWF-103 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A load's result that may be this file's own exports object handed back (a `require` cycle through another module, `module.parent.exports`) reaches a member write through dataflow the per-file census does not follow (a local helper's return, an object or array member, a parameter, `for…of`, a destructuring assignment, a getter), so `exports.run = safeOp` stays attributed | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-104 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census trusts a builtin reader (`Object.keys(exports)`, `instanceof Object`) unless THIS file spells the builtin's name in a write or hand-off; a builtin reached through `.constructor` (`({}).constructor.keys = …`, `exports.constructor.keys = …`), or patched by another module the file loads, makes the "reader" write the export | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
 
 ---
 
@@ -17240,6 +17244,21 @@ the "V-3 audit 2" cases of the oracle test.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-26`) and § 4 (`export-map-first-match-class-method`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task E-1, 2026-10-13): Fixed.** Re-measured against
+real Node before the fix: four shapes were live false `NOT_AFFECTED`s (a
+class method, a nested function, an `o.run = function` property and, in an
+ES module, a class method named like the export before the real
+declaration). `mapExportsToFunctions` now resolves an export's local through
+the one declaration it binds to at the export's own site
+(`exportLocalCallableLocation`, built on V-3's `lexicalDeclarationOf`),
+never by `fn.name`; the name-lookup census's `open` PRM-26 entries are
+deleted. All four assert `AFFECTED` in `tests/oracle/e1-export-write-set.test.ts` (`prm26.*`). Measured on
+real `node_modules` (`scripts/e1-export-write-set-corpus.mjs`): 107 exports
+move to a different function, each spot-checked one a decoy the name
+`find` had taken (acorn's `parse`, minimatch's `braceExpand`, zod's
+`array`, babel's `parse`, debug's `enabled`).
+
 ---
 
 ## PRM-27 — A later string-key or getter property in an object-literal export is ignored; the earlier plain-key value is still published
@@ -17254,6 +17273,18 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-26`)
 Spread elements are (correctly) skipped as unresolvable, but the same path also skips a later string-literal key (`run: safe, "run": danger`) or getter override (`get run(){ return danger; }`), so the earlier `safe` value is kept as the published export although JavaScript's last-write-wins semantics make `danger` the real one.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-27`) and § 4 (`export-map-string-key-override`, `export-map-getter-override`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task E-1, 2026-10-13): Fixed.** Three shapes were live
+(a later string key, a getter, a spread); a dynamic computed key was
+already `UNKNOWN`. `unpackObjectLiteralExports` now applies ADR 0009 § 4:
+every key form names a property, the last plain definition of a name wins,
+an accessor of the name or an unresolved computed key after its last
+definition withdraws it, a spread anywhere in the literal withdraws every
+name (ADR 0009 § 4, as written; E-1's audit, finding 6), and `__proto__:`
+is no export. `tests/oracle/e1-export-write-set.test.ts`
+(`prm27.*`, and the controls `control.literal-*`, one of which was a false
+`AFFECTED` on the base).
 
 ---
 
@@ -17270,6 +17301,14 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-27`)
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-28`) and § 4 (`export-map-computed-key-scope`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task E-1, 2026-10-13): Fixed.** Both measured shapes (a
+function's and a block's own `const K` before the module-scope one) were
+live. `resolveComputedPropertyNameLiteral` resolves the key's identifier
+lexically, from the key, to one `const` declared before it. ADV2-028 stays
+`AFFECTED` (`control.computed-module-const-dangerous`). `tests/oracle/e1-export-write-set.test.ts`
+(`prm28.*`).
+
 ---
 
 ## PRM-29 — A property write inside a called `configure()` function is not seen as competing with the export map
@@ -17285,6 +17324,15 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-28`)
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-29`) and § 4 (`export-map-configure-write`)`. Not fixed here; this section records the finding only, per this task's boundaries.
 
+
+**Status update (task E-1, 2026-10-13): Fixed.** Re-measured: the three
+deferred-write shapes were already `UNKNOWN` on the base (BL-064's window:
+a deferred competing write opens it at the start of the file). Two further
+shapes were live: a `this.run = …` write in an exported or literal method
+called as `w.configure()` (the method's `this` IS the exports object). E-1's
+census counts every `this` write in a non-arrow function as a write of its
+name (`method-this-write`). `tests/oracle/e1-export-write-set.test.ts` (`prm29.*`).
+
 ---
 
 ## PRM-30 — A `module.exports = {...}` literal unpacking wins over a later `module.exports.run = danger` member write
@@ -17299,6 +17347,15 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-29`)
 `module.exports = { parse, safe, run: safe }; module.exports.run = danger;` keeps the literal-unpacked `safe` as the published `run` rather than the later member write `danger`, because the two write forms are not ordered against each other by source position. Family C certifies `danger` unreachable although it is the module's real last-written, real-called export.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-30`) and § 4 (`export-map-literal-then-member-write`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task E-1, 2026-10-13): Fixed.** Both shapes were live,
+and the mirror image (`module.exports = { run: dangerousOp };
+module.exports.run = safeOp;`) was a false `AFFECTED`. `applyExportWriteSet`
+orders a name's writes on the FINAL export object, with `exports` tracked
+through `exports = module.exports = …`; a write to a replaced object is
+ignored. `tests/oracle/e1-export-write-set.test.ts` (`prm30.*`, `control.literal-then-member-write-safe`,
+`control.stale-exports-write`).
 
 ---
 
@@ -17688,6 +17745,14 @@ stale function, a false `NOT_AFFECTED` when only the later value calls
 the target. Nothing A-4 adds is wrong in a way a plain call is not; lane E
 fixes all of them together.
 
+
+**Status update (task E-1, 2026-10-13): Fixed.** The positive control
+needs a function-expression initializer (`export const run = safeOp` is not
+attributed at all); with it, all three shapes were live (a module-scope
+reassignment, one in an exported function, an export list of a reassigned
+`let`). A local the file assigns anywhere attributes nothing and is marked
+`exportAttributionWithdrawn`. `tests/oracle/e1-export-write-set.test.ts` (`prm62.*`).
+
 ---
 
 ## PRM-63 — Several ways of replacing/mutating `module.exports` (bracket member write, module-alias write, `Object.assign(module.exports, …)`) are not recognized as export writes
@@ -17702,6 +17767,75 @@ fixes all of them together.
 `module["exports"] = …`, `module[k] = …`, `Object.assign(module, …)` and `Reflect.set(module, "exports", …)` are all compensated: the closure's `loader_capability_escape` flag correctly withdraws to UNKNOWN. But `module["exports"].run = …`, `module.exports["run"] = …` (the PRM-30 mechanism through a bracket), `const m = module; m.exports = …` (the PRM-32 mechanism through an alias), and `Object.assign(module.exports, { run })` are not compensated and give family C over the real `danger` export.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 5 ("PRM-63 FALSE")`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task E-1, 2026-10-13): Fixed.** Re-measured: nine shapes
+were live (`module["exports"].run =`, `const m = module; m.exports =`,
+`const e = exports; e.run =`, module-scope `this.run =`, `&&=`, a
+destructuring target, `exports` handed to a helper, `const api =
+module.exports; api.run =`, a self-`require` member write), and two more
+found while building the census (a write through the whole-module
+binding, `main.run = …` after `module.exports = main`; and an export method
+handing its `this` to a helper that writes it). `Object.assign`,
+`defineProperty`, `Reflect.set` and `Object.freeze` were already
+`UNKNOWN`. Every reference the file makes to its export objects is now
+classified by the closed `ExportWriteKind` union (ADR 0009 § 2); a form
+outside it withdraws every name of the file. `tests/oracle/e1-export-write-set.test.ts` (`prm63.*`, `e1.*`),
+`src/code-intelligence/module-model.export-write-set.test.ts`.
+
+E-1's independent audit (BLOCKED on the first version) measured eight
+further live shapes of this finding, every one pre-existing on the base:
+a self-load reaching the exports object through an assignment, a helper's
+return, `||`, or a base constructor's return under a derived class's field
+(`this` is what `super()` returned); `module.parent.children` (treated as
+an inert member read); a class's `Symbol.hasInstance` run by
+`exports instanceof C`; a patched `Object.prototype.valueOf` run by
+`exports == 1`; and an own `toString` run by a template literal. Four more
+were wrong at the model and masked only by the call graph's
+`own_export_call` backstop (`exports.__proto__ =`, `__defineGetter__`,
+`require("module")._load(__filename)`, and a write onto a frozen
+whole-module object from another module). All are fixed in E-1: a load
+that may load this file is an alias of its exports object, censused
+wherever it flows (`mayLoadThisFile`); `module` members are an allow-list;
+a loose comparison, a template literal and `instanceof` of a non-builtin
+are no inert uses; writes to builtin prototypes, `__proto__` writes on an
+export object or an alias of one, `__defineGetter__`/`__defineSetter__`,
+`process.mainModule` and the `module` builtin are un-enumerable; and a
+write on a final export object this file does not create as a plain one
+(a call's result, another module's object, a literal with an accessor of
+the name or a `__proto__:`, a class that `extends` or has a static
+accessor of the name, a function's `name`/`length`) attributes nothing.
+`tests/oracle/e1-export-write-set.test.ts` (`audit.*`).
+
+E-1's audit, second round (BLOCKED), measured nine more live shapes, one
+group a regression of the first round's fix: narrowing self-load member
+writes to the loads `mayLoadThisFile` accepts reopened a member write
+through ANY other load's result, which may be this file's exports object
+handed back (`require("./other").run =` with `other.js` re-exporting
+`./index` or `module.parent.exports`, a member chain off a load, a
+`package.json` `imports` alias, a package whose name differs from its
+directory); the other two groups were pre-existing on the base: a builtin
+reader the file itself replaces (`Object.keys = …; Object.keys(exports)`),
+and `process.mainModule` reached through an alias of `process` or through
+the global object. All nine were `NOT_AFFECTED` on the base and are
+`UNKNOWN` now: a member write through any load's result, directly, through
+a binding declared, assigned or destructured from one, or through a chain
+of members, withdraws the name (`baseMayBeLoaded`); the reader allow-lists
+hold only in a file that patches no builtin (`fileMayPatchBuiltins`); a
+`process` value is inert only when tested or used through an allow-listed
+member (`processValueIsInert`). `tests/oracle/e1-export-write-set.test.ts`
+(`reaudit.*`). Its fourth group, prototype accessors reached without an
+ambient `X.prototype`, is registered as RWF-102.
+
+E-1's audit, third round (BLOCKED): two rules the second round added were
+wrong and are fixed in E-1 -- `process`'s `EventEmitter` methods return
+`process` itself (`process.on(…).mainModule`), so they are inert only when
+their result is discarded or tested; and the new alias summaries were
+super-linear (acorn 5 s instead of 0.8 s) and one overflowed the stack on
+a 3,000-alias chain, now memoized per declaration and bounded at depth 64,
+failing closed. The round's other findings were pre-existing on the base
+and are registered as RWF-103 and RWF-104: closing them inside one file's
+census is a precision decision for the project owner.
 
 ---
 
@@ -17909,6 +18043,13 @@ too -- and is `AFFECTED` after; the same package with `parse` defined in
 `module-model.ts`'s last-write-wins premise is stated as Node's real semantics "for straight-line module-scope code and nothing else" — but a require cycle is not straight-line: a required file mid-cycle observes whatever `module.exports` held at that point, which can differ from the final value. Both a whole-module and a property-write cyclic-observer fixture certify the intermediate, `danger`-calling value unreachable.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-103`) and § 4 (`r2-cyclic-observer-*`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+
+**Status update (task E-1, 2026-10-13): Fixed by BL-064.** Re-measured
+against real Node: the cyclic observer between two writes is `UNKNOWN` on
+E-1's base (BL-064's window: the `require` between the writes is an
+evaluation no proof completes). Kept as a regression case in `tests/oracle/e1-export-write-set.test.ts`
+(`prm103.cyclic-observer-between-writes`).
 
 ---
 
@@ -21167,3 +21308,142 @@ module.exports = main;`, app `require("wrap").run("x")`: real Node calls
 head; measured by BL-064's second audit round). That is PRM-61's stale
 export object, ADR 0009 § 1, lane E (REMEDIATION-PLAN maps it to E-2).
 
+
+
+**Status update (task E-1, 2026-10-13): the authoritative case is
+closed.** `exports.run = safeOp; function main() {} main.run = dangerousOp;
+module.exports = main;`, app `require("wrap").run("x")`: real Node calls
+`parse`; the analyzer answers `NOT_AFFECTED` on E-1's base and `UNKNOWN` on
+its head. The stale property write is no write of the final export object
+(`applyExportWriteSet`), and `main.run = …` is a write through the
+whole-module binding, an alias of the final object (`finalObjectAliasUses`).
+`tests/oracle/e1-export-write-set.test.ts` (`e1.authoritative-stale-property-write`). The forwarding hop
+(PRM-61, E-2) is not changed.
+
+---
+
+## RWF-101 — An export of a `var` read before its initializer runs is attributed to the initializer
+
+**Status:** Open
+**Failure class:** fabricated call edge; false `AFFECTED`
+**Defect class:** B (correct binding, wrong runtime-value semantics)
+**Proof family affected:** none (an `AFFECTED` path)
+**Severity:** P2 / soundness instruments and hardening (no false `NOT_AFFECTED`)
+**Fix lane:** E (ADR 0009 § 1 clause 5)
+
+**Discovered:** by task E-1, writing the lexical-identity tests. Measured
+end to end against real Node v22.11.0 with the oracle harness: with
+`exports.run = run;` followed by `var run = function (x) { return
+dangerousOp(x); };` and an entry calling `require("wrap").run("x")`, real
+Node throws a `TypeError` (`exports.run` is `undefined`) and never calls
+`parse`; the analyzer answers `AFFECTED`, on E-1's base `07a61e8` and on its
+head.
+
+**Cause.** `propertyExportProvenance` gives the export a
+`localFunctionLocation` through `chasedValueFunctionLocation`
+(`resolveLocalValue`, RWF-012), which proves the binding single-assignment
+but not that its initializer ran before the export read it. E-1's lexical
+path (`exportLocalCallableLocation`) refuses this order, but it is reached
+only when no location was chased.
+
+**Fix (not done here).** Gate the chased location on evaluation order, as
+V-3's `declaredRootAt` and E-1's `exportLocalCallableLocation` do. Backlog
+`BL-071`.
+
+---
+
+## RWF-102 — A prototype accessor reached without spelling an ambient `X.prototype` is not in the export write set
+
+**Status:** Open
+**Failure class:** fabricated attribution (masked; no false `NOT_AFFECTED` measured)
+**Defect class:** B (correct binding, wrong runtime-value semantics)
+**Proof family affected:** C, if the backstop is ever removed
+**Severity:** P1 / a fabricated attribution, which AGENTS.md § E counts as a soundness defect even though no verdict moves
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task E-1's independent audit, second round. Measured
+against real Node v22.11.0 with the oracle harness: `exports.run =
+safeOp;` preceded by an accessor of `run` (or a frozen data property
+`run`) installed on `Object.prototype` through
+`Object.getPrototypeOf(exports)`, `Object.getPrototypeOf({})`,
+`exports.constructor.prototype`, `exports.__proto__`, an alias `const O =
+Object; O.prototype`, or `Reflect.getPrototypeOf(…)` -- then
+`require("wrap").run("x")` calls `parse` (the inherited setter swallows
+the write, or the frozen inherited property makes it fail silently).
+`mapExportsToFunctions` still answers `run -> safeOp`, on E-1's base and
+head; the verdict is `UNKNOWN` only because the call graph withdraws the
+escaped value (`escaped_value`).
+
+**Cause.** `isPrototypeTampering` recognises a builtin prototype only
+when an ambient constructor's `prototype` member is spelled
+(`Object.prototype.x = …`); a prototype object reached through a reader's
+result, `constructor`, `__proto__` or an alias is not followed. E-1's
+`fileMayPatchBuiltins` covers an alias of `Object` itself only for the
+reader allow-lists.
+
+---
+
+## RWF-103 — A load's result reaches a member write through dataflow the per-file export census does not follow
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (multi-valued provenance collapsed: a value that may be this module's own exports object)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1; § 4's "a cyclic `require` that cannot reach back")
+
+**Discovered:** by task E-1's independent audit, third round. Measured
+against real Node v22.11.0 with the oracle harness, `other.js` being
+`module.exports = require("./index");` (or `module.exports =
+module.parent.exports;`): `exports.run = safeOp;` followed by any of
+`function get() { return require("./other"); } get().run = dangerousOp;`,
+`const o = { m: require("./other") }; o.m.run = dangerousOp;`,
+`const a = [require("./other")]; a[0].run = dangerousOp;`,
+`function set(m) { m.run = dangerousOp; } set(require("./other"));`,
+`for (const m of [require("./other")]) m.run = dangerousOp;`,
+`let o; [o] = [require("./other")]; o.run = dangerousOp;`, or a getter
+returning the load -- real Node calls `parse`; the analyzer answers
+`NOT_AFFECTED` on E-1's base `07a61e8`, on its first head `c184ee6` and on
+its working tree. Five more spellings (`Object.assign`,
+`Object.defineProperty`, `Reflect.set` on a load, an IIFE parameter, `new`
+of a function returning the load) are wrong at the model and masked by
+the call graph.
+
+**Cause.** E-1 withdraws a name written through a load's result only on
+syntactic routes (`baseMayBeLoaded`: a member chain, a binding declared,
+assigned or destructured from a load, `require.call`/`bind`). Any other
+flow of a load's result is uncensused. A per-file fix must treat every
+escaping load result as a possible hand-back of the exports object, which
+withdraws nearly every TypeScript-emitted file (`__importStar(require(…))`);
+the alternative is module-graph-aware: only a load that can reach back to
+this file (ADR 0009 § 4) or is unresolved counts. Decision for the project
+owner (task E-1's report).
+
+---
+
+## RWF-104 — A builtin reader is trusted though the builtin is reachable without its name, or patched by another module
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (correct binding, wrong runtime-value semantics)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task E-1's independent audit, third round. Measured
+against real Node v22.11.0 with the oracle harness: `({}).constructor.keys
+= function (o) { o.run = dangerousOp; return []; }; exports.run = safeOp;
+Object.keys(exports);` (and the same through `exports.constructor.keys`)
+-- real Node calls `parse`; the analyzer answers `NOT_AFFECTED` on the
+base, on `c184ee6` and on E-1's working tree. The same holds when a sibling
+module the file loads (`require("./patch")`) replaces `Object.keys`:
+builtins are shared by every module, so no census of one file establishes
+that a reader is a reader.
+
+**Cause.** `fileMayPatchBuiltins` (E-1) sees a builtin only through its
+ambient name or the global object; `isBuiltinReaderCall`,
+`classifyHelperCall` and the `instanceof` arm of `isInertUse` then trust
+it. Sound options: drop the reader allow-lists (an export object handed
+to `Object.keys` withdraws the file), or decide it at the closure (no
+module of the closure may patch a builtin). Decision for the project owner
+(task E-1's report).
