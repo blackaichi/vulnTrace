@@ -2170,6 +2170,3388 @@ function isCompletingWriteTarget(
   return false;
 }
 
+/* ------------------------------------------------------------------ *
+ * E-1 (ADR 0009 § 1, § 2): the export write set                        *
+ * ------------------------------------------------------------------ */
+
+/**
+ * What one reference this file makes to its own export objects does to
+ * them (task E-1; ADR 0009 § 2's closed `ExportWriteKind` union). The
+ * references censused are every ambient `exports`, `module` and
+ * `require`, module-scope `this` and the wrapper's `arguments`, `this` in
+ * any non-arrow function (called as `exports.m()`, it IS the exports
+ * object), and every member write whose base is a `require(…)` result.
+ *
+ * - `read`: leaves the objects in this file's hands and writes nothing
+ *   (`exports.x` read or called as one of this file's own functions,
+ *   `typeof exports`, a comparison, `Object.keys(exports)`).
+ * - `property-write`: `exports.x = v`, `exports["x"] = v`,
+ *   `module.exports.x = v`, `module.exports["x"] = v`, module-scope
+ *   `this.x = v` -- the writes {@link exportWriteSet} orders.
+ * - `property-other-write`: the same targets in any other write position
+ *   (`+=`, `&&=`, `++`, `delete`, a destructuring or `for-of` target).
+ * - `whole-module-write`: `module.exports = v` (ordered by
+ *   {@link collectModuleExportsAssignments}).
+ * - `exports-rebinding`: `exports = v`.
+ * - `method-this-write`: a member write on `this` inside a non-arrow
+ *   function, a class method or a class's static member -- the exports
+ *   object when the function is called as one of its methods (or the class
+ *   is the whole-module value).
+ * - `method-this-hand-off`: that `this` handed on (`var self = this`,
+ *   `f.call(this)`, `return this`). It is un-enumerable only when its
+ *   function can be a method of an export object
+ *   ({@link exportMethodOwners}); anything handed a fresh instance is no
+ *   export object unless the whole-module value may be one.
+ * - `define-property`: `Object.defineProperty(exports, "x", …)`,
+ *   `Object.defineProperties` / `Object.assign` with object-literal
+ *   sources, `Reflect.set` / `Reflect.defineProperty` with a literal key.
+ * - `require-result-member-write`: `require(…).x = v`, or `r.x = v` with
+ *   `const r = require(…)`: a module that requires itself gets its own
+ *   exports object back.
+ * - `object-alias`: an export object's value bound to a local
+ *   (`const e = exports`, lodash's `var freeExports = … && exports`): the
+ *   local's own uses are censused ({@link finalObjectAliasUses}).
+ * - `module-alias`: `module`'s value bound to a local
+ *   (`var freeModule = … && module`): counted only when the local reads
+ *   members other than `exports`, uses `exports` inertly, and writes
+ *   nothing ({@link moduleAliasIsInert}).
+ * - `unenumerable`: anything else -- an alias (`const e = exports`,
+ *   `const m = module`), `module["exports"]`, the object handed to a call
+ *   or returned, `Object.freeze(exports)`, the wrapper's `arguments`,
+ *   `eval`, `require.cache`, a write through a key nothing names. The
+ *   default: a form this union does not name is un-enumerable.
+ */
+type ExportWriteKind =
+  | "read"
+  | "property-write"
+  | "property-other-write"
+  | "whole-module-write"
+  | "exports-rebinding"
+  | "method-this-write"
+  | "method-this-hand-off"
+  | "define-property"
+  | "require-result-member-write"
+  | "object-alias"
+  | "module-alias"
+  | "unenumerable";
+
+/**
+ * Where a `this` is: module scope (the original exports object); a
+ * non-arrow function or class method (`function`, the exports object when
+ * called as one of its methods); a class's static field or static block
+ * (`static`, the class); a constructor or instance field (`fresh`, the
+ * instance being constructed).
+ */
+type ThisContext = "module" | "function" | "static" | "fresh";
+
+/** How a value written into an export object can make a function one of its methods. */
+type MethodSourceContext =
+  /** The value of one property: a function value is a method. */
+  | "property"
+  /** The whole-module value: its properties' values, and a class's statics. */
+  | "whole"
+  /** An object whose properties are copied in (`Object.assign`, `defineProperties`). */
+  | "container"
+  /** A property descriptor (`defineProperty`): its `get`, `set` and `value`. */
+  | "descriptor"
+  /** A map of descriptors (`defineProperties`): each value is a `descriptor`. */
+  | "descriptors";
+
+/** A value written into an export object, with how it can become a method. */
+type MethodSource = readonly [ts.Expression, MethodSourceContext];
+
+/** Builds one {@link ExportReference} of a classification site. */
+type MakeReference = (
+  kind: ExportWriteKind,
+  names?: ReadonlySet<string> | "all",
+  values?: readonly MethodSource[],
+  assignment?: ts.BinaryExpression,
+) => ExportReference;
+
+/** One censused reference, classified. */
+interface ExportReference {
+  readonly kind: ExportWriteKind;
+  /** The names a write of this reference can set; `"all"` for a key nothing names. */
+  readonly names: ReadonlySet<string> | "all";
+  /** For a `property-write`: the assignment, and which spelling it writes through. */
+  readonly assignment?: ts.BinaryExpression;
+  readonly base?: ExportPropertyWrite["base"];
+  /** Values this reference writes into an export object, for {@link exportMethodOwners}. */
+  readonly values?: readonly MethodSource[];
+  /** For a `method-this-hand-off`: the function (or, for a static or fresh `this`, the class) whose `this` is handed on. */
+  readonly owner?: ts.Node;
+  /** For an `object-alias` or a `module-alias`: the local bound to the value. */
+  readonly alias?: ts.Identifier;
+  readonly thisContext?: ThisContext;
+  /** Whether it runs later than its statement, or never: inside a function body or an instance field initializer. */
+  readonly deferred: boolean;
+  readonly statementIndex: number;
+}
+
+/** A plain `=` property write, at the position the object-identity walk orders it. */
+interface ExportPropertyWrite {
+  readonly name: string;
+  readonly assignment: ts.BinaryExpression;
+  readonly statementIndex: number;
+  /** `this` is module-scope `this`: the ORIGINAL exports object, whatever `exports` is rebound to. */
+  readonly base: "exports" | "module.exports" | "this";
+}
+
+/** {@link exportWriteSet}'s answer. */
+interface ExportWriteSet {
+  /** A reference no kind enumerates: every name of the file is withdrawn. */
+  readonly unenumerable: boolean;
+  /** Names a write the effective-write rule cannot order may set. */
+  readonly withdrawn: ReadonlySet<string>;
+  /** Every module-time `=` property write, in source order. */
+  readonly propertyWrites: readonly ExportPropertyWrite[];
+  /** Every `exports = …` rebinding at module time. */
+  readonly rebindings: readonly ts.BinaryExpression[];
+}
+
+const NO_NAMES: ReadonlySet<string> = new Set();
+
+/** `Object` methods that only read an object they are handed. */
+const OBJECT_READERS: ReadonlySet<string> = new Set([
+  "keys",
+  "values",
+  "entries",
+  "getOwnPropertyNames",
+  "getOwnPropertyDescriptor",
+  "getOwnPropertyDescriptors",
+  "getOwnPropertySymbols",
+  "getPrototypeOf",
+  "isFrozen",
+  "isSealed",
+  "isExtensible",
+  "hasOwn",
+]);
+
+/** `Reflect` methods that only read an object they are handed. */
+const REFLECT_READERS: ReadonlySet<string> = new Set([
+  "get",
+  "has",
+  "ownKeys",
+  "getOwnPropertyDescriptor",
+  "getPrototypeOf",
+  "isExtensible",
+]);
+
+const exportWriteSetBySourceFile = new WeakMap<ts.SourceFile, ExportWriteSet>();
+
+/**
+ * The complete write set of this file's CommonJS export objects (task E-1;
+ * ADR 0009 § 1): every reference the file makes to them, classified by
+ * {@link ExportWriteKind}, over the WHOLE file (a function body may run at
+ * module time, or after it). Only references that denote the ambient
+ * CommonJS bindings count: a parameter or local named `exports` (a
+ * bundler's helper, TypeScript's `__exportStar(m, exports)`) is another
+ * binding.
+ *
+ * Accepted bounds, which no census of one file's text can see: writes by
+ * OTHER modules (E-4's), a loader patched from outside the file, a method
+ * of another module run with this module's exports object as `this`, and a
+ * dynamic `import()` of this file, whose namespace's `default` is the
+ * exports object.
+ */
+function exportWriteSet(sourceFile: ts.SourceFile): ExportWriteSet {
+  const cached = exportWriteSetBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let unenumerable = false;
+  const withdrawn = new Set<string>();
+  const propertyWrites: ExportPropertyWrite[] = [];
+  const rebindings: ts.BinaryExpression[] = [];
+  const methodSources: MethodSource[] = [];
+  const handOffs: ExportReference[] = [];
+
+  const consume = (reference: ExportReference): void => {
+    const names = reference.names;
+    methodSources.push(...(reference.values ?? []));
+    // A write named `__proto__` on an export object (or through an alias of
+    // one) sets its prototype: any name may then be inherited, through a
+    // getter, a setter or a method no write spells (E-1's independent
+    // audit, finding 4). `Object.setPrototypeOf(exports, …)` is an
+    // un-enumerable helper call for the same reason.
+    if (
+      names !== "all" &&
+      names.has("__proto__") &&
+      reference.kind !== "read"
+    ) {
+      unenumerable = true;
+      return;
+    }
+    switch (reference.kind) {
+      case "read":
+      case "whole-module-write":
+        return;
+      case "method-this-hand-off":
+        handOffs.push(reference);
+        return;
+      case "property-write":
+        if (names === "all") {
+          unenumerable = true;
+        } else if (reference.deferred) {
+          for (const name of names) withdrawn.add(name);
+        } else {
+          for (const name of names) {
+            propertyWrites.push({
+              name,
+              assignment: reference.assignment!,
+              statementIndex: reference.statementIndex,
+              base: reference.base!,
+            });
+          }
+        }
+        return;
+      case "exports-rebinding":
+        if (reference.deferred) {
+          unenumerable = true;
+        } else {
+          rebindings.push(reference.assignment!);
+        }
+        return;
+      case "method-this-write":
+        // Through a key nothing names, a method's `this` write may set any
+        // name -- of an export object only when its function can be one of
+        // its methods, the hand-off question.
+        if (names === "all") {
+          handOffs.push(reference);
+        } else {
+          for (const name of names) withdrawn.add(name);
+        }
+        return;
+      case "property-other-write":
+      case "define-property":
+      case "require-result-member-write":
+        if (names === "all") {
+          unenumerable = true;
+        } else {
+          for (const name of names) withdrawn.add(name);
+        }
+        return;
+      case "object-alias": {
+        const uses = finalObjectAliasUses(sourceFile, reference.alias!);
+        if (uses === "all") {
+          unenumerable = true;
+        } else {
+          for (const name of uses.names) withdrawn.add(name);
+          for (const written of uses.values) {
+            methodSources.push([written, "property"]);
+          }
+        }
+        return;
+      }
+      case "module-alias":
+        if (!moduleAliasIsInert(sourceFile, reference.alias!)) {
+          unenumerable = true;
+        }
+        return;
+      case "unenumerable":
+        unenumerable = true;
+        return;
+      default: {
+        const exhaustive: never = reference.kind;
+        throw new Error(`unclassified export reference ${String(exhaustive)}`);
+      }
+    }
+  };
+
+  sourceFile.statements.forEach((statement, statementIndex) => {
+    const visit = (
+      node: ts.Node,
+      deferred: boolean,
+      thisContext: ThisContext,
+      owner: ts.Node | undefined,
+    ): void => {
+      const reference = classifyExportReference(
+        node,
+        deferred,
+        thisContext,
+        owner,
+        statementIndex,
+      );
+      if (reference !== undefined) {
+        consume(reference);
+      }
+      // A class's heritage, decorators and computed keys are evaluated in
+      // the ENCLOSING context (BL-064's audit, finding 5a).
+      if (ts.isClassLike(node)) {
+        node.heritageClauses?.forEach((clause) =>
+          visit(clause, deferred, thisContext, owner),
+        );
+        ts.getDecorators(node)?.forEach((d) =>
+          visit(d, deferred, thisContext, owner),
+        );
+        for (const member of node.members) {
+          if (
+            member.name !== undefined &&
+            ts.isComputedPropertyName(member.name)
+          ) {
+            visit(member.name, deferred, thisContext, owner);
+          }
+          if (ts.canHaveDecorators(member)) {
+            ts.getDecorators(member)?.forEach((d) =>
+              visit(d, deferred, thisContext, owner),
+            );
+          }
+          // A constructor and an instance field run with the instance being
+          // constructed as `this` (a class constructor cannot be called
+          // without `new`); a static field and a static block with the class
+          // itself; a method with whatever it is called on.
+          const isStatic =
+            ts.isClassStaticBlockDeclaration(member) ||
+            isStaticClassElement(member);
+          const memberContext: ThisContext =
+            ts.isConstructorDeclaration(member) ||
+            (ts.isPropertyDeclaration(member) && !isStatic)
+              ? "fresh"
+              : ts.isPropertyDeclaration(member) ||
+                  ts.isClassStaticBlockDeclaration(member)
+                ? "static"
+                : "function";
+          const memberOwner = memberContext === "function" ? member : node;
+          const memberDeferred =
+            deferred ||
+            ts.isFunctionLike(member) ||
+            (ts.isPropertyDeclaration(member) && !isStatic);
+          ts.forEachChild(member, (child) => {
+            if (child !== member.name && !ts.isDecorator(child)) {
+              visit(child, memberDeferred, memberContext, memberOwner);
+            }
+          });
+        }
+        return;
+      }
+      if (
+        ts.isFunctionLike(node) &&
+        node.name !== undefined &&
+        ts.isComputedPropertyName(node.name)
+      ) {
+        visit(node.name, deferred, thisContext, owner);
+      }
+      const nestedDeferred = deferred || ts.isFunctionLike(node);
+      const ownsThis = ts.isFunctionLike(node) && !ts.isArrowFunction(node);
+      ts.forEachChild(node, (child) => {
+        if (
+          ts.isFunctionLike(node) &&
+          node.name !== undefined &&
+          child === node.name
+        ) {
+          return;
+        }
+        visit(
+          child,
+          nestedDeferred,
+          ownsThis ? "function" : thisContext,
+          ownsThis ? node : owner,
+        );
+      });
+    };
+    visit(statement, false, "module", undefined);
+  });
+
+  // A whole-module value spelled as a binding (`module.exports = api`), or
+  // a named function or class expression's own name inside it
+  // (`module.exports = function main() { main.x = v; }`), is an alias of the
+  // final export object.
+  for (const site of competingWriteSites(sourceFile).wholeModule) {
+    const value = unwrapParentheses(
+      unwrapValue(
+        ts.isExportAssignment(site.node)
+          ? site.node.expression
+          : (site.node as ts.BinaryExpression).right,
+      ),
+    );
+    const binding = ts.isIdentifier(value)
+      ? value
+      : (ts.isFunctionExpression(value) || ts.isClassExpression(value)) &&
+          value.name !== undefined
+        ? value.name
+        : undefined;
+    if (binding === undefined || isAmbientReference(binding, "exports")) {
+      continue;
+    }
+    const alias = finalObjectAliasUses(sourceFile, binding);
+    if (alias === "all") {
+      unenumerable = true;
+    } else {
+      for (const name of alias.names) withdrawn.add(name);
+      // A value written through the alias is one of the final object's
+      // properties: a function there is one of its methods.
+      for (const written of alias.values) {
+        methodSources.push([written, "property"]);
+      }
+    }
+  }
+
+  // A handed-on `this` reaches an export object only from a function that
+  // can be one of its methods.
+  if (!unenumerable && handOffs.length > 0) {
+    const owners = exportMethodOwners(sourceFile, methodSources);
+    unenumerable = handOffs.some(
+      (handOff) =>
+        owners === "all" ||
+        (handOff.thisContext !== "fresh" && owners.has(handOff.owner!)),
+    );
+  }
+
+  const set = { unenumerable, withdrawn, propertyWrites, rebindings };
+  exportWriteSetBySourceFile.set(sourceFile, set);
+  return set;
+}
+
+/**
+ * The names written through `binding` (a whole-module value spelled as a
+ * binding, an alias of the final export object) and the values written,
+ * or `"all"` when the binding is handed on: every reference to the same
+ * declaration that is not a member read, a method call, an inert use or
+ * another whole-module write. A member write of any form withdraws its
+ * name. A binding that is not the file's own single declaration is
+ * `"all"`; a `const`, `let` or `var` initialized to another binding (a
+ * second alias) adds that one's uses, accounted the same way.
+ */
+function finalObjectAliasUses(
+  sourceFile: ts.SourceFile,
+  binding: ts.Identifier,
+  seen: Set<unknown> = new Set(),
+):
+  | {
+      readonly names: ReadonlySet<string>;
+      readonly values: readonly ts.Expression[];
+    }
+  | "all" {
+  // An undeclared name is a global: its uses in this file are every
+  // undeclared reference of that spelling (another module reaches it only
+  // through the global object, an accepted bound of every file census).
+  const declaration: ts.Node =
+    lexicalDeclarationOf(binding, binding.text) ?? sourceFile;
+  if (seen.size > 8 || isAmbientReference(binding, "module")) {
+    return "all";
+  }
+  const names = new Set<string>();
+  const values: ts.Expression[] = [];
+  const key =
+    declaration === sourceFile ? `global:${binding.text}` : declaration;
+  if (seen.has(key)) {
+    return { names, values };
+  }
+  seen.add(key);
+  let handedOn = false;
+  const merge = (other: ts.Identifier): void => {
+    const uses = finalObjectAliasUses(sourceFile, other, seen);
+    if (uses === "all") {
+      handedOn = true;
+      return;
+    }
+    for (const name of uses.names) names.add(name);
+    values.push(...uses.values);
+  };
+  // A binding initialized to another binding aliases that one's object too,
+  // and so does one initialized to this binding (`const b = a`, RWF-012's
+  // chains): their uses are accounted the same way. (One initialized to a
+  // call or a `new` may share its object with whatever the callee kept: no
+  // census of the file's text sees that holder, an accepted bound.)
+  if (ts.isVariableDeclaration(declaration)) {
+    const init =
+      declaration.initializer === undefined
+        ? undefined
+        : unwrapParentheses(declaration.initializer);
+    if (init !== undefined && ts.isIdentifier(init)) {
+      merge(init);
+      if (handedOn) {
+        return "all";
+      }
+    }
+  }
+  const visit = (node: ts.Node): void => {
+    if (handedOn) {
+      return;
+    }
+    if (
+      ts.isIdentifier(node) &&
+      node.text === binding.text &&
+      !isNonReferenceName(node, node.parent) &&
+      !isDeclarationName(node, node.parent) &&
+      (lexicalDeclarationOf(node, node.text) ?? sourceFile) === declaration
+    ) {
+      const outer = skipOuterParentheses(node);
+      const parent = outer.parent as ts.Node;
+      if (
+        (ts.isPropertyAccessExpression(parent) ||
+          ts.isElementAccessExpression(parent)) &&
+        parent.expression === outer
+      ) {
+        const access = skipOuterParentheses(parent);
+        if (isWriteTargetPosition(access)) {
+          const written = accessNames(parent);
+          // A `__proto__` write sets the prototype: any name may follow.
+          if (written === "all" || written.has("__proto__")) {
+            handedOn = true;
+          } else {
+            for (const name of written) names.add(name);
+          }
+          const writer = access.parent as ts.Node;
+          if (ts.isBinaryExpression(writer) && writer.left === access) {
+            values.push(writer.right);
+          } else if (
+            !ts.isPrefixUnaryExpression(writer) &&
+            !ts.isPostfixUnaryExpression(writer) &&
+            !ts.isDeleteExpression(writer)
+          ) {
+            // A destructuring or `for-of` target's value is unreadable
+            // here: it stands in as a member read (any function).
+            values.push(access as ts.Expression);
+          }
+        }
+        return;
+      }
+      if (isInertUse(outer)) {
+        return;
+      }
+      // Another binding's initializer (`const b = a`), or assigned to one
+      // (`b = a`, `module.exports = alias = impl`): a further alias.
+      if (
+        ts.isVariableDeclaration(parent) &&
+        parent.initializer === outer &&
+        ts.isIdentifier(parent.name)
+      ) {
+        merge(parent.name);
+        return;
+      }
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        parent.right === outer &&
+        ts.isIdentifier(unwrapParentheses(parent.left)) &&
+        !isAmbientReference(unwrapParentheses(parent.left), "exports")
+      ) {
+        merge(unwrapParentheses(parent.left) as ts.Identifier);
+        return;
+      }
+      // Stored into itself (`factory.default = factory`): it stays within
+      // the final object.
+      const target =
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        parent.right === outer
+          ? unwrapParentheses(parent.left)
+          : undefined;
+      if (
+        target !== undefined &&
+        (ts.isPropertyAccessExpression(target) ||
+          ts.isElementAccessExpression(target)) &&
+        ts.isIdentifier(unwrapParentheses(target.expression)) &&
+        lexicalDeclarationOf(
+          unwrapParentheses(target.expression),
+          (unwrapParentheses(target.expression) as ts.Identifier).text,
+        ) === declaration
+      ) {
+        return;
+      }
+      // Read by an `Object` or `Reflect` reader (`Object.keys(api)`).
+      if (
+        ts.isCallExpression(parent) &&
+        parent.arguments[0] === outer &&
+        classifyHelperCall(parent, (kind) => ({
+          kind,
+          names: NO_NAMES,
+          deferred: false,
+          statementIndex: 0,
+        })).kind === "read"
+      ) {
+        return;
+      }
+      // Called or constructed, the object hands itself to nothing.
+      if (
+        (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+        parent.expression === outer
+      ) {
+        return;
+      }
+      // Written back into an export object (`module.exports = fn;
+      // module.exports.default = fn;`): it stays in this module's exports.
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        parent.right === outer &&
+        (isModuleExportsAssignmentTarget(unwrapParentheses(parent.left)) ||
+          isAmbientReference(unwrapParentheses(parent.left), "exports") ||
+          commonJsExportPropertyName(unwrapParentheses(parent.left)) !==
+            undefined)
+      ) {
+        return;
+      }
+      if (
+        ts.isExportAssignment(parent) &&
+        parent.isExportEquals &&
+        parent.expression === outer
+      ) {
+        return;
+      }
+      if (isPlainAssignmentTarget(outer)) {
+        // Rebound: the binding no longer holds the final object afterwards,
+        // but may before; its later member writes are counted all the same.
+        return;
+      }
+      handedOn = true;
+      return;
+    }
+  };
+  // Only identifiers spelled like the binding are visited (E-1's audit, finding 5).
+  for (const reference of identifiersSpelled(sourceFile, binding.text)) {
+    visit(reference);
+  }
+  return handedOn ? "all" : { names, values };
+}
+
+/**
+ * The functions whose `this` can be an export object, because they can be
+ * one of its methods (task E-1): every function value written into an
+ * export object -- a property write's value, the whole-module value's
+ * properties and, for a class, its static members, an `Object.assign` or
+ * `defineProperties` source's values, a `defineProperty` descriptor's `get`,
+ * `set` and `value`. A class is listed for its static fields and blocks.
+ *
+ * `"all"` when any of those values is something this cannot read -- a
+ * call, a `new`, a member read, a parameter, a binding the file reassigns:
+ * it may be any function of the file, and a whole-module value that is a
+ * call's or a `new`'s result may be an instance of any class of the file.
+ * A value from another module (`require(…)`, an import) brings that
+ * module's functions, whose `this` is no census's (an accepted bound); a
+ * nested object literal's methods have that object as `this`.
+ */
+function exportMethodOwners(
+  sourceFile: ts.SourceFile,
+  sources: readonly MethodSource[],
+): ReadonlySet<ts.Node> | "all" {
+  const owners = new Set<ts.Node>();
+  let all = false;
+  const visiting = new Set<ts.Node>();
+  const addClass = (node: ts.ClassLikeDeclaration): void => {
+    owners.add(node);
+    for (const member of node.members) {
+      if (
+        isStaticClassElement(member) &&
+        (ts.isMethodDeclaration(member) || ts.isAccessor(member))
+      ) {
+        owners.add(member);
+      }
+    }
+  };
+  const addObject = (
+    literal: ts.ObjectLiteralExpression,
+    accessors: boolean,
+  ): void => {
+    for (const property of literal.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        all = true;
+      } else if (
+        ts.isPropertyAssignment(property) &&
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === "__proto__"
+      ) {
+        // The prototype's methods are inherited, run with this object as
+        // `this`.
+        add(property.initializer, "container");
+      } else if (ts.isPropertyAssignment(property)) {
+        add(property.initializer, "property");
+      } else if (ts.isShorthandPropertyAssignment(property)) {
+        add(property.name, "property");
+      } else if (ts.isMethodDeclaration(property)) {
+        owners.add(property);
+      } else if (accessors) {
+        owners.add(property);
+      }
+    }
+  };
+  const add = (
+    expression: ts.Expression,
+    context: MethodSourceContext,
+    depth = 0,
+  ): void => {
+    const value = unwrapParentheses(unwrapValue(expression));
+    if (all || depth > 3) {
+      all = true;
+      return;
+    }
+    // A primitive and an arrow have no `this` of their own; an array is
+    // its elements' `this`, never the export object's.
+    if (
+      isPrimitiveValue(value) ||
+      ts.isArrowFunction(value) ||
+      ts.isArrayLiteralExpression(value) ||
+      ts.isRegularExpressionLiteral(value) ||
+      ts.isTemplateExpression(value)
+    ) {
+      return;
+    }
+    if (ts.isFunctionExpression(value)) {
+      if (context !== "whole") owners.add(value);
+      return;
+    }
+    if (ts.isClassExpression(value)) {
+      if (context === "whole") addClass(value);
+      return;
+    }
+    if (ts.isObjectLiteralExpression(value)) {
+      if (context === "whole" || context === "container") {
+        addObject(value, context === "whole");
+      } else if (context === "descriptors") {
+        for (const property of value.properties) {
+          if (ts.isPropertyAssignment(property)) {
+            add(property.initializer, "descriptor", depth + 1);
+          } else if (ts.isShorthandPropertyAssignment(property)) {
+            add(property.name, "descriptor", depth + 1);
+          } else {
+            all = true;
+          }
+        }
+      } else if (context === "descriptor") {
+        for (const property of value.properties) {
+          if (
+            ts.isPropertyAssignment(property) &&
+            ts.isIdentifier(property.name) &&
+            property.name.text === "value"
+          ) {
+            add(property.initializer, "property", depth + 1);
+          } else if (
+            ts.isPropertyAssignment(property) ||
+            ts.isShorthandPropertyAssignment(property)
+          ) {
+            add(
+              ts.isPropertyAssignment(property)
+                ? property.initializer
+                : property.name,
+              "property",
+              depth + 1,
+            );
+          } else if (!ts.isSpreadAssignment(property)) {
+            owners.add(property);
+          } else {
+            all = true;
+          }
+        }
+      }
+      return;
+    }
+    if (isRequireResult(value) || isRequireResultMember(value)) {
+      return;
+    }
+    // The value is one of the operands.
+    if (ts.isConditionalExpression(value)) {
+      add(value.whenTrue, context, depth + 1);
+      add(value.whenFalse, context, depth + 1);
+      return;
+    }
+    if (
+      ts.isBinaryExpression(value) &&
+      (value.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        value.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        value.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken)
+    ) {
+      add(value.left, context, depth + 1);
+      add(value.right, context, depth + 1);
+      return;
+    }
+    if (
+      ts.isBinaryExpression(value) &&
+      value.operatorToken.kind === ts.SyntaxKind.CommaToken
+    ) {
+      add(value.right, context, depth + 1);
+      return;
+    }
+    // Read off a global or another module (`Error.captureStackTrace`,
+    // `lib.util.x`): no function of this file.
+    if (
+      (ts.isPropertyAccessExpression(value) ||
+        ts.isElementAccessExpression(value)) &&
+      isForeignRoot(value)
+    ) {
+      return;
+    }
+    // A call's (or a construction's) result outside the whole-module
+    // position is one of this file's functions only through what the callee
+    // returns -- for one of this file's own callees -- or through what it was
+    // handed -- for a global's or another module's. A whole-module value
+    // that is a call's or a construction's result may be an instance of any
+    // class of the file.
+    if (
+      (ts.isCallExpression(value) || ts.isNewExpression(value)) &&
+      context !== "whole"
+    ) {
+      const callee = unwrapParentheses(value.expression);
+      if (
+        ts.isCallExpression(value) &&
+        isAmbientReference(
+          ts.isPropertyAccessExpression(callee) ? callee.expression : callee,
+          "Symbol",
+        )
+      ) {
+        return;
+      }
+      // An instance of one of this file's classes has itself as its
+      // methods' `this`; only a constructor's explicit return is another value.
+      const constructed =
+        ts.isNewExpression(value) && ts.isIdentifier(callee)
+          ? lexicalDeclarationOf(callee, callee.text)
+          : ts.isNewExpression(value) && ts.isClassExpression(callee)
+            ? callee
+            : undefined;
+      if (
+        constructed !== undefined &&
+        (ts.isClassDeclaration(constructed) ||
+          ts.isClassExpression(constructed)) &&
+        !(
+          ts.isIdentifier(callee) &&
+          isNameAssignedWithin(sourceFile, callee.text)
+        )
+      ) {
+        const ctor = constructed.members.find(ts.isConstructorDeclaration);
+        for (const returned of ctor === undefined ? [] : returnedValues(ctor)) {
+          add(returned, "property", depth + 1);
+        }
+        return;
+      }
+      const local = localCallable(sourceFile, callee);
+      if (local !== undefined) {
+        for (const returned of returnedValues(local)) {
+          // A returned parameter (an enum IIFE's `return E2`) is what this
+          // call passed at its position -- unless the parameter is written,
+          // rest, or the call spreads its arguments.
+          const unwrapped = unwrapParentheses(returned);
+          const declared = ts.isIdentifier(unwrapped)
+            ? lexicalDeclarationOf(unwrapped, unwrapped.text)
+            : undefined;
+          const parameter =
+            declared !== undefined && ts.isParameter(declared)
+              ? declared
+              : undefined;
+          const at =
+            parameter === undefined ? -1 : local.parameters.indexOf(parameter);
+          if (parameter !== undefined && at >= 0) {
+            const args = value.arguments ?? [];
+            if (
+              parameter.dotDotDotToken !== undefined ||
+              !ts.isIdentifier(parameter.name) ||
+              isNameAssignedWithin(local, parameter.name.text) ||
+              args.some(ts.isSpreadElement)
+            ) {
+              all = true;
+              return;
+            }
+            const argument = args[at] ?? parameter.initializer;
+            if (argument !== undefined) {
+              add(argument, "property", depth + 1);
+            }
+            continue;
+          }
+          add(returned, "property", depth + 1);
+        }
+        return;
+      }
+      if (isForeignRoot(callee)) {
+        for (const argument of value.arguments ?? []) {
+          add(
+            argument,
+            ts.isObjectLiteralExpression(unwrapParentheses(argument))
+              ? "container"
+              : "property",
+            depth + 1,
+          );
+        }
+        return;
+      }
+      all = true;
+      return;
+    }
+    if (ts.isIdentifier(value)) {
+      if (isAmbientReference(value, "exports")) {
+        return;
+      }
+      const declaration = lexicalDeclarationOf(value, value.text);
+      if (declaration === undefined) {
+        // A global (`Object`, `Symbol.iterator`'s owner): no function of
+        // this file.
+        return;
+      }
+      if (
+        ts.isImportSpecifier(declaration) ||
+        ts.isImportClause(declaration) ||
+        ts.isNamespaceImport(declaration) ||
+        ts.isImportEqualsDeclaration(declaration)
+      ) {
+        return;
+      }
+      if (ts.isFunctionDeclaration(declaration)) {
+        if (context !== "whole") owners.add(declaration);
+        return;
+      }
+      if (ts.isClassDeclaration(declaration)) {
+        if (context === "whole") addClass(declaration);
+        return;
+      }
+      if (
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer !== undefined &&
+        !isNameAssignedWithin(sourceFile, value.text)
+      ) {
+        // A binding read inside its own initializer (`var E = f(E || {})`)
+        // is still `undefined` there: the cycle adds no value.
+        if (visiting.has(declaration)) {
+          return;
+        }
+        visiting.add(declaration);
+        add(declaration.initializer, context, depth + 1);
+        visiting.delete(declaration);
+        return;
+      }
+      // Destructured from another module (`const { bold } = require("x")`).
+      if (ts.isBindingElement(declaration)) {
+        let holder: ts.Node = declaration;
+        while (
+          ts.isBindingElement(holder) ||
+          ts.isObjectBindingPattern(holder) ||
+          ts.isArrayBindingPattern(holder)
+        ) {
+          holder = holder.parent;
+        }
+        if (
+          ts.isVariableDeclaration(holder) &&
+          holder.initializer !== undefined &&
+          isForeignRoot(holder.initializer) &&
+          !isNameAssignedWithin(sourceFile, value.text)
+        ) {
+          return;
+        }
+      }
+      all = true;
+      return;
+    }
+    all = true;
+  };
+  for (const [expression, context] of sources) {
+    add(expression, context);
+    if (all) {
+      return "all";
+    }
+  }
+  return owners;
+}
+
+/**
+ * Whether `expression`'s root names something outside this file's own
+ * functions: a global (no declaration in scope; not the CommonJS ambient
+ * names), an import, a `require(…)` result, or a binding initialized to
+ * one (directly, through a member read, or through an interop helper's
+ * call on it, TypeScript's `__importDefault(require("x"))`).
+ */
+function isForeignRoot(expression: ts.Expression): boolean {
+  let root = unwrapParentheses(expression);
+  while (
+    ts.isPropertyAccessExpression(root) ||
+    ts.isElementAccessExpression(root)
+  ) {
+    root = unwrapParentheses(root.expression);
+  }
+  if (isRequireResult(root)) {
+    return true;
+  }
+  if (!ts.isIdentifier(root)) {
+    return false;
+  }
+  if (
+    ["exports", "module", "require", "arguments", "eval"].includes(root.text)
+  ) {
+    return false;
+  }
+  const declaration = lexicalDeclarationOf(root, root.text);
+  if (declaration === undefined) {
+    return true;
+  }
+  if (
+    ts.isImportSpecifier(declaration) ||
+    ts.isImportClause(declaration) ||
+    ts.isNamespaceImport(declaration) ||
+    ts.isImportEqualsDeclaration(declaration)
+  ) {
+    return true;
+  }
+  if (
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer === undefined ||
+    isNameAssignedWithin(declaration.getSourceFile(), root.text)
+  ) {
+    return false;
+  }
+  const init = unwrapParentheses(declaration.initializer);
+  return (
+    isRequireResult(init) ||
+    isRequireResultMember(init) ||
+    (ts.isCallExpression(init) &&
+      init.arguments.length === 1 &&
+      isRequireResult(init.arguments[0]!))
+  );
+}
+
+/** The function `callee` denotes when it is one of this file's own, unreassigned. */
+function localCallable(
+  sourceFile: ts.SourceFile,
+  callee: ts.Expression,
+): ts.FunctionLikeDeclaration | undefined {
+  if (ts.isFunctionExpression(callee) || ts.isArrowFunction(callee)) {
+    return callee;
+  }
+  if (
+    !ts.isIdentifier(callee) ||
+    isNameAssignedWithin(sourceFile, callee.text)
+  ) {
+    return undefined;
+  }
+  const declaration = lexicalDeclarationOf(callee, callee.text);
+  if (declaration !== undefined && ts.isFunctionDeclaration(declaration)) {
+    return declaration.body === undefined ? undefined : declaration;
+  }
+  if (
+    declaration !== undefined &&
+    ts.isVariableDeclaration(declaration) &&
+    declaration.initializer !== undefined
+  ) {
+    const init = unwrapParentheses(declaration.initializer);
+    if (ts.isFunctionExpression(init) || ts.isArrowFunction(init)) {
+      return init;
+    }
+  }
+  return undefined;
+}
+
+/** Every value a function can return: its `return` expressions (not a nested function's), or a concise arrow's body. */
+function returnedValues(fn: ts.FunctionLikeDeclaration): ts.Expression[] {
+  if (fn.body === undefined) {
+    return [];
+  }
+  if (!ts.isBlock(fn.body)) {
+    return [fn.body];
+  }
+  const found: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression !== undefined) {
+      found.push(node.expression);
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(fn.body, visit);
+  return found;
+}
+
+/**
+ * Whether `access` (`module.exports.m(…)`) calls a method every value of
+ * which this file defines as its own function: no property write of `m`
+ * ({@link exportPropertyWriteValues}) and, in every whole-module object
+ * literal that defines `m`, a method or a function value. Such a method's
+ * `this` writes and hand-offs are censused like any function's, so the call
+ * hands the exports object to no code the census does not see.
+ */
+function isOwnLiteralMethodCall(access: ts.Node): boolean {
+  if (!ts.isPropertyAccessExpression(access)) {
+    return false;
+  }
+  const name = access.name.text;
+  const sourceFile = access.getSourceFile();
+  if ((exportPropertyWriteValues(sourceFile).get(name) ?? []).length > 0) {
+    return false;
+  }
+  let defined = false;
+  for (const site of competingWriteSites(sourceFile).wholeModule) {
+    const value = unwrapParentheses(
+      unwrapValue(
+        ts.isExportAssignment(site.node)
+          ? site.node.expression
+          : (site.node as ts.BinaryExpression).right,
+      ),
+    );
+    if (!ts.isObjectLiteralExpression(value)) {
+      return false;
+    }
+    for (const property of value.properties) {
+      if (ts.isSpreadAssignment(property)) {
+        return false;
+      }
+      if (ts.isShorthandPropertyAssignment(property)) {
+        if (property.name.text !== name) continue;
+        defined = true;
+        const declaration = lexicalDeclarationOf(property.name, name);
+        if (
+          declaration === undefined ||
+          !ts.isFunctionDeclaration(declaration) ||
+          isNameAssignedWithin(sourceFile, name)
+        ) {
+          return false;
+        }
+        continue;
+      }
+      if (
+        property.name === undefined ||
+        !(
+          ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)
+        ) ||
+        property.name.text !== name
+      ) {
+        continue;
+      }
+      defined = true;
+      const own =
+        ts.isMethodDeclaration(property) ||
+        (ts.isPropertyAssignment(property) &&
+          (ts.isFunctionExpression(unwrapParentheses(property.initializer)) ||
+            ts.isArrowFunction(unwrapParentheses(property.initializer))));
+      if (!own) {
+        return false;
+      }
+    }
+  }
+  return defined;
+}
+
+/**
+ * The local a value flows into, when `node`'s value can only end up there:
+ * through parentheses, the value operands of `&&`, `||` and `??`, a
+ * conditional's branches and a comma's right, into a variable's initializer
+ * (`var a = … && exports`) or a plain assignment to an identifier
+ * (`a = exports`). `undefined` for any other destination.
+ */
+function valueSink(node: ts.Node): ts.Identifier | undefined {
+  let current = skipOuterParentheses(node);
+  for (;;) {
+    const parent = current.parent as ts.Node | undefined;
+    if (parent === undefined) {
+      return undefined;
+    }
+    if (
+      (ts.isBinaryExpression(parent) &&
+        (parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+          parent.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+          parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          (parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+            parent.right === current))) ||
+      (ts.isConditionalExpression(parent) && parent.condition !== current)
+    ) {
+      current = skipOuterParentheses(parent);
+      continue;
+    }
+    if (
+      ts.isVariableDeclaration(parent) &&
+      parent.initializer === current &&
+      ts.isIdentifier(parent.name)
+    ) {
+      return parent.name;
+    }
+    if (
+      ts.isBinaryExpression(parent) &&
+      parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+      parent.right === current &&
+      ts.isIdentifier(unwrapParentheses(parent.left))
+    ) {
+      const target = unwrapParentheses(parent.left) as ts.Identifier;
+      return isAmbientReference(target, "exports") ||
+        isAmbientReference(target, "module")
+        ? undefined
+        : target;
+    }
+    return undefined;
+  }
+}
+
+/**
+ * Whether a local holding `module` (lodash's `var freeModule = … && module`)
+ * reaches the export objects through nothing the census does not see: every
+ * use of it is inert, a read or a call of a member other than `exports`
+ * (`freeModule.require(…)`), or an inert use of its `exports` member
+ * (`freeModule.exports === freeExports`). A write through it, its `exports`
+ * read for any other use, and the local handed on are not.
+ */
+function moduleAliasIsInert(
+  sourceFile: ts.SourceFile,
+  binding: ts.Identifier,
+): boolean {
+  const declaration = lexicalDeclarationOf(binding, binding.text);
+  if (declaration === undefined) {
+    return false;
+  }
+  let inert = true;
+  const visit = (node: ts.Node): void => {
+    if (!inert) {
+      return;
+    }
+    if (
+      ts.isIdentifier(node) &&
+      node.text === binding.text &&
+      !isNonReferenceName(node, node.parent) &&
+      !isDeclarationName(node, node.parent) &&
+      lexicalDeclarationOf(node, node.text) === declaration
+    ) {
+      const outer = skipOuterParentheses(node);
+      const parent = outer.parent as ts.Node;
+      if (
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === outer
+      ) {
+        const access = skipOuterParentheses(parent);
+        if (isWriteTargetPosition(access)) {
+          inert = false;
+        } else if (isInertUse(access)) {
+          // A member only tested (`freeModule.require && …`).
+        } else if (parent.name.text === "exports") {
+          inert = false;
+        } else if (parent.name.text === "require") {
+          // `freeModule.require("util")`: a load of something that cannot be
+          // this file.
+          const call = access.parent as ts.Node;
+          inert =
+            ts.isCallExpression(call) &&
+            call.expression === access &&
+            !mayLoadThisFile(call);
+        } else {
+          inert = INERT_MODULE_MEMBERS.has(parent.name.text);
+        }
+        return;
+      }
+      if (isInertUse(outer) || isPlainAssignmentTarget(outer)) {
+        return;
+      }
+      inert = false;
+      return;
+    }
+  };
+  // Only identifiers spelled like the binding are visited (E-1's audit, finding 5).
+  for (const reference of identifiersSpelled(sourceFile, binding.text)) {
+    visit(reference);
+  }
+  return inert;
+}
+
+/**
+ * Whether the method `access` calls (`exports.m(…)`) is one this file
+ * spells no value of at all: no property write of `m` and no whole-module
+ * write whose value can carry `m`. Another module put it on the object.
+ */
+function isMethodWrittenElsewhere(access: ts.Node): boolean {
+  if (!ts.isPropertyAccessExpression(access)) {
+    return false;
+  }
+  const name = access.name.text;
+  const sourceFile = access.getSourceFile();
+  // An `Object.prototype` method is a builtin, not another module's
+  // (`exports.__defineGetter__(…)` writes the object; E-1's independent
+  // audit, finding 4).
+  if (
+    name in Object.prototype ||
+    (exportPropertyWriteValues(sourceFile).get(name) ?? []).length > 0
+  ) {
+    return false;
+  }
+  return competingWriteSites(sourceFile).wholeModule.every((site) => {
+    if (site.carries !== "all") {
+      return !site.carries.has(name);
+    }
+    // A function or class value carries what is written onto it (the alias
+    // census reads every such write of this file) and a class's own static
+    // members; anything else (a call's result, another module's object) may
+    // carry any name.
+    const value = unwrapParentheses(
+      unwrapValue(
+        ts.isExportAssignment(site.node)
+          ? site.node.expression
+          : (site.node as ts.BinaryExpression).right,
+      ),
+    );
+    // Another module's object (`module.exports = require("./debug")`)
+    // carries that module's methods.
+    if (isRequireResult(value) || isRequireResultMember(value)) {
+      return true;
+    }
+    const binding = ts.isIdentifier(value)
+      ? value
+      : (ts.isFunctionExpression(value) || ts.isClassExpression(value)) &&
+          value.name !== undefined
+        ? value.name
+        : undefined;
+    const declared =
+      binding === undefined
+        ? ts.isFunctionExpression(value) || ts.isClassExpression(value)
+          ? value
+          : undefined
+        : lexicalDeclarationOf(binding, binding.text);
+    if (
+      declared === undefined ||
+      !(
+        ts.isFunctionDeclaration(declared) ||
+        ts.isFunctionExpression(declared) ||
+        ts.isClassDeclaration(declared) ||
+        ts.isClassExpression(declared)
+      ) ||
+      (ts.isClassLike(declared) &&
+        declared.members.some(
+          (member) =>
+            member.name !== undefined &&
+            ts.isIdentifier(member.name) &&
+            member.name.text === name,
+        ))
+    ) {
+      return false;
+    }
+    if (binding === undefined) {
+      return true;
+    }
+    const uses = finalObjectAliasUses(sourceFile, binding);
+    return uses !== "all" && !uses.names.has(name);
+  });
+}
+
+/** Whether a `with` body spells any name or `this` through which an export object is reached. */
+function withBodyReachesExportNames(body: ts.Node): boolean {
+  let reaches = false;
+  const visit = (node: ts.Node): void => {
+    if (reaches) {
+      return;
+    }
+    if (
+      node.kind === ts.SyntaxKind.ThisKeyword ||
+      (ts.isIdentifier(node) &&
+        (node.text === "exports" ||
+          node.text === "module" ||
+          node.text === "require" ||
+          node.text === "arguments" ||
+          node.text === "eval"))
+    ) {
+      reaches = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(body);
+  return reaches;
+}
+
+/** `require(…).x`, `require(…)["x"]`: another module's export. */
+function isRequireResultMember(expression: ts.Expression): boolean {
+  const value = unwrapParentheses(expression);
+  return (
+    (ts.isPropertyAccessExpression(value) ||
+      ts.isElementAccessExpression(value)) &&
+    isRequireResult(value.expression)
+  );
+}
+
+/** Whether `node` is an identifier reference to the AMBIENT CommonJS binding `name` (no declaration in scope). */
+function isAmbientReference(node: ts.Node, name: string): boolean {
+  if (!ts.isIdentifier(node) || node.text !== name) {
+    return false;
+  }
+  const parent = node.parent as ts.Node | undefined;
+  return (
+    parent !== undefined &&
+    !isNonReferenceName(node, parent) &&
+    !isDeclarationName(node, parent) &&
+    lexicalDeclarationOf(node, name) === undefined
+  );
+}
+
+/**
+ * Whether `node` is the name a declaration introduces, or a property name
+ * a pattern or specifier reads (`{ module: m } = x`, `import { x as y }`,
+ * `export { x as y }`'s outer name): not a reference.
+ */
+function isDeclarationName(node: ts.Identifier, parent: ts.Node): boolean {
+  if (
+    ((ts.isBindingElement(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isExportSpecifier(parent)) &&
+      parent.propertyName === node) ||
+    (ts.isExportSpecifier(parent) &&
+      parent.propertyName !== undefined &&
+      parent.name === node)
+  ) {
+    return true;
+  }
+  return (
+    (ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isImportClause(parent) ||
+      ts.isNamespaceImport(parent) ||
+      ts.isImportEqualsDeclaration(parent)) &&
+    (parent as { name?: ts.Node }).name === node
+  );
+}
+
+/**
+ * Whether `node` changes what EVERY object inherits, or reaches the loader
+ * (E-1's independent audit, finding 4): then an export object may have an
+ * inherited setter, getter or method no write of the file spells, and
+ * `exports.x = v` may not even create a property.
+ *
+ * - `X.prototype` of an ambient global (`Object.prototype`,
+ *   `Function.prototype`, …) written, written through
+ *   (`Object.prototype.m = f`), or handed to a call
+ *   (`Object.defineProperty(Object.prototype, "run", …)`); a read of it
+ *   (`Object.prototype.hasOwnProperty.call(…)`) is not;
+ * - a `__defineGetter__` or `__defineSetter__` call on anything;
+ * - `process.mainModule` (the entry `Module`, whose `children` can hold this
+ *   module) and a load of the `module` builtin (`require("module")._cache`,
+ *   `._load`).
+ */
+function isPrototypeTampering(node: ts.Node): boolean {
+  if (
+    ts.isPropertyAccessExpression(node) ||
+    ts.isElementAccessExpression(node)
+  ) {
+    const name = ts.isPropertyAccessExpression(node)
+      ? node.name.text
+      : exactCommonJsExportPropertyName(
+          unwrapParentheses(node.argumentExpression),
+        );
+    const base = unwrapParentheses(node.expression);
+    if (
+      name === "prototype" &&
+      ts.isIdentifier(base) &&
+      isAmbientReference(base, base.text) &&
+      !["exports", "module", "require"].includes(base.text)
+    ) {
+      const outer = skipOuterParentheses(node);
+      const parent = outer.parent as ts.Node;
+      if (isWriteTargetPosition(outer)) {
+        return true;
+      }
+      if (
+        (ts.isPropertyAccessExpression(parent) ||
+          ts.isElementAccessExpression(parent)) &&
+        parent.expression === outer
+      ) {
+        return isWriteTargetPosition(skipOuterParentheses(parent));
+      }
+      return (
+        ts.isCallExpression(parent) &&
+        parent.arguments.some(
+          (argument) => unwrapParentheses(argument) === node,
+        ) &&
+        !isBuiltinReaderCall(parent)
+      );
+    }
+    if (
+      name === "mainModule" &&
+      ts.isIdentifier(base) &&
+      isAmbientReference(base, "process")
+    ) {
+      return true;
+    }
+    if (
+      (name === "__defineGetter__" || name === "__defineSetter__") &&
+      ts.isCallExpression(node.parent) &&
+      node.parent.expression === node
+    ) {
+      return true;
+    }
+    // `globalThis.process`, `root.process` where `root` is bound to the
+    // global object (lodash's `freeGlobal.process`), or a global's member
+    // nothing names (E-1's re-audit, F3).
+    if (
+      (name === undefined || name === "process") &&
+      reachesGlobalObject(base)
+    ) {
+      return name === undefined || !processValueIsInert(node);
+    }
+    return false;
+  }
+  if (isAmbientReference(node, "process")) {
+    return !processValueIsInert(node);
+  }
+  if (ts.isCallExpression(node) && isRequireResult(node)) {
+    const [first] = node.arguments;
+    const argument = first === undefined ? undefined : unwrapParentheses(first);
+    if (
+      argument !== undefined &&
+      ts.isStringLiteralLike(argument) &&
+      (argument.text === "process" || argument.text === "node:process")
+    ) {
+      // The `process` builtin is the `process` object itself.
+      return !processValueIsInert(node);
+    }
+    return (
+      argument !== undefined &&
+      ts.isStringLiteralLike(argument) &&
+      (argument.text === "module" || argument.text === "node:module")
+    );
+  }
+  return false;
+}
+
+/** Members of `process` that reach no module object and run no code of a module. */
+const PROCESS_INERT_MEMBERS: ReadonlySet<string> = new Set([
+  "env",
+  "platform",
+  "arch",
+  "version",
+  "versions",
+  "release",
+  "features",
+  "config",
+  "pid",
+  "ppid",
+  "argv",
+  "argv0",
+  "execArgv",
+  "execPath",
+  "title",
+  "type",
+  "browser",
+  "cwd",
+  "exit",
+  "exitCode",
+  "nextTick",
+  "hrtime",
+  "uptime",
+  "memoryUsage",
+  "cpuUsage",
+  "resourceUsage",
+  "emitWarning",
+  "noDeprecation",
+  "throwDeprecation",
+  "traceDeprecation",
+  "listeners",
+  "listenerCount",
+  "stdout",
+  "stderr",
+  "stdin",
+  "umask",
+  "kill",
+  "getuid",
+  "geteuid",
+  "getgid",
+  "getegid",
+  "getgroups",
+  "send",
+  "connected",
+  "disconnect",
+  "channel",
+]);
+
+/** Members of `process` (its `EventEmitter` methods) that return `process` itself. */
+const PROCESS_CHAINABLE_MEMBERS: ReadonlySet<string> = new Set([
+  "on",
+  "once",
+  "off",
+  "addListener",
+  "removeListener",
+  "removeAllListeners",
+  "prependListener",
+  "prependOnceListener",
+  "setMaxListeners",
+]);
+
+/** Ambient names that denote the global object, or build code that returns it (`Function("return this")()`). */
+const GLOBAL_OBJECT_NAMES: readonly string[] = [
+  "globalThis",
+  "global",
+  "self",
+  "window",
+  "Function",
+];
+
+/**
+ * Whether `base` may be the global object: an ambient `globalThis`,
+ * `global`, `self` or `window`, or a binding whose initializer spells one
+ * (lodash's `var freeGlobal = typeof global == "object" && global …`;
+ * `root = freeGlobal || freeSelf || Function("return this")()`).
+ */
+function reachesGlobalObject(
+  base: ts.Expression,
+  seen: Set<ts.Node> = new Set(),
+): boolean {
+  const value = unwrapParentheses(base);
+  if (!ts.isIdentifier(value)) {
+    return false;
+  }
+  if (GLOBAL_OBJECT_NAMES.some((name) => isAmbientReference(value, name))) {
+    return true;
+  }
+  const declaration = lexicalDeclarationOf(value, value.text);
+  if (
+    declaration === undefined ||
+    seen.has(declaration) ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer === undefined
+  ) {
+    return false;
+  }
+  const known = globalReachByDeclaration.get(declaration);
+  if (known !== undefined) {
+    return known;
+  }
+  if (seen.size >= SUMMARY_DEPTH) {
+    // Fail closed past the bound: the binding may be the global object.
+    return true;
+  }
+  const outermost = seen.size === 0;
+  seen.add(declaration);
+  aliasSummaryWalks += 1;
+  let reaches = false;
+  const visit = (node: ts.Node): void => {
+    if (reaches) {
+      return;
+    }
+    if (ts.isIdentifier(node) && reachesGlobalObject(node, seen)) {
+      reaches = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(declaration.initializer);
+  // A `false` below the outermost call may be a cycle's cut, not an answer.
+  if (reaches || outermost) {
+    globalReachByDeclaration.set(declaration, reaches);
+  }
+  return reaches;
+}
+
+/**
+ * How deep the alias summaries ({@link reachesGlobalObject},
+ * {@link bindingMayHoldLoad}, {@link processValueIsInert}) follow bindings
+ * before failing closed (E-1's audit, round 3: a 3,000-alias chain
+ * overflowed the stack).
+ */
+const SUMMARY_DEPTH = 64;
+
+const globalReachByDeclaration = new WeakMap<ts.Node, boolean>();
+let aliasSummaryWalks = 0;
+
+/** How many alias summaries were computed (memo misses): an operation count for the structural performance test. */
+export function exportAliasSummaryWalks(): number {
+  return aliasSummaryWalks;
+}
+const loadHoldingByDeclaration = new WeakMap<ts.Node, boolean>();
+
+/**
+ * Whether a `process` value (`process`, `globalThis.process`) reaches no
+ * module object (E-1's re-audit, F3): only tested, or used through a member
+ * of {@link PROCESS_INERT_MEMBERS} (`process.env.X`), or `binding("util")`
+ * (lodash), directly or through a binding every use of which is so
+ * (`var freeProcess = … && freeGlobal.process`). `process.mainModule`,
+ * `process.getBuiltinModule("module")`, a computed member and a hand-off
+ * reach the loader.
+ */
+function processValueIsInert(
+  node: ts.Node,
+  seen: Set<ts.Node> = new Set(),
+): boolean {
+  const outer = skipOuterParentheses(node);
+  const parent = outer.parent as ts.Node;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === outer) {
+    const member = parent.name.text;
+    const access = skipOuterParentheses(parent);
+    if (PROCESS_CHAINABLE_MEMBERS.has(member)) {
+      // `process.on(…)` returns `process` itself (E-1's audit, round 3):
+      // only a call whose result is discarded or tested hands nothing on.
+      const call = access.parent as ts.Node;
+      return (
+        isInertUse(access) ||
+        (ts.isCallExpression(call) &&
+          call.expression === access &&
+          isInertUse(call))
+      );
+    }
+    if (PROCESS_INERT_MEMBERS.has(member)) {
+      return true;
+    }
+    if (isInertUse(access)) {
+      return true;
+    }
+    const call = access.parent as ts.Node;
+    const [first] = ts.isCallExpression(call) ? call.arguments : [];
+    return (
+      member === "binding" &&
+      ts.isCallExpression(call) &&
+      call.expression === access &&
+      first !== undefined &&
+      ts.isStringLiteralLike(first) &&
+      first.text === "util"
+    );
+  }
+  if (isInertUse(outer)) {
+    return true;
+  }
+  const top = climbValue(outer);
+  if (top !== outer && isInertUse(top)) {
+    return true;
+  }
+  const holder = top.parent as ts.Node;
+  if (
+    ts.isVariableDeclaration(holder) &&
+    holder.initializer === top &&
+    ts.isObjectBindingPattern(holder.name)
+  ) {
+    // `const { env } = process`: allow-listed members only, no rest.
+    return holder.name.elements.every((element) => {
+      const key =
+        element.propertyName ??
+        (ts.isIdentifier(element.name) ? element.name : undefined);
+      return (
+        element.dotDotDotToken === undefined &&
+        key !== undefined &&
+        (ts.isIdentifier(key) || ts.isStringLiteral(key)) &&
+        PROCESS_INERT_MEMBERS.has(key.text)
+      );
+    });
+  }
+  if (
+    !ts.isVariableDeclaration(holder) ||
+    holder.initializer !== top ||
+    !ts.isIdentifier(holder.name)
+  ) {
+    return false;
+  }
+  if (seen.has(holder)) {
+    return true;
+  }
+  if (seen.size >= SUMMARY_DEPTH) {
+    // Fail closed past the bound.
+    return false;
+  }
+  seen.add(holder);
+  const name = holder.name;
+  return identifiersSpelled(node.getSourceFile(), name.text).every(
+    (reference) =>
+      reference === name ||
+      isNonReferenceName(reference, reference.parent) ||
+      lexicalDeclarationOf(reference, reference.text) !== holder ||
+      isPlainAssignmentTarget(skipOuterParentheses(reference)) ||
+      processValueIsInert(reference, seen),
+  );
+}
+
+const identifiersBySourceFile = new WeakMap<
+  ts.SourceFile,
+  ReadonlyMap<string, readonly ts.Identifier[]>
+>();
+let identifierIndexBuilds = 0;
+
+/**
+ * Every identifier of the file spelled `text`, from one index built per
+ * file (task E-1's independent audit, finding 5: the alias censuses walked
+ * the whole file once per alias, quadratic in aliases × file size).
+ */
+function identifiersSpelled(
+  sourceFile: ts.SourceFile,
+  text: string,
+): readonly ts.Identifier[] {
+  let index = identifiersBySourceFile.get(sourceFile);
+  if (index === undefined) {
+    identifierIndexBuilds += 1;
+    const built = new Map<string, ts.Identifier[]>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isIdentifier(node)) {
+        const known = built.get(node.text);
+        if (known === undefined) {
+          built.set(node.text, [node]);
+        } else {
+          known.push(node);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    identifiersBySourceFile.set(sourceFile, built);
+    index = built;
+  }
+  return index.get(text) ?? [];
+}
+
+/** How many per-file identifier indexes were built (an operation count for the structural performance test). */
+export function exportAliasIdentifierIndexBuilds(): number {
+  return identifierIndexBuilds;
+}
+
+/**
+ * Whether `C.name = v` on a class this file defines creates or sets an own
+ * data property: not for its own non-writable `name`, `length` and
+ * `prototype`; not when it `extends` anything (an inherited static setter
+ * may take the write); not when one of its static members is an accessor of
+ * the name, or a computed key that may be.
+ */
+function classTakesWrite(node: ts.ClassLikeDeclaration, name: string): boolean {
+  if (
+    name === "name" ||
+    name === "length" ||
+    name === "prototype" ||
+    (node.heritageClauses ?? []).some(
+      (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+    )
+  ) {
+    return false;
+  }
+  return !node.members.some(
+    (member) =>
+      isStaticClassElement(member) &&
+      member.name !== undefined &&
+      (ts.isComputedPropertyName(member.name) ||
+        (ts.isAccessor(member) &&
+          (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)) &&
+          member.name.text === name)),
+  );
+}
+
+/** `Object.prototype` methods that read their `this` and write nothing. */
+const PROTOTYPE_READER_METHODS: ReadonlySet<string> = new Set([
+  "hasOwnProperty",
+  "propertyIsEnumerable",
+  "isPrototypeOf",
+]);
+
+/**
+ * Whether `call` only reads the objects it is handed: an ambient `Object`
+ * or `Reflect` reader (`Object.getOwnPropertyDescriptor(Map.prototype, …)`),
+ * or `.call` / `.apply` of a builtin prototype's reader method, spelled
+ * directly or through a binding initialized to it and never written
+ * (qs's `var has = Object.prototype.hasOwnProperty; has.call(o, k)`).
+ */
+function isBuiltinReaderCall(call: ts.CallExpression): boolean {
+  return (
+    isSyntacticReaderCall(call) && !fileMayPatchBuiltins(call.getSourceFile())
+  );
+}
+
+/** {@link isBuiltinReaderCall}'s spelling alone, trusting that the builtins it names are the builtins. */
+function isSyntacticReaderCall(call: ts.CallExpression): boolean {
+  const callee = unwrapParentheses(call.expression);
+  if (!ts.isPropertyAccessExpression(callee)) {
+    return false;
+  }
+  const receiver = unwrapParentheses(callee.expression);
+  if (isAmbientReference(receiver, "Object")) {
+    return OBJECT_READERS.has(callee.name.text);
+  }
+  if (isAmbientReference(receiver, "Reflect")) {
+    return REFLECT_READERS.has(callee.name.text);
+  }
+  if (callee.name.text !== "call" && callee.name.text !== "apply") {
+    return false;
+  }
+  let method: ts.Expression = receiver;
+  if (ts.isIdentifier(method)) {
+    const declaration = lexicalDeclarationOf(method, method.text);
+    if (
+      declaration === undefined ||
+      !ts.isVariableDeclaration(declaration) ||
+      declaration.initializer === undefined ||
+      isNameAssignedWithin(call.getSourceFile(), method.text)
+    ) {
+      return false;
+    }
+    method = unwrapParentheses(declaration.initializer);
+  }
+  if (
+    !ts.isPropertyAccessExpression(method) ||
+    !PROTOTYPE_READER_METHODS.has(method.name.text)
+  ) {
+    return false;
+  }
+  const owner = unwrapParentheses(method.expression);
+  return (
+    ts.isPropertyAccessExpression(owner) &&
+    owner.name.text === "prototype" &&
+    BUILTIN_CONSTRUCTORS.some((name) =>
+      isAmbientReference(unwrapParentheses(owner.expression), name),
+    )
+  );
+}
+
+/**
+ * The outermost expression `node`'s value can be the value of: through
+ * parentheses, the operands of `&&`, `||` and `??`, a conditional's
+ * branches and a comma's right.
+ */
+function climbValue(node: ts.Node): ts.Node {
+  let current = skipOuterParentheses(node);
+  for (;;) {
+    const parent = current.parent as ts.Node | undefined;
+    if (
+      parent !== undefined &&
+      ((ts.isBinaryExpression(parent) &&
+        (parent.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+          parent.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+          parent.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+          (parent.operatorToken.kind === ts.SyntaxKind.CommaToken &&
+            parent.right === current))) ||
+        (ts.isConditionalExpression(parent) && parent.condition !== current))
+    ) {
+      current = skipOuterParentheses(parent);
+      continue;
+    }
+    return current;
+  }
+}
+
+/**
+ * Whether the object `base` denotes may be a load's result or reached from
+ * one: `require(x)`, `require(x).a`, `require.call(null, x)`,
+ * `require.bind(null)(x)`, `c ? require(x) : y`, or a binding any
+ * declaration or assignment gives such a value (`const o = require(x)`,
+ * `var s; s = require(x)`, `const { self } = require(x)`), through any chain
+ * of members (`o.self`). A member write on it may write this file's own
+ * exports object (E-1's re-audit, F1: a cycle through another module, an
+ * `imports` alias or a self-name hands it back).
+ */
+function baseMayBeLoaded(base: ts.Expression): boolean {
+  let root = unwrapParentheses(base);
+  while (
+    ts.isPropertyAccessExpression(root) ||
+    ts.isElementAccessExpression(root)
+  ) {
+    root = unwrapParentheses(root.expression);
+  }
+  return ts.isIdentifier(root)
+    ? bindingMayHoldLoad(root)
+    : valueMayBeLoaded(root);
+}
+
+/** Whether `expression`'s value may be a load's result or a member of one. */
+function valueMayBeLoaded(
+  expression: ts.Expression,
+  seen: Set<ts.Node> = new Set(),
+): boolean {
+  const value = unwrapParentheses(expression);
+  if (
+    ts.isPropertyAccessExpression(value) ||
+    ts.isElementAccessExpression(value)
+  ) {
+    return valueMayBeLoaded(value.expression, seen);
+  }
+  if (ts.isConditionalExpression(value)) {
+    return (
+      valueMayBeLoaded(value.whenTrue, seen) ||
+      valueMayBeLoaded(value.whenFalse, seen)
+    );
+  }
+  if (ts.isBinaryExpression(value)) {
+    switch (value.operatorToken.kind) {
+      case ts.SyntaxKind.AmpersandAmpersandToken:
+      case ts.SyntaxKind.BarBarToken:
+      case ts.SyntaxKind.QuestionQuestionToken:
+        return (
+          valueMayBeLoaded(value.left, seen) ||
+          valueMayBeLoaded(value.right, seen)
+        );
+      case ts.SyntaxKind.CommaToken:
+      case ts.SyntaxKind.EqualsToken:
+        return valueMayBeLoaded(value.right, seen);
+      default:
+        return false;
+    }
+  }
+  if (ts.isCallExpression(value)) {
+    if (isRequireResult(value)) {
+      return true;
+    }
+    // `require.call(…)`, `require.apply(…)`, `require.bind(…)(…)`.
+    let callee = unwrapParentheses(value.expression);
+    while (
+      ts.isPropertyAccessExpression(callee) ||
+      ts.isElementAccessExpression(callee) ||
+      ts.isCallExpression(callee)
+    ) {
+      callee = unwrapParentheses(callee.expression);
+    }
+    return isLoaderCallee(callee);
+  }
+  if (ts.isIdentifier(value)) {
+    return bindingMayHoldLoad(value, seen);
+  }
+  return false;
+}
+
+/** Whether a declaration or an assignment of `binding` gives it a value {@link valueMayBeLoaded}. */
+function bindingMayHoldLoad(
+  binding: ts.Identifier,
+  seen: Set<ts.Node> = new Set(),
+): boolean {
+  const declaration = lexicalDeclarationOf(binding, binding.text);
+  if (declaration === undefined || seen.has(declaration)) {
+    return false;
+  }
+  const known = loadHoldingByDeclaration.get(declaration);
+  if (known !== undefined) {
+    return known;
+  }
+  if (seen.size >= SUMMARY_DEPTH) {
+    // Fail closed past the bound: the binding may hold a load's result.
+    return true;
+  }
+  const outermost = seen.size === 0;
+  seen.add(declaration);
+  aliasSummaryWalks += 1;
+  const holds = bindingSourcesMayBeLoaded(binding, declaration, seen);
+  // A `false` below the outermost call may be a cycle's cut, not an answer.
+  if (holds || outermost) {
+    loadHoldingByDeclaration.set(declaration, holds);
+  }
+  return holds;
+}
+
+/** {@link bindingMayHoldLoad}'s question for one declaration: its initializer and every assignment. */
+function bindingSourcesMayBeLoaded(
+  binding: ts.Identifier,
+  declaration: ts.Node,
+  seen: Set<ts.Node>,
+): boolean {
+  let holder: ts.Node = declaration;
+  // `const { self } = require(x)`, `const [s] = …`: the pattern's source.
+  while (
+    ts.isBindingElement(holder) ||
+    ts.isObjectBindingPattern(holder) ||
+    ts.isArrayBindingPattern(holder)
+  ) {
+    holder = holder.parent;
+  }
+  if (
+    ts.isVariableDeclaration(holder) &&
+    holder.initializer !== undefined &&
+    valueMayBeLoaded(holder.initializer, seen)
+  ) {
+    return true;
+  }
+  return identifiersSpelled(binding.getSourceFile(), binding.text).some(
+    (reference) => {
+      const outer = skipOuterParentheses(reference);
+      const parent = outer.parent as ts.Node;
+      return (
+        ts.isBinaryExpression(parent) &&
+        parent.left === outer &&
+        isAssignmentOperatorToken(parent.operatorToken.kind) &&
+        lexicalDeclarationOf(reference, reference.text) === declaration &&
+        valueMayBeLoaded(parent.right, seen)
+      );
+    },
+  );
+}
+
+/**
+ * Whether a loader call ({@link isRequireResult}) may load the file it is
+ * written in, and so return this module's own exports object: a specifier
+ * that is not a literal; a relative or absolute one that resolves to this
+ * file (with or without an extension) or to one of its ancestor
+ * directories (an `index`, or a `package.json` `main`); the package's own
+ * name or a subpath of it, for a file under `node_modules/<name>/`. A
+ * `require.main.require(…)` or `module.constructor._load(…)` resolves from
+ * another module, so any relative or absolute specifier may be this file.
+ *
+ * It decides only where a self-load's result is CENSUSED as an alias of the
+ * exports object. It is no proof that a load returns another object: a
+ * cycle through another module (`module.exports = require("./index")`), a
+ * `package.json` `imports` entry (`#self`), an installed name that differs
+ * from the directory, or `module.paths` can all hand this file's exports
+ * object back. A member write through ANY load's result is therefore a
+ * write of its name ({@link baseMayBeLoaded}; E-1's re-audit, F1); only the
+ * other flows of a load this does not accept are not censused (an accepted
+ * bound: its object is another module's, task E-4).
+ */
+function mayLoadThisFile(call: ts.CallExpression): boolean {
+  const [first] = call.arguments;
+  if (first === undefined || ts.isSpreadElement(first)) {
+    return true;
+  }
+  const argument = unwrapParentheses(first);
+  if (!ts.isStringLiteralLike(argument)) {
+    return true;
+  }
+  const specifier = argument.text;
+  const file = call.getSourceFile().fileName.replace(/\\/g, "/");
+  if (!file.startsWith("/")) {
+    // Not a POSIX absolute path: no resolution here can rule it out.
+    return true;
+  }
+  const callee = unwrapParentheses(call.expression);
+  const elsewhere =
+    ts.isPropertyAccessExpression(callee) &&
+    (callee.name.text === "_load" ||
+      (ts.isPropertyAccessExpression(unwrapParentheses(callee.expression)) &&
+        (unwrapParentheses(callee.expression) as ts.PropertyAccessExpression)
+          .name.text === "main"));
+  const isPath =
+    specifier === "." ||
+    specifier === ".." ||
+    specifier.startsWith("./") ||
+    specifier.startsWith("../") ||
+    specifier.startsWith("/");
+  if (isPath) {
+    if (elsewhere) {
+      return true;
+    }
+    const directory = file.slice(0, file.lastIndexOf("/") + 1);
+    const resolved = posixResolve(directory, specifier);
+    return (
+      resolved === file ||
+      file.startsWith(`${resolved}/`) ||
+      [
+        ".js",
+        ".cjs",
+        ".mjs",
+        ".ts",
+        ".cts",
+        ".mts",
+        ".jsx",
+        ".tsx",
+        ".node",
+      ].some((extension) => `${resolved}${extension}` === file)
+    );
+  }
+  const owner = file.match(/.*\/node_modules\/((?:@[^/]+\/)?[^/]+)\//);
+  return (
+    owner !== null &&
+    (specifier === owner[1] || specifier.startsWith(`${owner[1]}/`))
+  );
+}
+
+/** `path.posix.resolve(directory, specifier)` with no filesystem access, `directory` ending in `/`. */
+function posixResolve(directory: string, specifier: string): string {
+  const parts = (
+    specifier.startsWith("/") ? specifier : `${directory}${specifier}`
+  ).split("/");
+  const out: string[] = [];
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      out.pop();
+    } else {
+      out.push(part);
+    }
+  }
+  return `/${out.join("/")}`;
+}
+
+/**
+ * The members of a `module` object that reach no module object: its own
+ * strings and flags, and `require` (each call of it is a loader call the
+ * census follows).
+ */
+const INERT_MODULE_MEMBERS: ReadonlySet<string> = new Set([
+  "id",
+  "filename",
+  "path",
+  "loaded",
+  "paths",
+  "isPreloading",
+  "require",
+]);
+
+/** Ambient names whose members a file can patch for every module: the global object and the builtins the reader allow-lists trust. */
+const PATCHABLE_GLOBALS: readonly string[] = [
+  "globalThis",
+  "global",
+  "self",
+  "window",
+  "Reflect",
+];
+
+const builtinPatchingBySourceFile = new WeakMap<ts.SourceFile, boolean>();
+
+/**
+ * Whether this file may replace a builtin the reader allow-lists trust
+ * (`Object.keys`, `Reflect.get`, `Object.prototype.hasOwnProperty`,
+ * `Object[Symbol.hasInstance]`; E-1's re-audit, F2): a write through an
+ * ambient builtin or global object (`Object.keys = f`,
+ * `globalThis.Object = o`, `Object.prototype.m = f`), or one of them handed
+ * to code or aliased (`Object.defineProperty(Object, …)`, `const O =
+ * Object`). Calling one (`Object.keys(o)`, `Object(x)`), testing one,
+ * `instanceof` one, and aliasing a builtin's member that is not an object
+ * of builtins (`var has = Object.prototype.hasOwnProperty`) do not. Then no
+ * call of a builtin is taken for a reader.
+ */
+function fileMayPatchBuiltins(sourceFile: ts.SourceFile): boolean {
+  const known = builtinPatchingBySourceFile.get(sourceFile);
+  if (known !== undefined) {
+    return known;
+  }
+  const names = [...BUILTIN_CONSTRUCTORS, ...PATCHABLE_GLOBALS];
+  const patches = names.some((name) =>
+    identifiersSpelled(sourceFile, name).some((reference) => {
+      if (!isAmbientReference(reference, name)) {
+        return false;
+      }
+      // The member chain the name heads (`Object.prototype.m`), and whether
+      // its value is still an object of builtins (the global object, a
+      // builtin, a builtin's `prototype`) rather than one of their methods.
+      let top: ts.Node = skipOuterParentheses(reference);
+      let objectValued = true;
+      for (;;) {
+        const parent = top.parent as ts.Node;
+        if (
+          !(
+            ts.isPropertyAccessExpression(parent) ||
+            ts.isElementAccessExpression(parent)
+          ) ||
+          parent.expression !== top
+        ) {
+          break;
+        }
+        const member = ts.isPropertyAccessExpression(parent)
+          ? parent.name.text
+          : exactCommonJsExportPropertyName(
+              unwrapParentheses(parent.argumentExpression),
+            );
+        objectValued =
+          objectValued &&
+          (member === undefined ||
+            member === "prototype" ||
+            names.includes(member));
+        top = skipOuterParentheses(parent);
+      }
+      const parent = top.parent as ts.Node;
+      // `-Number.MAX_VALUE`, `!globalThis.window`: an operator that only
+      // reads (the shared write test counts every prefix operand).
+      const readOnlyUnary =
+        ts.isPrefixUnaryExpression(parent) &&
+        parent.operator !== ts.SyntaxKind.PlusPlusToken &&
+        parent.operator !== ts.SyntaxKind.MinusMinusToken;
+      if (!readOnlyUnary && isWriteTargetPosition(top)) {
+        return true;
+      }
+      if (
+        !objectValued ||
+        isInertUse(top) ||
+        ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+          parent.expression === top) ||
+        (ts.isBinaryExpression(parent) &&
+          parent.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
+          parent.right === top)
+      ) {
+        return false;
+      }
+      // `class E extends Error {}`: the class inherits, the builtin is not
+      // changed.
+      if (
+        ts.isExpressionWithTypeArguments(parent) &&
+        ts.isHeritageClause(parent.parent)
+      ) {
+        return false;
+      }
+      if (readOnlyUnary) {
+        return false;
+      }
+      // `const F = Function; new F("")`, `var hasMap = typeof Map ===
+      // "function" && Map.prototype` (only tested), `U = max ? f(max) :
+      // Array`: an alias only tested, called or constructed.
+      const value = climbValue(top);
+      const holder = value.parent as ts.Node;
+      if (
+        ts.isVariableDeclaration(holder) &&
+        holder.initializer === value &&
+        ts.isIdentifier(holder.name)
+      ) {
+        const alias = holder.name;
+        return !identifiersSpelled(sourceFile, alias.text).every(
+          (use) =>
+            use === alias ||
+            isNonReferenceName(use, use.parent) ||
+            lexicalDeclarationOf(use, use.text) !== holder ||
+            isInertUse(use) ||
+            ((ts.isCallExpression(use.parent) ||
+              ts.isNewExpression(use.parent)) &&
+              use.parent.expression === use),
+        );
+      }
+      // `const { defineProperty, keys } = Object`: its methods, not an
+      // object of builtins (no rest, no `prototype`, no builtin's name).
+      if (
+        ts.isVariableDeclaration(holder) &&
+        holder.initializer === value &&
+        ts.isObjectBindingPattern(holder.name) &&
+        holder.name.elements.every((element) => {
+          const key =
+            element.propertyName ??
+            (ts.isIdentifier(element.name) ? element.name : undefined);
+          return (
+            element.dotDotDotToken === undefined &&
+            key !== undefined &&
+            (ts.isIdentifier(key) || ts.isStringLiteral(key)) &&
+            key.text !== "prototype" &&
+            !names.includes(key.text)
+          );
+        })
+      ) {
+        return false;
+      }
+      // Handed to an `Object` or `Reflect` reader, which only reads it.
+      return !(
+        ts.isCallExpression(parent) &&
+        parent.arguments.some((argument) => argument === top) &&
+        isSyntacticReaderCall(parent)
+      );
+    }),
+  );
+  builtinPatchingBySourceFile.set(sourceFile, patches);
+  return patches;
+}
+
+/** Ambient constructors whose `Symbol.hasInstance` is the builtin one. */
+const BUILTIN_CONSTRUCTORS: readonly string[] = [
+  "Object",
+  "Function",
+  "Array",
+  "Error",
+  "TypeError",
+  "RangeError",
+  "Date",
+  "RegExp",
+  "Map",
+  "Set",
+  "WeakMap",
+  "WeakSet",
+  "Promise",
+  "String",
+  "Number",
+  "Boolean",
+  "Symbol",
+];
+
+/** `null`, `undefined` (the ambient name) or `void …`: a loose comparison with it coerces nothing. */
+function isNullish(expression: ts.Expression): boolean {
+  const value = unwrapParentheses(expression);
+  return (
+    value.kind === ts.SyntaxKind.NullKeyword ||
+    ts.isVoidExpression(value) ||
+    isAmbientReference(value, "undefined")
+  );
+}
+
+/**
+ * Whether the value of `node` (an object reference) is only tested, never
+ * handed to code: `typeof x`, `!x`, `void x`, a strict comparison, a loose
+ * one against `null` or `undefined`, `k in x`, `C instanceof …` with the
+ * object on the right, `x instanceof B` for an ambient builtin constructor
+ * `B`, a condition (`if`, a loop's, a conditional's test), the discarded
+ * left of a comma, an expression statement, and the LEFT operand of `&&`
+ * (ToBoolean: an object is truthy, so `x && y` yields `y`; a falsy `this`
+ * is no export object). A logical expression's other operands are its
+ * value, which is inert only when the whole expression is.
+ *
+ * NOT inert, because real Node runs code with the object (E-1's
+ * independent audit, finding 3): a loose comparison against anything else
+ * and a template literal (ToPrimitive: `valueOf`, `toString`,
+ * `Symbol.toPrimitive`, inherited or patched), and `x instanceof C` for a
+ * `C` this file defines (`C[Symbol.hasInstance](x)`). A builtin's own
+ * `Symbol.hasInstance` or prototype methods are changed only by the
+ * prototype tampering the census refuses ({@link isPrototypeTampering}).
+ */
+function isInertUse(node: ts.Node): boolean {
+  const outer = skipOuterParentheses(node);
+  const parent = outer.parent as ts.Node | undefined;
+  if (parent === undefined) {
+    return false;
+  }
+  if (
+    ts.isTypeOfExpression(parent) ||
+    ts.isVoidExpression(parent) ||
+    ts.isExpressionStatement(parent) ||
+    (ts.isPrefixUnaryExpression(parent) &&
+      parent.operator === ts.SyntaxKind.ExclamationToken)
+  ) {
+    return true;
+  }
+  if (
+    ((ts.isIfStatement(parent) ||
+      ts.isWhileStatement(parent) ||
+      ts.isDoStatement(parent)) &&
+      parent.expression === outer) ||
+    (ts.isForStatement(parent) && parent.condition === outer) ||
+    (ts.isConditionalExpression(parent) && parent.condition === outer)
+  ) {
+    return true;
+  }
+  if (ts.isConditionalExpression(parent)) {
+    // A branch is the conditional's value.
+    return isInertUse(parent);
+  }
+  if (!ts.isBinaryExpression(parent)) {
+    return false;
+  }
+  switch (parent.operatorToken.kind) {
+    case ts.SyntaxKind.EqualsEqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+      return true;
+    case ts.SyntaxKind.EqualsEqualsToken:
+    case ts.SyntaxKind.ExclamationEqualsToken:
+      return isNullish(parent.left === outer ? parent.right : parent.left);
+    case ts.SyntaxKind.InstanceOfKeyword:
+      // On the right, the object runs its own `Symbol.hasInstance` (or the
+      // builtin one) with itself as `this`: its own methods are censused.
+      // A builtin's, unless the file may replace it (E-1's re-audit, F4:
+      // `Object.defineProperty(Object, Symbol.hasInstance, …)`).
+      return (
+        parent.right === outer ||
+        (BUILTIN_CONSTRUCTORS.some((name) =>
+          isAmbientReference(unwrapParentheses(parent.right), name),
+        ) &&
+          !fileMayPatchBuiltins(parent.getSourceFile()))
+      );
+    case ts.SyntaxKind.InKeyword:
+      return parent.right === outer;
+    case ts.SyntaxKind.CommaToken:
+      return parent.left === outer || isInertUse(parent);
+    case ts.SyntaxKind.AmpersandAmpersandToken:
+      return parent.left === outer || isInertUse(parent);
+    case ts.SyntaxKind.BarBarToken:
+    case ts.SyntaxKind.QuestionQuestionToken:
+      return isInertUse(parent);
+    default:
+      return false;
+  }
+}
+
+/**
+ * The names a property key can denote: the one exact name, none for a
+ * symbol (`Symbol.toStringTag`, `Symbol("x")`, `Symbol.for("x")` with the
+ * ambient `Symbol`: no export is named by a symbol), or `"all"`.
+ */
+function keyNames(key: ts.Expression): ReadonlySet<string> | "all" {
+  const expression = unwrapParentheses(key);
+  const exact = exactCommonJsExportPropertyName(expression);
+  if (exact !== undefined) {
+    return new Set([exact]);
+  }
+  const symbolBase = ts.isPropertyAccessExpression(expression)
+    ? expression.expression
+    : ts.isCallExpression(expression)
+      ? ts.isPropertyAccessExpression(expression.expression) &&
+        expression.expression.name.text === "for"
+        ? expression.expression.expression
+        : expression.expression
+      : undefined;
+  return symbolBase !== undefined &&
+    isAmbientReference(unwrapParentheses(symbolBase), "Symbol")
+    ? NO_NAMES
+    : "all";
+}
+
+/** {@link keyNames} for a member access. */
+function accessNames(
+  access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): ReadonlySet<string> | "all" {
+  return ts.isPropertyAccessExpression(access)
+    ? new Set([access.name.text])
+    : keyNames(access.argumentExpression);
+}
+
+/** Whether `node` is a plain `=` assignment's left-hand side. */
+function isPlainAssignmentTarget(node: ts.Node): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  return (
+    parent !== undefined &&
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.left === node
+  );
+}
+
+/** The outermost parenthesized form of `node` (what its parent sees). */
+function skipOuterParentheses(node: ts.Node): ts.Node {
+  let current = node;
+  while (
+    current.parent !== undefined &&
+    ts.isParenthesizedExpression(current.parent)
+  ) {
+    current = current.parent;
+  }
+  return current;
+}
+
+/**
+ * {@link ExportWriteKind} for one node, or `undefined` when the node is no
+ * censused reference. `object` is the reference denoting an export object
+ * (`exports`, `module.exports`, module-scope `this`); its use decides.
+ */
+function classifyObjectUse(
+  object: ts.Node,
+  base: ExportPropertyWrite["base"],
+  deferred: boolean,
+  statementIndex: number,
+): ExportReference {
+  const outer = skipOuterParentheses(object);
+  const parent = outer.parent as ts.Node;
+  const make: MakeReference = (kind, names = NO_NAMES, values, assignment) => ({
+    kind,
+    names,
+    values,
+    assignment,
+    base,
+    deferred,
+    statementIndex,
+  });
+  if (
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent)) &&
+    parent.expression === outer
+  ) {
+    const access = skipOuterParentheses(parent);
+    const names = accessNames(parent);
+    if (isPlainAssignmentTarget(access)) {
+      const assignment = access.parent as ts.BinaryExpression;
+      return make(
+        "property-write",
+        names,
+        [[assignment.right, "property"]],
+        assignment,
+      );
+    }
+    if (isWriteTargetPosition(access)) {
+      const writer = access.parent as ts.Node;
+      // The value a compound write stores is its right-hand side's (or a
+      // number); a destructuring or `for-of` target's is unreadable here,
+      // so it stands in as a member read (any function).
+      const values: readonly MethodSource[] =
+        ts.isBinaryExpression(writer) && writer.left === access
+          ? [[writer.right, "property"]]
+          : ts.isPrefixUnaryExpression(writer) ||
+              ts.isPostfixUnaryExpression(writer) ||
+              ts.isDeleteExpression(writer)
+            ? []
+            : [[access as ts.Expression, "property"]];
+      return make("property-other-write", names, values);
+    }
+    // A method called on the object runs with it as `this`: one of this
+    // file's own functions is censused here; any other holds it.
+    // A method this file never writes was put there by another module,
+    // which already holds the object: whatever it writes is a write by
+    // another module (E-4's), and calling it hands over nothing new.
+    return callsForeignExportMethod(access) &&
+      !isOwnLiteralMethodCall(access) &&
+      !isMethodWrittenElsewhere(access)
+      ? make("unenumerable")
+      : make("read");
+  }
+  if (isInertUse(outer)) {
+    return make("read");
+  }
+  if (ts.isCallExpression(parent) && parent.arguments[0] === outer) {
+    return classifyHelperCall(parent, make);
+  }
+  const sink = valueSink(outer);
+  return sink === undefined
+    ? make("unenumerable")
+    : { ...make("object-alias"), alias: sink };
+}
+
+/** `Object.x(E, …)`, `Reflect.x(E, …)` and `….hasOwnProperty.call(E, …)` with an export object `E` first. */
+function classifyHelperCall(
+  call: ts.CallExpression,
+  make: MakeReference,
+): ExportReference {
+  const callee = unwrapParentheses(call.expression);
+  if (!ts.isPropertyAccessExpression(callee)) {
+    return make("unenumerable");
+  }
+  const method = callee.name.text;
+  const receiver = unwrapParentheses(callee.expression);
+  // A builtin reader the file cannot have replaced (`Object.keys(E)`,
+  // `Object.prototype.hasOwnProperty.call(E, k)`); not any receiver's
+  // `hasOwnProperty`, nor a reader the file patches (E-1's re-audit, F2).
+  if (isBuiltinReaderCall(call)) {
+    return make("read");
+  }
+  const isObject = isAmbientReference(receiver, "Object");
+  const isReflect = isAmbientReference(receiver, "Reflect");
+  if (!isObject && !isReflect) {
+    return make("unenumerable");
+  }
+  if (fileMayPatchBuiltins(call.getSourceFile())) {
+    return make("unenumerable");
+  }
+  const [, second, third, ...rest] = call.arguments;
+  if (
+    method === "defineProperty" ||
+    (isReflect && (method === "set" || method === "deleteProperty"))
+  ) {
+    const values: MethodSource[] =
+      third === undefined
+        ? []
+        : [[third, method === "set" ? "property" : "descriptor"]];
+    return make(
+      "define-property",
+      second === undefined ? "all" : keyNames(second),
+      values,
+    );
+  }
+  if (isObject && (method === "defineProperties" || method === "assign")) {
+    const sources = (
+      method === "assign" ? [second, third, ...rest] : [second]
+    ).filter((source): source is ts.Expression => source !== undefined);
+    const values = sources.map((source): MethodSource => [
+      source,
+      method === "assign" ? "container" : "descriptors",
+    ]);
+    const names = new Set<string>();
+    for (const source of sources) {
+      const literal = unwrapParentheses(source);
+      const keys = ts.isObjectLiteralExpression(literal)
+        ? objectLiteralKeyNames(literal)
+        : "all";
+      if (keys === "all") {
+        return make("define-property", "all", values);
+      }
+      for (const key of keys) names.add(key);
+    }
+    return make("define-property", names, values);
+  }
+  // `Object.freeze`, `seal`, `preventExtensions`, `setPrototypeOf`, … :
+  // a later write may fail, or the object's names change.
+  return make("unenumerable");
+}
+
+/** Every name an object literal defines, or `"all"` when a spread or a key nothing names may define any. */
+function objectLiteralKeyNames(
+  literal: ts.ObjectLiteralExpression,
+): ReadonlySet<string> | "all" {
+  const names = new Set<string>();
+  for (const property of literal.properties) {
+    if (ts.isSpreadAssignment(property)) {
+      return "all";
+    }
+    if (ts.isShorthandPropertyAssignment(property)) {
+      names.add(property.name.text);
+      continue;
+    }
+    const key = property.name;
+    const name = ts.isComputedPropertyName(key)
+      ? resolveComputedPropertyNameLiteral(literal.getSourceFile(), key)
+      : ts.isIdentifier(key) || ts.isPrivateIdentifier(key)
+        ? key.text
+        : exactCommonJsExportPropertyName(key as ts.Expression);
+    if (name === undefined) {
+      return "all";
+    }
+    names.add(name);
+  }
+  return names;
+}
+
+/** Whether `expression` is `require(…)` or `module.require(…)`, the ambient loader. */
+function isRequireResult(expression: ts.Expression): boolean {
+  const call = unwrapParentheses(expression);
+  return (
+    ts.isCallExpression(call) &&
+    isLoaderCallee(unwrapParentheses(call.expression))
+  );
+}
+
+/**
+ * Whether `callee` is a CommonJS loader, whose call may return this very
+ * module's exports object (a self-load): the ambient `require`,
+ * `module.require`, `require.main.require`, `module.constructor._load`, or
+ * a local bound once to the ambient `require` and never written
+ * (`const r = require`, ADV2-051).
+ */
+function isLoaderCallee(callee: ts.Expression): boolean {
+  if (isAmbientReference(callee, "require")) {
+    return true;
+  }
+  if (ts.isIdentifier(callee)) {
+    const declaration = lexicalDeclarationOf(callee, callee.text);
+    return (
+      declaration !== undefined &&
+      ts.isVariableDeclaration(declaration) &&
+      declaration.initializer !== undefined &&
+      isAmbientReference(
+        unwrapParentheses(declaration.initializer),
+        "require",
+      ) &&
+      !isNameAssignedWithin(callee.getSourceFile(), callee.text)
+    );
+  }
+  if (!ts.isPropertyAccessExpression(callee)) {
+    return false;
+  }
+  const base = unwrapParentheses(callee.expression);
+  return (
+    (callee.name.text === "require" &&
+      (isAmbientReference(base, "module") ||
+        (ts.isPropertyAccessExpression(base) &&
+          base.name.text === "main" &&
+          isAmbientReference(
+            unwrapParentheses(base.expression),
+            "require",
+          )))) ||
+    (callee.name.text === "_load" &&
+      ts.isPropertyAccessExpression(base) &&
+      base.name.text === "constructor" &&
+      isAmbientReference(unwrapParentheses(base.expression), "module"))
+  );
+}
+
+/**
+ * Whether every use of a local bound to `require` is a call of it (or
+ * inert), so that {@link isLoaderCallee} accounts for all of them.
+ */
+function loaderAliasIsOnlyCalled(binding: ts.Identifier): boolean {
+  const sourceFile = binding.getSourceFile();
+  const declaration = lexicalDeclarationOf(binding, binding.text);
+  if (
+    declaration === undefined ||
+    isNameAssignedWithin(sourceFile, binding.text)
+  ) {
+    return false;
+  }
+  let only = true;
+  const visit = (node: ts.Node): void => {
+    if (!only) {
+      return;
+    }
+    if (
+      ts.isIdentifier(node) &&
+      node.text === binding.text &&
+      !isNonReferenceName(node, node.parent) &&
+      !isDeclarationName(node, node.parent) &&
+      lexicalDeclarationOf(node, node.text) === declaration
+    ) {
+      const outer = skipOuterParentheses(node);
+      const parent = outer.parent as ts.Node;
+      only =
+        (ts.isCallExpression(parent) && parent.expression === outer) ||
+        isInertUse(outer);
+      return;
+    }
+  };
+  // Only identifiers spelled like the binding are visited (E-1's audit, finding 5).
+  for (const reference of identifiersSpelled(sourceFile, binding.text)) {
+    visit(reference);
+  }
+  return only;
+}
+
+/** Whether `access` (`require.main`, `module.constructor`) is the base of a loader call (`require.main.require(…)`). */
+function isLoaderCallBase(access: ts.Node): boolean {
+  const member = access.parent as ts.Node | undefined;
+  const call = member?.parent as ts.Node | undefined;
+  return (
+    member !== undefined &&
+    ts.isPropertyAccessExpression(member) &&
+    member.expression === access &&
+    call !== undefined &&
+    ts.isCallExpression(call) &&
+    call.expression === member &&
+    isLoaderCallee(member)
+  );
+}
+
+function classifyExportReference(
+  node: ts.Node,
+  deferred: boolean,
+  thisContext: ThisContext,
+  owner: ts.Node | undefined,
+  statementIndex: number,
+): ExportReference | undefined {
+  const make: MakeReference = (kind, names = NO_NAMES, values, assignment) => ({
+    kind,
+    names,
+    values,
+    assignment,
+    deferred,
+    statementIndex,
+  });
+
+  if (ts.isWithStatement(node)) {
+    // Inside `with (o) { … }` an ambient name may be a property of `o`, so
+    // `exports.x = v` there may write `o.exports` and `module.exports = v`
+    // may not write the module at all. Its object expression is censused
+    // like any other reference.
+    return withBodyReachesExportNames(node.statement)
+      ? make("unenumerable")
+      : undefined;
+  }
+  if (ts.isExportAssignment(node) && node.isExportEquals) {
+    // TypeScript's `export = X`: a whole-module write.
+    return make("whole-module-write", NO_NAMES, [[node.expression, "whole"]]);
+  }
+  if (node.kind === ts.SyntaxKind.ThisKeyword) {
+    if (thisContext === "module") {
+      // Module-scope `this` is the ORIGINAL exports object.
+      return classifyObjectUse(node, "this", deferred, statementIndex);
+    }
+    // In a function, `this` is the exports object when the function is
+    // called as one of its methods (a static member's, when its class is
+    // the whole-module value): any write through it may set a name. A
+    // fresh instance's writes run while it is constructed, before any write
+    // the walk orders after it; handing it on matters only when the
+    // whole-module value may be such an instance ({@link exportMethodOwners}).
+    const outer = skipOuterParentheses(node);
+    const parent = outer.parent as ts.Node;
+    if (
+      (ts.isPropertyAccessExpression(parent) ||
+        ts.isElementAccessExpression(parent)) &&
+      parent.expression === outer
+    ) {
+      if (!isWriteTargetPosition(skipOuterParentheses(parent))) {
+        return make("read");
+      }
+      return thisContext === "fresh"
+        ? undefined
+        : {
+            ...make("method-this-write", accessNames(parent)),
+            owner,
+            thisContext,
+          };
+    }
+    if (isInertUse(outer)) {
+      return make("read");
+    }
+    return { ...make("method-this-hand-off"), owner, thisContext };
+  }
+
+  if (isPrototypeTampering(node)) {
+    return make("unenumerable");
+  }
+  // A load that may load this very file returns its exports object (a
+  // self-load): the result is an alias of it, wherever it flows (E-1's
+  // independent audit, finding 1). A member write on it withdraws the
+  // name; a binding it flows into is censused like any alias; anything
+  // else hands it on.
+  if (
+    ts.isCallExpression(node) &&
+    isRequireResult(node) &&
+    mayLoadThisFile(node)
+  ) {
+    const top = climbValue(node);
+    const parent = top.parent as ts.Node;
+    if (
+      (ts.isPropertyAccessExpression(parent) ||
+        ts.isElementAccessExpression(parent)) &&
+      parent.expression === top
+    ) {
+      const access = skipOuterParentheses(parent);
+      if (!isWriteTargetPosition(access)) {
+        return make("read");
+      }
+      const writer = access.parent as ts.Node;
+      return make(
+        "require-result-member-write",
+        accessNames(parent),
+        ts.isBinaryExpression(writer) && writer.left === access
+          ? [[writer.right, "property"]]
+          : [[access as ts.Expression, "property"]],
+      );
+    }
+    if (isInertUse(top)) {
+      return make("read");
+    }
+    const sink = valueSink(top);
+    return sink === undefined
+      ? make("unenumerable")
+      : { ...make("object-alias"), alias: sink };
+  }
+  // A member write on any load's result, directly, through a binding or
+  // through a chain of members (`require("./other").run = v`, `o.run = v`,
+  // `o.self.run = v`): the loaded module may hand this file's exports object
+  // back, so it withdraws the name (E-1's re-audit, F1).
+  if (
+    (ts.isPropertyAccessExpression(node) ||
+      ts.isElementAccessExpression(node)) &&
+    isWriteTargetPosition(skipOuterParentheses(node)) &&
+    baseMayBeLoaded(node.expression)
+  ) {
+    return make("require-result-member-write", accessNames(node));
+  }
+
+  if (!ts.isIdentifier(node)) {
+    return undefined;
+  }
+  switch (node.text) {
+    case "exports": {
+      if (!isAmbientReference(node, "exports")) {
+        return undefined;
+      }
+      const outer = skipOuterParentheses(node);
+      if (isPlainAssignmentTarget(outer)) {
+        return make(
+          "exports-rebinding",
+          NO_NAMES,
+          undefined,
+          outer.parent as ts.BinaryExpression,
+        );
+      }
+      if (isWriteTargetPosition(outer)) {
+        return make("unenumerable");
+      }
+      // `module.exports = exports`: the value is tracked by the identity walk.
+      const parent = outer.parent as ts.Node;
+      if (
+        ts.isBinaryExpression(parent) &&
+        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        parent.right === outer &&
+        isModuleExportsAssignmentTarget(unwrapParentheses(parent.left))
+      ) {
+        return make("read");
+      }
+      return classifyObjectUse(node, "exports", deferred, statementIndex);
+    }
+    case "module": {
+      if (!isAmbientReference(node, "module")) {
+        return undefined;
+      }
+      const outer = skipOuterParentheses(node);
+      const parent = outer.parent as ts.Node;
+      if (
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === outer
+      ) {
+        const member = parent.name.text;
+        if (member !== "exports") {
+          // Only the members that reach no module object are reads
+          // (`module.id`, `module.filename`, a `module.require(…)` load,
+          // censused as a loader call); `module.parent.children` and
+          // `module.children` can hold this module itself, and
+          // `module.constructor` reaches the loader's cache (E-1's
+          // independent audit, finding 2).
+          // A member only tested (`!module.nodeType`) hands nothing on.
+          return INERT_MODULE_MEMBERS.has(member) ||
+            isInertUse(skipOuterParentheses(parent)) ||
+            (member === "constructor" && isLoaderCallBase(parent))
+            ? make("read")
+            : make("unenumerable");
+        }
+        const access = skipOuterParentheses(parent);
+        if (isPlainAssignmentTarget(access)) {
+          return make("whole-module-write", NO_NAMES, [
+            [(access.parent as ts.BinaryExpression).right, "whole"],
+          ]);
+        }
+        if (isWriteTargetPosition(access)) {
+          return make("unenumerable");
+        }
+        // `exports = module.exports`: tracked by the identity walk.
+        const accessParent = access.parent as ts.Node;
+        if (
+          ts.isBinaryExpression(accessParent) &&
+          accessParent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+          accessParent.right === access &&
+          isAmbientReference(unwrapParentheses(accessParent.left), "exports")
+        ) {
+          return make("read");
+        }
+        return classifyObjectUse(
+          parent,
+          "module.exports",
+          deferred,
+          statementIndex,
+        );
+      }
+      if (isInertUse(outer)) {
+        return make("read");
+      }
+      const moduleSink = valueSink(outer);
+      return moduleSink === undefined
+        ? make("unenumerable")
+        : { ...make("module-alias"), alias: moduleSink };
+    }
+    case "require": {
+      if (!isAmbientReference(node, "require")) {
+        return undefined;
+      }
+      const outer = skipOuterParentheses(node);
+      const parent = outer.parent as ts.Node;
+      if (ts.isCallExpression(parent) && parent.expression === outer) {
+        return make("read");
+      }
+      if (
+        ts.isPropertyAccessExpression(parent) &&
+        parent.expression === outer
+      ) {
+        // `require.cache` holds this module; `require.main` is this module
+        // when it is the entry, except in a comparison.
+        if (parent.name.text === "cache") {
+          return make("unenumerable");
+        }
+        if (parent.name.text === "main") {
+          // `require.main.require(…)` is a loader call (its result is
+          // censused like `require(…)`'s).
+          return isInertUse(skipOuterParentheses(parent)) ||
+            isLoaderCallBase(parent)
+            ? make("read")
+            : make("unenumerable");
+        }
+        return make("read");
+      }
+      if (isInertUse(outer)) {
+        return make("read");
+      }
+      // `const r = require`: a loader alias, whose calls are censused like
+      // `require(…)`'s, as long as it is only ever called.
+      const loaderSink = valueSink(outer);
+      return loaderSink !== undefined &&
+        ts.isVariableDeclaration(loaderSink.parent) &&
+        loaderAliasIsOnlyCalled(loaderSink)
+        ? make("read")
+        : make("unenumerable");
+    }
+    case "arguments":
+      return thisContext === "module" && isAmbientReference(node, "arguments")
+        ? make("unenumerable")
+        : undefined;
+    case "eval":
+      // Only a DIRECT `eval(…)` sees the module's scope; an indirect one runs
+      // in the global scope, where `module` and `exports` are not bound.
+      return isAmbientReference(node, "eval") &&
+        ts.isCallExpression(skipOuterParentheses(node).parent) &&
+        (skipOuterParentheses(node).parent as ts.CallExpression).expression ===
+          skipOuterParentheses(node)
+        ? make("unenumerable")
+        : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * Collapses this file's CommonJS named bindings to one per name: the one
+ * effective write's binding, or one withdrawn binding (task E-1; ADR 0009
+ * § 1 clauses 1, 2 and 5).
+ *
+ * The effective write of a name is the LAST module-time write of it to the
+ * FINAL export object -- the object `module.exports` holds once module
+ * evaluation completes. Which object each write reaches is decided by an
+ * identity walk over the top-level statements: `module.exports = X`
+ * installs a new object, `exports = module.exports = X` points `exports` at
+ * it too, `exports = module.exports` points `exports` back at the current
+ * one, and any other rebinding of `exports` points it at an object that is
+ * no export. A write to a STALE object (`exports.x = v` after a
+ * `module.exports = { … }` that `exports` does not follow) is no write of
+ * the final export and is ignored; a write whose object the walk cannot
+ * place (inside a statement that also rebinds one of the two names, or
+ * after a conditional rebinding) withdraws the name.
+ *
+ * A name is also withdrawn when any write the walk cannot order may set it
+ * ({@link ExportWriteSet.withdrawn}: a deferred write, a compound or
+ * destructuring write, a method's `this` write, `Object.defineProperty`, a
+ * member write on a `require(…)` result), and every name -- the
+ * whole-module export too -- when the census meets a reference no kind
+ * enumerates.
+ *
+ * The binding kept for the effective write is the one its own
+ * provenance was built from: a literal's definition, or the property
+ * binding of the name's last write in source order
+ * ({@link commonJsPropertyExportRhs}). When the effective write is some
+ * other write, the name is withdrawn rather than given a provenance its
+ * binding does not carry.
+ *
+ * Applied only where the whole-module value is decided (no whole-module
+ * write, or {@link selectAuthoritativeWholeModuleExport}'s one): an
+ * undecided one is BL-064's (RWF-100) withdrawal in
+ * {@link buildExportBindings}.
+ */
+function applyExportWriteSet(
+  index: SourceIndex,
+  results: ExportBinding[],
+  authoritative: ModuleExportsAssignment | undefined,
+  wholeModuleWrites: number,
+  literalDefinitions: ReadonlySet<ExportBinding>,
+): ExportBinding[] {
+  if (!results.some((binding) => binding.syntax === "commonjs")) {
+    return results;
+  }
+  const sourceFile = index.sourceFile;
+  const set = exportWriteSet(sourceFile);
+  const withdrawnBinding = (binding: ExportBinding): ExportBinding => ({
+    kind: binding.kind,
+    syntax: binding.syntax,
+    exportedName: binding.exportedName,
+    exportAttributionWithdrawn: true,
+    location: binding.location,
+  });
+  if (set.unenumerable) {
+    return results.map((binding) =>
+      binding.syntax === "commonjs" && binding.kind !== "re-export"
+        ? withdrawnBinding(binding)
+        : binding,
+    );
+  }
+  if (wholeModuleWrites > 0 && authoritative === undefined) {
+    // BL-064's (RWF-100) path decides; the census still withdraws.
+    return results.map((binding) =>
+      binding.syntax === "commonjs" &&
+      binding.kind === "named" &&
+      binding.exportedName !== undefined &&
+      set.withdrawn.has(binding.exportedName)
+        ? withdrawnBinding(binding)
+        : binding,
+    );
+  }
+
+  // The identity walk. 0 is the original exports object; statement i's
+  // whole-module write installs object i + 1; -1 is an object the walk
+  // cannot place.
+  const statements = sourceFile.statements;
+  const wholeWritesByStatement = new Map<number, ts.Node[]>();
+  for (const site of competingWriteSites(sourceFile).wholeModule) {
+    if (site.deferred) continue;
+    const known = wholeWritesByStatement.get(site.statementIndex);
+    if (known === undefined) {
+      wholeWritesByStatement.set(site.statementIndex, [site.node]);
+    } else {
+      known.push(site.node);
+    }
+  }
+  const rebindingsByStatement = new Map<number, ts.BinaryExpression[]>();
+  for (const rebinding of set.rebindings) {
+    const at = topLevelStatementIndex(rebinding);
+    if (at === undefined) continue;
+    const known = rebindingsByStatement.get(at);
+    if (known === undefined) {
+      rebindingsByStatement.set(at, [rebinding]);
+    } else {
+      known.push(rebinding);
+    }
+  }
+  const writesByStatement = new Map<number, ExportPropertyWrite[]>();
+  const writesByName = new Map<string, ExportPropertyWrite[]>();
+  for (const write of set.propertyWrites) {
+    for (const [map, key] of [
+      [writesByStatement, write.statementIndex],
+      [writesByName, write.name],
+    ] as const) {
+      const byKey = map as Map<typeof key, ExportPropertyWrite[]>;
+      const known = byKey.get(key);
+      if (known === undefined) {
+        byKey.set(key, [write]);
+      } else {
+        known.push(write);
+      }
+    }
+  }
+
+  let moduleExportsObject = 0;
+  let exportsObject = 0;
+  /** Each property write's object. */
+  const objectOf = new Map<ExportPropertyWrite, number>();
+  for (let i = 0; i < statements.length; i += 1) {
+    const wholeWrites = wholeWritesByStatement.get(i) ?? [];
+    const rebinds = rebindingsByStatement.get(i) ?? [];
+    const changes = wholeWrites.length > 0 || rebinds.length > 0;
+    for (const write of writesByStatement.get(i) ?? []) {
+      objectOf.set(
+        write,
+        write.base === "this"
+          ? 0
+          : changes
+            ? -1
+            : write.base === "module.exports"
+              ? moduleExportsObject
+              : exportsObject,
+      );
+    }
+    if (!changes) continue;
+    const chain = assignmentChainOf(statements[i]!);
+    const inChain = (node: ts.Node): boolean => chain.includes(node);
+    if (
+      !wholeWrites.every(inChain) ||
+      !rebinds.every((rebinding) => inChain(rebinding))
+    ) {
+      // A rebinding inside a condition, a comma, a nested expression.
+      if (wholeWrites.length > 0) moduleExportsObject = -1;
+      if (rebinds.length > 0) exportsObject = -1;
+      continue;
+    }
+    const lastLink = chain.at(-1)!;
+    const innermost = unwrapParentheses(
+      unwrapValue(
+        ts.isExportAssignment(lastLink)
+          ? lastLink.expression
+          : (lastLink as ts.BinaryExpression).right,
+      ),
+    );
+    if (wholeWrites.length > 0) {
+      moduleExportsObject = isAmbientReference(innermost, "exports")
+        ? exportsObject
+        : i + 1;
+    }
+    if (rebinds.length > 0) {
+      exportsObject =
+        wholeWrites.length > 0
+          ? moduleExportsObject
+          : isModuleExportsAssignmentTarget(innermost)
+            ? moduleExportsObject
+            : -1;
+    }
+  }
+  const finalObject = moduleExportsObject;
+
+  /**
+   * Whether `module.exports.name = v` on the final object creates or sets
+   * an own data property (E-1's independent audit, finding 2's follow-up):
+   * the final object is one this file makes as a plain object -- an object
+   * literal with no accessor or `__proto__:` for the name, a function or a
+   * class (whose own `name` and `length`, and a class's `prototype`, are
+   * not writable). A call's or a construction's result, another module's
+   * object or a binding to one may be frozen, a proxy, or have a setter.
+   */
+  const writesTakeOnFinalObject = (name: string): boolean => {
+    if (authoritative === undefined) {
+      return false;
+    }
+    let value = unwrapParentheses(unwrapValue(authoritative.rhs));
+    if (ts.isIdentifier(value) && !isAmbientReference(value, "exports")) {
+      const declaration = lexicalDeclarationOf(value, value.text);
+      if (
+        declaration === undefined ||
+        isNameAssignedWithin(sourceFile, value.text)
+      ) {
+        return false;
+      }
+      if (ts.isFunctionDeclaration(declaration)) {
+        return name !== "name" && name !== "length";
+      }
+      if (ts.isClassDeclaration(declaration)) {
+        return classTakesWrite(declaration, name);
+      }
+      if (
+        !ts.isVariableDeclaration(declaration) ||
+        declaration.initializer === undefined
+      ) {
+        return false;
+      }
+      value = unwrapParentheses(declaration.initializer);
+    }
+    if (isAmbientReference(value, "exports")) {
+      return true;
+    }
+    if (ts.isFunctionExpression(value) || ts.isArrowFunction(value)) {
+      return name !== "name" && name !== "length";
+    }
+    if (ts.isClassExpression(value)) {
+      return classTakesWrite(value, name);
+    }
+    if (!ts.isObjectLiteralExpression(value)) {
+      return false;
+    }
+    return !value.properties.some(
+      (property) =>
+        ts.isSpreadAssignment(property) ||
+        ((ts.isGetAccessorDeclaration(property) ||
+          ts.isSetAccessorDeclaration(property)) &&
+          (property.name === undefined ||
+            !(
+              ts.isIdentifier(property.name) ||
+              ts.isStringLiteral(property.name)
+            ) ||
+            property.name.text === name)) ||
+        (ts.isPropertyAssignment(property) &&
+          (ts.isIdentifier(property.name) ||
+            ts.isStringLiteral(property.name)) &&
+          property.name.text === "__proto__"),
+    );
+  };
+
+  // The authoritative literal's own definitions: the final object's, since
+  // that write installed it ({@link selectAuthoritativeWholeModuleExport}
+  // keeps only the last whole-module write).
+  const literalBindings = new Map<string, ExportBinding>();
+  for (const binding of literalDefinitions) {
+    if (binding.exportedName !== undefined) {
+      literalBindings.set(binding.exportedName, binding);
+    }
+  }
+
+  /** What each name's bindings collapse to: one binding, or none. */
+  const decided = new Map<string, ExportBinding | undefined>();
+  const decide = (name: string, bindings: ExportBinding[]): void => {
+    const sample = bindings[0]!;
+    if (set.withdrawn.has(name) || finalObject < 0) {
+      decided.set(name, withdrawnBinding(sample));
+      return;
+    }
+    const writes = writesByName.get(name) ?? [];
+    if (writes.some((write) => objectOf.get(write) === -1)) {
+      decided.set(name, withdrawnBinding(sample));
+      return;
+    }
+    // An object id is the statement that installed it, so a write that
+    // reaches the final object runs after the write that installed it.
+    const onFinal = writes.filter(
+      (write) => objectOf.get(write) === finalObject,
+    );
+    const literal = literalBindings.get(name);
+    if (onFinal.length === 0) {
+      // No write reaches the final object but the literal's own: the
+      // others went to a stale object.
+      decided.set(name, literal);
+      return;
+    }
+    // A write on an object this file did not make as a plain one may not
+    // take (a frozen object, a setter, a proxy, an inherited accessor).
+    if (finalObject > 0 && !writesTakeOnFinalObject(name)) {
+      decided.set(name, withdrawnBinding(sample));
+      return;
+    }
+    const effective = onFinal.at(-1)!;
+    const property = bindings.find(
+      (binding) => !literalDefinitions.has(binding),
+    );
+    decided.set(
+      name,
+      property !== undefined &&
+        effective.base !== "this" &&
+        commonJsPropertyExportRhs(index, name) === effective.assignment.right
+        ? property
+        : withdrawnBinding(sample),
+    );
+  };
+
+  const byName = new Map<string, ExportBinding[]>();
+  for (const binding of results) {
+    if (
+      binding.syntax === "commonjs" &&
+      binding.kind === "named" &&
+      binding.exportedName !== undefined
+    ) {
+      const known = byName.get(binding.exportedName);
+      if (known === undefined) {
+        byName.set(binding.exportedName, [binding]);
+      } else {
+        known.push(binding);
+      }
+    }
+  }
+  for (const [name, bindings] of byName) {
+    decide(name, bindings);
+  }
+
+  const emitted = new Set<string>();
+  const collapsed: ExportBinding[] = [];
+  for (const binding of results) {
+    if (
+      binding.syntax !== "commonjs" ||
+      binding.kind !== "named" ||
+      binding.exportedName === undefined
+    ) {
+      collapsed.push(binding);
+      continue;
+    }
+    const name = binding.exportedName;
+    if (emitted.has(name)) continue;
+    emitted.add(name);
+    const kept = decided.get(name);
+    if (kept !== undefined) {
+      collapsed.push(kept);
+    }
+  }
+  return collapsed;
+}
+
 /** One module-scope binding: how it is declared, where, and how often. */
 interface ModuleScopeBinding {
   readonly kind: "function" | "var" | "let" | "const" | "class" | "other";
@@ -7669,61 +11051,80 @@ function ambiguousWholeModuleExport(
 }
 
 /**
- * The literal string value of a computed property name's key expression
- * (`[expr]:` / `[expr]() {}`), when it's directly a string/numeric
- * literal or a same-file `const` binding initialized to one (VT-217,
- * SDD-v0.2.md § 7.1's computed-key follow-on) -- e.g.
+ * The property name a computed key (`[expr]:` / `[expr]() {}`) denotes,
+ * when it is directly a string or numeric literal or an identifier bound to
+ * a `const` initialized to one (VT-217) -- e.g.
  * `const NAME = "vulnerable"; module.exports = { [NAME]: impl };`.
- * `undefined` for anything else (a parameter, a function call, a runtime
- * value) -- a genuinely dynamic key stays unresolved exactly as before.
+ * `undefined` for anything else (a parameter, a call, a runtime value): a
+ * genuinely dynamic key, which {@link unpackObjectLiteralExports} treats as
+ * able to define any name.
+ *
+ * E-1 (PRM-28): the identifier resolves LEXICALLY, from the key itself, to
+ * the one declaration it binds to ({@link lexicalDeclarationOf}), which
+ * must be written before the key (a `const` read earlier is in its temporal
+ * dead zone). This used to take the first `const` of that spelling anywhere
+ * in the file, so a function's or block's own `const K = "other"` decided
+ * what a module-scope `[K]` published. A numeric key yields its property
+ * name only when it round-trips ({@link exactCommonJsExportPropertyName}):
+ * `1e3` denotes `"1000"`.
  */
 function resolveComputedPropertyNameLiteral(
   sourceFile: ts.SourceFile,
   name: ts.ComputedPropertyName,
 ): string | undefined {
-  const expr = name.expression;
-  if (ts.isStringLiteralLike(expr) || ts.isNumericLiteral(expr)) {
-    return expr.text;
+  const expr = unwrapParentheses(name.expression);
+  const literal = exactCommonJsExportPropertyName(expr);
+  if (literal !== undefined || !ts.isIdentifier(expr)) {
+    return literal;
   }
-  if (!ts.isIdentifier(expr)) {
+  const declaration = lexicalDeclarationOf(expr, expr.text);
+  if (
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    declaration.initializer === undefined ||
+    !ts.isVariableDeclarationList(declaration.parent) ||
+    (declaration.parent.flags & ts.NodeFlags.Const) === 0 ||
+    declaration.getEnd() > expr.getStart(sourceFile)
+  ) {
     return undefined;
   }
-  const keyName = expr.text;
-
-  let found: string | undefined;
-  function visit(node: ts.Node): void {
-    if (found !== undefined) {
-      return;
-    }
-    if (
-      ts.isVariableDeclaration(node) &&
-      ts.isIdentifier(node.name) &&
-      node.name.text === keyName &&
-      node.initializer &&
-      ts.isStringLiteralLike(node.initializer) &&
-      ts.isVariableDeclarationList(node.parent) &&
-      (node.parent.flags & ts.NodeFlags.Const) !== 0
-    ) {
-      found = node.initializer.text;
-      return;
-    }
-    ts.forEachChild(node, visit);
-  }
-  visit(sourceFile);
-  return found;
+  return exactCommonJsExportPropertyName(
+    unwrapParentheses(declaration.initializer),
+  );
 }
 
 /**
- * Unpacks `module.exports = { a, b: c, method() {} }` into individual
- * named exports — this is one of the most common CommonJS export patterns
- * and, without unpacking, its named members would be invisible to symbol
- * resolution (TASK-017). Spread elements are skipped: their exported name
- * cannot be determined statically (see docs/SDD.md § 21: dynamic
- * constructs must not fabricate exact bindings). A computed property name
- * (VT-217) is unpacked only when its key resolves to a literal via
- * {@link resolveComputedPropertyNameLiteral}; any other computed key stays
- * unresolved. Returns `undefined` (not unpacked) when the RHS isn't an
- * object literal, or when none of its properties are statically nameable.
+ * Unpacks `module.exports = { a, b: c, "d": e, [K]: f, method() {} }` into
+ * individual named exports (TASK-017; VT-217 for computed keys) -- one of
+ * the most common CommonJS export patterns, whose members would otherwise
+ * be invisible to symbol resolution.
+ *
+ * E-1 (PRM-27; ADR 0009 § 4, "duplicate keys inside one object literal"):
+ * a literal can define one name several times, and Node evaluates its
+ * properties in order, so the LAST definition is the one published. Per
+ * name, then:
+ *
+ * - every key form the literal can spell names a property: an identifier,
+ *   a string, a numeric key that round-trips, a computed key
+ *   {@link resolveComputedPropertyNameLiteral} resolves, a shorthand, a
+ *   method, a getter or a setter;
+ * - the name is published by its last definition when every definition of
+ *   it is a plain value (a property, a shorthand or a method);
+ * - a getter or setter among its definitions withdraws it (the value is
+ *   computed at the read, or a setter alone leaves `undefined`);
+ * - a computed key nothing resolves can define ANY name, so it withdraws
+ *   every name whose last definition comes before it;
+ * - a spread anywhere in the literal withdraws every name, as ADR 0009 § 4
+ *   states (a name defined after the spread would be sound to keep --
+ *   `{ ...defaults, run: safe }` publishes `safe` -- but the ADR decides);
+ * - a non-computed `__proto__:` sets the prototype and defines no own
+ *   property: it is no export (the names it makes inherited are no binding
+ *   here, hence unresolved).
+ *
+ * A withdrawn name keeps a binding, marked
+ * {@link ExportBinding.exportAttributionWithdrawn}: the export exists and
+ * its value is not determined. Returns `undefined` when the right-hand side
+ * is not an object literal, or names nothing.
  */
 function unpackObjectLiteralExports(
   index: SourceIndex,
@@ -7734,108 +11135,111 @@ function unpackObjectLiteralExports(
     return undefined;
   }
 
-  const results: ExportBinding[] = [];
+  interface Definitions {
+    /** The binding of the name's last plain definition, if its last definition is one. */
+    last: ExportBinding | undefined;
+    /** The index of the name's last definition among the literal's properties. */
+    lastIndex: number;
+    accessor: boolean;
+  }
+  const byName = new Map<string, Definitions>();
+  /** The index of the last spread or unresolved computed key. */
+  let lastOpenIndex = -1;
+  /** ADR 0009 § 4: a spread anywhere in the literal withdraws every name. */
+  let sawSpread = false;
 
-  for (const property of assignment.rhs.properties) {
-    if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name)) {
-      results.push({
-        kind: "named",
-        syntax: "commonjs",
-        exportedName: property.name.text,
-        localName: ts.isIdentifier(property.initializer)
-          ? property.initializer.text
-          : undefined,
-        // RWF-011: `{ foo: function () {} }` / `{ foo: () => {} }` /
-        // `{ Foo: class {} }` — the property's VALUE is the function node,
-        // an identity. Without it the only remaining key would be the
-        // property name, which is the exported name and therefore no
-        // provenance at all (see {@link propertyExportProvenance}).
-        localFunctionLocation: objectLiteralValueLocation(
-          sourceFile,
-          assignment,
-          property.initializer,
-        ),
-        commonJsReExport: objectLiteralValueReExport(
-          index,
-          assignment,
-          property.initializer,
-        ),
-        localIdentifierProvenanceRefused: refusedProvenanceFlag(
-          refusesLocalIdentifierProvenance(index, property.initializer),
-        ),
-        location: toSourceLocation(sourceFile, property),
+  const valueBinding = (
+    exportedName: string,
+    property: ts.ObjectLiteralElementLike,
+    value: ts.Expression,
+  ): ExportBinding => ({
+    kind: "named",
+    syntax: "commonjs",
+    exportedName,
+    localName: ts.isIdentifier(value) ? value.text : undefined,
+    // RWF-011: `{ foo: function () {} }` / `{ foo: () => {} }` /
+    // `{ Foo: class {} }` — the property's VALUE is the function node,
+    // an identity.
+    localFunctionLocation: objectLiteralValueLocation(
+      sourceFile,
+      assignment,
+      value,
+    ),
+    // `module.exports = { Range }` over a local
+    // `const Range = require("./classes/range")` -- the dominant
+    // real-world shape (semver, qs; see the audit's § 5.2).
+    commonJsReExport: objectLiteralValueReExport(index, assignment, value),
+    // RWF-013: a reassigned identifier is refused in every key form.
+    localIdentifierProvenanceRefused: refusedProvenanceFlag(
+      refusesLocalIdentifierProvenance(index, value),
+    ),
+    location: toSourceLocation(sourceFile, property),
+  });
+
+  const define = (
+    name: string,
+    propertyIndex: number,
+    binding: ExportBinding | undefined,
+  ): void => {
+    const known = byName.get(name);
+    if (known === undefined) {
+      byName.set(name, {
+        last: binding,
+        lastIndex: propertyIndex,
+        accessor: binding === undefined,
       });
-    } else if (
-      ts.isPropertyAssignment(property) &&
-      ts.isComputedPropertyName(property.name)
-    ) {
-      const exportedName = resolveComputedPropertyNameLiteral(
-        sourceFile,
-        property.name,
+    } else {
+      known.last = binding;
+      known.lastIndex = propertyIndex;
+      known.accessor ||= binding === undefined;
+    }
+  };
+
+  assignment.rhs.properties.forEach((property, propertyIndex) => {
+    if (ts.isSpreadAssignment(property)) {
+      sawSpread = true;
+      return;
+    }
+    if (ts.isShorthandPropertyAssignment(property)) {
+      // The shorthand's own identifier IS the value expression.
+      define(
+        property.name.text,
+        propertyIndex,
+        valueBinding(property.name.text, property, property.name),
       );
-      if (exportedName !== undefined) {
-        results.push({
-          kind: "named",
-          syntax: "commonjs",
-          exportedName,
-          localName: ts.isIdentifier(property.initializer)
-            ? property.initializer.text
-            : undefined,
-          localFunctionLocation: objectLiteralValueLocation(
-            sourceFile,
-            assignment,
-            property.initializer,
-          ),
-          commonJsReExport: objectLiteralValueReExport(
-            index,
-            assignment,
-            property.initializer,
-          ),
-          // RWF-013, extended to the computed-key form (VT-217) that
-          // shipped without it: `module.exports = { [NAME]: fn }` binds an
-          // export to an identifier exactly as the literal-key form does,
-          // and a reassigned `fn` must be refused in both.
-          localIdentifierProvenanceRefused: refusedProvenanceFlag(
-            refusesLocalIdentifierProvenance(index, property.initializer),
-          ),
-          location: toSourceLocation(sourceFile, property),
-        });
-      }
-    } else if (ts.isShorthandPropertyAssignment(property)) {
-      results.push({
-        kind: "named",
-        syntax: "commonjs",
-        exportedName: property.name.text,
-        localName: property.name.text,
-        // `module.exports = { Range }` over a local
-        // `const Range = require("./classes/range")` -- the dominant
-        // real-world shape (semver, qs; see the audit's § 5.2). The
-        // shorthand's own identifier IS the value expression.
-        commonJsReExport: objectLiteralValueReExport(
-          index,
-          assignment,
-          property.name,
-        ),
-        localIdentifierProvenanceRefused: refusedProvenanceFlag(
-          refusesLocalIdentifierProvenance(index, property.name),
-        ),
-        location: toSourceLocation(sourceFile, property),
-      });
-    } else if (
-      ts.isMethodDeclaration(property) &&
-      ts.isIdentifier(property.name)
+      return;
+    }
+    const key = property.name;
+    if (
+      ts.isPropertyAssignment(property) &&
+      (ts.isIdentifier(key) || ts.isStringLiteral(key)) &&
+      key.text === "__proto__"
     ) {
-      results.push({
+      return;
+    }
+    const name = ts.isComputedPropertyName(key)
+      ? resolveComputedPropertyNameLiteral(sourceFile, key)
+      : ts.isIdentifier(key) || ts.isPrivateIdentifier(key)
+        ? key.text
+        : exactCommonJsExportPropertyName(key as ts.Expression);
+    if (name === undefined) {
+      lastOpenIndex = propertyIndex;
+      return;
+    }
+    if (ts.isPropertyAssignment(property)) {
+      define(
+        name,
+        propertyIndex,
+        valueBinding(name, property, property.initializer),
+      );
+    } else if (ts.isMethodDeclaration(property)) {
+      // RWF-011: a method IS its own function node, so it is bound by
+      // position only. Its name is no reference (E-1): resolving it
+      // lexically would land on a same-named declaration in scope.
+      define(name, propertyIndex, {
         kind: "named",
         syntax: "commonjs",
-        exportedName: property.name.text,
-        localName: property.name.text,
-        // RWF-011: a method IS its own function node, so bind it by
-        // position. Its `localName` above is the method's own name, which
-        // for this shape is necessarily also the exported name — so a
-        // name search could not tell the method apart from an unrelated
-        // same-file `function foo() {}` and returned whichever came
-        // first, silently attributing the wrong node.
+        exportedName: name,
         localFunctionLocation: methodValueLocation(
           sourceFile,
           assignment,
@@ -7843,37 +11247,31 @@ function unpackObjectLiteralExports(
         ),
         location: toSourceLocation(sourceFile, property),
       });
-    } else if (
-      ts.isMethodDeclaration(property) &&
-      ts.isComputedPropertyName(property.name)
-    ) {
-      const exportedName = resolveComputedPropertyNameLiteral(
-        sourceFile,
-        property.name,
-      );
-      if (exportedName !== undefined) {
-        results.push({
-          kind: "named",
-          syntax: "commonjs",
-          exportedName,
-          localName: exportedName,
-          // The computed form additionally has no usable name at all:
-          // source indexing records the method under its literal source
-          // text (`[NAME]`), so position is the only thing that can
-          // resolve it.
-          localFunctionLocation: methodValueLocation(
-            sourceFile,
-            assignment,
-            property,
-          ),
-          location: toSourceLocation(sourceFile, property),
-        });
-      }
+    } else {
+      // A getter or a setter.
+      define(name, propertyIndex, undefined);
     }
-    // Spread elements and any other computed property name (one that
-    // doesn't resolve to a literal) are intentionally not unpacked.
-  }
+  });
 
+  const results: ExportBinding[] = [];
+  for (const [name, definitions] of byName) {
+    if (
+      definitions.last !== undefined &&
+      !definitions.accessor &&
+      !sawSpread &&
+      definitions.lastIndex > lastOpenIndex
+    ) {
+      results.push(definitions.last);
+    } else {
+      results.push({
+        kind: "named",
+        syntax: "commonjs",
+        exportedName: name,
+        exportAttributionWithdrawn: true,
+        location: toSourceLocation(sourceFile, assignment.rhs),
+      });
+    }
+  }
   return results.length > 0 ? results : undefined;
 }
 
@@ -7937,6 +11335,9 @@ function buildExportBindings(
   const sourceFile = index.sourceFile;
   const results: ExportBinding[] = [];
   let sawCommonJsModuleExports = false;
+  let authoritative: ModuleExportsAssignment | undefined;
+  let wholeModuleWrites = 0;
+  const literalDefinitions = new Set<ExportBinding>();
 
   for (const exp of exportsList) {
     switch (exp.bindingKind) {
@@ -7994,6 +11395,18 @@ function buildExportBindings(
           exportedName: exp.exportedName,
           localName: exp.localName,
           specifier: exp.specifier,
+          // E-1 (PRM-62; ADR 0009 § 1 clause 2): an ES module exports a
+          // LIVE binding, so a local the file assigns anywhere -- at module
+          // scope, or in a function an importer calls later -- holds more
+          // than its declaration's value. {@link mapExportsToFunctions}
+          // refuses it ({@link exportLocalCallableLocation}); the flag
+          // lets root selection widen rather than drop it.
+          exportAttributionWithdrawn:
+            exp.bindingKind !== "re-export" &&
+            exp.localName !== undefined &&
+            isNameAssignedWithin(sourceFile, exp.localName)
+              ? true
+              : undefined,
           location: exp.location,
         });
         break;
@@ -8009,10 +11422,12 @@ function buildExportBindings(
     // assigned literal would publish a branch's export table as the
     // module's. See {@link selectAuthoritativeWholeModuleExport}.
     const assignments = collectModuleExportsAssignments(sourceFile);
-    const authoritative = selectAuthoritativeWholeModuleExport(assignments);
+    wholeModuleWrites = assignments.length;
+    authoritative = selectAuthoritativeWholeModuleExport(assignments);
     const observed = assignments.at(-1);
     if (authoritative) {
       const unpacked = unpackObjectLiteralExports(index, authoritative);
+      unpacked?.forEach((binding) => literalDefinitions.add(binding));
       results.push(
         ...(unpacked ?? [wholeModuleDefaultExport(index, authoritative)]),
       );
@@ -8059,7 +11474,15 @@ function buildExportBindings(
     }
   }
 
-  return results;
+  // E-1 (ADR 0009 § 1): one effective write per CommonJS name, from the
+  // file's complete write set. See {@link applyExportWriteSet}.
+  return applyExportWriteSet(
+    index,
+    results,
+    authoritative,
+    wholeModuleWrites,
+    literalDefinitions,
+  );
 }
 
 /**
@@ -8234,7 +11657,20 @@ function wholeModuleDefaultExport(
     // one structurally (RWF-003). Independent of `localName`: an anonymous
     // value has an identity and no name, and a named function expression
     // has both.
-    localFunctionLocation: directExportedFunctionLocation(index, assignment),
+    //
+    // E-1: a NAMED class expression (`module.exports = class Cursor {}`)
+    // is identified by its constructor's position. Its name is bound only
+    // inside the class, so lexical identity finds no declaration of it in
+    // module scope, where the name `find` used to find its constructor.
+    // An anonymous one stays unattributed, as before.
+    localFunctionLocation:
+      directExportedFunctionLocation(index, assignment) ??
+      (ts.isClassExpression(rhsValue) &&
+      rhsValue.name !== undefined &&
+      isDefinitelyReachedExportAssignment(assignment.rhs) &&
+      !declaresCommonJsAmbientShadow(index)
+        ? toSourceLocation(index.sourceFile, classConstructorNode(rhsValue))
+        : undefined),
     // RWF-013: `module.exports = fn` where `fn` is a variable this file
     // reassigns (or otherwise cannot prove single-assignment for). The
     // name "fn" is still a perfectly good same-file match for the STALE
@@ -9179,34 +12615,85 @@ export function mapExportsToFunctions(
     }
 
     // RWF-011: ONLY a local name the export's own right-hand side
-    // established may drive a same-file function search. This used to
-    // read `exp.localName ?? exp.exportedName`, and that fallback is the
-    // defect: a public export name is not provenance for any local
-    // symbol, so `exports.parse = registry.impl` — whose value this
-    // analyzer models nothing about — bound itself to an unrelated
-    // same-file `function parse()` purely because the two strings match.
-    // Family C would then prove that decoy unreachable and report a
-    // complete, internally consistent, and false NOT_AFFECTED.
+    // established may name the export's function -- never the public
+    // export name, which is provenance for no local symbol
+    // (`exports.parse = registry.impl` beside an unrelated
+    // `function parse()`).
     //
-    // Dropping the fallback costs nothing that had provenance: every
-    // shape that legitimately resolved through it now arrives here with a
-    // real `localName` (an identifier right-hand side, an object-literal
-    // shorthand, an ESM local) or was already resolved above by exact
-    // position (a directly-referenced function, arrow, class or method).
-    // An export with neither is one nothing in this file attributes, and
-    // an unattributed export is an unresolved target — UNKNOWN, never a
-    // verdict. See {@link propertyExportProvenance}.
-    const localKey = exp.localName;
-    if (!localKey) {
+    // E-1 (PRM-26; ADR 0009 § 1 clause 5): and that local name denotes
+    // the ONE declaration it binds to where the export is written, by
+    // lexical identity, never the first indexed function that merely
+    // shares its spelling (a class method, a nested function, an
+    // `o.run = function () {}` that source indexing names after the
+    // property). A name nothing in scope declares, declares twice, or the
+    // file assigns anywhere attributes nothing: an unresolved target,
+    // UNKNOWN. See {@link exportLocalCallableLocation}.
+    if (exp.localName === undefined) {
       continue;
     }
-    const matchingFn = index.functions.find((fn) => fn.name === localKey);
-    if (matchingFn) {
-      result.set(canonicalName, matchingFn);
+    const location = exportLocalCallableLocation(index, exp, exp.localName);
+    if (location !== undefined) {
+      functionsByPosition ??= indexFunctionsByPosition(index);
+      const byIdentity = functionsByPosition.get(positionKey(location));
+      if (byIdentity) {
+        result.set(canonicalName, byIdentity);
+      }
     }
   }
 
   return result;
+}
+
+/**
+ * The position of the callable `localName` denotes at `exp`'s own site, by
+ * lexical identity (task E-1, PRM-26), or `undefined` when it denotes no
+ * one callable this file defines.
+ *
+ * The site is the export's own statement, declaration or specifier, and
+ * the name resolves through its scope chain to the one declaration that
+ * owns it ({@link lexicalDeclarationOf}): a class method, a nested
+ * function or a property function that merely shares the spelling is never
+ * it. Refused, toward an unresolved target:
+ *
+ * - a site inside a function body (a write that may run later, or never);
+ * - a name the file assigns ANYWHERE (`run = other`, in any scope): its
+ *   declaration's value is not the export's (RWF-013 for CommonJS, PRM-62
+ *   for an ES module's live binding, which an assignment anywhere changes
+ *   for every importer);
+ * - for CommonJS, a variable whose initializer has not run where the
+ *   export reads it (`exports.run = run; var run = function () {}`
+ *   publishes `undefined`). An ES module export is a live binding, read at
+ *   the importer's call, so its order is not asked.
+ */
+function exportLocalCallableLocation(
+  index: SourceIndex,
+  exp: ExportBinding,
+  localName: string,
+): SourceLocation | undefined {
+  const sourceFile = index.sourceFile;
+  const site = nodeAtLocation(sourceFile, exp.location);
+  if (site === undefined || isInsideFunctionBody(site)) {
+    return undefined;
+  }
+  const declaration = lexicalDeclarationOf(site, localName);
+  if (
+    declaration === undefined ||
+    isNameAssignedWithin(sourceFile, localName)
+  ) {
+    return undefined;
+  }
+  if (ts.isVariableDeclaration(declaration)) {
+    if (declaration.initializer === undefined) {
+      return undefined;
+    }
+    if (
+      exp.syntax === "commonjs" &&
+      declaration.getEnd() > site.getStart(sourceFile)
+    ) {
+      return undefined;
+    }
+  }
+  return declaredCallableLocation(sourceFile, declaration);
 }
 
 /** A function node's own start position, the identity key {@link ExportBinding.localFunctionLocation} resolves against. */

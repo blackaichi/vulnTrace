@@ -75,63 +75,32 @@ export interface NameLookupCensusEntry {
   readonly why: string;
 }
 
-const PRM_26 = { finding: "PRM-26", task: "E-1" } as const;
-
 export const NAME_LOOKUP_CENSUS: readonly NameLookupCensusEntry[] = [
-  // -- Target attribution: the export map's first match by name (PRM-26) --
-  {
-    file: "src/code-intelligence/module-model.ts",
-    enclosing: "mapExportsToFunctions",
-    expression: "fn.name === localKey",
-    direction: "open",
-    openFinding: PRM_26,
-    why: "takes the FIRST indexed function named like the export's local -- a class method, a nested function, an `obj.x = function(){}` -- as the export's implementation; ADR 0009 replaces it with lexical identity (task E-1)",
-  },
-  {
-    file: "src/code-intelligence/module-model.ts",
-    enclosing: "findExportedClassMembers",
-    expression: "mapExportsToFunctions(index, model)",
-    direction: "open",
-    openFinding: PRM_26,
-    why: "the exported classes are read off the PRM-26 map",
-  },
+  // -- Target attribution: exported classes' members ----------------------
+  //
+  // The export map itself (`mapExportsToFunctions`) resolves an export's
+  // local by lexical identity since task E-1 (PRM-26, ADR 0009 § 1 clause
+  // 5); it is no name-keyed lookup, and neither are its callers.
   {
     file: "src/code-intelligence/module-model.ts",
     enclosing: "findExportedClassMembers",
     expression: "exportedClassNames.has(fn.memberOf.className)",
     direction: "widen-only",
-    why: "the members of EVERY class whose name an exported class has -- a nested class of the same name included -- are targets, ORed by the caller: a target too many (a false-AFFECTED risk, found by task V-3's independent audit), never one too few; the exported-class set is the open PRM-26 entry above",
+    why: "the members of EVERY class whose name an exported class has -- a nested class of the same name included -- are targets, ORed by the caller: a target too many (a false-AFFECTED risk, found by task V-3's independent audit), never one too few; the exported classes themselves come from the export map's lexical identity (task E-1)",
   },
   {
     file: "src/code-intelligence/module-model.ts",
     enclosing: "findExportedClassMembers",
     expression: "fn.name === memberName",
     direction: "widen-only",
-    why: "returns EVERY member so named of every exported class, and the caller ORs reachability across them: a same-named member is one more target, never a substitute (VT-301A); the exported-class set it filters by is the open PRM-26 entry above",
-  },
-  {
-    file: "src/analysis/verdict.ts",
-    enclosing: "findExportNodeInFile",
-    expression: "mapExportsToFunctions(index, model)",
-    direction: "open",
-    openFinding: PRM_26,
-    why: "a rule's target is attributed through the PRM-26 map",
+    why: "returns EVERY member so named of every exported class, and the caller ORs reachability across them: a same-named member is one more target, never a substitute (VT-301A)",
   },
   {
     file: "src/analysis/verdict.ts",
     enclosing: "findExportNodeInFile",
     expression: "findExportedClassMembers(index, model, exportName)",
-    direction: "open",
-    openFinding: PRM_26,
-    why: "a method target is attributed through the exported classes the PRM-26 map names",
-  },
-  {
-    file: "src/code-intelligence/call-graph.ts",
-    enclosing: "prepareFile",
-    expression: "mapExportsToFunctions(index, model)",
-    direction: "open",
-    openFinding: PRM_26,
-    why: "each file's export-name -> node map, which call edges into the file resolve through, is built from the PRM-26 map",
+    direction: "widen-only",
+    why: "a method target is every member so named of every exported class, ORed (the two widen-only entries above); the exported classes come from the export map's lexical identity since task E-1",
   },
   // -- The synthetic-graph target fallback -------------------------------
   {
