@@ -116,6 +116,8 @@ export default defineConfig({
 
       "src/cli/scan.b5-cli-output.test.ts",
       "src/cli/run.b5-flags.test.ts",
+
+      "src/code-intelligence/module-model.export-write-set.test.ts",
     ],
     // Same reason as `vitest.config.ts`: several of these run REAL
     // end-to-end scans over vendored `node_modules` and legitimately take

@@ -44,6 +44,8 @@ export interface InvariantOwnership {
     | "P1-A"
     /** The soundness remediation's ADR 0008 (lane A; registered from task A-1). */
     | "ADR-0008"
+    /** The soundness remediation's ADR 0009 (lane E; registered from task E-1). */
+    | "ADR-0009"
     /** The soundness remediation's ADR 0010 (lane C; registered from task C-1). */
     | "ADR-0010"
     /** The soundness remediation's ADR 0011 (lane V; registered from task V-3). */
@@ -700,6 +702,34 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "unfiltered condition and the HTML fallback, end to end; the run test " +
       "owns the flags at the CLI boundary. withdrawn is decided (B-5's " +
       "reading of decision 3, REMEDIATION-PLAN § 5a).",
+  },
+  {
+    id: "VT-INV-E-write-set",
+    invariant:
+      "A CommonJS or ES module export is attributed to a declaration only " +
+      "when the file's complete write set determines one effective write " +
+      "(ADR 0009 § 1): every reference the file makes to its export " +
+      "objects is classified by the closed ExportWriteKind union, a form " +
+      "outside it withdraws every name; the effective write of a name is " +
+      "its last module-time write to the FINAL export object, a write to a " +
+      "stale object is ignored, and a write the walk cannot order (deferred, " +
+      "compound, destructuring, a method's this, defineProperty, a member " +
+      "write on a require() result) withdraws the name; an object literal " +
+      "publishes each name's last plain definition, withdrawn by an " +
+      "accessor or a later spread or unresolved key; a computed key and an " +
+      "export's local resolve by lexical identity, never by name; and an " +
+      "ES module local the file assigns anywhere is withdrawn.",
+    foundation: "ADR-0009",
+    owners: ["src/code-intelligence/module-model.export-write-set.test.ts"],
+    note:
+      "Task E-1 (PRM-26, 27, 28, 29, 30, 62, 63, 103). The unit test owns " +
+      "each ExportWriteKind, the literal rule, lexical identity, the " +
+      "computed-key constants, the final-object walk and the ES module " +
+      "withdrawal, one at a time. Its real-Node ground truth is " +
+      "tests/oracle/e1-export-write-set.test.ts, run in CI by `npm run " +
+      "test:oracle` (it spawns real Node, so it is not a Foundation-gate " +
+      "owner). The name-keyed-lookup census (VT-INV-V-corroboration's) " +
+      "fails on any name-keyed export lookup this task removed coming back.",
   },
 ];
 

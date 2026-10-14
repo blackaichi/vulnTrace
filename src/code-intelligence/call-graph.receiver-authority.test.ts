@@ -847,7 +847,12 @@ describe("a method edge is withdrawn when the export slot its class was read fro
       ),
       "src/lib.js": `${LIB}function swap() { module.exports.Lib = module.exports.Evil; }\nmodule.exports.swap = swap;\n`,
     });
-    expect(accountOf(graph)).toContain(WITHDRAWN[0]);
+    // Since task E-1 the deferred write withdraws the export `Lib` itself
+    // (ADR 0009 § 1 clause 2), so `new Lib()` is already an unresolved
+    // target and no method edge is ever resolved to be withdrawn here.
+    const account = accountOf(graph);
+    expect(account).toContain("unknown unresolved_target");
+    expect(account.some((entry) => !entry.startsWith("unknown"))).toBe(false);
   });
 });
 
