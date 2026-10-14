@@ -284,3 +284,159 @@ describe("hop ordering", () => {
     ).toEqual([]);
   });
 });
+
+describe("E-2: the CommonJS hop consults the export write set (RWF-105)", () => {
+  const LIB = `module.exports = require("./lib");\n`;
+  const FORWARD = {
+    specifier: "./lib",
+    exportName: "vulnerable",
+    syntax: "commonjs",
+  } as const;
+
+  // Each write leaves no named binding of its own -- E-1's census can only
+  // withdraw the name -- and writes `vulnerable` onto `./lib`'s own
+  // exports object, which real Node then publishes (tests/oracle/
+  // e2-forwarding-write-set.test.ts).
+  it.each([
+    ["an array destructuring write", `[module.exports.vulnerable] = [other];`],
+    [
+      "an object destructuring write",
+      `({ vulnerable: module.exports.vulnerable } = other);`,
+    ],
+    ["a for-of write", `for (module.exports.vulnerable of [other]);`],
+    [
+      "a write through an alias of the final object",
+      `const e = module.exports;\ne.vulnerable = other;`,
+    ],
+    ["a logical assignment", `module.exports.vulnerable ||= other;`],
+    ["a delete", `delete module.exports.vulnerable;`],
+    ["Object.assign", `Object.assign(module.exports, { vulnerable: other });`],
+    [
+      "Object.defineProperty",
+      `Object.defineProperty(module.exports, "vulnerable", { value: other });`,
+    ],
+    ["Reflect.set", `Reflect.set(module.exports, "vulnerable", other);`],
+  ])(
+    "refuses to forward a name the file writes onto the forwarded object: %s",
+    (_label, write) => {
+      const model = modelOf(`const other = () => {};\n${LIB}${write}`);
+      expect(
+        model.exports.some((exp) => exp.exportedName === "vulnerable"),
+        "no named binding of its own",
+      ).toBe(false);
+      expect(commonJsExportForwardingHop(model, "vulnerable")).toBeUndefined();
+    },
+  );
+
+  it("still forwards a name the file does not write", () => {
+    expect(
+      commonJsExportForwardingHop(
+        modelOf(`const other = 1;\n${LIB}[module.exports.other] = [other];`),
+        "vulnerable",
+      ),
+    ).toEqual(FORWARD);
+  });
+
+  it("forwards past a write to the STALE `exports` or module-scope `this`: neither is the forwarded object", () => {
+    for (const write of [
+      `exports.vulnerable = other;`,
+      `this.vulnerable = other;`,
+    ]) {
+      expect(
+        commonJsExportForwardingHop(
+          modelOf(`const other = () => {};\n${LIB}${write}`),
+          "vulnerable",
+        ),
+        write,
+      ).toEqual(FORWARD);
+    }
+  });
+
+  it("records a plain write on the forwarded object, and not a stale one", () => {
+    const shadowed = (write: string) =>
+      modelOf(`const other = () => {};\n${LIB}${write}`).exports.find(
+        (exp) => exp.kind === "default",
+      )?.forwardingShadowedNames;
+    expect(
+      shadowed(`module.exports.vulnerable = other;`)?.has("vulnerable"),
+    ).toBe(true);
+    expect(shadowed(`exports.vulnerable = other;`)?.has("vulnerable")).toBe(
+      false,
+    );
+    expect(shadowed(``)).toEqual(new Set());
+  });
+
+  it("refuses a destructuring write to the stale `exports` too (the census does not place its object: the accepted precision cost)", () => {
+    expect(
+      commonJsExportForwardingHop(
+        modelOf(
+          `const other = () => {};\n${LIB}[exports.vulnerable] = [other];`,
+        ),
+        "vulnerable",
+      ),
+    ).toBeUndefined();
+  });
+
+  it("forwards nothing from a whole-module re-export carrying no write-set record", () => {
+    const model = modelOf(LIB);
+    expect(commonJsExportForwardingHop(model, "vulnerable")).toEqual(FORWARD);
+    const unconsulted = {
+      ...model,
+      exports: model.exports.map((exp) =>
+        exp.kind === "default"
+          ? { ...exp, forwardingShadowedNames: undefined }
+          : exp,
+      ),
+    };
+    expect(
+      commonJsExportForwardingHop(unconsulted, "vulnerable"),
+    ).toBeUndefined();
+  });
+
+  it("forwards nothing when the model carries more than one whole-module binding", () => {
+    const model = modelOf(LIB);
+    const twice = { ...model, exports: [...model.exports, ...model.exports] };
+    expect(commonJsExportForwardingHop(twice, "vulnerable")).toBeUndefined();
+  });
+
+  it("forwards an own name only when every own binding of it carries the same origin", () => {
+    const model = modelOf(`exports.vulnerable = require("./lib").vulnerable;`);
+    const own = model.exports[0]!;
+    expect(commonJsExportForwardingHop(model, "vulnerable")).toEqual(FORWARD);
+    const withOwn = (...extra: (typeof own)[]) => ({
+      ...model,
+      exports: [own, ...extra],
+    });
+    expect(
+      commonJsExportForwardingHop(withOwn(own), "vulnerable"),
+      "the same origin twice",
+    ).toEqual(FORWARD);
+    expect(
+      commonJsExportForwardingHop(
+        withOwn({
+          ...own,
+          commonJsReExport: {
+            specifier: "./other",
+            importedName: "vulnerable",
+          },
+        }),
+        "vulnerable",
+      ),
+      "two origins: the first is not the one Node keeps",
+    ).toBeUndefined();
+    expect(
+      commonJsExportForwardingHop(
+        withOwn({ ...own, exportAttributionWithdrawn: true }),
+        "vulnerable",
+      ),
+      "a withdrawn binding of the name",
+    ).toBeUndefined();
+    expect(
+      commonJsExportForwardingHop(
+        { ...model, exports: [{ ...own, exportAttributionWithdrawn: true }] },
+        "vulnerable",
+      ),
+      "a withdrawn binding that still carries an origin",
+    ).toBeUndefined();
+  });
+});
