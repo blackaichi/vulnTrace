@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -35,7 +36,7 @@ function modelOf(source: string, ext = ".js") {
   const file = path.join(dir, `m${ext}`);
   writeFileSync(file, source);
   const index = indexSourceFileFromDisk(file);
-  const model = buildModuleModel(index);
+  const model = buildModuleModel(index, NO_LOAD_REACHES_BACK);
   return { model, candidates: entrypointRootCandidates(index, model) };
 }
 

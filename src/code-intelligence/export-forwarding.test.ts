@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { describe, expect, it } from "vitest";
 import {
   commonJsExportForwardingHop,
@@ -25,7 +26,7 @@ import { indexSourceFile } from "./source-index.js";
  * guessed at.
  */
 function modelOf(source: string, file = "/virtual/index.js") {
-  return buildModuleModel(indexSourceFile(file, source));
+  return buildModuleModel(indexSourceFile(file, source), NO_LOAD_REACHES_BACK);
 }
 
 describe("CommonJS forwarding hops", () => {

@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { describe, expect, it } from "vitest";
 import { classifyLocalBinding } from "./commonjs-reexports.js";
 import { buildModuleModel } from "./module-model.js";
@@ -245,7 +246,7 @@ describe("RWF-025b: scope and shadowing", () => {
 describe("RWF-025b: downstream CommonJS re-export attribution", () => {
   function originOf(source: string, exportedName: string) {
     const index = indexSourceFile(`/virtual/rwf025b-x${counter++}.js`, source);
-    return buildModuleModel(index).exports.find(
+    return buildModuleModel(index, NO_LOAD_REACHES_BACK).exports.find(
       (exp) => exp.exportedName === exportedName,
     )?.commonJsReExport;
   }
@@ -288,7 +289,7 @@ describe("RWF-025b: downstream CommonJS re-export attribution", () => {
       "refused",
     );
     expect(
-      buildModuleModel(readOnlyIndex).exports.find(
+      buildModuleModel(readOnlyIndex, NO_LOAD_REACHES_BACK).exports.find(
         (exp) => exp.exportedName === "vulnerable",
       ),
     ).toBeDefined();

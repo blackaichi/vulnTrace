@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { describe, expect, it } from "vitest";
 import {
   buildModuleModel,
@@ -31,12 +32,15 @@ function attributed(
   file = "/pkg/index.js",
 ): string | undefined {
   const index = indexSourceFile(file, text);
-  return mapExportsToFunctions(index, buildModuleModel(index)).get(name)?.name;
+  return mapExportsToFunctions(
+    index,
+    buildModuleModel(index, NO_LOAD_REACHES_BACK),
+  ).get(name)?.name;
 }
 
 function bindingsOf(text: string, file = "/pkg/index.js"): ExportBinding[] {
   const index = indexSourceFile(file, text);
-  return [...buildModuleModel(index).exports];
+  return [...buildModuleModel(index, NO_LOAD_REACHES_BACK).exports];
 }
 
 function expectWithdrawn(text: string, name = "run"): void {
@@ -62,7 +66,10 @@ describe("E-1: lexical identity (PRM-26)", () => {
       "/pkg/index.js",
       `${HEAD}class A { run() { return lib.safe(); } }\nvoid A;\nfunction run() { return lib.parse(); }\nexports.run = run;\n`,
     );
-    const fn = mapExportsToFunctions(index, buildModuleModel(index)).get("run");
+    const fn = mapExportsToFunctions(
+      index,
+      buildModuleModel(index, NO_LOAD_REACHES_BACK),
+    ).get("run");
     expect(
       fn?.memberOf,
       "the module-scope function, not A#run",
@@ -72,7 +79,10 @@ describe("E-1: lexical identity (PRM-26)", () => {
   it("binds the module-scope declaration, not a nested function of its name", () => {
     const text = `${HEAD}function outer() { function run() { return lib.safe(); } return run; }\nvoid outer;\nfunction run() { return lib.parse(); }\nmodule.exports = { run };\n`;
     const index = indexSourceFile("/pkg/index.js", text);
-    const fn = mapExportsToFunctions(index, buildModuleModel(index)).get("run");
+    const fn = mapExportsToFunctions(
+      index,
+      buildModuleModel(index, NO_LOAD_REACHES_BACK),
+    ).get("run");
     expect(fn?.location.line).toBe(6);
   });
 
@@ -651,9 +661,10 @@ describe("E-1: a named whole-module class expression", () => {
       "/pkg/index.js",
       "function Cursor() {}\nvoid Cursor;\nmodule.exports = class Cursor { constructor() {} };\n",
     );
-    const fn = mapExportsToFunctions(index, buildModuleModel(index)).get(
-      "default",
-    );
+    const fn = mapExportsToFunctions(
+      index,
+      buildModuleModel(index, NO_LOAD_REACHES_BACK),
+    ).get("default");
     expect(fn?.kind).toBe("constructor");
     expect(fn?.location.line).toBe(3);
   });
