@@ -1,3 +1,4 @@
+import { fixtureLoadReach } from "../testing/load-reach.js";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
@@ -122,16 +123,20 @@ describe("RWF-013b fixture: reassigned function declaration (fixtures/commonjs-r
     expect(stale?.kind).toBe("function");
 
     expect(
-      mapExportsToFunctions(index, buildModuleModel(index)).get("parse"),
+      mapExportsToFunctions(
+        index,
+        buildModuleModel(index, await fixtureLoadReach(root, index)),
+      ).get("parse"),
     ).toBeUndefined();
   });
 
   it("records the refusal as an examined-and-rejected identifier, not as silence", async () => {
     const { root } = await scan({ target: "parse" });
     const index = indexSourceFileFromDisk(facadePath(root));
-    const parse = buildModuleModel(index).exports.find(
-      (e) => e.exportedName === "parse",
-    );
+    const parse = buildModuleModel(
+      index,
+      await fixtureLoadReach(root, index),
+    ).exports.find((e) => e.exportedName === "parse");
 
     expect(parse?.localIdentifierProvenanceRefused).toBe(true);
   });
@@ -186,9 +191,10 @@ describe("RWF-013b fixture: reassigned function declaration (fixtures/commonjs-r
   it("leaves the statically resolvable sibling export exactly as it was", async () => {
     const { root } = await scan({ target: "parseSync" });
     const index = indexSourceFileFromDisk(facadePath(root));
-    const parseSync = buildModuleModel(index).exports.find(
-      (e) => e.exportedName === "parseSync",
-    );
+    const parseSync = buildModuleModel(
+      index,
+      await fixtureLoadReach(root, index),
+    ).exports.find((e) => e.exportedName === "parseSync");
 
     expect(parseSync?.localIdentifierProvenanceRefused).toBeUndefined();
     expect(parseSync?.commonJsReExport).toEqual({ specifier: "./lib/parse" });

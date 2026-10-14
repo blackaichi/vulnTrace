@@ -71,9 +71,14 @@ import {
 } from "./module-model.js";
 import type { ModuleResolver } from "./module-resolver.js";
 import {
+  attachLoadReachGraph,
+  loadReachGraphFor,
+  preparingResolver,
+  type LoadReachGraph,
+} from "./load-reach.js";
+import {
   type IndexedFunction,
   type SourceIndex,
-  indexSourceFileFromDisk,
   isAccessorWithBody,
   isFunctionLike,
   toSourceLocation,
@@ -153,15 +158,19 @@ interface FileGraphData {
 function prepareFile(
   filePath: string,
   registerNode: (node: GraphNode) => void,
+  reachGraph: LoadReachGraph,
 ): FileGraphData | undefined {
-  let index: SourceIndex;
-  try {
-    index = indexSourceFileFromDisk(filePath);
-  } catch {
+  // Task BL-074: read and parsed once per scan, shared with the reach graph
+  // (performance only; `undefined` exactly when reading it fails).
+  const index = reachGraph.indexOf(filePath);
+  if (index === undefined) {
     return undefined;
   }
 
-  const model = buildModuleModel(index);
+  // Task BL-074: the file's module-graph context, prepared when the walk
+  // resolved to it (`preparingResolver`) or rooted at it; absent, the
+  // export census applies its fail-closed per-file rule.
+  const model = buildModuleModel(index, reachGraph.cached(filePath));
   const modNodeId = moduleNodeId(filePath);
   registerNode({ id: modNodeId, kind: "module", module: filePath });
 
@@ -4731,7 +4740,7 @@ export async function buildCallGraph(
     if (!withinLimits()) {
       return undefined;
     }
-    const prepared = prepareFile(filePath, registerNode);
+    const prepared = prepareFile(filePath, registerNode, reachGraph);
     if (prepared) {
       fileData.set(filePath, prepared);
     }
@@ -4740,9 +4749,19 @@ export async function buildCallGraph(
 
   const receiverMethods: ReceiverMethodRecord[] = [];
 
+  // Task BL-074: every file the walk resolves to, and every root, has its
+  // export census's module-graph context ready before `ensurePrepared`
+  // (synchronous) builds its model.
+  const reachGraph = loadReachGraphFor(options.resolver, {
+    jsx: options.project?.rawCompilerOptions,
+  });
+  for (const entryFile of options.entryFiles) {
+    await reachGraph.prepareFile(entryFile);
+  }
+
   const ctx: WalkContext = {
     edges,
-    resolver: options.resolver,
+    resolver: preparingResolver(options.resolver, reachGraph),
     ensurePrepared,
     onDiscoverFile: (filePath) => {
       const prepared = ensurePrepared(filePath);
@@ -4857,5 +4876,7 @@ export async function buildCallGraph(
   }
   options.onWalkedFiles?.([...walked]);
 
-  return { nodes: [...nodes.values()], edges };
+  const graph: CallGraph = { nodes: [...nodes.values()], edges };
+  attachLoadReachGraph(graph, reachGraph);
+  return graph;
 }

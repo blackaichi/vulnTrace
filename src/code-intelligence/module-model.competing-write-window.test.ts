@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { describe, expect, it } from "vitest";
 import {
   buildModuleModel,
@@ -20,7 +21,10 @@ import { indexSourceFile } from "./source-index.js";
 
 function exportName(text: string, name = "run"): string | undefined {
   const index = indexSourceFile("/pkg/index.js", text);
-  return mapExportsToFunctions(index, buildModuleModel(index)).get(name)?.name;
+  return mapExportsToFunctions(
+    index,
+    buildModuleModel(index, NO_LOAD_REACHES_BACK),
+  ).get(name)?.name;
 }
 
 function defaultName(text: string): string | undefined {
@@ -153,7 +157,7 @@ describe("BL-064: which writes compete", () => {
       "/pkg/index.js",
       `${HEAD}module.exports = { run: dangerous };\nJSON.parse(input);\nmodule.exports.run = safe;\n`,
     );
-    const write = buildModuleModel(index).exports.find(
+    const write = buildModuleModel(index, NO_LOAD_REACHES_BACK).exports.find(
       (exp) => exp.exportedName === "run" && exp.location.line === 6,
     );
     expect(write?.exportAttributionWithdrawn).toBe(true);
@@ -386,7 +390,10 @@ describe("BL-064's independent audit: the shapes it broke", () => {
       'import lib = require("vuln-lib");\nfunction dangerous() {}\nfunction safe() {}\nexports.run = dangerous;\nJSON.parse(input);\nexports.run = safe;\n',
     );
     expect(
-      mapExportsToFunctions(index, buildModuleModel(index)).get("run")?.name,
+      mapExportsToFunctions(
+        index,
+        buildModuleModel(index, NO_LOAD_REACHES_BACK),
+      ).get("run")?.name,
     ).toBeUndefined();
   });
 

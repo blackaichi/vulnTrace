@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { describe, expect, it } from "vitest";
 import { buildModuleModel, mapExportsToFunctions } from "./module-model.js";
 import { indexSourceFile } from "./source-index.js";
@@ -19,13 +20,16 @@ import { indexSourceFile } from "./source-index.js";
 /** `line:column` of the function a canonical export name resolved to, or `undefined`. */
 function exportPosition(text: string, name = "default"): string | undefined {
   const index = indexSourceFile("/pkg/index.js", text);
-  const fn = mapExportsToFunctions(index, buildModuleModel(index)).get(name);
+  const fn = mapExportsToFunctions(
+    index,
+    buildModuleModel(index, NO_LOAD_REACHES_BACK),
+  ).get(name);
   return fn ? `${fn.location.line}:${fn.location.column}` : undefined;
 }
 
 function bindingFor(text: string, exportedName?: string) {
   const index = indexSourceFile("/pkg/index.js", text);
-  return buildModuleModel(index).exports.find((e) =>
+  return buildModuleModel(index, NO_LOAD_REACHES_BACK).exports.find((e) =>
     exportedName === undefined
       ? e.kind === "default"
       : e.exportedName === exportedName,

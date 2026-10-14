@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -29,7 +30,10 @@ function candidatesFor(fileName: string, source: string) {
   const file = path.join(dir, fileName);
   writeFileSync(file, source);
   const index = indexSourceFileFromDisk(file);
-  return entrypointRootCandidates(index, buildModuleModel(index));
+  return entrypointRootCandidates(
+    index,
+    buildModuleModel(index, NO_LOAD_REACHES_BACK),
+  );
 }
 
 describe("P0-Z: root derivation reports its own completeness", () => {

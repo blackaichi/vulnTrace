@@ -1,3 +1,4 @@
+import { fixtureLoadReach } from "../testing/load-reach.js";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildCallGraph } from "../code-intelligence/call-graph.js";
@@ -140,7 +141,10 @@ describe("RWF-011 fixture: coincidental same-name CommonJS export (fixtures/comm
     expect(decoy).toBeDefined();
 
     expect(
-      mapExportsToFunctions(index, buildModuleModel(index)).get("parse"),
+      mapExportsToFunctions(
+        index,
+        buildModuleModel(index, await fixtureLoadReach(root, index)),
+      ).get("parse"),
     ).toBeUndefined();
   });
 
@@ -152,9 +156,10 @@ describe("RWF-011 fixture: coincidental same-name CommonJS export (fixtures/comm
     // establishes nothing, full stop.
     const { root } = await scan({ target: "parse" });
     const index = indexSourceFileFromDisk(facadePath(root));
-    const parse = buildModuleModel(index).exports.find(
-      (e) => e.exportedName === "parse",
-    );
+    const parse = buildModuleModel(
+      index,
+      await fixtureLoadReach(root, index),
+    ).exports.find((e) => e.exportedName === "parse");
 
     expect(parse).toBeDefined();
     expect(parse?.localIdentifierProvenanceRefused).toBeUndefined();
@@ -232,9 +237,13 @@ describe("RWF-011 fixture: coincidental same-name CommonJS export (fixtures/comm
     // test cannot pass merely because nothing anywhere resolved.
     const nestedIndex = indexSourceFileFromDisk(nested);
     expect(
-      mapExportsToFunctions(nestedIndex, buildModuleModel(nestedIndex)).get(
-        "parse",
-      ),
+      mapExportsToFunctions(
+        nestedIndex,
+        buildModuleModel(
+          nestedIndex,
+          await fixtureLoadReach(root, nestedIndex),
+        ),
+      ).get("parse"),
     ).toBeDefined();
 
     const { finding } = await scan({
@@ -273,9 +282,10 @@ describe("RWF-011 fixture: coincidental same-name CommonJS export (fixtures/comm
     // positive relation this task preserves.
     const { root } = await scan({ target: "parseSync" });
     const index = indexSourceFileFromDisk(facadePath(root));
-    const parseSync = buildModuleModel(index).exports.find(
-      (e) => e.exportedName === "parseSync",
-    );
+    const parseSync = buildModuleModel(
+      index,
+      await fixtureLoadReach(root, index),
+    ).exports.find((e) => e.exportedName === "parseSync");
 
     expect(parseSync?.localIdentifierProvenanceRefused).toBeUndefined();
     expect(parseSync?.commonJsReExport).toEqual({ specifier: "./lib/parse" });

@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { describe, expect, it } from "vitest";
 import { buildModuleModel, mapExportsToFunctions } from "./module-model.js";
 import { indexSourceFile } from "./source-index.js";
@@ -31,14 +32,19 @@ import { indexSourceFile } from "./source-index.js";
 /** `line:column` of the function a canonical export name resolved to, or `undefined`. */
 function exportPosition(text: string, name: string): string | undefined {
   const index = indexSourceFile("/pkg/index.js", text);
-  const fn = mapExportsToFunctions(index, buildModuleModel(index)).get(name);
+  const fn = mapExportsToFunctions(
+    index,
+    buildModuleModel(index, NO_LOAD_REACHES_BACK),
+  ).get(name);
   return fn ? `${fn.location.line}:${fn.location.column}` : undefined;
 }
 
 /** The named export binding the model built for `text`. */
 function binding(text: string, name: string) {
   const index = indexSourceFile("/pkg/index.js", text);
-  return buildModuleModel(index).exports.find((e) => e.exportedName === name);
+  return buildModuleModel(index, NO_LOAD_REACHES_BACK).exports.find(
+    (e) => e.exportedName === name,
+  );
 }
 
 describe("RWF-011: a public export name is never local symbol provenance", () => {
@@ -195,7 +201,10 @@ describe("RWF-011: a public export name is never local symbol provenance", () =>
 
     const index = indexSourceFile("/pkg/index.js", "exports.parse = reg.impl;");
     expect(
-      mapExportsToFunctions(index, buildModuleModel(index)).get("parse"),
+      mapExportsToFunctions(
+        index,
+        buildModuleModel(index, NO_LOAD_REACHES_BACK),
+      ).get("parse"),
     ).toBeUndefined();
   });
 
@@ -614,7 +623,10 @@ describe("RWF-011: ESM attribution is untouched", () => {
     ["export default class Foo { m() {} }", "default", "1:22"],
   ])("still binds %s", (text, name, expected) => {
     const index = indexSourceFile("/pkg/index.ts", text);
-    const fn = mapExportsToFunctions(index, buildModuleModel(index)).get(name);
+    const fn = mapExportsToFunctions(
+      index,
+      buildModuleModel(index, NO_LOAD_REACHES_BACK),
+    ).get(name);
     expect(fn && `${fn.location.line}:${fn.location.column}`).toBe(expected);
   });
 });

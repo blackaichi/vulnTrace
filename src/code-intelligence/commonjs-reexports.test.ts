@@ -1,3 +1,4 @@
+import { NO_LOAD_REACHES_BACK } from "../testing/load-reach.js";
 import { describe, expect, it } from "vitest";
 import { buildModuleModel, type ExportBinding } from "./module-model.js";
 import { indexSourceFile } from "./source-index.js";
@@ -14,7 +15,10 @@ import { indexSourceFile } from "./source-index.js";
  * graph's job and are covered in call-graph.test.ts.
  */
 function exportsOf(source: string): readonly ExportBinding[] {
-  return buildModuleModel(indexSourceFile("/virtual/index.js", source)).exports;
+  return buildModuleModel(
+    indexSourceFile("/virtual/index.js", source),
+    NO_LOAD_REACHES_BACK,
+  ).exports;
 }
 
 function originOf(source: string, exportedName: string) {

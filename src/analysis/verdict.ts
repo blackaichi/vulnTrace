@@ -9,6 +9,11 @@ import {
   type EntrypointRootIncompleteness,
 } from "../code-intelligence/module-model.js";
 import { exportForwardingHops } from "../code-intelligence/export-forwarding.js";
+import {
+  attachLoadReachGraph,
+  loadReachGraphFor,
+  loadReachGraphOf,
+} from "../code-intelligence/load-reach.js";
 import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
 import {
   parseBarePackageSpecifier,
@@ -277,6 +282,16 @@ function isNamedNode(node: GraphNode, file: string, name: string): boolean {
  * unresolved target (preserving uncertainty), never silently gain the
  * same unsafe name-only binding a synthetic test explicitly opted into.
  */
+/**
+ * Task BL-074: prepares `file`'s export-census context in the reach graph
+ * `graph` was built with, so the synchronous attribution that follows
+ * ({@link findExportNodeInFile}) reads it. A graph built without one (by
+ * hand, as tests do) leaves the census's per-file rule.
+ */
+async function prepareLoadReach(graph: CallGraph, file: string): Promise<void> {
+  await loadReachGraphOf(graph)?.prepareFile(file);
+}
+
 function findExportNodeInFile(
   graph: CallGraph,
   resolvedFile: string,
@@ -295,7 +310,13 @@ function findExportNodeInFile(
 
   try {
     const index = indexSourceFileFromDisk(resolvedFile);
-    const model = buildModuleModel(index);
+    // Task BL-074: the export census's module-graph context, prepared by
+    // the call graph or by {@link prepareLoadReach}; absent, the census's
+    // fail-closed per-file rule.
+    const model = buildModuleModel(
+      index,
+      loadReachGraphOf(graph)?.cached(resolvedFile),
+    );
     const exportedFn = mapExportsToFunctions(index, model).get(exportName);
     if (exportedFn) {
       const node = byLocation(exportedFn);
@@ -439,6 +460,7 @@ async function findExportNodeThroughForwarding(
     return [];
   }
   visited.add(hopKey);
+  await prepareLoadReach(graph, file);
 
   // Structural attribution first, at every depth: the far side of a hop is
   // resolved by exactly the relation a directly-exported target is, so a
@@ -453,7 +475,10 @@ async function findExportNodeThroughForwarding(
 
   let model;
   try {
-    model = buildModuleModel(indexSourceFileFromDisk(file));
+    model = buildModuleModel(
+      indexSourceFileFromDisk(file),
+      loadReachGraphOf(graph)?.cached(file),
+    );
   } catch {
     // Unreadable/unparsable file: no export facts, so no authoritative
     // hop. Refuse, exactly as an absent forwarding origin does.
@@ -1202,6 +1227,7 @@ async function resolveTargetNodes(
         // synthetic/test graphs whose "files" never existed on disk (see
         // BuildFindingOptions). Forwarding hops deliberately keep it off,
         // exactly as P1-A1 left them.
+        await prepareLoadReach(graph, entry.resolvedFile);
         const direct = findExportNodeInFile(
           graph,
           entry.resolvedFile,
@@ -1426,6 +1452,7 @@ async function resolveTargetNodes(
     };
   }
 
+  await prepareLoadReach(graph, resolution.resolvedFileName);
   const nodes = findExportNodeInFile(
     graph,
     resolution.resolvedFileName,
@@ -1593,7 +1620,12 @@ function entrypointSourceNodes(
   let model;
   try {
     index = indexSourceFileFromDisk(entrypoint.filePath);
-    model = buildModuleModel(index);
+    // Task BL-074: an entrypoint is a root of the call graph, which
+    // prepared its export census's module-graph context.
+    model = buildModuleModel(
+      index,
+      loadReachGraphOf(graph)?.cached(entrypoint.filePath),
+    );
   } catch {
     if (entrypoint.symbol !== undefined) {
       // A configured symbol that cannot be looked up in its file did not
@@ -2237,6 +2269,18 @@ export async function buildFinding(
 
   const { graph, entrypoints, resolver, projectRoot, knownPackageRoots } =
     context;
+
+  // Task BL-074: the export census's module-graph context is the scan's,
+  // reached through its resolver -- the one the call graph prepared -- even
+  // for a graph that is not the call graph's own object (a copy).
+  let reachGraph = loadReachGraphOf(graph);
+  if (reachGraph === undefined) {
+    reachGraph = loadReachGraphFor(resolver);
+    attachLoadReachGraph(graph, reachGraph);
+  }
+  for (const entrypoint of entrypoints) {
+    await reachGraph.prepareFile(entrypoint.filePath);
+  }
 
   // FAIL CLOSED on a context this analyzer did not create (VT-CONTRACT-03).
   //

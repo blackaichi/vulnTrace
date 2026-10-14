@@ -4369,6 +4369,1079 @@ function posixResolve(directory: string, specifier: string): string {
   return `/${out.join("/")}`;
 }
 
+/* ------------------------------------------------------------------ *
+ * BL-074 (RWF-103, RWF-106): a load's result that may be an export     *
+ * object of this file, through any dataflow                            *
+ * ------------------------------------------------------------------ */
+
+/**
+ * The module-graph context of one file's census (task BL-074; ADR 0009
+ * § 4, "a cyclic `require` that cannot reach back"): which of its loads
+ * may return one of its export objects -- its own exports object, handed
+ * back through a cycle or the loader registry, or the object a
+ * whole-module write installed (`module.exports = require("./safe")`
+ * forwards `./safe`'s exports object, which every load of `./safe`
+ * returns). Built per scan by `load-reach.ts`, from the resolver.
+ *
+ * Absent, every load may: the census is then the per-file rule, which
+ * withdraws a file wherever a load's value leaves the routes the census
+ * follows. That keeps every consumer without a resolver fail-closed.
+ */
+export interface LoadReach {
+  /**
+   * Whether a load of `specifier`, a literal resolved from this file, may
+   * return an export object of this file or reach one through its members.
+   * `true` for any specifier the context was not asked about.
+   */
+  mayReachBack(specifier: string): boolean;
+}
+
+/** What {@link loadResultEscapes} needs asked of the module graph, for one file. */
+export interface LoadReachQuery {
+  /** Every literal specifier a load of this file resolves from this file. */
+  readonly specifiers: readonly string[];
+  /** The literal specifiers whose module a whole-module write installs (`module.exports = require("./safe")`). */
+  readonly forwardSpecifiers: readonly string[];
+  /**
+   * A whole-module write installs a value that may be any object (a call's
+   * result, a binding the file reassigns, a load this relation cannot
+   * resolve): then any load may return it, and the graph cannot answer.
+   */
+  readonly opaqueFinalObject: boolean;
+}
+
+/**
+ * The literal specifier of a load resolved from this file -- the ambient
+ * `require`, an only-called alias of it, `module.require` -- or
+ * `undefined` for a load the graph cannot answer for: a computed
+ * specifier, a spread, a load resolved from another module
+ * (`require.main.require`, `module.constructor._load`).
+ */
+function plainLoadSpecifier(call: ts.CallExpression): string | undefined {
+  if (!isRequireResult(call)) {
+    return undefined;
+  }
+  const callee = unwrapParentheses(call.expression);
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    !isAmbientReference(unwrapParentheses(callee.expression), "module")
+  ) {
+    return undefined;
+  }
+  const [first] = call.arguments;
+  if (first === undefined || ts.isSpreadElement(first)) {
+    return undefined;
+  }
+  const argument = unwrapParentheses(first);
+  return ts.isStringLiteralLike(argument) ? argument.text : undefined;
+}
+
+/**
+ * Whether `call` loads a module: a loader call ({@link isRequireResult}),
+ * or one made through `Function.prototype` (`require.call(null, x)`,
+ * `require.apply(null, [x])`, `require.bind(null)(x)`).
+ */
+function isLoadCall(call: ts.CallExpression): boolean {
+  if (isRequireResult(call)) {
+    return true;
+  }
+  const callee = unwrapParentheses(call.expression);
+  if (
+    ts.isPropertyAccessExpression(callee) &&
+    (callee.name.text === "call" || callee.name.text === "apply")
+  ) {
+    return isLoaderCallee(unwrapParentheses(callee.expression));
+  }
+  return ts.isCallExpression(callee) && isBoundLoader(callee);
+}
+
+/** Whether `call` is `require.bind(…)` (of any loader {@link isLoaderCallee} names). */
+function isBoundLoader(call: ts.CallExpression): boolean {
+  const callee = unwrapParentheses(call.expression);
+  return (
+    ts.isPropertyAccessExpression(callee) &&
+    callee.name.text === "bind" &&
+    isLoaderCallee(unwrapParentheses(callee.expression))
+  );
+}
+
+/** {@link loadValueIsConfined}'s bound on the bindings it follows; past it, a value escapes. */
+const CONFINEMENT_DEPTH = 64;
+
+/**
+ * Whether every use of a value a load returns -- or reads from such a
+ * value through members -- is one the census accounts for (task BL-074):
+ *
+ * - the base of a member chain: a write through it is a write of its name,
+ *   withdrawn ({@link baseMayBeLoaded}); a member read is followed, since
+ *   the member may be an export object too (`require("./holder").self`);
+ * - the receiver of a member call, or a callee: the code run is a
+ *   module's own, with its own census;
+ * - an inert use ({@link isInertUse}): a test, `typeof`, a discarded value;
+ * - held by a binding -- a declaration, a destructuring declaration, or a
+ *   plain assignment to a name -- whose every reference is confined.
+ *
+ * Anything else hands the value on where the census cannot follow it: an
+ * argument, a return, an array or object element, a spread, `for-of`,
+ * `await`, a destructuring assignment, a coercion.
+ */
+function loadValueIsConfined(
+  value: ts.Node,
+  seen: Set<ts.Node> = new Set(),
+): boolean {
+  const top = climbValue(value);
+  const parent = top.parent as ts.Node | undefined;
+  if (parent === undefined) {
+    return false;
+  }
+  if (
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent)) &&
+    parent.expression === top
+  ) {
+    const access = skipOuterParentheses(parent);
+    if (isWriteTargetPosition(access)) {
+      return true;
+    }
+    const accessParent = access.parent as ts.Node | undefined;
+    if (
+      accessParent !== undefined &&
+      (ts.isCallExpression(accessParent) || ts.isNewExpression(accessParent)) &&
+      accessParent.expression === access
+    ) {
+      // A member call: its code is a module's own, censused there. What it
+      // returns is NOT followed, though it may be the object itself
+      // (`require("./other").valueOf()`): RWF-107, open, a measured
+      // precision trade-off for the project owner (BL-078).
+      return true;
+    }
+    return loadValueIsConfined(access, seen);
+  }
+  if (
+    (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+    parent.expression === top
+  ) {
+    // Called or constructed: the result may be an export object too
+    // (`module.exports = () => require("./index")`) and is NOT followed:
+    // RWF-107, as above.
+    return true;
+  }
+  if (isInertUse(top)) {
+    return true;
+  }
+  if (ts.isVariableDeclaration(parent) && parent.initializer === top) {
+    return bindingNameIsConfined(parent.name, seen);
+  }
+  if (ts.isExportAssignment(parent) && parent.isExportEquals) {
+    // `export = require("./lib")`: a whole-module write, below.
+    return true;
+  }
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === top
+  ) {
+    // In every branch below the assignment's own value is the load's
+    // (`set(a = require("./other"))`, `a = b = require("./other")`), and
+    // is followed too (BL-074's audit, finding 1).
+    const target = unwrapParentheses(parent.left);
+    if (isModuleExportsAssignmentTarget(target)) {
+      // `module.exports = require("./lib")`: the whole-module write the
+      // identity walk orders, and every later use of `module.exports` is
+      // censused as the final object's.
+      return loadValueIsConfined(parent, seen);
+    }
+    if (isAmbientReference(target, "exports")) {
+      // `exports = module.exports = require("./lib")`: the rebinding the
+      // identity walk orders with it, and `exports`'s uses are censused.
+      return (
+        isChainedWholeModuleWrite(parent.right) &&
+        loadValueIsConfined(parent, seen)
+      );
+    }
+    if (
+      commonJsExportPropertyName(target) !== undefined &&
+      exportObjectsAreWriteOnly(target.getSourceFile())
+    ) {
+      // `exports.b = require("./b")` in a file that never reads its export
+      // objects back: the value is published, and no code of this file can
+      // reach it again to write through it (another module's writes are
+      // E-4's, as for every other export).
+      return loadValueIsConfined(parent, seen);
+    }
+    if (ts.isIdentifier(target) && !isAmbientReference(target, "module")) {
+      const declaration = lexicalDeclarationOf(target, target.text);
+      return (
+        declaration !== undefined &&
+        bindingReferencesAreConfined(target, declaration, seen) &&
+        loadValueIsConfined(parent, seen)
+      );
+    }
+  }
+  return false;
+}
+
+const writeOnlyExportsBySourceFile = new WeakMap<ts.SourceFile, boolean>();
+
+/** Whether `value` is `module.exports = v` (the inner write of `exports = module.exports = v`). */
+function isChainedWholeModuleWrite(value: ts.Expression): boolean {
+  const inner = unwrapParentheses(value);
+  return (
+    ts.isBinaryExpression(inner) &&
+    inner.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    isModuleExportsAssignmentTarget(unwrapParentheses(inner.left))
+  );
+}
+
+/**
+ * Whether this file's every reference to its export objects is a plain
+ * `=` write: of a property (`exports.x = v`, `module.exports.x = v`) or of
+ * the whole module (`module.exports = v`, `exports = module.exports = v`),
+ * with no `this` anywhere (a method's `this` may be an export object) --
+ * so nothing the file stores on them can be read back by its own code
+ * (task BL-074).
+ */
+function exportObjectsAreWriteOnly(sourceFile: ts.SourceFile): boolean {
+  const cached = writeOnlyExportsBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let writeOnly = true;
+  const visit = (node: ts.Node): void => {
+    if (!writeOnly) {
+      return;
+    }
+    if (
+      node.kind === ts.SyntaxKind.ThisKeyword ||
+      // A self-load returns the exports object: another way to read back.
+      (ts.isCallExpression(node) &&
+        isLoadCall(node) &&
+        (!isRequireResult(node) || mayLoadThisFile(node)))
+    ) {
+      writeOnly = false;
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      const outer = skipOuterParentheses(node);
+      const parent = outer.parent as ts.Node | undefined;
+      if (isAmbientReference(node, "exports")) {
+        writeOnly =
+          parent !== undefined &&
+          (((ts.isPropertyAccessExpression(parent) ||
+            ts.isElementAccessExpression(parent)) &&
+            parent.expression === outer &&
+            commonJsExportPropertyName(parent) !== undefined &&
+            isPlainAssignmentTarget(skipOuterParentheses(parent))) ||
+            // `exports = module.exports = v`
+            (isPlainAssignmentTarget(outer) &&
+              ts.isBinaryExpression(parent) &&
+              isChainedWholeModuleWrite(parent.right)));
+        return;
+      }
+      if (isAmbientReference(node, "module")) {
+        if (
+          parent === undefined ||
+          !ts.isPropertyAccessExpression(parent) ||
+          parent.expression !== outer
+        ) {
+          writeOnly = false;
+          return;
+        }
+        if (parent.name.text !== "exports") {
+          return;
+        }
+        const access = skipOuterParentheses(parent);
+        const accessParent = access.parent as ts.Node | undefined;
+        writeOnly =
+          isPlainAssignmentTarget(access) ||
+          (accessParent !== undefined &&
+            (ts.isPropertyAccessExpression(accessParent) ||
+              ts.isElementAccessExpression(accessParent)) &&
+            accessParent.expression === access &&
+            commonJsExportPropertyName(accessParent) !== undefined &&
+            isPlainAssignmentTarget(skipOuterParentheses(accessParent)));
+        return;
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  writeOnlyExportsBySourceFile.set(sourceFile, writeOnly);
+  return writeOnly;
+}
+
+/** {@link loadValueIsConfined} for every name a declaration's name (or pattern) binds. */
+function bindingNameIsConfined(
+  name: ts.BindingName,
+  seen: Set<ts.Node>,
+): boolean {
+  if (ts.isIdentifier(name)) {
+    const declaration = lexicalDeclarationOf(name, name.text);
+    return (
+      declaration !== undefined &&
+      bindingReferencesAreConfined(name, declaration, seen)
+    );
+  }
+  return name.elements.every(
+    (element) =>
+      ts.isOmittedExpression(element) ||
+      bindingNameIsConfined(element.name, seen),
+  );
+}
+
+/** Whether every reference to `declaration` (bound to `binding`'s name) is confined. */
+function bindingReferencesAreConfined(
+  binding: ts.Identifier,
+  declaration: ts.Node,
+  seen: Set<ts.Node>,
+): boolean {
+  if (seen.has(declaration)) {
+    // A cycle: its other uses are being checked already.
+    return true;
+  }
+  if (seen.size >= CONFINEMENT_DEPTH) {
+    return false;
+  }
+  seen.add(declaration);
+  loadConfinementWalks += 1;
+  return identifiersSpelled(binding.getSourceFile(), binding.text).every(
+    (reference) => {
+      const parent = reference.parent as ts.Node | undefined;
+      if (
+        parent === undefined ||
+        isNonReferenceName(reference, parent) ||
+        isDeclarationName(reference, parent) ||
+        lexicalDeclarationOf(reference, reference.text) !== declaration
+      ) {
+        return true;
+      }
+      const outer = skipOuterParentheses(reference);
+      if (isPlainAssignmentTarget(outer)) {
+        // A new value is written; this one is not read here.
+        return true;
+      }
+      if (isWriteTargetPosition(outer)) {
+        return false;
+      }
+      return loadValueIsConfined(reference, seen);
+    },
+  );
+}
+
+let loadConfinementWalks = 0;
+
+/** Bindings {@link loadValueIsConfined} has followed in this process (BL-074's structural performance test). */
+export function loadConfinementWalkCount(): number {
+  return loadConfinementWalks;
+}
+
+const loadEscapesBySourceFile = new WeakMap<
+  ts.SourceFile,
+  Map<LoadReach | undefined, boolean>
+>();
+
+/**
+ * Whether a load's result that may be an export object of this file
+ * leaves the routes the census follows (task BL-074; RWF-103, RWF-106):
+ * then a write anywhere it flows may set any name of that object, and the
+ * whole file is un-enumerable.
+ *
+ * A load may be an export object when the graph context says its
+ * specifier may reach back ({@link LoadReach}), when it has no literal
+ * specifier resolved from this file, or when there is no context at all
+ * (the per-file rule). A load that may load this very file is
+ * E-1's alias of the exports object ({@link mayLoadThisFile}), censused
+ * where it flows by {@link classifyExportReference}, and is skipped here.
+ * A bound loader (`require.bind(…)`) that is not called at once escapes
+ * with whatever it may load.
+ */
+function loadResultEscapes(
+  sourceFile: ts.SourceFile,
+  reach: LoadReach | undefined,
+): boolean {
+  let byReach = loadEscapesBySourceFile.get(sourceFile);
+  const cached = byReach?.get(reach);
+  if (cached !== undefined) {
+    return cached;
+  }
+  let escapes = false;
+  const visit = (node: ts.Node): void => {
+    if (escapes) {
+      return;
+    }
+    if (ts.isCallExpression(node)) {
+      if (isBoundLoader(node)) {
+        const outer = skipOuterParentheses(node);
+        const parent = outer.parent as ts.Node | undefined;
+        if (
+          parent === undefined ||
+          !ts.isCallExpression(parent) ||
+          parent.expression !== outer
+        ) {
+          escapes = true;
+          return;
+        }
+      } else if (
+        isLoadCall(node) &&
+        !(isRequireResult(node) && mayLoadThisFile(node))
+      ) {
+        const specifier = plainLoadSpecifier(node);
+        const mayYield =
+          specifier === undefined ||
+          reach === undefined ||
+          reach.mayReachBack(specifier);
+        if (mayYield && !loadValueIsConfined(node)) {
+          escapes = true;
+          return;
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  if (byReach === undefined) {
+    byReach = new Map();
+    loadEscapesBySourceFile.set(sourceFile, byReach);
+  }
+  byReach.set(reach, escapes);
+  return escapes;
+}
+
+/**
+ * Whether a whole-module value is a fresh object no load can return: a
+ * literal, a function or class expression, a primitive, or a name bound
+ * once to a function or class declaration or to such a value.
+ */
+function isFreshWholeModuleValue(value: ts.Expression): boolean {
+  const unwrapped = unwrapValue(value);
+  if (
+    ts.isObjectLiteralExpression(unwrapped) ||
+    ts.isArrayLiteralExpression(unwrapped) ||
+    ts.isFunctionExpression(unwrapped) ||
+    ts.isArrowFunction(unwrapped) ||
+    ts.isClassExpression(unwrapped) ||
+    isPrimitiveValue(unwrapped)
+  ) {
+    return true;
+  }
+  if (!ts.isIdentifier(unwrapped)) {
+    return false;
+  }
+  const declaration = lexicalDeclarationOf(unwrapped, unwrapped.text);
+  if (
+    declaration === undefined ||
+    isNameAssignedWithin(unwrapped.getSourceFile(), unwrapped.text)
+  ) {
+    return false;
+  }
+  if (
+    ts.isFunctionDeclaration(declaration) ||
+    ts.isClassDeclaration(declaration)
+  ) {
+    return true;
+  }
+  return (
+    ts.isVariableDeclaration(declaration) &&
+    ts.isIdentifier(declaration.name) &&
+    declaration.initializer !== undefined &&
+    !ts.isIdentifier(unwrapValue(declaration.initializer)) &&
+    isFreshWholeModuleValue(declaration.initializer)
+  );
+}
+
+/**
+ * The questions {@link loadResultEscapes} asks of the module graph for
+ * this file (task BL-074): every literal specifier it loads, and which
+ * module objects its whole-module writes install.
+ */
+export function loadReachQuery(index: SourceIndex): LoadReachQuery {
+  const sourceFile = index.sourceFile;
+  const specifiers = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const specifier = plainLoadSpecifier(node);
+      if (specifier !== undefined) {
+        specifiers.add(specifier);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+
+  const forwardSpecifiers = new Set<string>();
+  let opaqueFinalObject = false;
+  for (const site of competingWriteSites(sourceFile).wholeModule) {
+    const value = ts.isExportAssignment(site.node)
+      ? site.node.expression
+      : (site.node as ts.BinaryExpression).right;
+    if (isFreshWholeModuleValue(value)) {
+      continue;
+    }
+    // `module.exports = require("./safe")`, or a member of a load
+    // (`require("./lib").sub`): the object is that module's, or one it
+    // reaches -- a load of it, or of anything that reaches it, returns it.
+    let root = unwrapValue(value);
+    while (
+      ts.isPropertyAccessExpression(root) ||
+      ts.isElementAccessExpression(root)
+    ) {
+      root = unwrapParentheses(root.expression);
+    }
+    const specifier = ts.isCallExpression(root)
+      ? plainLoadSpecifier(root)
+      : undefined;
+    if (specifier === undefined) {
+      opaqueFinalObject = true;
+    } else {
+      forwardSpecifiers.add(specifier);
+    }
+  }
+  return {
+    specifiers: [...specifiers],
+    forwardSpecifiers: [...forwardSpecifiers],
+    opaqueFinalObject,
+  };
+}
+
+/** Builtins whose module object reaches the loader registry, or runs code that can (`vm`, `inspector`, `repl`). */
+export const REGISTRY_BUILTINS: ReadonlySet<string> = new Set([
+  "module",
+  "process",
+  "vm",
+  "inspector",
+  "repl",
+  "worker_threads",
+]);
+
+/**
+ * Whether this file can reach another module's exports object without a
+ * static load of it (task BL-074): through the loader registry
+ * (`module.parent`, `module.children`, `module.constructor`, `module`
+ * handed on, `require.cache`, `require.main` other than tested or called
+ * as a loader, `require` handed on, a load through `Function.prototype`),
+ * through `process` (`process.mainModule`, `process` handed on, `process`
+ * through the global object), a registry builtin
+ * ({@link REGISTRY_BUILTINS}), `with`, or the wrapper's `arguments` (whose
+ * third is `module`). The census's own predicates decide each:
+ * {@link isPrototypeTampering} (which also counts writes to builtin
+ * prototypes: over-approximate, in the safe direction),
+ * {@link processValueIsInert}, {@link INERT_MODULE_MEMBERS}.
+ *
+ * Code the file evaluates (`eval`, `Function`, `vm`, a dynamic `import()`
+ * or `require`) is the closure-widening scan's (`loader-constructs.ts`),
+ * which `load-reach.ts` consults beside this.
+ */
+export function fileReachesLoaderRegistry(index: SourceIndex): boolean {
+  const sourceFile = index.sourceFile;
+  let reaches = false;
+  const visit = (node: ts.Node, moduleScope: boolean): void => {
+    if (reaches) {
+      return;
+    }
+    if (ts.isWithStatement(node) || isPrototypeTampering(node)) {
+      reaches = true;
+      return;
+    }
+    // A member that reaches the loader registry or a caller's frame, by
+    // NAME, whatever object it is read from -- `process.mainModule`
+    // through a global object no relation here recognises (a sloppy
+    // function's `this`), `fn.caller`, V8's call sites
+    // (`Error.prepareStackTrace`, `getThis()`), `eval` and `Function`
+    // reached as members -- spelled as a member, a literal key, a
+    // destructuring key or any string (`Reflect.get(fn, "caller")`,
+    // `Object.defineProperty(Error, "prepareStackTrace", …)`). BL-074's
+    // audit, rounds 1 and 2. A key computed at run time spells no name:
+    // RWF-109.
+    if (
+      (ts.isPropertyAccessExpression(node) &&
+        REGISTRY_REACHING_MEMBER_NAMES.has(node.name.text)) ||
+      (ts.isStringLiteralLike(node) &&
+        REGISTRY_REACHING_MEMBER_NAMES.has(node.text)) ||
+      // A key of an object literal, which is a destructuring assignment's
+      // pattern (`({ mainModule: m } = p)`, `({ mainModule } = p)`).
+      (ts.isIdentifier(node) &&
+        REGISTRY_REACHING_MEMBER_NAMES.has(node.text) &&
+        ((ts.isPropertyAssignment(node.parent) && node.parent.name === node) ||
+          ts.isShorthandPropertyAssignment(node.parent))) ||
+      (ts.isBindingElement(node) &&
+        ts.isObjectBindingPattern(node.parent) &&
+        (() => {
+          const key = node.propertyName ?? node.name;
+          return (
+            (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) &&
+            REGISTRY_REACHING_MEMBER_NAMES.has(key.text)
+          );
+        })())
+    ) {
+      reaches = true;
+      return;
+    }
+    if (ts.isCallExpression(node)) {
+      // Only `require("x")` itself is an edge the graph follows
+      // (`SourceIndex.imports`); any other load -- an alias, `module.require`,
+      // a template specifier, `Function.prototype` -- is one it does not.
+      if (isLoadCall(node)) {
+        const callee = unwrapParentheses(node.expression);
+        const [first] = node.arguments;
+        const direct =
+          isAmbientReference(callee, "require") &&
+          node.arguments.length === 1 &&
+          first !== undefined &&
+          ts.isStringLiteral(first);
+        if (
+          !direct ||
+          REGISTRY_BUILTINS.has(first.text.replace(/^node:/, ""))
+        ) {
+          reaches = true;
+          return;
+        }
+      }
+      if (isBoundLoader(node)) {
+        reaches = true;
+        return;
+      }
+    }
+    if (
+      ((ts.isIdentifier(node) && isReferenceIdentifier(node)) ||
+        node.kind === ts.SyntaxKind.ThisKeyword) &&
+      valueIsGlobalObject(node as ts.Expression) &&
+      globalObjectUseReaches(node as ts.Expression)
+    ) {
+      reaches = true;
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      if (
+        (node.text === "module" && isAmbientReference(node, "module")) ||
+        (node.text === "require" && isAmbientReference(node, "require"))
+      ) {
+        if (registryReference(node)) {
+          reaches = true;
+          return;
+        }
+      } else if (
+        node.text === "arguments" &&
+        moduleScope &&
+        isAmbientReference(node, "arguments")
+      ) {
+        reaches = true;
+        return;
+      }
+    }
+    const nested =
+      moduleScope && !(ts.isFunctionLike(node) && !ts.isArrowFunction(node));
+    ts.forEachChild(node, (child) => visit(child, nested));
+  };
+  visit(sourceFile, true);
+  return reaches;
+}
+
+/**
+ * Member names that reach another module's objects from any object they
+ * are read from ({@link fileReachesLoaderRegistry}): the loader registry
+ * through `process` (`mainModule`, `getBuiltinModule("module")`, `dlopen`
+ * with a module object), code evaluation (`eval`, `Function` as members of
+ * the global object), and a caller's frame, whose values include a module
+ * wrapper's `exports` and `module` (`caller`, V8's `prepareStackTrace`,
+ * `getThis`, `getFunction`).
+ */
+const REGISTRY_REACHING_MEMBER_NAMES: ReadonlySet<string> = new Set([
+  "mainModule",
+  "getBuiltinModule",
+  "dlopen",
+  "eval",
+  "Function",
+  "caller",
+  "prepareStackTrace",
+  "getThis",
+  "getFunction",
+]);
+
+/** Whether `node` is a reference, not a name a declaration or a property introduces. */
+function isReferenceIdentifier(node: ts.Identifier): boolean {
+  const parent = node.parent as ts.Node | undefined;
+  return (
+    parent !== undefined &&
+    !isNonReferenceName(node, parent) &&
+    !isDeclarationName(node, parent)
+  );
+}
+
+/**
+ * Whether `expression`'s value may BE the global object (task BL-074): an
+ * ambient `globalThis`, `global`, `self`, `window` or `Function` (whose
+ * calls build code), the idiom `Function("return this")()`, or a binding
+ * initialized to one, through the value operands of `||`, `&&`, `??`, a
+ * conditional's branches and a comma's right. Narrower than
+ * {@link reachesGlobalObject}, which also counts a binding of a member of
+ * the global object (`var Symbol = root.Symbol`): here such a member is
+ * censused where it is read ({@link globalObjectUseReaches}).
+ */
+/**
+ * Whether a `this` may be the global object (BL-074's audit, round 3): in
+ * a non-arrow function (an arrow's is its enclosing one's) that is not a
+ * class member, in sloppy code -- a plain call `g()` of such a function
+ * gives `this` the global object. Module-scope `this` is the exports
+ * object; class bodies, ES modules and code under a `"use strict"`
+ * prologue (of the file or of an enclosing function) are strict, where a
+ * plain call gives `undefined`. A file with `import`/`export` syntax runs as
+ * an ES module (strict) or does not load at all (`export` in a `.cjs`).
+ * A TypeScript SOURCE is judged by its own syntax, though its CommonJS
+ * output may be sloppy (`noImplicitUseStrict`, Babel's `strictMode:
+ * false`): the analyzer reads the file Node runs only where that is the
+ * emitted JavaScript.
+ */
+function thisMayBeGlobalObject(node: ts.Node): boolean {
+  const binder = thisBindingFunction(node);
+  if (binder === undefined) {
+    // Module scope (the exports object), or a class member's own `this`
+    // (an instance or the class: class code is strict).
+    return false;
+  }
+  // The binding function's strictness alone decides `this` (the spec's
+  // OrdinaryCallBindThis; BL-074's round-4 review): its own prologue, and
+  // everything that encloses it -- a function or arrow under a prologue, a
+  // class (all of whose code is strict), the file's prologue, an ES module.
+  const sourceFile = node.getSourceFile();
+  if (
+    ts.isExternalModule(sourceFile) ||
+    hasUseStrictPrologue(sourceFile.statements)
+  ) {
+    return false;
+  }
+  for (
+    let current: ts.Node | undefined = binder;
+    current !== undefined && !ts.isSourceFile(current);
+    current = current.parent
+  ) {
+    if (ts.isClassLike(current)) {
+      return false;
+    }
+    if (ts.isFunctionLike(current)) {
+      const body = (current as ts.FunctionLikeDeclaration).body;
+      if (
+        body !== undefined &&
+        ts.isBlock(body) &&
+        hasUseStrictPrologue(body.statements)
+      ) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+/**
+ * The non-arrow function whose call binds `node`'s `this`, climbing past
+ * arrows (whose `this` is lexical, whatever their own strictness), a
+ * function's or member's computed name, a class's heritage clause and
+ * decorators (each evaluated with the enclosing `this`); `undefined` at
+ * module scope, or where a class member binds it (a method is found as the
+ * function; a field initializer or static block binds the instance or the
+ * class).
+ */
+function thisBindingFunction(node: ts.Node): ts.Node | undefined {
+  let child: ts.Node = node;
+  for (
+    let current: ts.Node | undefined = node.parent;
+    current !== undefined && !ts.isSourceFile(current);
+    child = current, current = current.parent
+  ) {
+    const viaName =
+      (current as { name?: ts.Node }).name === child || ts.isDecorator(child);
+    if (ts.isFunctionLike(current) && !ts.isArrowFunction(current)) {
+      if (!viaName) {
+        return current;
+      }
+      continue;
+    }
+    if (
+      (ts.isPropertyDeclaration(current) ||
+        ts.isClassStaticBlockDeclaration(current)) &&
+      ts.isClassLike(current.parent) &&
+      !viaName
+    ) {
+      return undefined;
+    }
+  }
+  return undefined;
+}
+
+/** Whether `statements` open with a `"use strict"` directive prologue. */
+function hasUseStrictPrologue(statements: ts.NodeArray<ts.Statement>): boolean {
+  for (const statement of statements) {
+    if (
+      !ts.isExpressionStatement(statement) ||
+      !ts.isStringLiteral(statement.expression)
+    ) {
+      return false;
+    }
+    // The RAW text decides: a directive spelled with an escape
+    // (`"use\x20strict"`) is no strict directive (BL-074's audit, round 4).
+    const raw = statement.expression.getText();
+    if (raw === '"use strict"' || raw === "'use strict'") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function valueIsGlobalObject(
+  expression: ts.Expression,
+  seen: Set<ts.Node> = new Set(),
+): boolean {
+  const value = unwrapParentheses(expression);
+  if (value.kind === ts.SyntaxKind.ThisKeyword) {
+    return thisMayBeGlobalObject(value);
+  }
+  if (ts.isIdentifier(value)) {
+    if (GLOBAL_OBJECT_NAMES.some((name) => isAmbientReference(value, name))) {
+      return true;
+    }
+    const declaration = lexicalDeclarationOf(value, value.text);
+    if (
+      declaration === undefined ||
+      !ts.isVariableDeclaration(declaration) ||
+      declaration.initializer === undefined ||
+      seen.has(declaration)
+    ) {
+      return false;
+    }
+    if (seen.size >= SUMMARY_DEPTH) {
+      return true;
+    }
+    seen.add(declaration);
+    return valueIsGlobalObject(declaration.initializer, seen);
+  }
+  if (ts.isConditionalExpression(value)) {
+    return (
+      valueIsGlobalObject(value.whenTrue, seen) ||
+      valueIsGlobalObject(value.whenFalse, seen)
+    );
+  }
+  if (ts.isBinaryExpression(value)) {
+    switch (value.operatorToken.kind) {
+      case ts.SyntaxKind.AmpersandAmpersandToken:
+      case ts.SyntaxKind.BarBarToken:
+      case ts.SyntaxKind.QuestionQuestionToken:
+        return (
+          valueIsGlobalObject(value.left, seen) ||
+          valueIsGlobalObject(value.right, seen)
+        );
+      case ts.SyntaxKind.CommaToken:
+      case ts.SyntaxKind.EqualsToken:
+        return valueIsGlobalObject(value.right, seen);
+      default:
+        return false;
+    }
+  }
+  return (
+    ts.isCallExpression(value) &&
+    ts.isCallExpression(unwrapParentheses(value.expression)) &&
+    isAmbientReference(
+      unwrapParentheses(
+        (unwrapParentheses(value.expression) as ts.CallExpression).expression,
+      ),
+      "Function",
+    )
+  );
+}
+
+/**
+ * Members of the global object that evaluate code, reach the loader
+ * registry, or are the global object again: read through a binding of the
+ * global object, any of them taints the module ({@link fileReachesLoaderRegistry}).
+ */
+const GLOBAL_OBJECT_REACHING_MEMBERS: ReadonlySet<string> = new Set([
+  "process",
+  "eval",
+  "Function",
+  "constructor",
+  "__proto__",
+  "globalThis",
+  "global",
+  "self",
+  "window",
+  "require",
+  "module",
+]);
+
+/**
+ * Whether a use of a value that may be the global object
+ * ({@link reachesGlobalObject}: `globalThis`, `global`, a binding of
+ * either, lodash's `root = freeGlobal || freeSelf || Function("return
+ * this")()`) may reach another module or evaluate code: a member of
+ * {@link GLOBAL_OBJECT_REACHING_MEMBERS}, a computed member, or the value
+ * handed anywhere but a test or another binding's initializer (which is
+ * itself a binding of the global object, checked where it is used).
+ */
+function globalObjectUseReaches(node: ts.Expression): boolean {
+  const outer = skipOuterParentheses(node);
+  const parent = outer.parent as ts.Node | undefined;
+  if (parent === undefined) {
+    return true;
+  }
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === outer) {
+    return GLOBAL_OBJECT_REACHING_MEMBERS.has(parent.name.text);
+  }
+  if (ts.isElementAccessExpression(parent) && parent.expression === outer) {
+    const key = unwrapParentheses(parent.argumentExpression);
+    return (
+      !ts.isStringLiteralLike(key) ||
+      GLOBAL_OBJECT_REACHING_MEMBERS.has(key.text)
+    );
+  }
+  if (isInertUse(outer)) {
+    return false;
+  }
+  if (
+    ts.isCallExpression(parent) &&
+    parent.expression === outer &&
+    isGlobalObjectIdiomBody(parent)
+  ) {
+    // `Function("return this")`: the idiom's own constructor call, whose
+    // result is censused as the global object where it flows.
+    return false;
+  }
+  const top = climbValue(outer);
+  const holder = top.parent as ts.Node | undefined;
+  return !(
+    holder !== undefined &&
+    ts.isVariableDeclaration(holder) &&
+    holder.initializer === top &&
+    ts.isIdentifier(holder.name)
+  );
+}
+
+/**
+ * The `line:column` of every `Function("return this")()` in the file whose
+ * value only initializes a binding (task BL-074): the global-object idiom
+ * of lodash and many UMD builds (`var root = freeGlobal || freeSelf ||
+ * Function("return this")()`). Its literal body evaluates nothing but the
+ * global object, and every use of the binding is checked by
+ * {@link fileReachesLoaderRegistry} ({@link globalObjectUseReaches}), so
+ * `load-reach.ts` does not count the closure-widening scan's
+ * `function_constructor` at these sites as taint.
+ */
+export function globalObjectIdiomSites(
+  index: SourceIndex,
+): ReadonlySet<string> {
+  const sourceFile = index.sourceFile;
+  const sites = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isCallExpression(node) &&
+      node.arguments.length === 0 &&
+      ts.isCallExpression(unwrapParentheses(node.expression))
+    ) {
+      const inner = unwrapParentheses(node.expression) as ts.CallExpression;
+      if (isGlobalObjectIdiomBody(inner)) {
+        const top = climbValue(node);
+        const holder = top.parent as ts.Node | undefined;
+        if (
+          holder !== undefined &&
+          ts.isVariableDeclaration(holder) &&
+          holder.initializer === top &&
+          ts.isIdentifier(holder.name)
+        ) {
+          const location = toSourceLocation(sourceFile, inner);
+          sites.add(`${location.line}:${location.column}`);
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return sites;
+}
+
+/** Whether `call` is `Function("return this")`: the ambient `Function` with exactly that literal body. */
+function isGlobalObjectIdiomBody(call: ts.CallExpression): boolean {
+  const [body] = call.arguments;
+  return (
+    isAmbientReference(unwrapParentheses(call.expression), "Function") &&
+    call.arguments.length === 1 &&
+    body !== undefined &&
+    ts.isStringLiteralLike(body) &&
+    /^\s*return this;?\s*$/.test(body.text)
+  );
+}
+
+/** Whether a reference to the ambient `module` or `require` reaches the loader registry ({@link fileReachesLoaderRegistry}). */
+function registryReference(node: ts.Identifier): boolean {
+  const outer = skipOuterParentheses(node);
+  const parent = outer.parent as ts.Node;
+  if (node.text === "require") {
+    if (ts.isCallExpression(parent) && parent.expression === outer) {
+      return false;
+    }
+    if (ts.isPropertyAccessExpression(parent) && parent.expression === outer) {
+      const member = parent.name.text;
+      if (member === "cache" || member === "call" || member === "apply") {
+        return true;
+      }
+      if (member === "main") {
+        return !isInertUse(skipOuterParentheses(parent));
+      }
+      return false;
+    }
+    if (isInertUse(outer)) {
+      return false;
+    }
+    const sink = valueSink(outer);
+    return !(
+      sink !== undefined &&
+      ts.isVariableDeclaration(sink.parent) &&
+      loaderAliasIsOnlyCalled(sink)
+    );
+  }
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === outer) {
+    const member = parent.name.text;
+    return !(
+      member === "exports" ||
+      (INERT_MODULE_MEMBERS.has(member) && member !== "require") ||
+      isInertUse(skipOuterParentheses(parent))
+    );
+  }
+  if (isInertUse(outer)) {
+    return false;
+  }
+  const sink = valueSink(outer);
+  return sink === undefined || moduleAliasReachesRegistry(sink);
+}
+
+/** Whether a local bound to `module` reads a member that reaches the registry, or is handed on. */
+function moduleAliasReachesRegistry(alias: ts.Identifier): boolean {
+  const declaration = lexicalDeclarationOf(alias, alias.text);
+  return identifiersSpelled(alias.getSourceFile(), alias.text).some(
+    (reference) => {
+      const parent = reference.parent as ts.Node | undefined;
+      if (
+        parent === undefined ||
+        isNonReferenceName(reference, parent) ||
+        isDeclarationName(reference, parent) ||
+        lexicalDeclarationOf(reference, reference.text) !== declaration
+      ) {
+        return false;
+      }
+      const outer = skipOuterParentheses(reference);
+      const outerParent = outer.parent as ts.Node;
+      if (
+        ts.isPropertyAccessExpression(outerParent) &&
+        outerParent.expression === outer
+      ) {
+        const member = outerParent.name.text;
+        return !(
+          member === "exports" ||
+          (INERT_MODULE_MEMBERS.has(member) && member !== "require") ||
+          isInertUse(skipOuterParentheses(outerParent))
+        );
+      }
+      return !(isInertUse(outer) || isPlainAssignmentTarget(outer));
+    },
+  );
+}
+
 /**
  * The members of a `module` object that reach no module object: its own
  * strings and flags, and `require` (each call of it is a loader call the
@@ -5292,6 +6365,7 @@ function applyExportWriteSet(
   authoritative: ModuleExportsAssignment | undefined,
   wholeModuleWrites: number,
   literalDefinitions: ReadonlySet<ExportBinding>,
+  reach: LoadReach | undefined,
 ): ExportBinding[] {
   if (!results.some((binding) => binding.syntax === "commonjs")) {
     return results;
@@ -5305,7 +6379,11 @@ function applyExportWriteSet(
     exportAttributionWithdrawn: true,
     location: binding.location,
   });
-  if (set.unenumerable) {
+  // BL-074 (RWF-103, RWF-106): a load's result that may be an export
+  // object of this file, handed where the census cannot follow it, may be
+  // written there under any name -- the whole-module re-export's forward
+  // included.
+  if (set.unenumerable || loadResultEscapes(sourceFile, reach)) {
     return results.map((binding) =>
       binding.syntax === "commonjs" && binding.kind !== "re-export"
         ? withdrawnBinding(binding)
@@ -11383,6 +12461,7 @@ function methodValueLocation(
 function buildExportBindings(
   index: SourceIndex,
   exportsList: readonly IndexedExport[],
+  reach: LoadReach | undefined,
 ): ExportBinding[] {
   const sourceFile = index.sourceFile;
   const results: ExportBinding[] = [];
@@ -11534,6 +12613,7 @@ function buildExportBindings(
     authoritative,
     wholeModuleWrites,
     literalDefinitions,
+    reach,
   );
 }
 
@@ -11752,12 +12832,21 @@ function wholeModuleDefaultExport(
 /**
  * Builds the unified import/export model for a file already indexed by
  * TASK-014 (see docs/SDD.md § 15-17).
+ *
+ * `reach` is the file's module-graph context (task BL-074,
+ * {@link LoadReach}): which of its loads may return one of its export
+ * objects. Without it every load may, and a file whose load result leaves
+ * the routes the export census follows has no attributable CommonJS
+ * export -- the fail-closed per-file rule.
  */
-export function buildModuleModel(index: SourceIndex): ModuleModel {
+export function buildModuleModel(
+  index: SourceIndex,
+  reach?: LoadReach,
+): ModuleModel {
   return {
     filePath: index.filePath,
     imports: index.imports.map(toImportBinding),
-    exports: buildExportBindings(index, index.exports),
+    exports: buildExportBindings(index, index.exports, reach),
   };
 }
 
