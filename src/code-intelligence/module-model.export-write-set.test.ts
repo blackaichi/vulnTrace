@@ -1183,3 +1183,384 @@ function expectWithdrawnIn(text: string, file: string, name = "run"): void {
     "and is marked withdrawn",
   ).toBe(true);
 }
+
+/**
+ * Task BL-084 (RWF-114 to RWF-117): every route to a function's own object
+ * is a use of the export object it is the value of. `LAZY` loads nothing at
+ * module time, so no statement before the export's write is unproven and
+ * BL-064's competing-write taint withdraws nothing: what is asserted is
+ * E-1's census alone. Real-Node ground truth for every shape:
+ * `tests/oracle/bl084-function-own-object.test.ts`.
+ */
+const LAZY =
+  'function dangerous() { return require("lib").parse(); }\nfunction safe() { return require("lib").safe(); }\n';
+const OWN = "module.exports = Api;\nmodule.exports.run = safe;\n";
+
+function defaultOf(text: string): string | undefined {
+  const index = indexSourceFile("/pkg/index.js", text);
+  return mapExportsToFunctions(
+    index,
+    buildModuleModel(index, NO_LOAD_REACHES_BACK),
+  ).get("default")?.name;
+}
+
+describe("BL-084: a route to a function's own object withdraws what it writes", () => {
+  it.each([
+    // RWF-114
+    [
+      "`arguments.callee`",
+      "function Api() { arguments.callee.run = dangerous; }\n",
+    ],
+    [
+      '`arguments["callee"]`',
+      'function Api() { arguments["callee"].run = dangerous; }\n',
+    ],
+    ["`arguments[k]`", "function Api(k) { arguments[k].run = dangerous; }\n"],
+    [
+      "an arrow's `arguments`",
+      "function Api() { (() => { arguments.callee.run = dangerous; })(); }\n",
+    ],
+    [
+      "an alias of `arguments.callee`",
+      "function Api() { const self = arguments.callee; self.run = dangerous; }\n",
+    ],
+    [
+      "a function expression's `arguments.callee`",
+      "var Api = function () { arguments.callee.run = dangerous; };\n",
+    ],
+    // RWF-115
+    [
+      "`new.target`",
+      "function Api() { if (new.target) new.target.run = dangerous; }\n",
+    ],
+    [
+      "an alias of `new.target`",
+      "function Api() { const C = new.target; if (C) C.run = dangerous; }\n",
+    ],
+    [
+      "a class constructor's `new.target`",
+      "class Api { constructor() { new.target.run = dangerous; } }\n",
+    ],
+    [
+      "a base class's `new.target`",
+      "class Base { constructor() { new.target.run = dangerous; } }\nclass Api extends Base {}\n",
+    ],
+    [
+      "`prototype.constructor`",
+      "function Api() {}\nApi.prototype.constructor.run = dangerous;\n",
+    ],
+    [
+      "`prototype.constructor` in a function",
+      "function Api() {}\nfunction setup() { Api.prototype.constructor.run = dangerous; }\nvoid setup;\n",
+    ],
+    [
+      "`this.constructor`",
+      "function Api() { this.constructor.run = dangerous; }\n",
+    ],
+    [
+      "a `constructor` of a parameter",
+      "function set(p) { p.constructor.run = dangerous; }\nfunction Api() {}\nvoid set;\n",
+    ],
+    [
+      '`prototype["constructor"]`',
+      'function Api() {}\nApi.prototype["constructor"].run = dangerous;\n',
+    ],
+    [
+      "`prototype[k]`",
+      "function Api() {}\nfunction setup(k) { Api.prototype[k].run = dangerous; }\nvoid setup;\n",
+    ],
+    [
+      "`Reflect.get(…)`",
+      "function Api() {}\nfunction setup(k) { Reflect.get(Api.prototype, k).run = dangerous; }\nvoid setup;\n",
+    ],
+    [
+      "a destructured `constructor`",
+      "function Api() {}\nconst { constructor: C } = new Api();\nC.run = dangerous;\n",
+    ],
+    // RWF-116
+    [
+      "a callee's `caller`",
+      "function helper() { helper.caller.run = dangerous; }\nfunction Api() { helper(); }\n",
+    ],
+    [
+      "a stack callsite's `getFunction()`",
+      "function Api(s) { s[0].getFunction().run = dangerous; }\n",
+    ],
+    // BL-084's independent audit: F1 (a `var arguments` is still the object).
+    [
+      "`arguments.callee` after `var arguments`",
+      "function Api() { var arguments; arguments.callee.run = dangerous; }\n",
+    ],
+    [
+      "`arguments.callee` after `var arguments = arguments`",
+      "function Api() { var arguments = arguments; arguments.callee.run = dangerous; }\n",
+    ],
+    // F2: an assignment's own value.
+    [
+      "an assignment's value (`(b = arguments.callee).run`)",
+      "function Api() { var b; (b = arguments.callee).run = dangerous; }\n",
+    ],
+    [
+      "an assignment chain (`a = b = arguments.callee`)",
+      "function Api() { var a, b; a = b = arguments.callee; a.run = dangerous; }\n",
+    ],
+    [
+      "an initializer chain (`var a = b = arguments.callee`)",
+      "function Api() { var b; var a = b = arguments.callee; a.run = dangerous; }\n",
+    ],
+    // F3: a shorthand destructuring writes the key.
+    [
+      "`arguments[k]`, `k` written by `({ k } = …)`",
+      'function Api() { var k = 0; ({ k } = { k: "callee" }); arguments[k].run = dangerous; }\n',
+    ],
+    [
+      "`arguments[k]`, `k` written by `({ k = … } = {})`",
+      'function Api() { var k = 0; ({ k = "callee" } = {}); arguments[k].run = dangerous; }\n',
+    ],
+    [
+      "`arguments[k]`, `k` written by `for ({ k } of …)`",
+      'function Api() { var k = 0; for ({ k } of [{ k: "callee" }]); arguments[k].run = dangerous; }\n',
+    ],
+    // Round 2, finding 1: a sloppy function's `arguments` property.
+    [
+      "`Api.arguments.callee` in a callee",
+      "function Api() { helper(); }\nfunction helper() { Api.arguments.callee.run = dangerous; }\n",
+    ],
+    [
+      "`arguments.callee.arguments.callee`",
+      "function Api() { arguments.callee.arguments.callee.run = dangerous; }\n",
+    ],
+    [
+      "a destructured `callee` of `Api.arguments`",
+      "function Api() { const { callee } = Api.arguments; callee.run = dangerous; }\n",
+    ],
+    // Round 3, finding 1: a stored self-reference read back.
+    [
+      "`module.exports.self = arguments.callee; module.exports.self.run`",
+      "function Api() { module.exports.self = arguments.callee; module.exports.self.run = dangerous; }\n",
+    ],
+    [
+      "an alias of a stored `module.exports.self`",
+      "function Api() { module.exports.self = arguments.callee; const s = module.exports.self; s.run = dangerous; }\n",
+    ],
+    [
+      "`Api.default` after `module.exports.default = arguments.callee`",
+      "function Api() { module.exports.default = arguments.callee; }\nfunction later() { Api.default.run = dangerous; }\nvoid later;\n",
+    ],
+    [
+      "`Api.self.run` after `Api.self = Api`",
+      "function Api() {}\nfunction setup() { Api.self = Api; Api.self.run = dangerous; }\nvoid setup;\n",
+    ],
+    [
+      "`module.exports.self.run` after `Api.self = Api`",
+      "function Api() {}\nfunction setup() { Api.self = Api; module.exports.self.run = dangerous; }\nvoid setup;\n",
+    ],
+    [
+      "`Api[k].run` after `Api.self = Api` (a key that may be `self`)",
+      "function Api() {}\nfunction setup(k) { Api.self = Api; Api[k].run = dangerous; }\nvoid setup;\n",
+    ],
+    // Round 4: a named function expression's own name.
+    [
+      "a named function expression's own name",
+      "const Api = function Inner() { Inner.run = dangerous; };\n",
+    ],
+    [
+      "a strict named function expression's own name",
+      'const Api = function Inner() { "use strict"; Inner.run = dangerous; };\n',
+    ],
+    // Round 2, finding 2: an assignment's value written back into an export.
+    [
+      "`(module.exports.self = arguments.callee).run`",
+      "function Api() { (module.exports.self = arguments.callee).run = dangerous; }\n",
+    ],
+    [
+      "`var b = exports.self = arguments.callee`",
+      "function Api() { var b = exports.self = arguments.callee; b.run = dangerous; }\n",
+    ],
+  ])("withdraws a name written through %s", (_label, source) => {
+    expectWithdrawn(`${LAZY}${source}${OWN}`);
+  });
+
+  it("withdraws `super.run = v` in a method of the exported object (RWF-117)", () => {
+    expectWithdrawn(
+      `${LAZY}module.exports = { run: safe, init() { super.run = dangerous; } };\n`,
+    );
+  });
+
+  it.each([
+    [
+      "`arguments` handed on",
+      "function Api() { set(arguments); }\nfunction set(a) { void a; }\n",
+    ],
+    ["`arguments` spread", "function Api() { return safe(...arguments); }\n"],
+    [
+      "a destructured `callee`",
+      "function Api() { const { callee } = arguments; void callee; }\n",
+    ],
+    [
+      "`new.target` handed on",
+      "function Api() { if (new.target) set(new.target); }\nfunction set(C) { void C; }\n",
+    ],
+    [
+      "`Object.setPrototypeOf(new.target, …)`",
+      "function Api() { if (new.target) Object.setPrototypeOf(new.target, null); }\n",
+    ],
+    [
+      "a `constructor` returned",
+      "function Api() {}\nfunction get(o) { return o.constructor; }\nvoid get;\n",
+    ],
+    [
+      "a computed read returned",
+      "function Api() {}\nfunction get(o, k) { return o[k]; }\nvoid get;\n",
+    ],
+    [
+      "a read by a counter later written a string, handed on",
+      'function Api() {}\nfunction get(o) { var i = 0; i = "constr" + "uctor"; return o[i]; }\nvoid get;\n',
+    ],
+    [
+      "a read by a `for…in` key, handed on",
+      "function Api() {}\nfunction each(o, f) { for (var k in o) f(o[k]); }\nvoid each;\n",
+    ],
+    [
+      "a descriptor read",
+      'function Api() {}\nconst d = Object.getOwnPropertyDescriptor(Api.prototype, "constructor");\nvoid d.value;\n',
+    ],
+    ["`Reflect` aliased", "function Api() {}\nconst R = Reflect;\nvoid R;\n"],
+    [
+      "a reader taken as a value",
+      "function Api() {}\nvar gOPD = Object.getOwnPropertyDescriptor;\nvoid gOPD;\n",
+    ],
+    ["`with`", "function Api() {}\nwith ({}) {}\n"],
+    // BL-084's independent audit: F1, F2 and F5.
+    [
+      "`arguments` handed on after `var arguments`",
+      "function Api() { var arguments; set(arguments); }\nfunction set(a) { void a; }\n",
+    ],
+    [
+      "an assignment of a route handed on (`set(b = arguments.callee)`)",
+      "function Api() { var b; set(b = arguments.callee); }\nfunction set(o) { void o; }\n",
+    ],
+    ["`Object` aliased", "function Api() {}\nconst O = Object;\nvoid O;\n"],
+    [
+      "`Object` destructured",
+      "function Api() {}\nconst { getOwnPropertyDescriptor: g } = Object;\nvoid g;\n",
+    ],
+    [
+      "a reader keyed by a string",
+      'function Api() {}\nvoid Object["getOwnPropertyDescriptor"];\n',
+    ],
+    [
+      "`Reflect` through the global object",
+      "function Api() {}\nfunction setup(k) { globalThis.Reflect.get(Api.prototype, k).run = dangerous; }\nvoid setup;\n",
+    ],
+    [
+      "a callsite reader taken as a value",
+      "function Api(s) { const gf = s[1].getFunction; void gf; }\n",
+    ],
+    [
+      "a callsite reader keyed by a string",
+      'function Api(s) { s[1]["getFunction"]().run = dangerous; }\n',
+    ],
+    [
+      "`prepareStackTrace`",
+      "function Api(c, m) { Error.prepareStackTrace = (e, s) => s; void c[m](); }\n",
+    ],
+  ])(
+    "withdraws every named export when %s, but keeps the function",
+    (_label, source) => {
+      const text = `${LAZY}${source}${OWN}`;
+      expectWithdrawn(text);
+      expect(defaultOf(text), "the whole-module value is not replaced").toBe(
+        "Api",
+      );
+    },
+  );
+
+  it.each([
+    ["the plain function", "function Api() {}\n"],
+    [
+      "`arguments.length` and `arguments[0]`",
+      "function Api() { return arguments.length + arguments[0]; }\n",
+    ],
+    [
+      "a member read through a route",
+      "function Api() { return this.constructor.name; }\n",
+    ],
+    [
+      "another name written through a route",
+      "function Api() {}\nfunction setup() { Api.prototype.constructor.x = 1; }\nvoid setup;\n",
+    ],
+    [
+      'a `"use strict"` function\'s `arguments` handed on',
+      'function Api() { "use strict"; return safe(...arguments); }\n',
+    ],
+    [
+      "another function's `arguments` handed on",
+      "function Api() {}\nfunction other() { return safe(...arguments); }\nvoid other;\n",
+    ],
+    [
+      "a strict owner's callee reading `caller`",
+      'function helper() { void helper.caller; }\nfunction Api() { "use strict"; helper(); }\n',
+    ],
+    [
+      "a read by a loop counter, handed on (a number is no `constructor` key)",
+      "function Api() {}\nfunction each(xs, f) { for (var i = 0; i < xs.length; i++) f(xs[i]); }\nvoid each;\n",
+    ],
+    [
+      "a stored self-reference whose reads write nothing",
+      "function Api() {}\nfunction setup(o) { Api.default = Api; return Api.default.name === o.default; }\nvoid setup;\n",
+    ],
+    [
+      "a parameter named `arguments` (another binding)",
+      "function Api(arguments) { set(arguments); }\nfunction set(a) { void a; }\n",
+    ],
+    [
+      "`Object(…)` and `Object.keys(…)`",
+      "function Api(x) { return Object(x) === Object.keys(x); }\n",
+    ],
+    [
+      "a read by arithmetic on counters, handed on",
+      "function Api() {}\nfunction last(xs, f) { let n = xs.length - 1; n -= 0; f(xs[n * 1], xs[n >> 1]); }\nvoid last;\n",
+    ],
+  ])("keeps the attribution for %s", (_label, source) => {
+    expect(attributed(`${LAZY}${source}${OWN}`)).toBe("safe");
+  });
+
+  it("keeps it in a strict file, where `arguments.callee` throws", () => {
+    expect(
+      attributed(
+        `"use strict";\n${LAZY}function Api() { set(arguments); }\nfunction set(a) { void a; }\n${OWN}`,
+      ),
+    ).toBe("safe");
+  });
+
+  // Round 3's fix, measured on postcss: a store into itself makes only reads
+  // OF the object by a computed key routes, so another value's computed read
+  // handed on keeps the whole-module function.
+  it("keeps the whole-module function beside a self-store and another value's computed read", () => {
+    const text = `${LAZY}class Api { constructor(o) { for (const k in o) this[k] = o[k]; } }\nmodule.exports = Api;\nApi.default = Api;\n`;
+    expect(defaultOf(text)).toBe("Api");
+  });
+
+  // Round 3, finding 2: a chain too long to follow fails closed, never
+  // overflowing the stack.
+  it("fails closed on a numeric-binding chain too deep to follow", () => {
+    const n = 3000;
+    const declarations = Array.from({ length: n }, (_, i) =>
+      i === 0 ? "var k0 = 0;\n" : `var k${i} = k${i - 1} + 1;\n`,
+    ).join("");
+    const text = `${LAZY}function Api() {}\n${declarations}function g(e) { set(e[k${n - 1}]); }\nfunction set(v) { void v; }\nvoid g;\n${OWN}`;
+    expect(() => attributed(text)).not.toThrow();
+    expect(attributed(text)).toBeUndefined();
+  });
+
+  it("is no route when the final object is no function of this file", () => {
+    // A plain exports object: `arguments` of an exported method is that
+    // method's, never the exports object's.
+    expect(
+      attributed(
+        `${LAZY}exports.run = safe;\nexports.other = function () { return set(arguments); };\nfunction set(a) { void a; }\n`,
+      ),
+    ).toBe("safe");
+  });
+});
