@@ -2782,19 +2782,8 @@ function finalObjectAliasUses(
       ) {
         return;
       }
-      // Read by an `Object` or `Reflect` reader (`Object.keys(api)`).
-      if (
-        ts.isCallExpression(parent) &&
-        parent.arguments[0] === outer &&
-        classifyHelperCall(parent, (kind) => ({
-          kind,
-          names: NO_NAMES,
-          deferred: false,
-          statementIndex: 0,
-        })).kind === "read"
-      ) {
-        return;
-      }
+      // Handed to a builtin (`Object.keys(api)`), it is handed to code: any
+      // module may have replaced the builtin (RWF-104, BL-075).
       // Called or constructed, the object hands itself to nothing.
       if (
         (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
@@ -4054,6 +4043,9 @@ const PROTOTYPE_READER_METHODS: ReadonlySet<string> = new Set([
  * or `.call` / `.apply` of a builtin prototype's reader method, spelled
  * directly or through a binding initialized to it and never written
  * (qs's `var has = Object.prototype.hasOwnProperty; has.call(o, k)`).
+ * Used only for an ambient prototype handed to it
+ * ({@link isPrototypeTampering}): any code holds those anyway. An export
+ * object handed to one is handed to code (RWF-104, BL-075).
  */
 function isBuiltinReaderCall(call: ts.CallExpression): boolean {
   return (
@@ -5457,7 +5449,7 @@ const INERT_MODULE_MEMBERS: ReadonlySet<string> = new Set([
   "require",
 ]);
 
-/** Ambient names whose members a file can patch for every module: the global object and the builtins the reader allow-lists trust. */
+/** Ambient names whose members a file can patch for every module: the global object and the builtins the census's define arm trusts. */
 const PATCHABLE_GLOBALS: readonly string[] = [
   "globalThis",
   "global",
@@ -5469,16 +5461,24 @@ const PATCHABLE_GLOBALS: readonly string[] = [
 const builtinPatchingBySourceFile = new WeakMap<ts.SourceFile, boolean>();
 
 /**
- * Whether this file may replace a builtin the reader allow-lists trust
- * (`Object.keys`, `Reflect.get`, `Object.prototype.hasOwnProperty`,
- * `Object[Symbol.hasInstance]`; E-1's re-audit, F2): a write through an
- * ambient builtin or global object (`Object.keys = f`,
- * `globalThis.Object = o`, `Object.prototype.m = f`), or one of them handed
+ * Whether this file may replace a builtin, spelled by its ambient name
+ * (E-1's re-audit, F2): a write through an ambient builtin or global
+ * object (`Object.keys = f`, `globalThis.Object = o`,
+ * `Object.prototype.m = f`), or one of them handed
  * to code or aliased (`Object.defineProperty(Object, …)`, `const O =
  * Object`). Calling one (`Object.keys(o)`, `Object(x)`), testing one,
  * `instanceof` one, and aliasing a builtin's member that is not an object
- * of builtins (`var has = Object.prototype.hasOwnProperty`) do not. Then no
- * call of a builtin is taken for a reader.
+ * of builtins (`var has = Object.prototype.hasOwnProperty`) do not. Then
+ * `Object.defineProperty(E, …)`, `Object.assign(E, …)` and `Reflect.set(E,
+ * …)` are not taken for the definitions they spell, and an ambient
+ * prototype handed to a reader is tampering ({@link isPrototypeTampering}).
+ *
+ * It is NOT what makes a builtin reader a reader of an export object: no
+ * census of one file sees a builtin reached without its name
+ * (`({}).constructor.keys = f`) or replaced by another module, so no
+ * builtin is trusted with an export object at all (RWF-104, BL-075). The
+ * define arm keeps the trust this census gives; another module's
+ * replacement of it is RWF-111 (masked by the call graph's escape row).
  */
 function fileMayPatchBuiltins(sourceFile: ts.SourceFile): boolean {
   const known = builtinPatchingBySourceFile.get(sourceFile);
@@ -5606,7 +5606,7 @@ function fileMayPatchBuiltins(sourceFile: ts.SourceFile): boolean {
   return patches;
 }
 
-/** Ambient constructors whose `Symbol.hasInstance` is the builtin one. */
+/** Ambient builtin constructors (whose `Symbol.hasInstance`, unless some module defines one, is the builtin one). */
 const BUILTIN_CONSTRUCTORS: readonly string[] = [
   "Object",
   "Function",
@@ -5640,10 +5640,8 @@ function isNullish(expression: ts.Expression): boolean {
 /**
  * Whether the value of `node` (an object reference) is only tested, never
  * handed to code: `typeof x`, `!x`, `void x`, a strict comparison, a loose
- * one against `null` or `undefined`, `k in x`, `C instanceof …` with the
- * object on the right, `x instanceof B` for an ambient builtin constructor
- * `B`, a condition (`if`, a loop's, a conditional's test), the discarded
- * left of a comma, an expression statement, and the LEFT operand of `&&`
+ * one against `null` or `undefined`, `k in x`, a condition (`if`, a
+ * loop's, a conditional's test), the discarded left of a comma, an expression statement, and the LEFT operand of `&&`
  * (ToBoolean: an object is truthy, so `x && y` yields `y`; a falsy `this`
  * is no export object). A logical expression's other operands are its
  * value, which is inert only when the whole expression is.
@@ -5651,10 +5649,12 @@ function isNullish(expression: ts.Expression): boolean {
  * NOT inert, because real Node runs code with the object (E-1's
  * independent audit, finding 3): a loose comparison against anything else
  * and a template literal (ToPrimitive: `valueOf`, `toString`,
- * `Symbol.toPrimitive`, inherited or patched), and `x instanceof C` for a
- * `C` this file defines (`C[Symbol.hasInstance](x)`). A builtin's own
- * `Symbol.hasInstance` or prototype methods are changed only by the
- * prototype tampering the census refuses ({@link isPrototypeTampering}).
+ * `Symbol.toPrimitive`, inherited or patched), and `instanceof` on either
+ * side (`C[Symbol.hasInstance](x)`): `C` one this file defines, an ambient
+ * builtin (any module of the process may define a builtin's own
+ * `Symbol.hasInstance`, RWF-104), or the object itself, whose
+ * `Symbol.hasInstance` is inherited from a prototype any module may write
+ * (RWF-112; BL-075).
  */
 function isInertUse(node: ts.Node): boolean {
   const outer = skipOuterParentheses(node);
@@ -5696,17 +5696,23 @@ function isInertUse(node: ts.Node): boolean {
     case ts.SyntaxKind.ExclamationEqualsToken:
       return isNullish(parent.left === outer ? parent.right : parent.left);
     case ts.SyntaxKind.InstanceOfKeyword:
-      // On the right, the object runs its own `Symbol.hasInstance` (or the
-      // builtin one) with itself as `this`: its own methods are censused.
-      // A builtin's, unless the file may replace it (E-1's re-audit, F4:
-      // `Object.defineProperty(Object, Symbol.hasInstance, …)`).
-      return (
-        parent.right === outer ||
-        (BUILTIN_CONSTRUCTORS.some((name) =>
-          isAmbientReference(unwrapParentheses(parent.right), name),
-        ) &&
-          !fileMayPatchBuiltins(parent.getSourceFile()))
-      );
+      // On the left the object is handed to the right's
+      // `Symbol.hasInstance`, a builtin's included: any module may define
+      // one on the builtin (`Object.defineProperty(Object,
+      // Symbol.hasInstance, …)`, E-1's re-audit, F4; RWF-104, BL-075). On
+      // the right its own `Symbol.hasInstance` runs with it as `this`, and
+      // a plain object's is inherited from `Object.prototype`, which any
+      // module may write (BL-075's audit, RWF-112) -- unless it is a
+      // function or a class with no heritage this file declares, whose
+      // inherited one is `Function.prototype`'s, non-writable and
+      // non-configurable (measured) -- as long as its own properties and
+      // its `[[Prototype]]` are unchanged. The census of its binding
+      // accounts writes through the binding; a write that reaches the
+      // function without its name (`arguments.callee`, `new.target`,
+      // `.prototype.constructor`) is not accounted, an open debt this
+      // narrowing inherits with every attribution of such a function
+      // (RWF-114, RWF-115).
+      return parent.right === outer && isOwnBaseCallable(outer);
     case ts.SyntaxKind.InKeyword:
       return parent.right === outer;
     case ts.SyntaxKind.CommaToken:
@@ -5719,6 +5725,42 @@ function isInertUse(node: ts.Node): boolean {
     default:
       return false;
   }
+}
+
+/**
+ * Whether `node` is an identifier bound, in this file, to a function
+ * declaration (neither async nor a generator) or to a class declaration
+ * with no heritage clause and no computed member, and never assigned: a
+ * value whose `[[Prototype]]` is `Function.prototype` (task BL-075).
+ */
+function isOwnBaseCallable(node: ts.Node): boolean {
+  const reference = unwrapParentheses(node as ts.Expression);
+  if (!ts.isIdentifier(reference)) {
+    return false;
+  }
+  const declaration = lexicalDeclarationOf(reference, reference.text);
+  if (
+    declaration === undefined ||
+    isNameAssignedWithin(reference.getSourceFile(), reference.text)
+  ) {
+    return false;
+  }
+  if (ts.isFunctionDeclaration(declaration)) {
+    return (
+      declaration.asteriskToken === undefined &&
+      !ts
+        .getModifiers(declaration)
+        ?.some((modifier) => modifier.kind === ts.SyntaxKind.AsyncKeyword)
+    );
+  }
+  return (
+    ts.isClassDeclaration(declaration) &&
+    declaration.heritageClauses === undefined &&
+    declaration.members.every(
+      (member) =>
+        member.name === undefined || !ts.isComputedPropertyName(member.name),
+    )
+  );
 }
 
 /**
@@ -5865,12 +5907,12 @@ function classifyHelperCall(
   }
   const method = callee.name.text;
   const receiver = unwrapParentheses(callee.expression);
-  // A builtin reader the file cannot have replaced (`Object.keys(E)`,
-  // `Object.prototype.hasOwnProperty.call(E, k)`); not any receiver's
-  // `hasOwnProperty`, nor a reader the file patches (E-1's re-audit, F2).
-  if (isBuiltinReaderCall(call)) {
-    return make("read");
-  }
+  // No builtin is trusted to only read the object (`Object.keys(E)`,
+  // `Object.prototype.hasOwnProperty.call(E, k)`): builtins are shared by
+  // every module of the process, and any of them -- this file through a
+  // spelling no census sees (`({}).constructor.keys = f`), a sibling, the
+  // entry -- may have replaced one with a function that writes onto what
+  // it is handed (RWF-104, BL-075). Such a call is `unenumerable` below.
   const isObject = isAmbientReference(receiver, "Object");
   const isReflect = isAmbientReference(receiver, "Reflect");
   if (!isObject && !isReflect) {
