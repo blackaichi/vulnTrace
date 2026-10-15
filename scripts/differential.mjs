@@ -6,7 +6,7 @@
  *
  *   node scripts/differential.mjs [--base <ref>] [--corpus <names>]
  *        [--case <ids>] [--out <dir>] [--keep-scratch]
- *        [--use-head-dependencies]
+ *        [--use-head-dependencies] [--no-cache]
  *   node scripts/differential.mjs --collect <snapshot.json>
  *        [--corpus <names>] [--case <ids>] [--label <text>]
  *   node scripts/differential.mjs --diff <base.json> <head.json> [--out <dir>]
@@ -42,6 +42,30 @@
  * verdict differentials come from the scan's own JSON output and need no
  * seam.
  *
+ * THE BASE SIDE IS CACHED (BL-089); THE HEAD SIDE NEVER IS. A clean base
+ * collection is stored under `.cache/differential/` (git-ignored), keyed
+ * by the base commit's full SHA and by everything the base side reads
+ * besides it: the corpus (every file under `tests/validation/` and
+ * `tests/adversarial/` — fixtures, cases, expected verdicts, the OSV
+ * snapshot), the instrument laid over the base (the paths below), this
+ * driver and `scripts/differential-cache.mjs`, the installed dependencies
+ * (`node_modules` in full, `package.json`, `package-lock.json`), the Node
+ * version, `--corpus` / `--case` / `--use-head-dependencies`, and what a
+ * scan can read above a scanned project (Node's upward `package.json` and
+ * `node_modules` lookups, from the in-place adversarial fixtures and from
+ * the validation corpus's copies under the OS temp directory). A later
+ * run whose key is identical reuses that snapshot instead of collecting
+ * the base side again, and the report says so. A change to any keyed
+ * input — committed or not — is a different key, and the base side is
+ * collected again: the cache is invalidated by its inputs, never by time.
+ * The exact key, and the one input it hashes by name only (the tool
+ * caches `node_modules/.vite` and `node_modules/.cache`), are documented
+ * in `differential-cache.mjs`'s header. The key is computed before and
+ * after a collection, and the snapshot is stored only when the two agree
+ * and vitest exited cleanly. A run whose inputs cannot all be hashed (a
+ * symlink leading out of them) is not cached, and the report says why.
+ * `--no-cache` collects the base side regardless and stores nothing.
+ *
  * Exit status: 0 when the report was produced (whatever it contains), 2
  * on a usage error or when a side could not be collected.
  */
@@ -66,6 +90,11 @@ import {
   SNAPSHOT_FORMAT,
   summarize,
 } from "./differential-lib.mjs";
+import {
+  baseCacheKey,
+  readCachedBase,
+  writeCachedBase,
+} from "./differential-cache.mjs";
 
 const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -88,6 +117,12 @@ const INSTRUMENT_PATHS = [
   "tests/differential",
   "vitest.differential.config.ts",
 ];
+
+/** The driver itself: part of the base side's cache key. */
+const DRIVER_PATHS = ["scripts/differential.mjs", "scripts/differential-cache.mjs"];
+
+/** Where clean base-side collections are kept (BL-089; git-ignored). */
+const CACHE_DIR = path.join(REPO_ROOT, ".cache", "differential");
 
 class UsageError extends Error {}
 
@@ -124,6 +159,9 @@ function parseArgs(argv) {
         break;
       case "--use-head-dependencies":
         options.useHeadDependencies = true;
+        break;
+      case "--no-cache":
+        options.noCache = true;
         break;
       case "--collect":
         options.mode = "collect";
@@ -210,27 +248,33 @@ function collect({ codeRoot, out, label, corpora, cases }) {
   return { snapshot, seconds, notes };
 }
 
+/**
+ * The base side runs on this tree's `node_modules`, which is only faithful
+ * when the two lockfiles agree. Checked before the cache is consulted, so
+ * a reused base side is refused exactly when a collected one would be.
+ */
+function lockfileNotes(sha, useHeadDependencies) {
+  const baseLock = git(["show", `${sha}:package-lock.json`]);
+  const headLock = readFileSync(path.join(REPO_ROOT, "package-lock.json"), "utf-8");
+  if (baseLock === headLock) return [];
+  if (!useHeadDependencies) {
+    throw new UsageError(
+      `the base's package-lock.json differs from this tree's; its analyzer would run on dependencies it was not locked to. Re-run with --use-head-dependencies to measure it with this tree's dependencies anyway.`,
+    );
+  }
+  return [
+    "The base's package-lock.json differs from the head's; the base was measured with the head's dependencies (--use-head-dependencies).",
+  ];
+}
+
 /** The base side: the base commit's analyzer with this tree's instrument. */
-function prepareBase(sha, scratch, useHeadDependencies) {
+function prepareBase(sha, scratch) {
   const tar = git(["archive", "--format=tar", sha, ...BASE_ANALYZER_PATHS], {
     encoding: null,
   });
   const untar = spawnSync("tar", ["-x", "-C", scratch], { input: tar });
   if (untar.status !== 0) {
     throw new Error(`tar -x failed: ${String(untar.stderr).trim()}`);
-  }
-  const notes = [];
-  const baseLock = readFileSync(path.join(scratch, "package-lock.json"), "utf-8");
-  const headLock = readFileSync(path.join(REPO_ROOT, "package-lock.json"), "utf-8");
-  if (baseLock !== headLock) {
-    if (!useHeadDependencies) {
-      throw new UsageError(
-        `the base's package-lock.json differs from this tree's; its analyzer would run on dependencies it was not locked to. Re-run with --use-head-dependencies to measure it with this tree's dependencies anyway.`,
-      );
-    }
-    notes.push(
-      "The base's package-lock.json differs from the head's; the base was measured with the head's dependencies (--use-head-dependencies).",
-    );
   }
   for (const rel of INSTRUMENT_PATHS) {
     const from = path.join(REPO_ROOT, rel);
@@ -244,7 +288,94 @@ function prepareBase(sha, scratch, useHeadDependencies) {
     path.join(scratch, "node_modules"),
     "dir",
   );
-  return notes;
+}
+
+/**
+ * The base side's snapshot: reused from the cache when its key is
+ * unchanged, otherwise collected (and then cached, when that is safe).
+ * See this file's header and `differential-cache.mjs`'s.
+ */
+function baseSide({ baseSha, label, out, options }) {
+  const keyInput = {
+    repoRoot: REPO_ROOT,
+    tmpRoot: tmpdir(),
+    baseSha,
+    snapshotFormat: SNAPSHOT_FORMAT,
+    selection: {
+      corpora: options.corpora,
+      cases: options.cases,
+      useHeadDependencies: options.useHeadDependencies === true,
+    },
+    runtime: {
+      node: process.version,
+      platform: process.platform,
+      arch: process.arch,
+    },
+    driverPaths: DRIVER_PATHS,
+    instrumentPaths: INSTRUMENT_PATHS,
+  };
+  const keyed = options.noCache
+    ? { cacheable: false, reason: "--no-cache was given" }
+    : baseCacheKey(keyInput);
+  if (keyed.cacheable) {
+    const cached = readCachedBase(CACHE_DIR, keyed.key, SNAPSHOT_FORMAT);
+    if (cached !== undefined) {
+      const snapshot = { ...cached.snapshot, label };
+      writeFileSync(out, JSON.stringify(snapshot) + "\n");
+      process.stderr.write(
+        `differential: ${label} reused from the cache (key ${keyed.key.slice(0, 12)})\n`,
+      );
+      return {
+        snapshot,
+        seconds: "0.0",
+        notes: [
+          `The base side was REUSED from the cache, not collected (key ${keyed.key.slice(0, 12)}, collected ${cached.collectedAt} in ${cached.seconds}s): the base commit and every input the base side reads — corpus, instrument, driver, dependencies, Node version, the directories around the scanned projects, the selection — are byte-identical to that collection's (BL-089; scripts/differential-cache.mjs). --no-cache collects it again.`,
+        ],
+      };
+    }
+  }
+  const scratch = mkdtempSync(path.join(tmpdir(), "vulntrace-differential-base-"));
+  try {
+    prepareBase(baseSha, scratch);
+    const base = collect({
+      codeRoot: scratch,
+      out,
+      label,
+      corpora: options.corpora,
+      cases: options.cases,
+    });
+    if (!keyed.cacheable) {
+      base.notes.push(`The base side was collected and not cached: ${keyed.reason}.`);
+    } else if (base.notes.length > 0) {
+      base.notes.push(
+        "The base side was collected and not cached: its collection was not clean (above).",
+      );
+    } else {
+      const after = baseCacheKey(keyInput);
+      if (!after.cacheable || after.key !== keyed.key) {
+        base.notes.push(
+          "The base side was collected and not cached: an input it reads changed while it was being collected.",
+        );
+      } else {
+        writeCachedBase(CACHE_DIR, keyed.key, {
+          baseSha,
+          collectedAt: new Date().toISOString(),
+          seconds: base.seconds,
+          snapshot: base.snapshot,
+        });
+        base.notes.push(
+          `The base side was collected and cached (key ${keyed.key.slice(0, 12)}); a later run with the same inputs reuses it.`,
+        );
+      }
+    }
+    return base;
+  } finally {
+    if (options.keepScratch) {
+      process.stderr.write(`differential: scratch kept at ${scratch}\n`);
+    } else {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
 }
 
 function writeResults(outDir, diff, report, snapshots) {
@@ -269,39 +400,30 @@ function compare(options) {
   const outDir =
     options.out ?? mkdtempSync(path.join(tmpdir(), "vulntrace-differential-"));
   mkdirSync(outDir, { recursive: true });
-  const scratch = mkdtempSync(path.join(tmpdir(), "vulntrace-differential-base-"));
-  try {
-    const notes = prepareBase(baseSha, scratch, options.useHeadDependencies);
-    const base = collect({
-      codeRoot: scratch,
-      out: path.join(outDir, "base.json"),
-      label: baseLabel,
-      corpora: options.corpora,
-      cases: options.cases,
-    });
-    const head = collect({
-      codeRoot: REPO_ROOT,
-      out: path.join(outDir, "head.json"),
-      label: headLabel,
-      corpora: options.corpora,
-      cases: options.cases,
-    });
-    notes.push(
-      ...base.notes,
-      ...head.notes,
-      "Both sides scanned the head's corpus (fixtures, cases, expected verdicts, OSV snapshot); only the analyzer differs.",
-      `Collection time: base ${base.seconds}s, head ${head.seconds}s.`,
-    );
-    const diff = diffSnapshots(base.snapshot, head.snapshot);
-    const report = renderReport(diff, { notes });
-    writeResults(outDir, { ...diff, summary: summarize(diff) }, report);
-  } finally {
-    if (options.keepScratch) {
-      process.stderr.write(`differential: scratch kept at ${scratch}\n`);
-    } else {
-      rmSync(scratch, { recursive: true, force: true });
-    }
-  }
+  const notes = lockfileNotes(baseSha, options.useHeadDependencies);
+  const base = baseSide({
+    baseSha,
+    label: baseLabel,
+    out: path.join(outDir, "base.json"),
+    options,
+  });
+  // The head side is never cached: it is the code under review.
+  const head = collect({
+    codeRoot: REPO_ROOT,
+    out: path.join(outDir, "head.json"),
+    label: headLabel,
+    corpora: options.corpora,
+    cases: options.cases,
+  });
+  notes.push(
+    ...base.notes,
+    ...head.notes,
+    "Both sides scanned the head's corpus (fixtures, cases, expected verdicts, OSV snapshot); only the analyzer differs.",
+    `Collection time: base ${base.seconds}s, head ${head.seconds}s.`,
+  );
+  const diff = diffSnapshots(base.snapshot, head.snapshot);
+  const report = renderReport(diff, { notes });
+  writeResults(outDir, { ...diff, summary: summarize(diff) }, report);
 }
 
 function main() {
