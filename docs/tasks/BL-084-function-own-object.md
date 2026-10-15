@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-084 (with `BL-086` folded in)
 - **Branch**: `bl-084-function-own-object`
 - **Base SHA**: `e7cb5767800ee757bfff3d9c035c074623f7ad85` (BL-075's merge, PR #105)
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `docs(tasks): BL-084 task file — every route to a function's own object is a use of the export object`
+  - `test(BL-084): every route to a function's own object, against real Node — RWF-114..117`
+  - `fix(BL-084): every route to a function's own object is censused like its binding — RWF-114..117`
+  - (this commit) `docs(BL-084): records — RWF-114..117 fixed, RWF-118 found, ADR 0009 decision record, plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -154,3 +158,38 @@ is OPEN-DEBTS D-09's six known failures (five, plus RWB-09a from BL-075).
 ## Report
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
+
+## Corrections and outcome (appended by the last commit)
+
+- **The route set was wider than this file's Problem section.** The
+  independent audit blocked four times, each round on live shapes of the
+  same root, all fixed here: round 1 -- `var arguments` (the arguments
+  object matched by spelling, not binding), an assignment's own value
+  (`(b = arguments.callee).run`), a shorthand destructuring writing a
+  "numeric" key, a quadratic numeric-key proof, readers reached without
+  spelling `Object` / `Reflect`; round 2 -- a sloppy function's own
+  `arguments` property (`Api.arguments.callee`), a write back's own value,
+  a reverse-asked numeric chain; round 3 -- a self-reference stored and
+  read back (`Api.self = Api; Api.self.run`, a gap of the binding's own
+  census too), a numeric chain overflowing the stack; round 4 -- a named
+  function expression's own name. Thirty-five live false `NOT_AFFECTED`s
+  in all, each failing on the base. Round 5 CERTIFIED (no fail-open across
+  377 model probes re-run on base and head), noting RWF-118's `valueOf`
+  shapes (masked) and a quadratic shape in the self-held-read replay
+  (backlog `BL-088`, P3).
+- **Two design choices beyond step 2, recorded in ADR 0009's decision
+  record for the owner:** a route handed on withdraws the NAMED exports and
+  keeps the whole-module function (`propertiesUnenumerable`); and a key
+  provably a number or a boolean is no route (`isNumericValue`). Without
+  the second, RWB-08 moved `AFFECTED → UNKNOWN` (measured).
+- **Premise 3 of this file stands, refined:** the masked `constructor`
+  shapes are withdrawn on the base only by BL-064's taint or a class's
+  "carries all"; with nothing unproven first, the model attributed them.
+- **Precision:** 1 of 4,765 attributed export bindings lost
+  (`scripts/bl084-function-own-object-corpus.mjs`); corpus differential
+  graph 0, proof 0, verdict 0; validation exactly D-09's six.
+- **Out of scope, registered:** RWF-118 (a call returning its receiver,
+  `Api.valueOf()`, or a builtin handing a property value to a callback, is
+  taken for a read; masked; backlog `BL-087`). Accepted, measured: a
+  1,000-link `a = b = … = Api` chain costs about 1 s against the base's
+  0.3 s (unrealistic shape; no structural guard).
