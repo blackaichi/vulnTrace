@@ -232,17 +232,19 @@ touches resolution semantics); the closure's whole-file widening scan
 
 ### D-09 — Known validation failures
 
-Five of the 17 real-world cases are kept **deliberately failing**, because
+Six of the 17 real-world cases are kept **deliberately failing**, because
 a disagreement with an independently-researched oracle is recorded rather
 than fixed away or re-scoped to match the tool. (Five until task A-3a,
 which added `RWB-07`; six until task A-4, which restored it; see its
-row.)
+row. Six since task BL-075, which added `RWB-09a`, pending the project
+owner's decision; see its row.)
 
 | Case | Expected | Actual | Cause |
 | --- | --- | --- | --- |
 | `RWB-03` | `AFFECTED` | `UNKNOWN` | RWF-006 — a webpack-bundled, getter-defined class export is not recognised as constructible/method-bearing. |
 | `RWB-05` | `NOT_AFFECTED` | `UNKNOWN` | **D-06 (RWF-002)**. The target now resolves exactly; what blocks the proof is unresolved edges elsewhere in `qs`'s own real dependencies. |
 | ~~`RWB-07`~~ | `NOT_AFFECTED` | `NOT_AFFECTED` since task A-4 (`UNKNOWN` from A-3a to A-4) | **Passing again since task A-4**, which admitted `JSON.parse`'s first position mechanically (`tests/oracle/builtin-admission.test.ts`): its hooks are protocol members and Proxy traps, accounted at their definitions since A-4. The history: **Task A-3a's fail-closed default, a sound precision cost.** `loadModernConfig(text)`, an exported function, hands its parameter to `JSON.parse`, whose first position coerces an object through `toString` / `Symbol.toPrimitive`: protocol hooks no position admission can cover before task A-4 accounts protocol members (ADR 0008's allowlist admission ruling, condition (b)). REMEDIATION-PLAN § 5a anticipated it; A-4 must re-admit the position ("A-3a additions"). |
+| `RWB-09a` | `AFFECTED` | `UNKNOWN` since task BL-075 | **Task BL-075's fail-closed rule, a sound precision cost, pending the project owner's decision.** semver's `classes/range.js` runs `range instanceof Comparator`, where `Comparator` is a load of `./comparator`, which loads `./range` back: under BL-074's module-graph rule its value may be `range.js`'s own exports object, and an export object on the right of `instanceof` runs an inherited `Symbol.hasInstance` any module may define (RWF-112). `range.js`'s export is withdrawn, so `new Range(…)` in `satisfies` is `unresolved_target`. Backlog `BL-085` (prove every object the load may yield inherits `Function.prototype`'s `Symbol.hasInstance`) would restore it. |
 | `RWB-09b` | `NOT_AFFECTED` | `NO_FINDING` | **A benchmark oracle-design limitation, not an analyzer defect.** The correct result really is no finding at all — the instance is confidently outside every affected range — and the case format has no way to express that as an expected outcome. |
 | `VAL-002` | `AFFECTED` | `UNKNOWN` | RWF-001 — a UMD `module.exports` assignment via a locally-aliased variable is invisible to export detection. |
 | `VAL-003` | `NOT_AFFECTED` | `UNKNOWN` | RWF-001, the same gap in the other direction — which is the point: it degrades precision **both** ways and never produces a false answer. |
@@ -1321,6 +1323,31 @@ validation equal to the D-09 baseline; the narrowing is backlog `BL-077`.
 This entry still stands: lanes E (E-3..E-5) and C (C-2..C-5) remain, with
 RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-104, RWF-107, RWF-109 and
 RWF-108 from this family.
+
+**Progress, added by task `BL-075` (2026-10-15).** Task BL-075
+(`docs/tasks/BL-075-builtin-reader-trust.md`) closes RWF-104 with option
+(a) (ADR 0009, "Decision record — option (a) for RWF-104"): no builtin is
+trusted to only read an export object, since builtins are shared by every
+module of the process and any of them -- this file through a spelling no
+census sees, a sibling, the entry -- may replace one. Eleven live
+family-C false `NOT_AFFECTED`s measured against real Node are closed
+(`tests/oracle/bl075-builtin-reader-trust.test.ts`): RWF-104's six, four
+of them spellings the finding had not recorded (a sibling or the entry
+replacing the builtin), and `RWF-112`'s five, found by its independent
+audit (the export object on the right of `instanceof` runs an inherited
+`Symbol.hasInstance` any module may define). Precision cost: 9 of 4,774 attributed export bindings (loads that
+may load the file back, on the right of `instanceof`), three oracle
+controls. It found `RWF-110` (a builtin replaced without its name
+runs with no call edge, live, pre-existing, lane A, backlog `BL-081`) and
+`RWF-111` (the define arm's per-file trust of the builtin, masked, backlog
+`BL-082`); its audit found `RWF-113` (members and methods another module
+may put on `Object.prototype`, masked, backlog `BL-083`) and `RWF-114`
+(an exported function writing onto itself through `arguments.callee`,
+live, pre-existing, backlog `BL-084`) and `RWF-115` (the same through
+`new.target` or a `constructor` chain, live, pre-existing, backlog
+`BL-086`). This entry still stands: lanes E (E-3..E-5) and C (C-2..C-5)
+remain, with RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107,
+RWF-108, RWF-109, RWF-110, RWF-111, RWF-113, RWF-114 and RWF-115 from this family.
 
 ## 2. Target intelligence is not analyzer uncertainty
 
