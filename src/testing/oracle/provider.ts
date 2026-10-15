@@ -60,11 +60,49 @@ export function syntheticProvider(
     list.push(syntheticAdvisory(advisory));
     byPackage.set(advisory.packageName, list);
   }
-  return {
+  const provider = {
     queryPackage(query: PackageQuery): Promise<readonly RawVulnerability[]> {
       return Promise.resolve(byPackage.get(query.name) ?? []);
     },
   };
+  SYNTHETIC_SPECS.set(provider, {
+    // Everything the provider will ever answer, fixed now: `byPackage` is
+    // private to this closure and built once.
+    spec: JSON.stringify([...byPackage.entries()]),
+    queryPackage: provider.queryPackage,
+  });
+  return provider;
+}
+
+/** Each {@link syntheticProvider}'s answers, as data (BL-089). */
+const SYNTHETIC_SPECS = new WeakMap<
+  object,
+  { readonly spec: string; readonly queryPackage: unknown }
+>();
+
+/**
+ * BL-089 — what a provider answers, as a string, when that is known as
+ * data: only for a provider {@link syntheticProvider} built and nobody has
+ * changed since (still exactly its one own method, the same function, a
+ * plain object). `undefined` for every other provider, whose answers are
+ * code, so that a scan under it is never reused
+ * (`scan-reuse.ts`).
+ */
+export function syntheticProviderSpec(
+  provider: VulnerabilityProvider,
+): string | undefined {
+  const entry = SYNTHETIC_SPECS.get(provider);
+  if (entry === undefined) return undefined;
+  const keys = Reflect.ownKeys(provider);
+  if (
+    keys.length !== 1 ||
+    keys[0] !== "queryPackage" ||
+    provider.queryPackage !== entry.queryPackage ||
+    Object.getPrototypeOf(provider) !== Object.prototype
+  ) {
+    return undefined;
+  }
+  return entry.spec;
 }
 
 /**

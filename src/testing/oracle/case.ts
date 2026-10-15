@@ -11,6 +11,7 @@ import {
   type ScanObservation,
 } from "./scan.js";
 import { withTempProject, type ProjectSpec } from "./project.js";
+import { scanReuseKey, scanWithReuse } from "./scan-reuse.js";
 import type { Verdict } from "../../domain/verdict.js";
 
 /** One project variant: the "case" itself, or one of its controls. */
@@ -80,6 +81,12 @@ export interface OracleVariantResult {
   readonly name: string;
   readonly loud: LoudFixtureResult;
   readonly scan: ScanObservation;
+  /**
+   * BL-089: `scan` is an earlier control's scan of byte-identical inputs,
+   * re-rooted (`scan-reuse.ts`). Only ever true for a control; `loud` and
+   * `groundTruth` are always this variant's own.
+   */
+  readonly scanReused: boolean;
   readonly groundTruth: GroundTruthResult;
 }
 
@@ -211,13 +218,26 @@ async function runVariant(
     "id" | "loudFixture" | "provider" | "scanOptions" | "groundTruthCommand"
   >,
   variant: OracleVariant,
+  role: "case" | "control",
 ): Promise<OracleVariantResult> {
   return withTempProject(variant.project, async (dir) => {
     // LOUD FIXTURE, unconditional: every variant is checked before it is
     // ever scanned, with no parameter anywhere in this module's public API
     // to suppress it.
     const loud = assertLoudFixture(dir, kase.loudFixture);
-    const scan = await runOracleScan(dir, kase.provider(), kase.scanOptions);
+    const provider = kase.provider();
+    // BL-089: only a CONTROL's scan may be reused (scan-reuse.ts); the
+    // case's own variant is always scanned. Ground truth runs either way.
+    const { observation: scan, reused: scanReused } = await scanWithReuse({
+      key:
+        role === "control"
+          ? scanReuseKey(variant.project, provider, kase.scanOptions)
+          : undefined,
+      dir,
+      project: variant.project,
+      options: kase.scanOptions,
+      scan: () => runOracleScan(dir, provider, kase.scanOptions),
+    });
     // Task A-3a: A-2's producer obligation, on every graph a case builds.
     if (scan.possibleEdgeProblems.length > 0) {
       throw new Error(
@@ -228,7 +248,7 @@ async function runVariant(
       dir,
       variant.groundTruthCommand ?? kase.groundTruthCommand,
     );
-    return { name: variant.name, loud, scan, groundTruth };
+    return { name: variant.name, loud, scan, scanReused, groundTruth };
   });
 }
 
@@ -260,7 +280,7 @@ export async function runOracleCase(
     throw new OracleCaseViolation(String(kase.id), problems);
   }
 
-  const variant = await runVariant(kase, kase.variant);
+  const variant = await runVariant(kase, kase.variant, "case");
 
   if (kase.expectation) {
     const observedVerdict = firstVerdict(variant);
@@ -292,8 +312,16 @@ export async function runOracleCase(
     };
   }
 
-  const positive = await runVariant(kase, kase.controls.controls.positive);
-  const negative = await runVariant(kase, kase.controls.controls.negative);
+  const positive = await runVariant(
+    kase,
+    kase.controls.controls.positive,
+    "control",
+  );
+  const negative = await runVariant(
+    kase,
+    kase.controls.controls.negative,
+    "control",
+  );
 
   const positiveVerdict = firstVerdict(positive);
   if (positiveVerdict !== "AFFECTED") {

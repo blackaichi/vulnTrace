@@ -77,9 +77,30 @@ export async function runOracleScan(
       edgeProblems = possibleEdgeProblems(observed);
     },
   });
-  const stdout = stdoutChunks.join("");
-  const stderr = stderrChunks.join("");
+  return observationOf(
+    {
+      exitCode,
+      stdout: stdoutChunks.join(""),
+      stderr: stderrChunks.join(""),
+      possibleEdgeProblems: edgeProblems,
+    },
+    options,
+  );
+}
 
+/**
+ * A {@link ScanObservation} from what one scan printed. The one place a
+ * scan's output is parsed, so a reused scan (BL-089, `scan-reuse.ts`) is
+ * read exactly as a fresh one.
+ */
+export function observationOf(
+  raw: Pick<
+    ScanObservation,
+    "exitCode" | "stdout" | "stderr" | "possibleEdgeProblems"
+  >,
+  options?: OracleScanOptions,
+): ScanObservation {
+  const { exitCode, stdout, stderr } = raw;
   let output: ScanOutput | undefined;
   if ((options?.format ?? "json") === "json" && !options?.outputPath) {
     try {
@@ -96,7 +117,7 @@ export async function runOracleScan(
     output,
     findings: output?.findings ?? [],
     unreportedCandidates: output?.unreportedCandidates ?? [],
-    possibleEdgeProblems: edgeProblems,
+    possibleEdgeProblems: [...raw.possibleEdgeProblems],
   };
 }
 
