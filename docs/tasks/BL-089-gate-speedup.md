@@ -2,11 +2,16 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-089
 - **Branch**: bl-089-gate-speedup
 - **Base SHA**: 54858baef38e69175a2e73186329ff056663c725
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `ff3dd6a` docs(tasks): BL-089 task file — speed up the local gate run without weakening any gate
+  - `3a164c4` feat(BL-089): cache the differential's base side under a key covering everything it reads
+  - `cf3e3c9` feat(BL-089): reuse a control's scan within an oracle run when its inputs are byte-identical
+  - `a2874f3` feat(BL-089): scripts/gates.mjs runs the gate set of AGENTS.md § I, each test file once
+  - (this commit) docs(BL-089): records — workflow, RWF-119, backlog, progress, validation report, scorecard
 - **Superseded by**: —
 
 ## Project context
@@ -149,26 +154,26 @@ whenever that cannot be established, and is reported where it happened.
 
 ## Acceptance criteria
 
-- [ ] The per-gate durations on the base are recorded in this file.
-- [ ] One `gates.mjs` run executes every test file of the gate set
+- [x] The per-gate durations on the base are recorded in this file.
+- [x] One `gates.mjs` run executes every test file of the gate set
       exactly once, which the runner checks from vitest's file lists; CI
       and the vitest configs are unchanged.
-- [ ] `scripts/differential.mjs` reuses the base side on a second run
+- [x] `scripts/differential.mjs` reuses the base side on a second run
       with unchanged inputs, collects again when any keyed input changes
       (tests show each input class invalidating the key), never caches
       the head side, names a reused base side in the report, and offers
       `--no-cache`; its header documents the key and the invalidation.
-- [ ] A reused base side and a freshly collected one are identical
+- [x] A reused base side and a freshly collected one are identical
       (measured on this branch).
-- [ ] The oracle reuse is measured (repeated control scans, before and
+- [x] The oracle reuse is measured (repeated control scans, before and
       after), keyed by project content, provider spec and scan options,
       never applied to a case's own variant, and the loud-fixture check
       and ground truth still run for every variant; tests show each rule.
-- [ ] `scripts/gates.mjs` exists and does item 5; `docs/WORKFLOW.md` § 3
+- [x] `scripts/gates.mjs` exists and does item 5; `docs/WORKFLOW.md` § 3
       documents it.
-- [ ] `docs/WORKFLOW.md` § 1.5 and § 3 carry item 6.
-- [ ] Before and after: wall clock and structural numbers.
-- [ ] No test skipped, no threshold relaxed, `AGENTS.md` § I unchanged in
+- [x] `docs/WORKFLOW.md` § 1.5 and § 3 carry item 6.
+- [x] Before and after: wall clock and structural numbers.
+- [x] No test skipped, no threshold relaxed, `AGENTS.md` § I unchanged in
       substance.
 
 ## Gates
@@ -230,3 +235,90 @@ In the format of `AGENTS.md` § J. Also report, before and after: the
 wall clock of each gate alone and of a whole `gates.mjs` run; test-file
 executions across the gate set; base-side collections and oracle scans
 performed.
+
+## Outcome (2026-10-16)
+
+Same machine and conditions as the base measurement. **The base was
+measured twice**: the first pass (above) ran in a fresh checkout whose
+vitest cache (`node_modules/.vite`, which vitest uses to start the slower
+files first) was empty, and that alone cost `test:oracle` 122 s and
+`test:foundation` 23 s; the second pass, with the cache warm, is the
+like-for-like baseline. "After" is two `node scripts/gates.mjs` runs on
+this branch's final tree (fast gates concurrent, suites in sequence,
+then the differential): run 1 with the differential's cache cold and
+part of vitest's cache cold, run 2 with both warm, as in a re-run between
+audit rounds.
+
+| Gate | Base, cold (s) | Base, warm (s) | Run 1 (s) | Run 2 (s) | What moved it (warm base → run 2) |
+| --- | ---: | ---: | ---: | ---: | --- |
+| fast gates (8) | 139.6 summed | 139.6 summed | 82.5 wall | 81.6 wall | concurrent, each with § I's command: −58.0 |
+| `test:foundation` | 154.3 | 131.1 | 153.0 | 131.5 | — |
+| `npm test` | 334.6 (230 files) | 331.0 (230 files) | 211.5 (178 files) | 208.5 (178 files) | the 55 foundation files run once: −122.5 |
+| `test:performance` | 31.5 | 31.7 | 31.4 | 32.0 | — |
+| `test:adversarial` | 15.9 | 15.8 | 15.7 | 15.8 | — |
+| `test:binding-grammar` | 13.3 | 13.3 | 13.3 | 13.2 | — |
+| `test:oracle` | 573.6 | 451.1 | 419.2 | 418.9 | 946 control scans reused: −32.2 (same tree, reuse off: 452.9) |
+| `test:validation` | 67.8 | 67.2 | 67.7 | 67.2 | — |
+| differential | 152.4 | 149.2 | 153.3 (collected, stored) | 76.3 (base reused) | base side reused: −72.9 |
+| file listing (runner) | — | — | ≈ 10 | ≈ 9.5 | +9.5 |
+| **whole set** | **1,483.0** | **1,330.0** | **1,157.4** | **1,054.5** | **−275.5 (−21%)** |
+
+So, against the warm base: a task's first full run saves about 200 s
+(−15%: run 2's suites with the differential collected, ≈ 1,131 s), and
+every later full run whose base-side inputs are unchanged saves 275.5 s
+(−21%). The oracle reuse is the smallest of the four savings: measured
+against the cold first pass it looked like 154 s, but 122 s of that was
+the cold vitest cache, which the same-tree control (reuse off, 452.9 s)
+and the warm base (451.1 s) both show.
+
+Structural, before → after:
+
+- **Test-file executions across the gate set: 323 → 271**, every one of
+  the 271 distinct, checked by the runner before any suite starts
+  (`npm test`'s 233 files split into the foundation's 55 and the other
+  178). Test executions: 10,028 → 7,721 (the 2,382 foundation tests run
+  once; this branch adds 75 tests to `npm test`).
+- **Base-side collections per differential run: 1 → 0 while the key is
+  unchanged.** A reused snapshot was byte-identical to a fresh collection
+  of the same inputs (one-case check); every later full run reported the
+  same zero differentials. Computing the key reads about 230 MB (this
+  checkout's `node_modules` and, above the worktree, the main checkout's):
+  about 2.5 s, once on a hit, twice on a miss.
+- **Oracle scans: 2,882 variant scans → 1,936**: 1,920 control scans, 946
+  of which repeat an earlier control of their file and are reused;
+  reuse across files would add 18. `VT_ORACLE_SCAN_REUSE=verify` scanned
+  every one of the 946 fresh as well: all identical to the reuse apart
+  from `scan.id` and the timings' durations.
+- **No test skipped, no threshold relaxed, no vitest config or CI step
+  changed.** Every test of `npm test` runs once in a runner run, and CI
+  still runs `test:foundation` and `npm test` both.
+
+The gates on the final tree, through the runner: every gate passes
+except `test:validation`, which fails exactly the five `knownFailure`
+cases plus `RWB-09a` (OPEN-DEBTS D-09's sixth, pending the owner's
+decision), with the same verdicts as on the base; the runner reports
+that as a deviation (exit 1), by design (RWF-119). Differential base
+`54858ba` against this branch: zero graph, proof and verdict changes over
+139 cases.
+
+## Corrections (2026-10-16)
+
+- **Gates** (above) says `test:validation` "must show exactly the five
+  known failures of OPEN-DEBTS D-09". D-09 lists six since task BL-075
+  (`RWB-09a` added, pending the project owner's decision); this file
+  repeated the stale count of `docs/WORKFLOW.md` § 3. Measured instead:
+  the six of D-09, with the base's verdicts. Registered as RWF-119 and
+  corrected in the records this task touches.
+- **What to do**, item 4, says there is no reuse "when the scan's output
+  names its temporary directory". Every scan's output names it
+  (`scan.project` is the scanned path, `src/cli/scan.ts`), so that rule
+  would forbid every reuse. Done instead: a reused scan is RE-ROOTED (the
+  earlier directory's unique name replaced by this variant's, a fresh
+  `scan.id`), and no reuse when the project's own content contains the
+  directory's name. That is sound only if the analysis does not depend on
+  the directory's name beyond printing it, which
+  `VT_ORACLE_SCAN_REUSE=verify` measured on all 946 reused scans of the
+  oracle suite (each also scanned fresh: identical apart from `scan.id`
+  and the timings' durations). The reuse also refuses `format: "html"`
+  (its output cannot be re-rooted as data), and keeps the earlier scan's
+  measured `timings`.
