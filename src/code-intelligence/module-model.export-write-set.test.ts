@@ -4,6 +4,8 @@ import {
   buildModuleModel,
   exportAliasIdentifierIndexBuilds,
   exportAliasSummaryWalks,
+  exportNumericKeyReferenceVisits,
+  exportOwnObjectRouteWalks,
   mapExportsToFunctions,
   type ExportBinding,
 } from "./module-model.js";
@@ -1562,5 +1564,55 @@ describe("BL-084: a route to a function's own object withdraws what it writes", 
         `${LAZY}exports.run = safe;\nexports.other = function () { return set(arguments); };\nfunction set(a) { void a; }\n`,
       ),
     ).toBe("safe");
+  });
+
+  it("walks each file's routes once, however many exports ask", () => {
+    const names = Array.from(
+      { length: 300 },
+      (_, i) => `module.exports.n${i} = safe;\n`,
+    ).join("");
+    const text = `${LAZY}function Api() { return this.constructor.name; }\n${OWN}${names}`;
+    const before = exportOwnObjectRouteWalks();
+    expect(attributed(text)).toBe("safe");
+    expect(exportOwnObjectRouteWalks() - before).toBe(1);
+  });
+
+  // BL-084's audit, F4: each numeric-key binding is decided once, from one
+  // index of its references, so the work is linear in the file.
+  it("decides loop-counter keys in work linear in the file", () => {
+    const n = 400;
+    const functions = Array.from(
+      { length: n },
+      (_, i) =>
+        `function f${i}(e) { var i = 0; for (i = 0; i < 10; i++) { void e[i]; void e[i + 1]; } }\n`,
+    ).join("");
+    const text = `${LAZY}function Api() {}\n${functions}${OWN}`;
+    // Six spellings of `i` per function.
+    const spellings = 6 * n;
+    const before = exportNumericKeyReferenceVisits();
+    expect(attributed(text)).toBe("safe");
+    expect(exportNumericKeyReferenceVisits() - before).toBeLessThanOrEqual(
+      3 * spellings,
+    );
+  });
+
+  // Round 2: a chain of numeric bindings asked from its far end first is
+  // decided once per declaration, not once per question.
+  it("decides a numeric-binding chain asked in reverse in linear work", () => {
+    const n = 400;
+    const declarations = Array.from({ length: n }, (_, i) =>
+      i === 0 ? "var k0 = 0;\n" : `var k${i} = k${i - 1} + 1;\n`,
+    ).join("");
+    const reads = Array.from(
+      { length: n },
+      (_, i) => `void e[k${n - 1 - i}];\n`,
+    ).join("");
+    const text = `${LAZY}function Api() {}\n${declarations}function g(e) {\n${reads}}\nvoid g;\n${OWN}`;
+    // Three spellings of each `k` but the last (two).
+    const before = exportNumericKeyReferenceVisits();
+    expect(attributed(text)).toBe("safe");
+    expect(exportNumericKeyReferenceVisits() - before).toBeLessThanOrEqual(
+      3 * 3 * n,
+    );
   });
 });

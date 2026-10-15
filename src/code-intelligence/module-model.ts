@@ -2333,6 +2333,12 @@ interface ExportPropertyWrite {
 interface ExportWriteSet {
   /** A reference no kind enumerates: every name of the file is withdrawn. */
   readonly unenumerable: boolean;
+  /**
+   * A route to a function or class the final object may be is handed on
+   * (BL-084): any name may be written onto it, so every named export is
+   * withdrawn; the whole-module value itself is not replaced.
+   */
+  readonly propertiesUnenumerable: boolean;
   /** Names a write the effective-write rule cannot order may set. */
   readonly withdrawn: ReadonlySet<string>;
   /** Every module-time `=` property write, in source order. */
@@ -2618,6 +2624,23 @@ function exportWriteSet(sourceFile: ts.SourceFile): ExportWriteSet {
     }
   }
 
+  // A function or class the final object may be is also reached without
+  // its name (BL-084: `arguments.callee`, `new.target`, `constructor`,
+  // `caller`): each route is censused like the binding. One handed on can
+  // write any name onto the function, but cannot replace `module.exports`.
+  let propertiesUnenumerable = false;
+  if (!unenumerable) {
+    const routed = finalObjectRouteUses(sourceFile);
+    if (routed === "all") {
+      propertiesUnenumerable = true;
+    } else if (routed !== undefined) {
+      for (const name of routed.names) withdrawn.add(name);
+      for (const written of routed.values) {
+        methodSources.push([written, "property"]);
+      }
+    }
+  }
+
   // A handed-on `this` reaches an export object only from a function that
   // can be one of its methods.
   if (!unenumerable && handOffs.length > 0) {
@@ -2629,7 +2652,13 @@ function exportWriteSet(sourceFile: ts.SourceFile): ExportWriteSet {
     );
   }
 
-  const set = { unenumerable, withdrawn, propertyWrites, rebindings };
+  const set = {
+    unenumerable,
+    propertiesUnenumerable,
+    withdrawn,
+    propertyWrites,
+    rebindings,
+  };
   exportWriteSetBySourceFile.set(sourceFile, set);
   return set;
 }
@@ -2662,24 +2691,18 @@ function finalObjectAliasUses(
   if (seen.size > 8 || isAmbientReference(binding, "module")) {
     return "all";
   }
-  const names = new Set<string>();
-  const values: ts.Expression[] = [];
+  const account = newFinalObjectAccount();
   const key =
     declaration === sourceFile ? `global:${binding.text}` : declaration;
   if (seen.has(key)) {
-    return { names, values };
+    return { names: account.names, values: account.values };
   }
   seen.add(key);
-  let handedOn = false;
-  const merge = (other: ts.Identifier): void => {
-    const uses = finalObjectAliasUses(sourceFile, other, seen);
-    if (uses === "all") {
-      handedOn = true;
-      return;
-    }
-    for (const name of uses.names) names.add(name);
-    values.push(...uses.values);
-  };
+  const merge = (other: ts.Identifier): void =>
+    mergeFinalObjectAlias(
+      account,
+      finalObjectAliasUses(sourceFile, other, seen),
+    );
   // A binding initialized to another binding aliases that one's object too,
   // and so does one initialized to this binding (`const b = a`, RWF-012's
   // chains): their uses are accounted the same way. (One initialized to a
@@ -2692,139 +2715,1088 @@ function finalObjectAliasUses(
         : unwrapParentheses(declaration.initializer);
     if (init !== undefined && ts.isIdentifier(init)) {
       merge(init);
-      if (handedOn) {
+      if (account.handedOn) {
         return "all";
       }
     }
   }
-  const visit = (node: ts.Node): void => {
-    if (handedOn) {
-      return;
+  // Only identifiers spelled like the binding are visited (E-1's audit, finding 5).
+  for (const node of identifiersSpelled(sourceFile, binding.text)) {
+    if (account.handedOn) {
+      break;
     }
     if (
-      ts.isIdentifier(node) &&
-      node.text === binding.text &&
       !isNonReferenceName(node, node.parent) &&
       !isDeclarationName(node, node.parent) &&
       (lexicalDeclarationOf(node, node.text) ?? sourceFile) === declaration
     ) {
-      const outer = skipOuterParentheses(node);
-      const parent = outer.parent as ts.Node;
-      if (
-        (ts.isPropertyAccessExpression(parent) ||
-          ts.isElementAccessExpression(parent)) &&
-        parent.expression === outer
-      ) {
-        const access = skipOuterParentheses(parent);
-        if (isWriteTargetPosition(access)) {
-          const written = accessNames(parent);
-          // A `__proto__` write sets the prototype: any name may follow.
-          if (written === "all" || written.has("__proto__")) {
-            handedOn = true;
+      accountFinalObjectUse(node, account, merge, declaration);
+    }
+  }
+  accountSelfHeldReads(sourceFile, account, merge);
+  return account.handedOn
+    ? "all"
+    : { names: account.names, values: account.values };
+}
+
+/** What the uses of the final export object's value write onto it ({@link finalObjectAliasUses}). */
+interface FinalObjectAccount {
+  readonly names: Set<string>;
+  readonly values: ts.Expression[];
+  handedOn: boolean;
+  /**
+   * Property names a store into itself or a write back into an export
+   * object makes hold the object (`Api.self = Api`, `module.exports.self =
+   * arguments.callee`): a later read of one is the object again
+   * ({@link accountSelfHeldReads}; BL-084's audit, round 3).
+   */
+  readonly selfNames: Set<string>;
+  /** Reads OF the object by a key no name decides: one may read a held name. */
+  readonly computedReads: ts.Expression[];
+}
+
+/** A fresh {@link FinalObjectAccount}. */
+function newFinalObjectAccount(): FinalObjectAccount {
+  return {
+    names: new Set(),
+    values: [],
+    handedOn: false,
+    selfNames: new Set(),
+    computedReads: [],
+  };
+}
+
+/**
+ * Every member read of the file by exact name, and every read by a key no
+ * name decides whose base is `exports` or `module.exports`, which may hold
+ * the final object. A computed read of any other base reads a held name
+ * only when that base is the object: the census that found the name
+ * records its own such reads ({@link FinalObjectAccount.computedReads}).
+ * An alias's census keeps its own (BL-084's audit, round 4: not merged
+ * across accounts; masked, since an alias of the final object handed to
+ * any computed read is already a route of {@link ownObjectRoutes}).
+ */
+interface MemberReadIndex {
+  readonly byName: ReadonlyMap<string, readonly ts.Expression[]>;
+  readonly computed: readonly ts.Expression[];
+}
+
+const memberReadIndexBySourceFile = new WeakMap<
+  ts.SourceFile,
+  MemberReadIndex
+>();
+
+function memberReadIndex(sourceFile: ts.SourceFile): MemberReadIndex {
+  const cached = memberReadIndexBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const byName = new Map<string, ts.Expression[]>();
+  const computed: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (
+      (ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)) &&
+      !isWriteTargetPosition(skipOuterParentheses(node))
+    ) {
+      // A key that is provably a number reads no name a store held.
+      const names = routeKeyNames(node);
+      if (names === "all") {
+        const base = unwrapParentheses(node.expression);
+        if (
+          isAmbientReference(base, "exports") ||
+          isModuleExportsAssignmentTarget(base)
+        ) {
+          computed.push(node);
+        }
+      } else {
+        for (const name of names) {
+          const known = byName.get(name);
+          if (known === undefined) {
+            byName.set(name, [node]);
           } else {
-            for (const name of written) names.add(name);
-          }
-          const writer = access.parent as ts.Node;
-          if (ts.isBinaryExpression(writer) && writer.left === access) {
-            values.push(writer.right);
-          } else if (
-            !ts.isPrefixUnaryExpression(writer) &&
-            !ts.isPostfixUnaryExpression(writer) &&
-            !ts.isDeleteExpression(writer)
-          ) {
-            // A destructuring or `for-of` target's value is unreadable
-            // here: it stands in as a member read (any function).
-            values.push(access as ts.Expression);
+            known.push(node);
           }
         }
-        return;
       }
-      if (isInertUse(outer)) {
-        return;
-      }
-      // Another binding's initializer (`const b = a`), or assigned to one
-      // (`b = a`, `module.exports = alias = impl`): a further alias.
-      if (
-        ts.isVariableDeclaration(parent) &&
-        parent.initializer === outer &&
-        ts.isIdentifier(parent.name)
-      ) {
-        merge(parent.name);
-        return;
-      }
-      if (
-        ts.isBinaryExpression(parent) &&
-        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        parent.right === outer &&
-        ts.isIdentifier(unwrapParentheses(parent.left)) &&
-        !isAmbientReference(unwrapParentheses(parent.left), "exports")
-      ) {
-        merge(unwrapParentheses(parent.left) as ts.Identifier);
-        return;
-      }
-      // Stored into itself (`factory.default = factory`): it stays within
-      // the final object.
-      const target =
-        ts.isBinaryExpression(parent) &&
-        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        parent.right === outer
-          ? unwrapParentheses(parent.left)
-          : undefined;
-      if (
-        target !== undefined &&
-        (ts.isPropertyAccessExpression(target) ||
-          ts.isElementAccessExpression(target)) &&
-        ts.isIdentifier(unwrapParentheses(target.expression)) &&
-        lexicalDeclarationOf(
-          unwrapParentheses(target.expression),
-          (unwrapParentheses(target.expression) as ts.Identifier).text,
-        ) === declaration
-      ) {
-        return;
-      }
-      // Handed to a builtin (`Object.keys(api)`), it is handed to code: any
-      // module may have replaced the builtin (RWF-104, BL-075).
-      // Called or constructed, the object hands itself to nothing.
-      if (
-        (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
-        parent.expression === outer
-      ) {
-        return;
-      }
-      // Written back into an export object (`module.exports = fn;
-      // module.exports.default = fn;`): it stays in this module's exports.
-      if (
-        ts.isBinaryExpression(parent) &&
-        parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        parent.right === outer &&
-        (isModuleExportsAssignmentTarget(unwrapParentheses(parent.left)) ||
-          isAmbientReference(unwrapParentheses(parent.left), "exports") ||
-          commonJsExportPropertyName(unwrapParentheses(parent.left)) !==
-            undefined)
-      ) {
-        return;
-      }
-      if (
-        ts.isExportAssignment(parent) &&
-        parent.isExportEquals &&
-        parent.expression === outer
-      ) {
-        return;
-      }
-      if (isPlainAssignmentTarget(outer)) {
-        // Rebound: the binding no longer holds the final object afterwards,
-        // but may before; its later member writes are counted all the same.
-        return;
-      }
-      handedOn = true;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  const index = { byName, computed };
+  memberReadIndexBySourceFile.set(sourceFile, index);
+  return index;
+}
+
+/**
+ * Accounts every read of a name `account` found holding the object (and
+ * every read by a key no name decides), each like a reference to it, until
+ * no further name is found (BL-084's audit, round 3: `Api.self = Api;
+ * Api.self.run = v`).
+ */
+function accountSelfHeldReads(
+  sourceFile: ts.SourceFile,
+  account: FinalObjectAccount,
+  merge: (other: ts.Identifier) => void,
+): void {
+  if (account.selfNames.size === 0) {
+    return;
+  }
+  const index = memberReadIndex(sourceFile);
+  const done = new Set<string>();
+  let computedDone = false;
+  let ownComputedDone = 0;
+  for (;;) {
+    const pending = [...account.selfNames].filter((name) => !done.has(name));
+    const ownComputed = account.computedReads.slice(ownComputedDone);
+    ownComputedDone = account.computedReads.length;
+    if (
+      (pending.length === 0 && ownComputed.length === 0) ||
+      account.handedOn
+    ) {
       return;
     }
-  };
-  // Only identifiers spelled like the binding are visited (E-1's audit, finding 5).
-  for (const reference of identifiersSpelled(sourceFile, binding.text)) {
-    visit(reference);
+    const reads: ts.Expression[] = [...ownComputed];
+    for (const name of pending) {
+      done.add(name);
+      reads.push(...(index.byName.get(name) ?? []));
+    }
+    if (!computedDone) {
+      computedDone = true;
+      reads.push(...index.computed);
+    }
+    for (const read of reads) {
+      if (account.handedOn) {
+        return;
+      }
+      accountFinalObjectUse(read, account, merge, undefined);
+    }
   }
-  return handedOn ? "all" : { names, values };
+}
+
+/** Adds a further alias's uses (or its hand-off) to `account`. */
+function mergeFinalObjectAlias(
+  account: FinalObjectAccount,
+  uses:
+    | {
+        readonly names: ReadonlySet<string>;
+        readonly values: readonly ts.Expression[];
+      }
+    | "all",
+): void {
+  if (uses === "all") {
+    account.handedOn = true;
+    return;
+  }
+  for (const name of uses.names) account.names.add(name);
+  account.values.push(...uses.values);
+}
+
+/**
+ * Accounts one expression that evaluates to the final export object's
+ * value -- a reference to its binding, or a route to a function's own
+ * object ({@link ownObjectRoutes}) -- by what its use does to the object:
+ * a member write adds its name and value, a member read, a call, an inert
+ * use or a write back into an export object adds nothing, a further
+ * binding is merged as an alias, and anything else hands it on. A call's
+ * RESULT is not censused, though it may be the object (`Api.valueOf()`):
+ * RWF-118's open gap, masked today by the call graph's unresolved-callee
+ * backstop.
+ * `declaration` is the binding's own declaration, for a store into itself
+ * (`factory.default = factory`); a route has none.
+ */
+function accountFinalObjectUse(
+  node: ts.Node,
+  account: FinalObjectAccount,
+  merge: (other: ts.Identifier) => void,
+  declaration: ts.Node | undefined,
+): void {
+  const outer = skipOuterParentheses(node);
+  const parent = outer.parent as ts.Node;
+  if (
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent)) &&
+    parent.expression === outer
+  ) {
+    const access = skipOuterParentheses(parent);
+    if (isWriteTargetPosition(access)) {
+      const written = accessNames(parent);
+      // A `__proto__` write sets the prototype: any name may follow.
+      if (written === "all" || written.has("__proto__")) {
+        account.handedOn = true;
+      } else {
+        for (const name of written) account.names.add(name);
+      }
+      const writer = access.parent as ts.Node;
+      if (ts.isBinaryExpression(writer) && writer.left === access) {
+        account.values.push(writer.right);
+      } else if (
+        !ts.isPrefixUnaryExpression(writer) &&
+        !ts.isPostfixUnaryExpression(writer) &&
+        !ts.isDeleteExpression(writer)
+      ) {
+        // A destructuring or `for-of` target's value is unreadable
+        // here: it stands in as a member read (any function).
+        account.values.push(access as ts.Expression);
+      }
+    } else if (routeKeyNames(parent) === "all") {
+      // A read by a key no name decides may read a name a store makes hold
+      // the object ({@link accountSelfHeldReads}).
+      account.computedReads.push(parent as ts.Expression);
+    }
+    return;
+  }
+  if (isInertUse(outer)) {
+    return;
+  }
+  // Another binding's initializer (`const b = a`), or assigned to one
+  // (`b = a`, `module.exports = alias = impl`): a further alias.
+  if (
+    ts.isVariableDeclaration(parent) &&
+    parent.initializer === outer &&
+    ts.isIdentifier(parent.name)
+  ) {
+    merge(parent.name);
+    return;
+  }
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === outer &&
+    ts.isIdentifier(unwrapParentheses(parent.left)) &&
+    !isAmbientReference(unwrapParentheses(parent.left), "exports")
+  ) {
+    merge(unwrapParentheses(parent.left) as ts.Identifier);
+    // The assignment's own value is the object too (`(b = a).run = v`,
+    // `set(b = a)`, `x = b = a`; BL-084's audit, F2).
+    accountFinalObjectUse(parent, account, merge, declaration);
+    return;
+  }
+  // Stored into itself (`factory.default = factory`): it stays within
+  // the final object.
+  const target =
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === outer
+      ? unwrapParentheses(parent.left)
+      : undefined;
+  if (
+    declaration !== undefined &&
+    target !== undefined &&
+    (ts.isPropertyAccessExpression(target) ||
+      ts.isElementAccessExpression(target)) &&
+    ts.isIdentifier(unwrapParentheses(target.expression)) &&
+    lexicalDeclarationOf(
+      unwrapParentheses(target.expression),
+      (unwrapParentheses(target.expression) as ts.Identifier).text,
+    ) === declaration
+  ) {
+    // A later read of that property is the object again.
+    const held = accessNames(target);
+    if (held === "all") {
+      account.handedOn = true;
+      return;
+    }
+    for (const name of held) account.selfNames.add(name);
+    accountFinalObjectUse(parent, account, merge, declaration);
+    return;
+  }
+  // Handed to a builtin (`Object.keys(api)`), it is handed to code: any
+  // module may have replaced the builtin (RWF-104, BL-075).
+  // Called or constructed, the object hands itself to nothing.
+  if (
+    (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+    parent.expression === outer
+  ) {
+    return;
+  }
+  // Written back into an export object (`module.exports = fn;
+  // module.exports.default = fn;`): it stays in this module's exports.
+  if (
+    ts.isBinaryExpression(parent) &&
+    parent.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+    parent.right === outer &&
+    (isModuleExportsAssignmentTarget(unwrapParentheses(parent.left)) ||
+      isAmbientReference(unwrapParentheses(parent.left), "exports") ||
+      commonJsExportPropertyName(unwrapParentheses(parent.left)) !== undefined)
+  ) {
+    // A later read of that property is the object again (`module.exports.self
+    // = fn; module.exports.self.run = v`; BL-084's audit, round 3), and the
+    // assignment's own value is the object too (round 2).
+    const held = commonJsExportPropertyName(unwrapParentheses(parent.left));
+    if (held !== undefined) {
+      account.selfNames.add(held);
+    }
+    accountFinalObjectUse(parent, account, merge, declaration);
+    return;
+  }
+  if (
+    ts.isExportAssignment(parent) &&
+    parent.isExportEquals &&
+    parent.expression === outer
+  ) {
+    return;
+  }
+  if (isPlainAssignmentTarget(outer)) {
+    // Rebound: the binding no longer holds the final object afterwards,
+    // but may before; its later member writes are counted all the same.
+    return;
+  }
+  account.handedOn = true;
+}
+
+/**
+ * The functions and classes the final export object may be (task BL-084):
+ * every whole-module value that is a function, arrow or class expression,
+ * a binding to a function or class declaration, or a variable initialized
+ * (through further bindings, a conditional's branches, `&&`, `||`, `??`)
+ * to one. A value that is none of these (a call's result, a load) is no
+ * object of this file's functions, and a property write after it is never
+ * attributed ({@link applyExportWriteSet}'s `writesTakeOnFinalObject`).
+ */
+function finalObjectOwnFunctions(sourceFile: ts.SourceFile): Set<ts.Node> {
+  const owners = new Set<ts.Node>();
+  const seen = new Set<ts.Node>();
+  const add = (expression: ts.Expression): void => {
+    const value = unwrapParentheses(unwrapValue(expression));
+    if (seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    if (
+      ts.isFunctionExpression(value) ||
+      ts.isArrowFunction(value) ||
+      ts.isClassExpression(value)
+    ) {
+      owners.add(value);
+    } else if (ts.isConditionalExpression(value)) {
+      add(value.whenTrue);
+      add(value.whenFalse);
+    } else if (
+      ts.isBinaryExpression(value) &&
+      (value.operatorToken.kind === ts.SyntaxKind.AmpersandAmpersandToken ||
+        value.operatorToken.kind === ts.SyntaxKind.BarBarToken ||
+        value.operatorToken.kind === ts.SyntaxKind.QuestionQuestionToken ||
+        value.operatorToken.kind === ts.SyntaxKind.CommaToken ||
+        value.operatorToken.kind === ts.SyntaxKind.EqualsToken)
+    ) {
+      if (value.operatorToken.kind !== ts.SyntaxKind.CommaToken) {
+        add(value.left);
+      }
+      add(value.right);
+    } else if (
+      ts.isIdentifier(value) &&
+      !isAmbientReference(value, "exports")
+    ) {
+      const declaration = lexicalDeclarationOf(value, value.text);
+      if (
+        declaration !== undefined &&
+        (ts.isFunctionDeclaration(declaration) ||
+          ts.isClassDeclaration(declaration))
+      ) {
+        owners.add(declaration);
+      } else if (
+        declaration !== undefined &&
+        ts.isVariableDeclaration(declaration) &&
+        declaration.initializer !== undefined
+      ) {
+        add(declaration.initializer);
+      }
+    }
+  };
+  for (const site of competingWriteSites(sourceFile).wholeModule) {
+    add(
+      ts.isExportAssignment(site.node)
+        ? site.node.expression
+        : (site.node as ts.BinaryExpression).right,
+    );
+  }
+  return owners;
+}
+
+/** `Reflect` and `Object` members whose result is a property's value: a route ({@link ownObjectRoutes}). */
+const VALUE_READERS: ReadonlySet<string> = new Set(["get"]);
+
+/**
+ * `Reflect` and `Object` members whose result HOLDS property values (a
+ * descriptor, a map of them, an array of values or entries): a route to
+ * anything it holds, so any use but an inert one hands it on
+ * ({@link ownObjectRoutes}).
+ */
+const HOLDER_READERS: ReadonlySet<string> = new Set([
+  "getOwnPropertyDescriptor",
+  "getOwnPropertyDescriptors",
+  "values",
+  "entries",
+]);
+
+const VALUE_OR_HOLDER_READERS: ReadonlySet<string> = new Set([
+  ...VALUE_READERS,
+  ...HOLDER_READERS,
+]);
+
+/** A stack callsite's readers of its frame's function and receiver. */
+const STACK_FRAME_KEYS: ReadonlySet<string> = new Set([
+  "getFunction",
+  "getThis",
+]);
+
+/**
+ * Whether `node` (an identifier) denotes its frame's `arguments` object
+ * (BL-084's audit, F1): no declaration, or a `var` (which re-declares the
+ * same binding, and whose initializer only writes it -- taken for the
+ * object, failing closed), or a declaration outside the frame (shadowed by
+ * the frame's own `arguments`). A parameter, `let`, `const`, function or
+ * class of that name inside the frame is another binding.
+ */
+function isArgumentsObjectReference(node: ts.Identifier): boolean {
+  if (node.text !== "arguments") {
+    return false;
+  }
+  const parent = node.parent as ts.Node | undefined;
+  if (
+    parent === undefined ||
+    isNonReferenceName(node, parent) ||
+    isDeclarationName(node, parent) ||
+    (ts.isVariableDeclaration(parent) && parent.name === node)
+  ) {
+    return false;
+  }
+  const declaration = lexicalDeclarationOf(node, "arguments");
+  if (declaration === undefined) {
+    return true;
+  }
+  if (
+    ts.isVariableDeclaration(declaration) &&
+    ts.isVariableDeclarationList(declaration.parent) &&
+    (declaration.parent.flags & ts.NodeFlags.BlockScoped) === 0
+  ) {
+    return true;
+  }
+  const frame = thisBindingFunction(node);
+  if (frame === undefined) {
+    return false;
+  }
+  for (
+    let current: ts.Node | undefined = declaration;
+    current !== undefined;
+    current = current.parent
+  ) {
+    if (current === frame) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether an ambient `Reflect` or `Object` is used only where
+ * {@link ownObjectRoutes} sees its readers: the base of a member named by
+ * an exact key (a reader's call is censused there), `Object(…)` or
+ * `new Object(…)`, or an inert use.
+ */
+function isConfinedReaderNamespace(node: ts.Identifier): boolean {
+  const outer = skipOuterParentheses(node);
+  const parent = outer.parent as ts.Node;
+  if (ts.isPropertyAccessExpression(parent) && parent.expression === outer) {
+    return true;
+  }
+  if (ts.isElementAccessExpression(parent) && parent.expression === outer) {
+    const names = accessNames(parent);
+    return (
+      names !== "all" &&
+      ![...names].some((name) => VALUE_OR_HOLDER_READERS.has(name))
+    );
+  }
+  if (
+    node.text === "Object" &&
+    (ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
+    parent.expression === outer
+  ) {
+    return true;
+  }
+  return isInertUse(outer);
+}
+
+/** {@link ownObjectRoutes}'s answer. */
+interface OwnObjectRoutes {
+  /** Expressions that may evaluate to an own function, censused like its binding. */
+  readonly expressions: readonly ts.Expression[];
+  /** Bindings a destructuring may bind to one, censused as aliases. */
+  readonly aliases: readonly ts.Identifier[];
+}
+
+const ownObjectRoutesBySourceFile = new WeakMap<
+  ts.SourceFile,
+  OwnObjectRoutes | "all"
+>();
+let ownObjectRouteWalks = 0;
+
+/** How many files {@link ownObjectRoutes} walked (an operation count for the structural performance test). */
+export function exportOwnObjectRouteWalks(): number {
+  return ownObjectRouteWalks;
+}
+
+/**
+ * Every expression of the file that may evaluate to one of `owners` (the
+ * final export object's functions and classes,
+ * {@link finalObjectOwnFunctions}) WITHOUT spelling its binding (task
+ * BL-084; RWF-114 to RWF-117), or `"all"` when one is handed where no census
+ * follows it. A named function or class expression's own name, the other
+ * binding to the same object, is censused as an alias by
+ * {@link finalObjectRouteUses} (round 4). Measured against real Node
+ * (`tests/oracle/bl084-function-own-object.test.ts`):
+ *
+ * - `arguments` in the frame of a sloppy owner (an arrow's is its
+ *   enclosing function's), identified by binding: undeclared or a `var`
+ *   ({@link isArgumentsObjectReference}): `arguments.callee`, and a read by
+ *   a key that may be `"callee"`, are routes; `arguments` handed on (an
+ *   argument, `.apply`, a spread, a destructuring) is `"all"`. In strict
+ *   code `callee` throws (RWF-114). A sloppy function's own `arguments`
+ *   property is that object too (`Api.arguments.callee`), so when an owner
+ *   is sloppy a read of `callee` from any base is a route.
+ * - `new.target` in an owner's frame (a function, or a class's
+ *   constructor), and in any constructor or function of the file when an
+ *   owner class has a heritage clause (`super()` passes it on) (RWF-115).
+ * - A read of `constructor` -- of the `prototype` and of every instance,
+ *   by any base, since no census follows where an instance flows -- and a
+ *   read by a key computed at run time, which may be `"constructor"`,
+ *   `"callee"` or `"caller"` (RWF-115), unless the key is provably a
+ *   number or a boolean ({@link isNumericValue}).
+ * - A read of `caller`, when an owner is sloppy: a sloppy function is the
+ *   `caller` of the function it calls (RWF-116).
+ * - A stack callsite's `getFunction()` and `getThis()`
+ *   (`Error.prepareStackTrace`), which give a sloppy frame's function and
+ *   receiver, called directly; either taken as a value or spelled as a
+ *   string, and `prepareStackTrace` spelled as a name or a string key, is
+ *   `"all"`. Built at run time (`"prepare" + "StackTrace"`, then `s[0][m]()`),
+ *   the callsite reader is a call whose result is not censused: RWF-118.
+ * - `Reflect.get(…)`, whose result is a property's value; the holders
+ *   `Object.getOwnPropertyDescriptor(s)`, `Object.values` / `entries` and
+ *   `Reflect.getOwnPropertyDescriptor`, any of those members but called
+ *   directly, an ambient `Reflect` or `Object` but as the base of a member
+ *   of an exact key (or `Object(…)`), and `Reflect` or `Object` read from
+ *   the global object, are `"all"` unless used inertly
+ *   ({@link isConfinedReaderNamespace}; BL-084's audit, F5).
+ * - A destructuring that reads `constructor`, `caller` or a computed key
+ *   binds an alias; into anything but a plain binding it is `"all"`.
+ * - A `with` statement may resolve any name to a holder's member: `"all"`.
+ *
+ * Accepted bounds, as for every census of one file: code of another module
+ * (a function of another module this file's functions call may read its
+ * `caller`; another module may read an instance's `constructor`, hand this
+ * file the function or an instance, or install `Error.prepareStackTrace`
+ * so that this file's frames are callsites), and accessors other modules
+ * install on the builtin prototypes (RWF-113).
+ */
+function ownObjectRoutes(
+  sourceFile: ts.SourceFile,
+  owners: ReadonlySet<ts.Node>,
+): OwnObjectRoutes | "all" {
+  const cached = ownObjectRoutesBySourceFile.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  ownObjectRouteWalks += 1;
+  const expressions = new Set<ts.Expression>();
+  const aliases: ts.Identifier[] = [];
+  let all = false;
+  const sloppyOwners = new Set(
+    [...owners].filter(
+      (owner) => ts.isFunctionLike(owner) && !isInStrictCode(owner),
+    ),
+  );
+  const superChain = [...owners].some(
+    (owner) =>
+      ts.isClassLike(owner) &&
+      (owner.heritageClauses ?? []).some(
+        (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+      ),
+  );
+  const isRoutingKey = (names: ReadonlySet<string> | "all"): boolean =>
+    names === "all" ||
+    names.has("constructor") ||
+    // A sloppy function's `arguments` property is its frame's arguments
+    // object (`Api.arguments.callee`), held by any value: `callee` routes
+    // from every base, as `caller` does (BL-084's audit, round 2).
+    (sloppyOwners.size > 0 && (names.has("caller") || names.has("callee")));
+  const isAmbientReader = (
+    node: ts.Node,
+    members: ReadonlySet<string>,
+  ): boolean =>
+    ts.isPropertyAccessExpression(node) &&
+    members.has(node.name.text) &&
+    (isAmbientReference(node.expression, "Reflect") ||
+      isAmbientReference(node.expression, "Object"));
+
+  const visit = (node: ts.Node): void => {
+    if (all) {
+      return;
+    }
+    if (ts.isWithStatement(node)) {
+      all = true;
+      return;
+    }
+    if (
+      ts.isMetaProperty(node) &&
+      node.keywordToken === ts.SyntaxKind.NewKeyword
+    ) {
+      const frame = thisBindingFunction(node);
+      if (
+        frame !== undefined &&
+        (owners.has(frame) ||
+          (ts.isConstructorDeclaration(frame) && owners.has(frame.parent)) ||
+          (superChain &&
+            (ts.isConstructorDeclaration(frame) ||
+              ts.isFunctionDeclaration(frame) ||
+              ts.isFunctionExpression(frame))))
+      ) {
+        expressions.add(node);
+      }
+    }
+    if (
+      (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+      (STACK_FRAME_KEYS.has(node.text) || node.text === "prepareStackTrace")
+    ) {
+      // A stack callsite's reader, or the hook, spelled as a key
+      // (`s[0]["getFunction"]()`, `Error["prepareStackTrace"] = …`).
+      all = true;
+      return;
+    }
+    if (ts.isIdentifier(node)) {
+      if (node.text === "prepareStackTrace") {
+        // This file shapes stack frames into callsites, whose readers it may
+        // reach by keys no census follows (`c[m]()`).
+        all = true;
+        return;
+      }
+      if (isArgumentsObjectReference(node)) {
+        const frame = thisBindingFunction(node);
+        if (frame !== undefined && sloppyOwners.has(frame)) {
+          const outer = skipOuterParentheses(node);
+          const parent = outer.parent as ts.Node;
+          if (
+            (ts.isPropertyAccessExpression(parent) ||
+              ts.isElementAccessExpression(parent)) &&
+            parent.expression === outer
+          ) {
+            const names = routeKeyNames(parent);
+            if (
+              !isWriteTargetPosition(skipOuterParentheses(parent)) &&
+              (names === "all" || names.has("callee"))
+            ) {
+              expressions.add(parent);
+            }
+          } else if (!isInertUse(outer)) {
+            all = true;
+            return;
+          }
+        }
+      } else if (
+        (isAmbientReference(node, "Reflect") ||
+          isAmbientReference(node, "Object")) &&
+        !isConfinedReaderNamespace(node)
+      ) {
+        // `Reflect` or `Object` handed on, aliased or keyed at run time:
+        // its readers are no longer seen where they are called (BL-084's
+        // audit, F5).
+        all = true;
+        return;
+      }
+      return;
+    }
+    if (
+      (ts.isPropertyAccessExpression(node) ||
+        ts.isElementAccessExpression(node)) &&
+      !isWriteTargetPosition(skipOuterParentheses(node))
+    ) {
+      if (isRoutingKey(routeKeyNames(node))) {
+        expressions.add(node);
+      }
+      const call = skipOuterParentheses(node).parent as ts.Node;
+      const called =
+        ts.isCallExpression(call) &&
+        call.expression === skipOuterParentheses(node);
+      if (isAmbientReader(node, VALUE_OR_HOLDER_READERS) && !called) {
+        // A reader taken as a value (`var gOPD = Object.getOwnPropertyDescriptor`).
+        all = true;
+        return;
+      }
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        STACK_FRAME_KEYS.has(node.name.text) &&
+        !called
+      ) {
+        // A callsite's reader taken as a value (`const gf = s[0].getFunction`).
+        all = true;
+        return;
+      }
+      const reached = accessNames(node);
+      if (
+        (reached === "all" ||
+          reached.has("Reflect") ||
+          reached.has("Object")) &&
+        valueIsGlobalObject(node.expression)
+      ) {
+        // `globalThis.Reflect`, `global["Object"]`: the readers by a name
+        // the ambient census does not see (BL-084's audit, F5).
+        all = true;
+        return;
+      }
+      if (called && ts.isPropertyAccessExpression(node)) {
+        const member = node.name.text;
+        if (member === "getFunction" || member === "getThis") {
+          expressions.add(call as ts.CallExpression);
+        } else if (isAmbientReader(node, VALUE_READERS)) {
+          expressions.add(call as ts.CallExpression);
+        } else if (isAmbientReader(node, HOLDER_READERS) && !isInertUse(call)) {
+          all = true;
+          return;
+        }
+      }
+    }
+    if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+      const key = node.propertyName ?? node.name;
+      const names = ts.isComputedPropertyName(key)
+        ? keyNames(key.expression)
+        : ts.isIdentifier(key) || ts.isStringLiteral(key)
+          ? new Set([key.text])
+          : "all";
+      if (node.dotDotDotToken === undefined && isRoutingKey(names)) {
+        if (ts.isIdentifier(node.name)) {
+          aliases.push(node.name);
+        } else {
+          all = true;
+          return;
+        }
+      }
+    }
+    if (
+      ts.isObjectLiteralExpression(node) &&
+      isWriteTargetPosition(skipOuterParentheses(node)) &&
+      node.properties.some(
+        (property) =>
+          property.name !== undefined &&
+          isRoutingKey(
+            ts.isComputedPropertyName(property.name)
+              ? keyNames(property.name.expression)
+              : ts.isIdentifier(property.name) ||
+                  ts.isStringLiteral(property.name)
+                ? new Set([property.name.text])
+                : "all",
+          ),
+      )
+    ) {
+      // A destructuring assignment reading a routing key.
+      all = true;
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  const routes: OwnObjectRoutes | "all" = all
+    ? "all"
+    : { expressions: [...expressions], aliases };
+  ownObjectRoutesBySourceFile.set(sourceFile, routes);
+  return routes;
+}
+
+/**
+ * {@link accessNames} for a read {@link ownObjectRoutes} asks about: a key
+ * that is provably a number or a boolean (`args[i]` with a loop counter)
+ * converts to no name a route needs (`constructor`, `callee`, `caller`).
+ */
+function routeKeyNames(
+  access: ts.PropertyAccessExpression | ts.ElementAccessExpression,
+): ReadonlySet<string> | "all" {
+  const names = accessNames(access);
+  return names === "all" &&
+    ts.isElementAccessExpression(access) &&
+    isNumericValue(access.argumentExpression)
+    ? NO_NAMES
+    : names;
+}
+
+/**
+ * Whether `expression` always evaluates to a number, a BigInt or a boolean
+ * (task BL-084): a literal, a unary operator, an arithmetic, bitwise,
+ * relational or equality operator (`+` only between two such values), a
+ * conditional of two such values, or a `var` / `let` / `const` this file
+ * declares (identified by lexical declaration, never by spelling) whose
+ * initializer and every write are such values. A parameter, a `for…in` /
+ * `for…of` binding, a destructuring and anything else is not.
+ */
+function isNumericValue(
+  expression: ts.Expression,
+  seen: Set<ts.Node> = new Set(),
+): boolean {
+  const node = unwrapParentheses(expression);
+  if (
+    ts.isNumericLiteral(node) ||
+    ts.isBigIntLiteral(node) ||
+    node.kind === ts.SyntaxKind.TrueKeyword ||
+    node.kind === ts.SyntaxKind.FalseKeyword ||
+    ts.isPrefixUnaryExpression(node) ||
+    ts.isPostfixUnaryExpression(node)
+  ) {
+    return true;
+  }
+  if (ts.isConditionalExpression(node)) {
+    return (
+      isNumericValue(node.whenTrue, seen) &&
+      isNumericValue(node.whenFalse, seen)
+    );
+  }
+  if (ts.isBinaryExpression(node)) {
+    switch (node.operatorToken.kind) {
+      case ts.SyntaxKind.PlusToken:
+        return (
+          isNumericValue(node.left, seen) && isNumericValue(node.right, seen)
+        );
+      case ts.SyntaxKind.CommaToken:
+        return isNumericValue(node.right, seen);
+      case ts.SyntaxKind.MinusToken:
+      case ts.SyntaxKind.AsteriskToken:
+      case ts.SyntaxKind.SlashToken:
+      case ts.SyntaxKind.PercentToken:
+      case ts.SyntaxKind.AsteriskAsteriskToken:
+      case ts.SyntaxKind.LessThanLessThanToken:
+      case ts.SyntaxKind.GreaterThanGreaterThanToken:
+      case ts.SyntaxKind.GreaterThanGreaterThanGreaterThanToken:
+      case ts.SyntaxKind.AmpersandToken:
+      case ts.SyntaxKind.BarToken:
+      case ts.SyntaxKind.CaretToken:
+      case ts.SyntaxKind.LessThanToken:
+      case ts.SyntaxKind.LessThanEqualsToken:
+      case ts.SyntaxKind.GreaterThanToken:
+      case ts.SyntaxKind.GreaterThanEqualsToken:
+      case ts.SyntaxKind.EqualsEqualsToken:
+      case ts.SyntaxKind.ExclamationEqualsToken:
+      case ts.SyntaxKind.EqualsEqualsEqualsToken:
+      case ts.SyntaxKind.ExclamationEqualsEqualsToken:
+      case ts.SyntaxKind.InKeyword:
+      case ts.SyntaxKind.InstanceOfKeyword:
+        return true;
+      default:
+        return false;
+    }
+  }
+  return ts.isIdentifier(node) && isNumericBinding(node, seen);
+}
+
+/** {@link isNumericValue} for a reference: its declaration's initializer and every write to it. */
+function isNumericBinding(
+  reference: ts.Identifier,
+  seen: Set<ts.Node>,
+): boolean {
+  const declaration = lexicalDeclarationOf(reference, reference.text);
+  if (
+    declaration === undefined ||
+    !ts.isVariableDeclaration(declaration) ||
+    !ts.isIdentifier(declaration.name)
+  ) {
+    return false;
+  }
+  const known = numericBindingByDeclaration.get(declaration);
+  if (known !== undefined) {
+    return known;
+  }
+  if (seen.has(declaration)) {
+    // Its other writes decide.
+    return true;
+  }
+  if (seen.size >= NUMERIC_BINDING_DEPTH) {
+    // Too deep a chain to follow without the stack: not proven, so a key
+    // it reads may be a route (BL-084's audit, round 3).
+    return false;
+  }
+  // A `false` holds whatever was assumed. Every combinator is a
+  // conjunction, so a `false` anywhere reaches the outermost question: when
+  // that one is `true`, so is every declaration it assumed (BL-084's audit,
+  // F4 and round 2: each declaration is decided once).
+  const outermost = seen.size === 0;
+  seen.add(declaration);
+  const decided = numericBindingWrites(
+    declaration as ts.VariableDeclaration & { readonly name: ts.Identifier },
+    seen,
+  );
+  if (!decided) {
+    numericBindingByDeclaration.set(declaration, false);
+  } else if (outermost) {
+    for (const assumed of seen) {
+      numericBindingByDeclaration.set(assumed, true);
+    }
+  }
+  return decided;
+}
+
+const numericBindingByDeclaration = new WeakMap<ts.Node, boolean>();
+
+/** How many bindings one numeric-key question may follow before it fails closed. */
+const NUMERIC_BINDING_DEPTH = 64;
+
+/** {@link isNumericBinding}'s question for one declaration: its initializer and every write. */
+function numericBindingWrites(
+  declaration: ts.VariableDeclaration & { readonly name: ts.Identifier },
+  seen: Set<ts.Node>,
+): boolean {
+  const list = declaration.parent;
+  if (
+    ts.isVariableDeclarationList(list) &&
+    (ts.isForInStatement(list.parent) || ts.isForOfStatement(list.parent))
+  ) {
+    return false;
+  }
+  const isNumericWrite = (initializer: ts.Expression | undefined): boolean =>
+    initializer === undefined || isNumericValue(initializer, seen);
+  if (!isNumericWrite(declaration.initializer)) {
+    return false;
+  }
+  for (const node of referencesByDeclaration(
+    declaration.getSourceFile(),
+    declaration.name.text,
+  ).get(declaration) ?? []) {
+    numericKeyReferenceVisits += 1;
+    const parent = node.parent as ts.Node;
+    if (ts.isVariableDeclaration(parent) && parent.name === node) {
+      // A redeclaration (`var i = …` again) is a write.
+      if (!isNumericWrite(parent.initializer)) {
+        return false;
+      }
+      continue;
+    }
+    if (
+      isDeclarationName(node, parent) ||
+      (ts.isShorthandPropertyAssignment(parent) && parent.name === node)
+    ) {
+      // A shorthand in an object pattern (`({ k } = o)`, `({ k = "x" } = o)`)
+      // writes it (BL-084's audit, F3); in an object literal it is a read,
+      // taken for a write all the same.
+      return false;
+    }
+    const outer = skipOuterParentheses(node);
+    if (!isWriteTargetPosition(outer)) {
+      continue;
+    }
+    const writer = outer.parent as ts.Node;
+    if (
+      ts.isPrefixUnaryExpression(writer) ||
+      ts.isPostfixUnaryExpression(writer)
+    ) {
+      continue;
+    }
+    if (
+      ts.isBinaryExpression(writer) &&
+      writer.left === outer &&
+      isAssignmentOperatorToken(writer.operatorToken.kind) &&
+      isNumericValue(writer.right, seen)
+    ) {
+      continue;
+    }
+    // A destructuring, a `for…in` / `for…of` target, a write of anything else.
+    return false;
+  }
+  return true;
+}
+
+const referencesByDeclarationBySourceFile = new WeakMap<
+  ts.SourceFile,
+  Map<string, ReadonlyMap<ts.Node, readonly ts.Identifier[]>>
+>();
+let numericKeyReferenceVisits = 0;
+
+/** How many references {@link isNumericBinding} visited, the index builds included (an operation count for the structural performance test). */
+export function exportNumericKeyReferenceVisits(): number {
+  return numericKeyReferenceVisits;
+}
+
+/**
+ * Every reference of the file spelled `text`, grouped by the declaration
+ * it denotes (lexically): one pass per spelling per file.
+ */
+function referencesByDeclaration(
+  sourceFile: ts.SourceFile,
+  text: string,
+): ReadonlyMap<ts.Node, readonly ts.Identifier[]> {
+  let byText = referencesByDeclarationBySourceFile.get(sourceFile);
+  if (byText === undefined) {
+    byText = new Map();
+    referencesByDeclarationBySourceFile.set(sourceFile, byText);
+  }
+  const cached = byText.get(text);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const grouped = new Map<ts.Node, ts.Identifier[]>();
+  for (const node of identifiersSpelled(sourceFile, text)) {
+    numericKeyReferenceVisits += 1;
+    if (isNonReferenceName(node, node.parent)) {
+      continue;
+    }
+    const declaration = lexicalDeclarationOf(node, text);
+    if (declaration === undefined) {
+      continue;
+    }
+    const known = grouped.get(declaration);
+    if (known === undefined) {
+      grouped.set(declaration, [node]);
+    } else {
+      known.push(node);
+    }
+  }
+  byText.set(text, grouped);
+  return grouped;
+}
+
+/**
+ * What the routes to the final export object's own functions and classes
+ * write onto them (task BL-084): each route accounted like a reference to
+ * the binding ({@link accountFinalObjectUse}), each destructured alias
+ * like the binding's alias ({@link finalObjectAliasUses}). `undefined`
+ * when the final object may be no function or class of this file.
+ */
+function finalObjectRouteUses(sourceFile: ts.SourceFile):
+  | {
+      readonly names: ReadonlySet<string>;
+      readonly values: readonly ts.Expression[];
+    }
+  | "all"
+  | undefined {
+  const owners = finalObjectOwnFunctions(sourceFile);
+  if (owners.size === 0) {
+    return undefined;
+  }
+  const routes = ownObjectRoutes(sourceFile, owners);
+  if (routes === "all") {
+    return "all";
+  }
+  const account = newFinalObjectAccount();
+  const merge = (other: ts.Identifier): void =>
+    mergeFinalObjectAlias(account, finalObjectAliasUses(sourceFile, other));
+  // A named function or class expression's own name is a second binding to
+  // the same object (`const Api = function Inner() { Inner.run = v; }`;
+  // BL-084's audit, round 4).
+  for (const owner of owners) {
+    if (
+      (ts.isFunctionExpression(owner) || ts.isClassExpression(owner)) &&
+      owner.name !== undefined
+    ) {
+      merge(owner.name);
+    }
+  }
+  for (const alias of routes.aliases) {
+    merge(alias);
+  }
+  for (const route of routes.expressions) {
+    if (account.handedOn) {
+      break;
+    }
+    accountFinalObjectUse(route, account, merge, undefined);
+  }
+  accountSelfHeldReads(sourceFile, account, merge);
+  return account.handedOn
+    ? "all"
+    : { names: account.names, values: account.values };
 }
 
 /**
@@ -5091,23 +6063,30 @@ function thisMayBeGlobalObject(node: ts.Node): boolean {
     return false;
   }
   // The binding function's strictness alone decides `this` (the spec's
-  // OrdinaryCallBindThis; BL-074's round-4 review): its own prologue, and
-  // everything that encloses it -- a function or arrow under a prologue, a
-  // class (all of whose code is strict), the file's prologue, an ES module.
+  // OrdinaryCallBindThis; BL-074's round-4 review).
+  return !isInStrictCode(binder);
+}
+
+/**
+ * Whether `node` is strict code: under its own prologue (a function's) or
+ * that of anything enclosing it -- a function or arrow under a prologue, a
+ * class (all of whose code is strict), the file's prologue, an ES module.
+ */
+function isInStrictCode(node: ts.Node): boolean {
   const sourceFile = node.getSourceFile();
   if (
     ts.isExternalModule(sourceFile) ||
     hasUseStrictPrologue(sourceFile.statements)
   ) {
-    return false;
+    return true;
   }
   for (
-    let current: ts.Node | undefined = binder;
+    let current: ts.Node | undefined = node;
     current !== undefined && !ts.isSourceFile(current);
     current = current.parent
   ) {
     if (ts.isClassLike(current)) {
-      return false;
+      return true;
     }
     if (ts.isFunctionLike(current)) {
       const body = (current as ts.FunctionLikeDeclaration).body;
@@ -5116,11 +6095,11 @@ function thisMayBeGlobalObject(node: ts.Node): boolean {
         ts.isBlock(body) &&
         hasUseStrictPrologue(body.statements)
       ) {
-        return false;
+        return true;
       }
     }
   }
-  return true;
+  return false;
 }
 
 /**
@@ -5707,11 +6686,13 @@ function isInertUse(node: ts.Node): boolean {
       // inherited one is `Function.prototype`'s, non-writable and
       // non-configurable (measured) -- as long as its own properties and
       // its `[[Prototype]]` are unchanged. The census of its binding
-      // accounts writes through the binding; a write that reaches the
-      // function without its name (`arguments.callee`, `new.target`,
-      // `.prototype.constructor`) is not accounted, an open debt this
-      // narrowing inherits with every attribution of such a function
-      // (RWF-114, RWF-115).
+      // accounts writes through the binding, and BL-084's route census
+      // ({@link ownObjectRoutes}) those that reach the function without its
+      // name (`arguments.callee`, `new.target`, `.prototype.constructor`):
+      // a route handed on, `Object.setPrototypeOf(new.target, P)` included,
+      // withdraws every named export (RWF-114, RWF-115), within that
+      // census's accepted bounds (another module's code) and RWF-118's open
+      // gap (a call that returns its receiver, `Api.valueOf()`).
       return parent.right === outer && isOwnBaseCallable(outer);
     case ts.SyntaxKind.InKeyword:
       return parent.right === outer;
@@ -6160,6 +7141,26 @@ function classifyExportReference(
     }
     return { ...make("method-this-hand-off"), owner, thisContext };
   }
+  if (node.kind === ts.SyntaxKind.SuperKeyword) {
+    // A `super` property write sets the property on `this`, the receiver
+    // (RWF-117, BL-084): a method's `this` write by another spelling. A read
+    // or a call through `super` reads the home object's prototype.
+    const parent = node.parent as ts.Node;
+    if (
+      (ts.isPropertyAccessExpression(parent) ||
+        ts.isElementAccessExpression(parent)) &&
+      parent.expression === node &&
+      isWriteTargetPosition(skipOuterParentheses(parent)) &&
+      thisContext !== "fresh"
+    ) {
+      return {
+        ...make("method-this-write", accessNames(parent)),
+        owner,
+        thisContext,
+      };
+    }
+    return undefined;
+  }
 
   if (isPrototypeTampering(node)) {
     return make("unenumerable");
@@ -6428,6 +7429,17 @@ function applyExportWriteSet(
   if (set.unenumerable || loadResultEscapes(sourceFile, reach)) {
     return results.map((binding) =>
       binding.syntax === "commonjs" && binding.kind !== "re-export"
+        ? withdrawnBinding(binding)
+        : binding,
+    );
+  }
+  if (set.propertiesUnenumerable) {
+    // BL-084: every name may be written onto the function the final object
+    // may be; a whole-module forward is withdrawn too, since the names it
+    // would answer for are no longer enumerable.
+    return results.map((binding) =>
+      binding.syntax === "commonjs" &&
+      (binding.kind === "named" || binding.commonJsReExport !== undefined)
         ? withdrawnBinding(binding)
         : binding,
     );
