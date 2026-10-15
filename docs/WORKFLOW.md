@@ -96,6 +96,13 @@ It returns `CERTIFIED` or `BLOCKED` with findings.
   `BLOCKED`, report, and stop.
 - The audit verdict and its findings go into the pull request body.
 
+**Re-validating between audit rounds** (task `BL-089`). After a fix
+between rounds, re-run only the suites the fix can affect, and the fast
+gates: `node scripts/gates.mjs --only <names>` (§ 3), which labels such a
+run PARTIAL. The full gate set of § 3 runs once, on the final HEAD,
+before the pull request, and that run's results are the ones the report
+and the pull request quote.
+
 ### 1.6 Commits
 
 AGENTS.md § H: the task file first, then one commit per micro-task.
@@ -172,15 +179,51 @@ node scripts/generate-scorecard.mjs --check
 node scripts/check-docs.mjs
 ```
 
+**The recommended way to run this set locally** is one command (task
+`BL-089`):
+
+```bash
+node scripts/gates.mjs                       # the whole set, then the differential
+node scripts/gates.mjs --only lint,test:oracle   # a PARTIAL run (§ 1.5)
+```
+
+It runs the same gates with the same commands, in three phases, and
+prints a summary of every gate's exit code, duration, test files and
+tests (full output in a log per gate; the script's header documents
+every option):
+
+1. **The fast gates** — typecheck, lint, format, the scorecard check,
+   check-docs, build, `validate:history`, `validate:metadata` —
+   concurrently, stopping at the first failure.
+2. **The test suites**, one after another (never concurrently: the
+   performance guards measure wall clock), every suite with its
+   `package.json` script's own vitest arguments. Each test file runs
+   exactly once: `test:foundation` is a deliberate subset of `npm test`
+   (CI runs both, unchanged), so after the foundation run `npm test` runs
+   with those files excluded, and before any suite starts the runner
+   checks, from vitest's own file lists, that no file is in two suites and
+   that the two halves are exactly `npm test`'s files. `test:validation`
+   passes only when exactly the cases `cases.json` marks `knownFailure`
+   fail (see the next point); each failure's assertion is printed for the
+   verdict-by-verdict comparison.
+3. **The differential** (below), its base side cached.
+
+Run the commands one by one only to investigate one gate; quote the
+runner's summary in the report.
+
 - `npm run test:validation` is fully offline since task `D-03` (it
   replays a recorded snapshot of real OSV answers, OPEN-DEBTS D-03,
-  CLOSED) but is still not run in CI: five of its cases are deliberately
-  kept failing (OPEN-DEBTS D-09) and the suite exits non-zero by design.
-  Run it locally for any task that can move a verdict. The documented
-  baseline is exactly five known failures, `RWB-03`, `RWB-05`, `RWB-09b`,
-  `VAL-002` and `VAL-003` (OPEN-DEBTS D-09; `RWB-07` was one from task
-  A-3a to task A-4), compared case by case and verdict by verdict. Any
-  change to that set is explained.
+  CLOSED) but is still not run in CI: the cases OPEN-DEBTS D-09 lists are
+  deliberately kept failing and the suite exits non-zero by design. Run
+  it locally for any task that can move a verdict. The documented
+  baseline is D-09's table of known failures — six since task `BL-075`:
+  `RWB-03`, `RWB-05`, `RWB-09a`, `RWB-09b`, `VAL-002` and `VAL-003`
+  (`RWB-07` was one from task A-3a to task A-4) — compared case by case
+  and verdict by verdict. Any change to that set is explained. `RWB-09a`
+  is not marked `knownFailure` in `tests/validation/cases/cases.json`
+  while the project owner's decision on it is pending (D-09), so the
+  suite's own summary and `scripts/gates.mjs`, which reads those marks,
+  report it as an unexpected failure until then (RWF-119).
 - `npm test` is also fully offline since `D-03`.
 - For an analyzer change, report the graph, proof and verdict
   differentials separately, with the shared tool (task `BL-029`):
@@ -199,7 +242,11 @@ node scripts/check-docs.mjs
   case on one side only are listed as such, never counted as unchanged.
   Put its summary table in the report, and the verdict and proof lines
   that moved. `scripts/differential.mjs`'s header documents the options
-  and exactly what each side contains. Task-specific questions the
+  and exactly what each side contains. The base side is cached (task
+  `BL-089`): a later run whose base commit and every other input the base
+  side reads are byte-identical reuses it, and the report says so; any
+  change to those inputs collects it again, and `--no-cache` always does.
+  The head side is never cached. Task-specific questions the
   corpora do not reach still need their own measurement (a per-task
   corpus script under `scripts/`, as recent task files and `FINDINGS.md`
   do).

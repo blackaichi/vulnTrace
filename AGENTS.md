@@ -240,8 +240,8 @@ Every task runs the full set, unrelaxed:
   a new failure, is a finding.
 - Every gate above marked "yes" runs in `.github/workflows/ci.yml`, on
   every pull request (task RWF-051-typecheck). `npm run test:validation`
-  is the one gate that stays local-only: five of its cases are
-  deliberately kept failing (OPEN-DEBTS D-09), and the suite asserts the
+  is the one gate that stays local-only: the cases OPEN-DEBTS D-09 lists
+  are deliberately kept failing, and the suite asserts the
   expected verdict unconditionally, so it exits non-zero by design —
   there is no meaningful red/green state for CI to gate on until that is
   addressed (backlog: the D-03-discovered CI-promotion task).

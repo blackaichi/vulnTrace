@@ -293,6 +293,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-116 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A sloppy exported function is the `caller` of the function it calls, and its own `arguments` property is its frame's arguments object: `function helper() { helper.caller.run = dangerousOp; } function Api() { helper(); }` (and `Api.arguments.callee.run = …` in a callee) writes onto the export, which no census of its binding sees | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-084) — see below |
 | RWF-117 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A `super` property write sets the property on `this`: `module.exports = { run: safeOp, init() { super.run = dangerousOp; } }`, the entry calling `init()` first, was not censused as a write of `run` | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-084) — see below |
 | RWF-118 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The final-object censuses (of the binding and of BL-084's routes) take a member read or a method call for a use that keeps the object in this file's hands, but a call may return its receiver (`Api.valueOf().run = …`) or hand a property value to a callback (`JSON.stringify(Api.prototype, (k, v) => { v.run = … })`) | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
+| RWF-119 | n/a — the repository's own workflow records | `docs/WORKFLOW.md` § 3, `AGENTS.md` § I, `docs/progress.md` and the pull request template said `test:validation` keeps five cases failing, and the committed `tests/validation/REPORT.md` showed `RWB-09a` passing; since task BL-075 the suite fails six and OPEN-DEBTS D-09 lists six (`RWB-09a` added, pending the project owner's decision) | record — a case-by-case comparison against WORKFLOW § 3 takes `RWB-09a`'s documented failure for a new one, and a reader of `REPORT.md` takes it for passing — see below | **Fixed** (BL-089) — see below |
 
 ---
 
@@ -22242,3 +22243,42 @@ routes.
 result of a method call on the final object (or a route) as a route
 itself, and a builtin handed the object together with a callback as a
 hand-off. Backlog `BL-087`.
+
+## RWF-119 — Three records state five known validation failures, and the committed report shows RWB-09a passing; D-09 has listed six since BL-075
+
+**Status:** Fixed (BL-089)
+**Failure class:** record — a stated baseline disagrees with the
+authoritative one (OPEN-DEBTS D-09) and with what the suite measures
+**Defect class:** not applicable (documentation)
+**Proof family affected:** none
+**Severity:** Low (no verdict path touched); it misdirects the
+case-by-case validation comparison every task makes
+**Fix lane:** none (records)
+
+**Discovered:** by task BL-089, timing every gate of `AGENTS.md` § I
+alone on the base `54858ba` (`AGENTS.md` § C, § D). `npm run
+test:validation` fails six cases: the five `tests/validation/cases/cases.json`
+marks `knownFailure`, and `RWB-09a` (`AFFECTED` expected, `UNKNOWN`
+actual). Task BL-075 moved `RWB-09a` and recorded it in OPEN-DEBTS D-09
+as the sixth known failure, "pending the project owner's decision",
+without marking it `knownFailure`, so the suite's own summary reports
+"Unexpected failures (not in FINDINGS.md): 1". Three records still said
+five: `docs/WORKFLOW.md` § 3 ("The documented baseline is exactly five
+known failures, `RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002` and
+`VAL-003`"), `AGENTS.md` § I ("five of its cases are deliberately kept
+failing") and `docs/progress.md` (the same words); the pull request
+template `.github/pull_request_template.md` listed the same five. And
+`tests/validation/REPORT.md`, which the suite regenerates on every run
+and which is committed, still read "Failed: 5" and `RWB-09a  AFFECTED
+AFFECTED  PASS`: it was last committed by task A-4 (`3d87189`), and
+BL-075 did not commit the regenerated one.
+
+**Fix (BL-089).** The three records and the template point at D-09's
+table instead of restating a count that goes stale (WORKFLOW § 3,
+`progress.md` and the template add "six since `BL-075`"); WORKFLOW § 3
+also says why the suite and
+`scripts/gates.mjs` report `RWB-09a` as unexpected until the decision is
+made: both read the `knownFailure` marks, the suite's own baseline. The
+regenerated `REPORT.md` is committed. `cases.json` is not touched:
+marking `RWB-09a` `knownFailure` is the decision D-09 leaves to the
+project owner.

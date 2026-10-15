@@ -16,9 +16,9 @@ yes or no. -->
 
 <!-- Every gate in AGENTS.md § I and its result. Graph, proof and verdict
 differentials, reported separately, as numbers. Validation compared case by
-case with OPEN-DEBTS D-09's known failures (RWB-03, RWB-05, RWB-09b,
-VAL-002, VAL-003). Tests added (failing on base, passing after) and the
-mutations each caught. -->
+case with OPEN-DEBTS D-09's table of known failures (six since BL-075).
+`node scripts/gates.mjs`'s summary (docs/WORKFLOW.md § 3). Tests added
+(failing on base, passing after) and the mutations each caught. -->
 
 ## Independent audit
 

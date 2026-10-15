@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-15, by `BL-084`.
+**Last updated:** 2026-10-16, by `BL-089`.
 
 ## Objective
 
@@ -251,9 +251,11 @@ dropped finding. The README says this (`README.md:80-88`, since
 `tests/validation/FINDINGS.md` RWF-053 — an earlier version of this line
 said the notice did not exist, which was false).
 `npm run test:validation` is hermetic since `D-03` (replays a recorded
-OSV snapshot) but is still not run in CI: five of its cases are
-deliberately kept failing (OPEN-DEBTS D-09) and the suite exits non-zero
-by design regardless of network access (backlog `BL-030`).
+OSV snapshot) but is still not run in CI: the cases OPEN-DEBTS D-09 lists
+(six since `BL-075`) are deliberately kept failing and the suite exits
+non-zero by design regardless of network access (backlog `BL-030`).
+`node scripts/gates.mjs` runs the whole gate set locally, each test file
+exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Key decisions
 
@@ -268,13 +270,13 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`BL-084` — Every route to a function's own object is a use of the export
-object it is the value of ([task file](tasks/BL-084-function-own-object.md),
-`BL-086` folded in): `READY_FOR_REVIEW`. `BL-075` merged as PR #105.
+`BL-089` — Speed up the local gate run without weakening any gate
+([task file](tasks/BL-089-gate-speedup.md), placed first by the project
+owner; tooling only): `READY_FOR_REVIEW`. `BL-084` merged as PR #106.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-084`:
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-089`:
 `BL-081` (RWF-110, P0, live, lane A: a builtin replaced without its name
 runs with no call edge; needs the owner's decision and a precision
 measurement), `BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
@@ -287,6 +289,11 @@ rest of lane E. `BL-068` is narrowed to RWF-098's single-write unit
 records (P2).
 
 ## Recently discovered
+
+From `BL-089`: `RWF-119` (records, fixed in BL-089: three records still
+said `test:validation` keeps five cases failing, and the committed
+`REPORT.md` showed `RWB-09a` passing, while D-09 has listed six since
+`BL-075`).
 
 From `BL-084`: `RWF-116` (a sloppy exported function is the `caller` of
 what it calls, and its own `arguments` property is its frame's arguments
