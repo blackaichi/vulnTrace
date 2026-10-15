@@ -1945,6 +1945,48 @@ updates).
   the graph (the global-object spellings are fixed in BL-074); a precision
   decision first.
 
+**BL-075 additions** (task `BL-075`, 2026-10-15). RWF-104 is closed by
+option (a) (ADR 0009, decision record of 2026-10-15): no builtin is
+trusted to only read an export object -- an `Object` / `Reflect` reader, a
+builtin prototype's reader `.call`, or `instanceof` (either side: RWF-112,
+found by its audit and fixed) handed one is `unenumerable`. Full record:
+FINDINGS RWF-104 (BL-075 status update) and RWF-112.
+
+- **Differentials.** `node scripts/differential.mjs` against `0113347`, 139 corpus cases:
+  graph 2 (RWB-09a and RWB-09b, 56 call edges into semver's `Range` withdrawn
+  to `unresolved_target`), proof 2, verdict 2 (the `semver-vulnerable`
+  finding of RWB-09a and of RWB-09b, `AFFECTED → UNKNOWN`; none into
+  `NOT_AFFECTED`, none removed, none unmeasured). RWB-09a's selected verdict
+  moves, so validation has six failures instead of D-09's five -- a sound
+  precision cost, pending the owner's decision (OPEN-DEBTS D-09, backlog
+  `BL-085`).
+- **Precision, measured** by `scripts/bl075-builtin-reader-trust-corpus.mjs`:
+  9 of 4,774 attributed export bindings lost, each a load that may load
+  the file back on the right of `instanceof` (RWF-112), none from a
+  builtin reader; (b) was not built, since it could keep none of them.
+- **What BL-075 binds.** Builtins are shared by every module of the
+  process: a later task that trusts a builtin's behaviour on the strength
+  of one file's text (or one closure's) re-opens RWF-104's class. Only an
+  operator use is inert.
+- **`BL-081`** (RWF-110, P0, live, discovered in BL-075): a builtin
+  replaced without its name (`({}).constructor.keys = f`,
+  `install(Object)`) runs with no call edge; ADR 0008's lane, a decision
+  and a precision measurement first.
+- **`BL-082`** (RWF-111, P1, masked, discovered in BL-075): the define
+  arm's per-file trust of the builtin; making it un-enumerable costs 1,115
+  of 3,810 `node_modules` attributions, a precision decision first.
+- **`BL-083`** (RWF-113, P1, masked, found by BL-075's audit): a member
+  read, a method call or a plain write of an export object trusts
+  `Object.prototype` against other modules; a decision first.
+- **`BL-085`** (precision, discovered in BL-075): restore RWB-09a -- a
+  load that may load this file back, on the right of `instanceof`, is
+  inert when every object of this file it may yield is proven to inherit
+  `Function.prototype`'s `Symbol.hasInstance`.
+- **`BL-084`** (RWF-114, P0, live, found by BL-075's audit): an exported
+  sloppy function writing onto itself through `arguments.callee`.
+- **`BL-086`** (RWF-115, P0, live, found by BL-075's audit): the same
+  through `new.target` or a `constructor` chain; may fold into `BL-084`.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

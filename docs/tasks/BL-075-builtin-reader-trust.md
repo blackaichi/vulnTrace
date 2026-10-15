@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-075
 - **Branch**: `bl-075-builtin-reader-trust`
 - **Base SHA**: `0113347f7c4e746a00d3d46f67a571fe5b1f98f0` (BL-074's merge, PR #104)
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `docs(tasks): BL-075 task file — a builtin reader is no reader when another module can replace the builtin`
+  - `test(BL-075): no builtin is trusted with an export object, against real Node — RWF-104, RWF-112`
+  - `fix(BL-075): an export object handed to a builtin is handed to code — RWF-104, RWF-112`
+  - (this commit) `docs(BL-075): records — RWF-104 and RWF-112 fixed, RWF-110, 111, 113..115 found, ADR 0009 decision record (option (a)), D-09 (RWB-09a), plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -164,3 +168,43 @@ is the five known failures of OPEN-DEBTS D-09.
 ## Report
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
+
+## Corrections and outcome (appended by the last commit)
+
+- **A premise of "What to do" step 3 was false.** It kept "`C instanceof
+  …` with the export object on the right" among the uses that "hold
+  whatever any module did", and the acceptance criterion said "the right
+  of `instanceof <Builtin>`" where it meant the left. On the right, the
+  object runs its own `Symbol.hasInstance`, which a plain object inherits
+  from `Object.prototype`, writable by any module: RWF-112, a live false
+  `NOT_AFFECTED` found by the independent audit (round 1), pre-existing,
+  fixed here (`instanceof` is never inert). One narrowing keeps precision:
+  a function or base class the file declares, on the right, inherits
+  `Function.prototype`'s non-writable, non-configurable one (measured);
+  it inherits RWF-114 and RWF-115's open debt (a write reaching the
+  function without its name).
+- **The precision premise of the decision changed.** Option (a) as first
+  implemented lost 0 of 4,774 attributions; with RWF-112 fixed it loses 9
+  (none from a builtin reader: each is a load that may load the file back,
+  on the right of `instanceof`), 19 before the narrowing. (b) could keep
+  none of them, so the choice stands. The cost reaches one validation
+  case: **RWB-09a moves `AFFECTED → UNKNOWN`** (semver's `range.js` ↔
+  `comparator.js` cycle), a sixth known validation failure recorded in
+  OPEN-DEBTS D-09 pending the owner's decision, with backlog `BL-085` to
+  restore it. `AGENTS.md` § I and `docs/WORKFLOW.md` § 3 still say five:
+  left for the owner's decision, not edited here.
+- **Option (b)'s premise was false** ("the module closure"): the entry,
+  outside any file's closure, can replace a builtin (RWF-104's correction).
+- **Out of scope, registered:** RWF-110 (a builtin replaced without its
+  name runs with no call edge; P0, live, lane A; `BL-081`), RWF-111 (the
+  define arm's trust; masked; `BL-082`), RWF-113 (`Object.prototype`
+  members, methods and non-writable properties; masked; `BL-083`), RWF-114
+  (`arguments.callee`; P0, live; `BL-084`), RWF-115 (`new.target`, a
+  `constructor` chain; P0, live; `BL-086`). BL-074's audit findings
+  RWF-107..109 were missing from the backlog's § 2 map; added.
+- **The independent audit** blocked in round 1 (RWF-112, fixed), in round
+  2 on the records' "0 of 4,774" (re-measured and corrected; it found
+  RWF-114) and in round 3 on the narrowing's comment premise and the
+  records' wording (corrected; it found RWF-115, and verified the 9 of
+  4,774 independently). Every round found the code change sound: it only
+  withdraws attribution.

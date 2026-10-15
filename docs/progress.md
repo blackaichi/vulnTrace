@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-14, by `BL-074`.
+**Last updated:** 2026-10-15, by `BL-075`.
 
 ## Objective
 
@@ -218,7 +218,16 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   flows (`load-reach.ts`). RWF-103 and RWF-106 closed: 34 live false
   `NOT_AFFECTED`s; precision 1,251 of 5,061 `node_modules` export bindings
   (option (a) would cost 1,640), no corpus verdict moved.
-  REMEDIATION-PLAN § 5a, "BL-074 additions".
+  REMEDIATION-PLAN § 5a, "BL-074 additions". `BL-075` took option (a)
+  for RWF-104 (ADR 0009 decision record): no builtin is trusted to only
+  read an export object, since builtins are shared by every module of the
+  process (the entry itself replaced `Object.keys` in one measured shape,
+  so the "closure" option was the wrong set), and no `instanceof` is
+  inert (its audit's RWF-112) unless it is a function or base class the
+  file declares. Eleven live false `NOT_AFFECTED`s closed, at 9 of 4,774
+  attributions; RWB-09a moves `AFFECTED → UNKNOWN` (a sixth known
+  validation failure, pending the owner's decision; backlog `BL-085`).
+  REMEDIATION-PLAN § 5a, "BL-075 additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -249,25 +258,40 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`BL-074` — A load's result that may be an export object of this file,
-through any dataflow ([task file](tasks/BL-074-load-result-dataflow.md)):
-`READY_FOR_REVIEW`, with BL-076 folded in. `E-2` merged as PR #103 (with
-its audit's RWF-106 left to BL-074).
+`BL-075` — A builtin reader is no reader when the builtin is reachable
+without its name or patched by another module
+([task file](tasks/BL-075-builtin-reader-trust.md)): `READY_FOR_REVIEW`.
+`BL-074` merged as PR #104.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-074`:
-`BL-075` (RWF-104, P0, waits on the owner's decision: drop the builtin
-reader allow-lists, or decide builtin patching over the module closure),
-`BL-079` (RWF-108, P0, at E-4's boundary), `E-3` (entrypoint roots),
-`E-4`, `E-5`. `BL-078` (RWF-107) and `BL-080` (RWF-109) need precision
-decisions. The P1 gaps `BL-057` and `BL-058` (small, `module-resolver.ts`
-only, from C-1), `BL-048` (RWF-074), `BL-050` (RWF-076), `BL-040`,
-`BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
-candidates to reorder ahead of the rest of lane E. `BL-068` is narrowed to RWF-098's
-single-write unit records (P2).
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-075`:
+`BL-084` (RWF-114, P0, live: an exported function writing onto itself
+through `arguments.callee`; `BL-086`, RWF-115, the same through
+`new.target`, may fold in), `BL-081` (RWF-110, P0, live, lane A: a builtin replaced without its name
+runs with no call edge; needs the owner's decision and a precision
+measurement), `BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
+(entrypoint roots), `E-4`, `E-5`. `BL-078` (RWF-107), `BL-080` (RWF-109)
+and `BL-082` (RWF-111) and `BL-083` (RWF-113) need decisions. The P1 gaps `BL-057` and
+`BL-058` (small, `module-resolver.ts` only, from C-1), `BL-048`
+(RWF-074), `BL-050` (RWF-076), `BL-040`, `BL-043` and `BL-051` (live
+family-A false `NOT_AFFECTED`s) are candidates to reorder ahead of the
+rest of lane E. `BL-068` is narrowed to RWF-098's single-write unit
+records (P2).
 
 ## Recently discovered
+
+From `BL-075`: `RWF-110` (`BL-081`, P0, live, pre-existing: the call
+graph takes `Object.keys(…)` for the builtin while another module may have
+replaced it through `({}).constructor` or a parameter) and `RWF-111`
+(`BL-082`, P1, masked: the export census's define arm trusts the builtin
+for the names it does not spell; 1,115 of 3,810 `node_modules`
+attributions to untrust it); its audit found `RWF-112` (fixed in BL-075)
+and `RWF-113` (`BL-083`, P1, masked: `Object.prototype` members another
+module defines) and `RWF-114` (`BL-084`, P0, live, pre-existing:
+`arguments.callee` reaches the exported function) and `RWF-115`
+(`BL-086`, P0, live, pre-existing: `new.target` does too). RWF-104's framing of option (b) ("the module
+closure") is corrected: the patcher can be the entry.
 
 From `BL-074`: its independent audit found `RWF-107` (`BL-078`, P1,
 masked: what a call through a load returns is not followed; the fix is a

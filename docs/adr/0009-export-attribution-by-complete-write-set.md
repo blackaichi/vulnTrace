@@ -505,6 +505,88 @@ this record closes.
 "withdraws nearly every TypeScript-emitted file". Measured, (a) loses
 32.4% of `node_modules` attributions: a large cost, not nearly all.
 
+## Decision record — option (a) for RWF-104 (taken by task BL-075, 2026-10-15; the project owner confirms it by merging, or drops it)
+
+**The choice.** E-1's report offered the project owner two sound rules for
+a builtin "reader" handed an export object (`Object.keys(exports)`, the
+other `Object` / `Reflect` readers, a builtin prototype's
+`hasOwnProperty.call(exports, k)`, `exports instanceof Object`), which E-1
+trusted unless THIS file replaced the builtin by name (RWF-104): (a) drop
+the reader allow-lists -- an export object handed to a builtin is handed
+to code; (b) decide builtin replacement over the module closure. The owner
+gave the go with the recommendation "(a) unless (b) wins on measured
+precision by a clear margin". BL-075 took (a).
+
+**Why not (b).** (b) can keep at most what (a) loses, and none of what
+(a) loses measured comes from a builtin reader (below), so (b) would keep
+none of it. And its premise was wrong: builtins are shared
+by every module of the process, not of one file's closure -- the entry,
+which no file's closure contains, replaced `Object.keys` before loading
+`wrap` and real Node called `parse` (`rwf104.entry-replaces-before-loading`).
+A sound (b) would range over every module that may run, with a census that
+sees a replacement through a parameter or a `constructor` member, which the
+call graph does not have either (RWF-110).
+
+**The rule.** No builtin is trusted to only read an export object, the
+final object's alias, or an object later exported: `classifyHelperCall`
+returns no `read`, `isInertUse` takes no `instanceof` for inert -- on the
+left the object is handed to the right's `Symbol.hasInstance`, a builtin's
+included; on the right it runs its own, inherited from an
+`Object.prototype` any module may write (RWF-112, found by BL-075's
+independent audit) -- and the final-object alias census lost the reader
+exemption. What stays inert holds whatever any module did: `typeof`, `!`,
+`void`, a strict comparison, a loose one against `null` / `undefined`, a
+condition, `k in E`, and the operators of § 1's census. The define arm
+(`Object.defineProperty(E, …)`, `Object.assign(E, …)`, `Reflect.set(E,
+…)`) keeps its per-file trust (RWF-111, below). One narrowing, with its
+argument: an identifier on the right of `instanceof` bound to a function
+declaration (not async, not a generator) or a class declaration with no
+heritage and no computed member, never assigned, is inert
+(`isOwnBaseCallable`): its `[[Prototype]]` is `Function.prototype`, whose
+`Symbol.hasInstance` is non-writable and non-configurable (measured), and
+the binding's census accounts the writes made through that binding. A
+write reaching the function without its name (`arguments.callee`,
+`new.target`, a `constructor` chain) is not accounted: the narrowing
+inherits that open debt (RWF-114, RWF-115).
+
+**The precision acceptance it binds.** Measured by
+`scripts/bl075-builtin-reader-trust-corpus.mjs` against BL-074's merge
+`0113347`: 9 of 4,774 attributed export bindings lost (7 of 3,810 in
+`node_modules`, 2 of 192 in the validation fixtures -- RWB-09's two
+semver `classes/range.js` -- none of 419 in `fixtures/` or of 75 and 278
+in adversarial v1 and v2), none gained or moved. Each is a load that may
+load this file back, on the right of `instanceof` (semver's `range.js` ↔
+`comparator.js`, js-yaml, ajv, postcss): its value may be this file's own
+exports object, so RWF-112 applies. Without the narrowing above the cost
+was 19. Three oracle controls with nothing replacing anything move
+`NOT_AFFECTED → UNKNOWN`
+(`cost.object-keys-unreplaced`, `cost.instanceof-unreplaced`,
+`cost.instanceof-right-unreplaced`), and nine census unit tests that
+pinned a reader as a read now assert the withdrawal. The corpus differential: `node scripts/differential.mjs` against `0113347`, 139 corpus cases:
+graph 2 (RWB-09a and RWB-09b, 56 call edges into semver's `Range` withdrawn
+to `unresolved_target`), proof 2, verdict 2 (the `semver-vulnerable`
+finding of RWB-09a and of RWB-09b, `AFFECTED → UNKNOWN`; none into
+`NOT_AFFECTED`, none removed, none unmeasured). RWB-09a's selected verdict
+moves, so validation has six failures instead of D-09's five -- a sound
+precision cost, pending the owner's decision (OPEN-DEBTS D-09, backlog
+`BL-085`). Dropping this record means
+restoring the per-file reader trust, which reopens RWF-104's six live
+shapes and RWF-112's five.
+
+**What it does not decide.** The define arm trusts the builtin for every
+name it does not spell; another module's replacement writes any name
+(RWF-111, masked by the call graph's escape row). Making it un-enumerable
+costs 1,115 of 3,810 `node_modules` attributions (29%), a separate
+precision decision (backlog `BL-082`). A call of a builtin replaced
+without its name has no edge whether or not an export object is involved
+(RWF-110, live, ADR 0008's lane, backlog `BL-081`). A member read or a
+method call of a name the file never writes, and a plain write, still
+trust that no other module put an accessor, method or non-writable
+property on `Object.prototype` (RWF-113, masked, backlog `BL-083`). Its
+audit also found a live neighbour outside builtins: an exported function
+writing onto itself through `arguments.callee` (RWF-114, backlog
+`BL-084`).
+
 ## Rationale
 
 Every export-model defect found so far picked *one* write and trusted it.

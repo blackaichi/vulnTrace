@@ -278,12 +278,18 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-101 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | `exports.run = run; var run = function () {…}` attributes `run` to the function, though the export is written while `run` is still `undefined` (RWF-012's alias chase ignores evaluation order) | fabricated edge; false `AFFECTED` — see below | Open |
 | RWF-102 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export model attributes `exports.run = safeOp` although the file installs an accessor or a frozen data property of `run` on `Object.prototype` reached without spelling an ambient `X.prototype` (`Object.getPrototypeOf(exports)`, `Object.getPrototypeOf({})`, `exports.constructor.prototype`, `exports.__proto__`, `const O = Object; O.prototype`, `Reflect.getPrototypeOf`) | fabricated attribution, masked by the call graph's `escaped_value` backstop (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-103 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A load's result that may be this file's own exports object handed back (a `require` cycle through another module, `module.parent.exports`) reaches a member write through dataflow the per-file census does not follow (a local helper's return, an object or array member, a parameter, `for…of`, a destructuring assignment, a getter), so `exports.run = safeOp` stays attributed | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-074) — see below |
-| RWF-104 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census trusts a builtin reader (`Object.keys(exports)`, `instanceof Object`) unless THIS file spells the builtin's name in a write or hand-off; a builtin reached through `.constructor` (`({}).constructor.keys = …`, `exports.constructor.keys = …`), or patched by another module the file loads, makes the "reader" write the export | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-104 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census trusts a builtin reader (`Object.keys(exports)`, `instanceof Object`) unless THIS file spells the builtin's name in a write or hand-off; a builtin reached through `.constructor` (`({}).constructor.keys = …`, `exports.constructor.keys = …`), or patched by another module the file loads, makes the "reader" write the export | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-075) — see below |
 | RWF-105 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The CommonJS forwarding hop forwards a name through a whole-module re-export (`module.exports = require("./safe")`) although the file writes that name onto the forwarded object in a form E-1's census can only withdraw (`[module.exports.run] = […]`, a `for-of` or compound write, `const e = module.exports; e.run = …`, `Object.assign`) | false NOT_AFFECTED (family C) and a fabricated edge (false AFFECTED), pre-existing on the base — see below | **Fixed** (E-2) — see below |
 | RWF-106 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The forwarding hop forwards a name through a whole-module re-export (`module.exports = require("./safe")`) although the file writes that name onto the same object through a load result's dataflow the census does not follow (`patch(require("./safe"))` with `o.run = …` inside, `[require("./safe")][0].run = …`, an object holder, `for…of`, `.map`) | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-074) — see below |
 | RWF-107 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | BL-074's census treats a load's value as confined when it is called, constructed or the receiver of a member call, without following what the call RETURNS, which may be this file's exports object (`module.exports = () => require("./index")` then `set(require("./g")())`; `require("./other").valueOf()`) | fabricated attribution at the model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-108 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | Another module stores this file's exports object on a third module's exports object (`require("wrap/store").lib = require("wrap")` in the app), and this file's own load of the third module then writes through it (`patch(require("./store").lib)`): the static load closure of `./store` does not contain this file, so BL-074's graph answers "cannot reach back" | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
 | RWF-109 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | BL-074's module graph taints a closure member that spells a frame-reaching member name (`caller`, `getThis`, …), but a key computed at run time spells none: a getter returning `g[k].arguments[0]` with `k` = `"cal" + "ler"` (the module wrapper's `exports`) answers "cannot reach back". Narrowed by BL-074 (status update below): the global-object spellings first recorded here were live and are fixed | wrong reach answer at the graph, masked end to end by the call graph for the frame spelling (no false `NOT_AFFECTED` measured) — see below | Open |
+| RWF-110 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The call graph takes a call of an ambient builtin (`Object.keys({})`) for the builtin, and A-3a's assignment escape row sees a replacement only when it spells an ambient builtin's name: a builtin replaced without its name (`({}).constructor.keys = f`, or `function install(O) { O.keys = f; } install(Object)` in another module) runs `f` with no edge | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-111 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census's define arm (`Object.defineProperty(exports, "__esModule", …)`, `Object.assign(exports, …)`, `Reflect.set`) withdraws only the names it spells and keeps every other attribution, trusting the builtin unless THIS file replaces it by name; another module's replacement writes any name | wrong attribution at the export model, masked end to end by the call graph's escape row (no false `NOT_AFFECTED` measured) — see below | Open |
+| RWF-112 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export object on the RIGHT of `instanceof` (`({}) instanceof exports`) was taken for inert, but it runs its inherited `Object.prototype[Symbol.hasInstance]` with itself as `this`, which any module may define | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-075) — see below |
+| RWF-113 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census takes a member read of a name the file never writes, and a call of a method it never writes (`isMethodWrittenElsewhere`), for reads, and trusts a plain `exports.run = …` against `Object.prototype`; another module's accessor, method or non-writable property on `Object.prototype` runs with, or intercepts, the export object | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
+| RWF-114 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A sloppy exported function writes onto itself through `arguments.callee` (`function Api() { arguments.callee.run = dangerousOp; } module.exports = Api; module.exports.run = safeOp; Api();`); the final object's alias census sees only identifiers spelled `Api` | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-115 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | An exported function writes onto itself through `new.target` (`function Api() { if (new.target) new.target.run = dangerousOp; }`, the entry calling `new w()` first) or a `constructor` chain; the alias census sees only identifiers spelled like the binding | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
 
 ---
 
@@ -21501,7 +21507,7 @@ a dynamic `import()` of this file (E-1's accepted bound).
 
 ## RWF-104 — A builtin reader is trusted though the builtin is reachable without its name, or patched by another module
 
-**Status:** Open
+**Status:** Fixed (BL-075) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (correct binding, wrong runtime-value semantics)
 **Proof family affected:** C
@@ -21525,6 +21531,61 @@ it. Sound options: drop the reader allow-lists (an export object handed
 to `Object.keys` withdraws the file), or decide it at the closure (no
 module of the closure may patch a builtin). Decision for the project owner
 (task E-1's report).
+
+**Status update (task BL-075, 2026-10-15): Fixed, by option (a).** The
+owner gave the go with the recommendation "(a) unless (b) wins on measured
+precision by a clear margin"; (b) could keep none of what (a) costs (below),
+so it was not built (ADR 0009, "Decision record — option (a) for RWF-104"). No builtin
+is trusted with an export object: `classifyHelperCall` no longer returns
+`read` for an `Object` / `Reflect` reader or a builtin prototype's reader
+`.call`, `isInertUse` no longer takes `E instanceof <Builtin>` for inert,
+and the final-object alias census lost the same exemption. Measured
+against real Node with `tests/oracle/bl075-builtin-reader-trust.test.ts`:
+the two recorded spellings, a sibling replacing `Object.keys` by name or
+through `({}).constructor`, the ENTRY replacing it before it loads `wrap`,
+and the entry keeping the object its `Object.keys` is handed and writing
+onto it later -- each `NOT_AFFECTED` on BL-075's base `0113347` while
+Node calls `parse`, each `UNKNOWN` now. The `Reflect.ownKeys`,
+`hasOwnProperty.call` and `instanceof Object` routes were already
+`UNKNOWN` on the base through the call graph (masked); their model-level
+withdrawal is pinned in `module-model.export-write-set.test.ts`. BL-075's
+independent audit found the export object on the RIGHT of `instanceof`
+still taken for inert, a live neighbour of the same root (RWF-112, fixed
+in BL-075: `instanceof` is never inert).
+
+**Correction.** Option (b) was framed as "decide it at the closure (no
+module of the closure may patch a builtin)". The closure is the wrong
+set: the entry, which no file's load closure contains, replaced
+`Object.keys` before loading `wrap` and Node called `parse`
+(`rwf104.entry-replaces-before-loading`). Builtins are shared by every
+module of the process, so (b) would have had to range over every module
+that may run, with a census that sees a replacement through a parameter
+(`install(Object)`) -- the call-graph side of the same root, RWF-110.
+
+**Precision.** Measured by `scripts/bl075-builtin-reader-trust-corpus.mjs`
+against the base: 9 of 4,774 attributed export bindings lost (7 of 3,810 in
+`node_modules`, 2 of 192 in the validation fixtures, none of 419 in
+`fixtures/` or of 75 / 278 in adversarial v1 / v2), none gained or moved.
+None comes from a builtin reader: each is a load whose module can load
+this file back (semver's `range.js` ↔ `comparator.js`, js-yaml's
+`schema.js`, ajv, postcss) on the right of `instanceof`, now not inert
+(RWF-112) -- its value may be this file's own exports object. An exported
+function or base class the file declares stays inert on the right: it
+inherits `Function.prototype[Symbol.hasInstance]`, non-writable and
+non-configurable (measured), as long as its own properties and
+`[[Prototype]]` are unchanged -- which the census of its binding does not
+establish against `arguments.callee`, `new.target` or a `constructor`
+chain (RWF-114, RWF-115, open debts the narrowing inherits); without that
+narrowing the cost was 19
+(semver's classes and url-parse included). Three oracle controls with
+nothing replacing anything move `NOT_AFFECTED → UNKNOWN` (`cost.*`).
+
+**"Fixed" covers** a builtin reader and `instanceof` (either side) handed
+an export object. It does not cover the define arm's trust of the builtin
+for the names it does not spell (RWF-111, masked), a member, method or
+accessor another module defines on `Object.prototype` (RWF-113, masked),
+or a call of a replaced builtin with no export object involved (RWF-110,
+live).
 
 ---
 
@@ -21778,3 +21839,230 @@ end to end through the call graph). So does `Object.assign(Error, {
 prepareStackTrace(e, s) {…} })`, a hook installed under a method name,
 though reading a frame from it still needs `getThis` / `getFunction`
 reached the same way.
+
+---
+
+## RWF-110 — A builtin replaced without spelling its name runs with no call edge
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (correct binding, wrong runtime-value semantics: `Object.keys` assumed to be the builtin)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** A (ADR 0008 § 2's escape row, § 4's builtin table)
+
+**Discovered:** by task BL-075, measuring its premises against real Node
+v22.11.0 with the oracle harness (E-1's loud fixture). No export object is
+involved. In `wrap/index.js`: `({}).constructor.keys = function (o) {
+dangerousOp(o); return []; }; exports.run = safeOp; Object.keys({});`; the
+same replacement in a sibling `wrap` loads; and in a sibling
+`function install(O) { O.keys = function (o) { danger(o); return []; }; }
+install(Object);`. Real Node calls `parse` through `Object.keys({})`; the
+analyzer answers `NOT_AFFECTED` for all three. The same replacement
+spelled `Object.keys = function …` in the sibling is `UNKNOWN`
+(`possible_invocation`): A-3a's assignment escape row gives the
+replacement a possible edge only when the write spells an ambient
+builtin's (or the global object's) name.
+
+**Cause.** The call graph identifies a builtin by its ambient binding
+(ADR 0008 § 4) and treats `Object.keys(…)` as the builtin, while the
+replacement is stored through a value the escape row does not recognise
+as a builtin (a `constructor` member, a parameter). Builtins are shared by
+every module of the process.
+
+**What it needs.** A decision (ADR 0008): a write of a function value
+through a base that may be a builtin object (a parameter, a computed or
+`constructor` / `__proto__` member chain) is an escape; or every builtin
+call is unresolved whenever a module that may run can replace a builtin.
+Both are precision trade-offs to measure first. Backlog `BL-081`.
+
+---
+
+## RWF-111 — The export census's define arm trusts the builtin for the names it does not spell
+
+**Status:** Open
+**Failure class:** wrong attribution at the export model, masked by the call graph (no false `NOT_AFFECTED` measured)
+**Defect class:** B (correct binding, wrong runtime-value semantics)
+**Proof family affected:** C (if unmasked)
+**Severity:** P1 / masked; a P0 class if a spelling escapes the call graph's escape row
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-075. `Object.defineProperty(exports,
+"__esModule", { value: true })`, `Object.assign(exports, { version: 1 })`
+and `Reflect.set(exports, …)` withdraw the names they spell and keep every
+other attribution unless THIS file replaces the builtin by name
+(`fileMayPatchBuiltins`). Another module may replace it: a sibling's
+`Object.defineProperty = function (o) { o.run = danger; return o; }`, or
+the entry's `Object.assign` keeping its target and writing `run` onto it
+after loading `wrap`, makes Node call `parse` while the export model
+attributes `run` to `safeOp`. Measured against real Node v22.11.0
+(`tests/oracle/bl075-builtin-reader-trust.test.ts`,
+`masked.sibling-replaces-define-property`, `masked.entry-holds-assign`):
+`UNKNOWN` on BL-075's base and head, through the call graph's
+`escaped_value` (an export object handed to a builtin position the
+builtin table does not admit as non-invoking). The same holds for an
+accessor another module defines on `Object.prototype`, which intercepts a
+plain `exports.run = …` (`masked.sibling-prototype-accessor`): every
+install route measured hands the accessor to a builtin (`defineProperty`,
+`defineProperties`), an escape.
+
+**What it needs.** The same decision as RWF-104, with a different price:
+treating the define arm as un-enumerable costs 1,115 of 3,810 attributed
+export bindings in `node_modules` (29%; `@babel/types`' generated
+validators, zod, ajv), measured by BL-075 against its base -- chiefly
+the `Object.defineProperty(exports, "__esModule", …)` that TypeScript and
+Babel emit. A precision decision for the project owner. Backlog `BL-082`.
+
+---
+
+## RWF-112 — The export object on the right of `instanceof` runs an inherited `Symbol.hasInstance` any module may define
+
+**Status:** Fixed (BL-075)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (correct binding, wrong runtime-value semantics: the export object's `Symbol.hasInstance` assumed to be its own, censused)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-075's independent audit (first round), against
+real Node v22.11.0 with the oracle harness and E-1's loud fixture. `x
+instanceof E` runs `E[Symbol.hasInstance](x)` with `E` as `this`; a plain
+export object has none of its own and inherits
+`Object.prototype[Symbol.hasInstance]`, which any module may define by a
+plain assignment. A sibling (`({}).__proto__[Symbol.hasInstance] =
+function () { this.run = danger; return false; };`, or the same spelled
+`Object.prototype[…]`) or the entry, before it loads `wrap`; in
+`wrap/index.js`, `exports.run = safeOp; if (({}) instanceof exports) {}`,
+the same on `module.exports = { run: safeOp }`, on module-scope `this`, and
+inside a called function: real Node calls `parse`, the analyzer answered
+`NOT_AFFECTED` on BL-075's base `0113347` and on its first head.
+
+**Cause.** `isInertUse` took the export object on the RIGHT of
+`instanceof` for inert ("its own `Symbol.hasInstance` (or the builtin
+one) … its own methods are censused"); BL-075's first head kept that arm,
+and its task file listed it among the uses that "hold whatever any module
+did". Both premises were false: a plain object has no builtin
+`Symbol.hasInstance`, and the inherited one is shared, writable state --
+RWF-104's root.
+
+**Fix (task BL-075).** `instanceof` is never inert, on either side,
+except an identifier on the right bound to a function declaration (not
+async, not a generator) or a class declaration with no heritage and no
+computed member, never assigned: its `[[Prototype]]` is
+`Function.prototype`, whose `Symbol.hasInstance` is non-writable and
+non-configurable (measured: an `Object.prototype` hook never runs for it,
+and assigning `Function.prototype[Symbol.hasInstance]` silently fails).
+Measured with `tests/oracle/bl075-builtin-reader-trust.test.ts`
+(`rwf112.*`): five spellings `NOT_AFFECTED` on the base while Node calls
+`parse`, `UNKNOWN` now; the unpatched control, where Node throws a
+`TypeError` (`cost.instanceof-right-unreplaced`), moves `NOT_AFFECTED →
+UNKNOWN`. A load that may load this file back is an export object of it
+(BL-074), so on the right of `instanceof` it withdraws too: semver's
+`classes/range.js` (`range instanceof Comparator`) loses its export, and
+validation case RWB-09a moves `AFFECTED → UNKNOWN` -- a sound precision
+cost, pending the owner's decision (OPEN-DEBTS D-09, backlog `BL-085`). Unit relation: `module-model.export-write-set.test.ts`.
+
+---
+
+## RWF-113 — The census reads a member the file never writes, or calls a method it never writes, as if no prototype could supply it
+
+**Status:** Open
+**Failure class:** wrong attribution at the export model, masked by the call graph (no false `NOT_AFFECTED` measured)
+**Defect class:** B (correct binding, wrong runtime-value semantics: a member assumed absent or put there by a module that already holds the object)
+**Proof family affected:** C (if unmasked)
+**Severity:** P1 / masked; a P0 class if a spelling escapes the call graph
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-075's independent audit, against real Node
+v22.11.0. Three model-level gaps of RWF-104's root, each `UNKNOWN` end to
+end on BL-075's base and head while Node calls `parse`:
+
+- a member READ of a name the file never writes (`exports.probe`) is a
+  `read`, but an accessor another module defines on `Object.prototype`
+  runs with the export object as `this` (masked by
+  `unsupported_receiver_binding`, `unsupported_literal_receiver` or
+  `escaped_value` at the install, for `__defineGetter__`, `({}).__proto__`,
+  `Object.defineProperty` and a copied class descriptor);
+- a CALL of a method the file never writes (`exports.init()`) is a `read`
+  under `isMethodWrittenElsewhere`, whose premise -- "another module put
+  it on the object", which already holds it -- is false: the method can
+  sit on `Object.prototype` (`({}).__proto__.init = function () {
+  this.run = danger; }` from a sibling or the entry; masked by
+  `own_export_call`); its `name in Object.prototype` test also reads the
+  analyzer's own process realm, not the scanned program's;
+- an inherited non-writable property or accessor intercepting a plain
+  `exports.run = safeOp` (`Object.defineProperty(({}).__proto__, "run",
+  { value: danger })`, or `({}).__proto__.run = danger;
+  Object.freeze(({}).__proto__)`; masked by `escaped_value` /
+  `unsupported_literal_receiver`) -- the same family as RWF-102 and
+  RWF-111's prototype-accessor shape.
+
+**What it needs.** A decision on how far the export model trusts
+`Object.prototype` against writes by other modules: each gap is masked
+only by a call-graph refusal that a later precision task could narrow.
+Backlog `BL-083`.
+
+---
+
+## RWF-114 — A function writes onto itself through `arguments.callee`, which no census of its binding sees
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (wrong binding identity: the exported function's own object reached without its name)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-075's independent audit (round 2), against real
+Node v22.11.0 with the oracle harness and E-1's loud fixture. In
+`wrap/index.js`: `function Api() { arguments.callee.run = dangerousOp; }
+module.exports = Api; module.exports.run = safeOp; Api();`, the entry
+calling `require("wrap").run("x")` (also with the entry calling `w()`
+first, and with an inline `function (x) { return lib.parse(x); }` as the
+written value). Real Node calls `parse`; the analyzer answers
+`NOT_AFFECTED` ("confirmed unreachable") on BL-075's base `0113347` and on
+its working tree.
+
+**Cause.** The final object's alias census (`finalObjectAliasUses`) sees
+only identifiers spelled like the binding (`Api`); a sloppy function's
+`arguments.callee` is the function itself, and the census of `arguments`
+runs only in the module wrapper's frame (`thisContext === "module"`).
+
+**What it needs.** `arguments.callee` (and `arguments` handed on) inside
+a sloppy function that may be an export object's value is a use of that
+object. Backlog `BL-084`. Not in BL-075's scope (no builtin involved).
+
+---
+
+## RWF-115 — An exported function writes onto itself through `new.target` or a `constructor` chain, which no census of its binding sees
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (wrong binding identity: the exported function's own object reached without its name)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-075's independent audit (round 3), against real
+Node v22.11.0 with the oracle harness and E-1's loud fixture. In
+`wrap/index.js`: `function Api() { if (new.target) new.target.run =
+dangerousOp; } module.exports = Api; module.exports.run = safeOp;`, the
+entry `const w = require("wrap"); new w(); w.run("x");` (also
+unconditional, and with an inline function calling `parse`). Real Node
+calls `parse`; the analyzer answers `NOT_AFFECTED` on BL-075's base
+`0113347` and on its head. The class form (`constructor() { new.target.run
+= … }`) is `UNKNOWN`. At the model, `Main.prototype.constructor.run = …`,
+`(new Main()).constructor.run = …` and `this.constructor.run = …` in a
+prototype method keep `run` attributed too (`UNKNOWN` end to end through
+`unresolved_target`); and the same routes can change the function's
+`[[Prototype]]` (`Object.setPrototypeOf(new.target, P)`), which
+BL-075's `isOwnBaseCallable` narrowing assumes unchanged.
+
+**Cause.** RWF-114's: the final object's alias census sees only
+identifiers spelled like the binding.
+
+**What it needs.** With RWF-114: every route to a function's own object
+(`new.target`, `arguments.callee`, a `constructor` member of its
+`prototype` or of an instance, `this` in a static member) inside a file
+whose export may be that function is a use of the export object. Backlog
+`BL-086` (may fold into `BL-084`).
