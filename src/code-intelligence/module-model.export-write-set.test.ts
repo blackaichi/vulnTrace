@@ -384,7 +384,6 @@ describe("E-1: the census (PRM-29, PRM-63; ADR 0009 § 2)", () => {
       "exports.other = safe;\nexports.other();\n",
     ],
     ["typeof", 'void (typeof exports === "object");\n'],
-    ["Object.keys", "void Object.keys(exports);\n"],
     ["module.id", "void module.id;\n"],
     ["require.main === module", "void (require.main === module);\n"],
     [
@@ -745,6 +744,24 @@ describe("E-1's independent audit: each finding, at the model", () => {
       "instanceof a class of this file",
       "class C { static [Symbol.hasInstance](o) { o.run = dangerous; return true; } }\nvoid (exports instanceof C);\n",
     ],
+    // BL-075 (RWF-104): any module may define a builtin's
+    // `Symbol.hasInstance`.
+    ["instanceof a builtin", "void (exports instanceof Object);\n"],
+    // BL-075's audit (RWF-112): on the right, the object's own
+    // `Symbol.hasInstance` is inherited from `Object.prototype`, which any
+    // module may write.
+    [
+      "the object on the right of instanceof",
+      "void (({}) instanceof exports);\n",
+    ],
+    [
+      "module-scope `this` on the right of instanceof",
+      "void (({}) instanceof this);\n",
+    ],
+    [
+      "the object on the right of instanceof in a function",
+      "function check(x) { return x instanceof exports; }\ncheck({});\n",
+    ],
   ])("withdraws on %s", (_label, use) => {
     expectWithdrawn(`${HEAD}exports.run = safe;\n${use}`);
   });
@@ -752,7 +769,6 @@ describe("E-1's independent audit: each finding, at the model", () => {
   it.each([
     ["a loose comparison with null", "void (exports == null);\n"],
     ["a loose comparison with undefined", "void (exports != undefined);\n"],
-    ["instanceof a builtin", "void (exports instanceof Object);\n"],
   ])("keeps attribution across %s", (_label, use) => {
     expect(attributed(`${HEAD}exports.run = safe;\n${use}`)).toBe("safe");
   });
@@ -954,11 +970,16 @@ describe("E-1's re-audit: each finding, at the model", () => {
       "a unary read of a builtin member",
       "var m = -Number.MAX_VALUE;\nvar w = !globalThis.window;\n",
     ],
-  ])("keeps `Object.keys(exports)` a read across %s", (_label, use) => {
-    expect(
-      attributed(`${HEAD}${use}exports.run = safe;\nObject.keys(exports);\n`),
-    ).toBe("safe");
-  });
+  ])(
+    "keeps another name's `defineProperty` a define across %s",
+    (_label, use) => {
+      expect(
+        attributed(
+          `${HEAD}${use}exports.run = safe;\nObject.defineProperty(exports, "other", { value: 1 });\n`,
+        ),
+      ).toBe("safe");
+    },
+  );
 
   it.each([
     [
@@ -970,19 +991,88 @@ describe("E-1's re-audit: each finding, at the model", () => {
       "const { prototype } = Object;\nvoid prototype;\n",
     ],
     ["an increment of a builtin member", "Number.MAX_VALUE++;\n"],
-  ])("withdraws `Object.keys(exports)` across %s", (_label, use) => {
+  ])("withdraws another name's `defineProperty` across %s", (_label, use) => {
     expect(
-      attributed(`${HEAD}${use}exports.run = safe;\nObject.keys(exports);\n`),
+      attributed(
+        `${HEAD}${use}exports.run = safe;\nObject.defineProperty(exports, "other", { value: 1 });\n`,
+      ),
     ).toBeUndefined();
   });
 
-  it("keeps attribution across builtin readers the file does not replace", () => {
+  // BL-075 (RWF-104): no builtin reader is trusted with an export object,
+  // even one the file never replaces: builtins are shared by every module
+  // of the process, and one reached without its name (`({}).constructor`)
+  // or replaced by another module writes onto what it is handed.
+  it.each([
+    ["`Object.keys`", "Object.keys(exports);\n"],
+    ["`Reflect.ownKeys`", "Reflect.ownKeys(exports);\n"],
+    [
+      "a builtin prototype's reader",
+      'Object.prototype.hasOwnProperty.call(exports, "run");\n',
+    ],
+    [
+      "an alias of a builtin prototype's reader",
+      'var has = Object.prototype.hasOwnProperty;\nhas.call(exports, "run");\n',
+    ],
+    [
+      "`Object.keys` reached through `({}).constructor` and replaced",
+      "({}).constructor.keys = function (o) { o.run = dangerous; return []; };\nObject.keys(exports);\n",
+    ],
+    [
+      "`Object.keys` reached through `exports.constructor` and replaced",
+      "exports.constructor.keys = function (o) { o.run = dangerous; return []; };\nObject.keys(exports);\n",
+    ],
+  ])("withdraws attribution across %s", (_label, use) => {
+    expect(attributed(`${HEAD}exports.run = safe;\n${use}`)).toBeUndefined();
+  });
+
+  // The final object's alias (`main`), in a file nothing can observe from
+  // outside (no `require`): the alias census used to exempt a reader too.
+  it.each([
+    ["`Object.keys(main)`", "Object.keys(main);\n"],
+    ["`main instanceof Object`", "void (main instanceof Object);\n"],
+  ])(
+    "withdraws attribution of the final object handed to a builtin by %s",
+    (_label, use) => {
+      const text = `function safe() {}\nfunction main() {}\nmodule.exports = main;\nmodule.exports.run = safe;\n`;
+      expect(attributed(text)).toBe("safe");
+      expect(attributed(`${text}${use}`)).toBeUndefined();
+    },
+  );
+
+  // On the right of `instanceof`, a function or a base class this file
+  // declares inherits `Function.prototype[Symbol.hasInstance]`, which is
+  // non-writable and non-configurable: no other module can replace it.
+  it.each([
+    ["a function declaration", "function main() {}\n", "main"],
+    ["a base class", "class Main {}\n", "Main"],
+  ])(
+    "keeps attribution of %s exported and on the right of instanceof",
+    (_label, declaration, name) => {
+      const text = `function safe() {}\n${declaration}module.exports = ${name};\nmodule.exports.run = safe;\n`;
+      expect(attributed(text)).toBe("safe");
+      expect(
+        attributed(
+          `${text}function check(x) { return x instanceof ${name}; }\ncheck({});\n`,
+        ),
+      ).toBe("safe");
+    },
+  );
+
+  // A derived class, a reassigned binding and a class with a computed
+  // member are withdrawn by the census before any `instanceof`; an async
+  // function is not, and its `[[Prototype]]` (`AsyncFunction.prototype`)
+  // is writable by any module.
+  it("withdraws attribution of an async function exported and on the right of instanceof", () => {
+    const text = `function safe() {}\nasync function main() {}\nmodule.exports = main;\nmodule.exports.run = safe;\n`;
+    expect(attributed(text)).toBe("safe");
+    expect(attributed(`${text}void (({}) instanceof main);\n`)).toBeUndefined();
+  });
+
+  it("keeps attribution across a builtin reader handed no export object", () => {
     expect(
       attributed(
-        `${HEAD}exports.run = safe;\nObject.keys(exports);\n` +
-          `Object.prototype.hasOwnProperty.call(exports, "run");\n` +
-          `var has = Object.prototype.hasOwnProperty;\nhas.call(exports, "run");\n` +
-          `Object.getOwnPropertyDescriptor(Map.prototype, "size");\n`,
+        `${HEAD}exports.run = safe;\nObject.getOwnPropertyDescriptor(Map.prototype, "size");\nObject.keys({});\n`,
       ),
     ).toBe("safe");
   });
