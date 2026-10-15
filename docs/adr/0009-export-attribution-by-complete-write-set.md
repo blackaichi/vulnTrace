@@ -547,7 +547,8 @@ heritage and no computed member, never assigned, is inert
 the binding's census accounts the writes made through that binding. A
 write reaching the function without its name (`arguments.callee`,
 `new.target`, a `constructor` chain) is not accounted: the narrowing
-inherits that open debt (RWF-114, RWF-115).
+inherits that open debt (RWF-114, RWF-115; closed by task BL-084, whose
+decision record follows).
 
 **The precision acceptance it binds.** Measured by
 `scripts/bl075-builtin-reader-trust-corpus.mjs` against BL-074's merge
@@ -586,6 +587,65 @@ property on `Object.prototype` (RWF-113, masked, backlog `BL-083`). Its
 audit also found a live neighbour outside builtins: an exported function
 writing onto itself through `arguments.callee` (RWF-114, backlog
 `BL-084`).
+
+## Decision record — every route to a function's own object, and the named-export withdrawal (taken by task BL-084, 2026-10-15; the project owner confirms it by merging, or drops it)
+
+**The rule.** § 1's census of the final export object has a second input
+besides the binding's spelled references: every expression that may
+evaluate to a function or class the final object may be without spelling
+its binding (`ownObjectRoutes` in `module-model.ts`) -- the frame's
+`arguments` object in a sloppy owner (identified by binding), `callee`
+and `caller` reads when an owner is sloppy, `new.target` in an owner's
+frame (any constructor's under a heritage clause), any `constructor`
+read, a key computed at run time, `Reflect.get`, a stack callsite's
+`getFunction()` / `getThis()`. Each is accounted exactly like a reference
+to the binding: a member write withdraws its name, a read or a call keeps
+the names, anything else hands it on. An assignment's own value is the
+object too, and a name a store into itself or a write back into an export
+makes hold the object is the object again wherever it is read -- for the
+binding's census as for the routes (`Api.self = Api; Api.self.run = v`
+was a gap of both). A named function or class expression's own name is a
+second binding to the object and is censused like it. A `super` property
+write is a method's `this` write (RWF-117). This closes RWF-114, RWF-115 and
+RWF-116, and the open debt BL-075's `instanceof` narrowing inherited.
+
+**What it decides, beyond § 1.** Two choices the owner confirms by
+merging:
+
+1. **A route handed on withdraws every NAMED export, not the whole-module
+   value** (`ExportWriteSet.propertiesUnenumerable`). A write that
+   reaches a function's own object adds or replaces its properties; it
+   cannot replace `module.exports`. The whole-module function stays
+   attributed (a whole-module forward is withdrawn with the names it would
+   answer for). The binding's own hand-off keeps § 3's full withdrawal,
+   unchanged.
+2. **A key that is provably a number or a boolean is no route**
+   (`isNumericValue`): a literal, an arithmetic, bitwise, relational or
+   equality result, or a `var` / `let` / `const` whose initializer and
+   every write -- identified by lexical declaration, a shorthand
+   destructuring counted as a write -- are such values. A number converts
+   to no `"constructor"`, `"callee"` or `"caller"`. Without it, a loop
+   counter `args[i]` handed on withdrew `debug`'s named exports and moved
+   RWB-08 `AFFECTED → UNKNOWN` (measured).
+
+Strict code has no `callee` / `caller` route (`callee` throws, a strict
+function is no `caller`, a class frame has no `getThis()`; measured).
+
+**The precision acceptance it binds.** Measured by
+`scripts/bl084-function-own-object-corpus.mjs` against BL-075's merge
+`e7cb576`: 1 of 4,765 attributed export bindings lost (locate-path's
+`sync`: a parameter used as a property key), none gained or moved; two
+oracle controls move `NOT_AFFECTED → UNKNOWN`. The corpus differential
+over 139 cases: graph 0, proof 0, verdict 0. Dropping this record means
+restoring the spelled-binding census, which reopens thirty-five live
+shapes of `tests/oracle/bl084-function-own-object.test.ts`.
+
+**What it does not decide.** A call that returns its receiver
+(`Api.valueOf()`), or a builtin handing a property value to a callback,
+is still taken for a read (RWF-118, masked, backlog `BL-087`). Code of
+another module (a callee reading its `caller`, a holder handed in, an
+`Error.prepareStackTrace` installed elsewhere) is E-4's accepted bound;
+code built at run time (`Function("return Reflect")()`) likewise.
 
 ## Rationale
 

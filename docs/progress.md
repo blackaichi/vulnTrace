@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-15, by `BL-075`.
+**Last updated:** 2026-10-15, by `BL-084`.
 
 ## Objective
 
@@ -227,7 +227,17 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   file declares. Eleven live false `NOT_AFFECTED`s closed, at 9 of 4,774
   attributions; RWB-09a moves `AFFECTED → UNKNOWN` (a sixth known
   validation failure, pending the owner's decision; backlog `BL-085`).
-  REMEDIATION-PLAN § 5a, "BL-075 additions".
+  REMEDIATION-PLAN § 5a, "BL-075 additions". `BL-084` (with `BL-086`
+  folded in) censuses every route to a function or class the final export
+  object may be without spelling its binding (`ownObjectRoutes`:
+  `arguments.callee`, `new.target`, `constructor` / `caller` / `callee`
+  reads, run-time keys unless provably numeric, `Reflect.get`, stack
+  callsites) like the binding itself, and a `super` write as a `this`
+  write; a route handed on withdraws the named exports and keeps the
+  whole-module function (ADR 0009 decision record). Thirty-five live
+  false `NOT_AFFECTED`s closed (RWF-114..117), at 1 of 4,765
+  attributions; no corpus verdict moved. REMEDIATION-PLAN § 5a, "BL-084
+  additions".
 - Numbers: [`SCORECARD.md`](SCORECARD.md) (measured, generated) and
   [`OPEN-DEBTS.md`](OPEN-DEBTS.md) (debts, P1-B entry criteria).
 
@@ -258,21 +268,18 @@ by design regardless of network access (backlog `BL-030`).
 
 ## Current task
 
-`BL-075` — A builtin reader is no reader when the builtin is reachable
-without its name or patched by another module
-([task file](tasks/BL-075-builtin-reader-trust.md)): `READY_FOR_REVIEW`.
-`BL-074` merged as PR #104.
+`BL-084` — Every route to a function's own object is a use of the export
+object it is the value of ([task file](tasks/BL-084-function-own-object.md),
+`BL-086` folded in): `READY_FOR_REVIEW`. `BL-075` merged as PR #105.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-075`:
-`BL-084` (RWF-114, P0, live: an exported function writing onto itself
-through `arguments.callee`; `BL-086`, RWF-115, the same through
-`new.target`, may fold in), `BL-081` (RWF-110, P0, live, lane A: a builtin replaced without its name
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-084`:
+`BL-081` (RWF-110, P0, live, lane A: a builtin replaced without its name
 runs with no call edge; needs the owner's decision and a precision
 measurement), `BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
 (entrypoint roots), `E-4`, `E-5`. `BL-078` (RWF-107), `BL-080` (RWF-109)
-and `BL-082` (RWF-111) and `BL-083` (RWF-113) need decisions. The P1 gaps `BL-057` and
+and `BL-082` (RWF-111), `BL-083` (RWF-113) and `BL-087` (RWF-118) need decisions. The P1 gaps `BL-057` and
 `BL-058` (small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074), `BL-050` (RWF-076), `BL-040`, `BL-043` and `BL-051` (live
 family-A false `NOT_AFFECTED`s) are candidates to reorder ahead of the
@@ -280,6 +287,13 @@ rest of lane E. `BL-068` is narrowed to RWF-098's single-write unit
 records (P2).
 
 ## Recently discovered
+
+From `BL-084`: `RWF-116` (a sloppy exported function is the `caller` of
+what it calls, and its own `arguments` property is its frame's arguments
+object; live, fixed in BL-084) and `RWF-117` (a `super` property write is
+a write onto `this`; live, fixed in BL-084); its audit found `RWF-118`
+(`BL-087`, P1, masked: a call that returns its receiver, `Api.valueOf()`,
+is taken for a read) and `BL-088` (P3, performance: a quadratic shape in the self-held-read replay).
 
 From `BL-075`: `RWF-110` (`BL-081`, P0, live, pre-existing: the call
 graph takes `Object.keys(…)` for the builtin while another module may have

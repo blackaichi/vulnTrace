@@ -1987,6 +1987,34 @@ FINDINGS RWF-104 (BL-075 status update) and RWF-112.
 - **`BL-086`** (RWF-115, P0, live, found by BL-075's audit): the same
   through `new.target` or a `constructor` chain; may fold into `BL-084`.
 
+**BL-084 additions** (task `BL-084`, 2026-10-15; `BL-086` folded in).
+RWF-114, RWF-115, and RWF-116 / RWF-117 (found by BL-084) are closed: every
+route to a function or class the final object may be is censused like its
+binding, and a `super` property write is a `this` write (ADR 0009,
+decision record of 2026-10-15). Full record: FINDINGS RWF-114 (BL-084
+status update), RWF-115, RWF-116, RWF-117.
+
+- **Differentials.** `node scripts/differential.mjs` against `e7cb576`,
+  139 corpus cases: graph 0, proof 0, verdict 0 (none into
+  `NOT_AFFECTED`, none removed, none unmeasured). The validation baseline
+  stays D-09's six. Before the numeric-key narrowing the verdict
+  differential was 1 (RWB-08 `AFFECTED → UNKNOWN`, `debug`'s `args[index]`
+  handed on); the narrowing restores it.
+- **Precision, measured** by `scripts/bl084-function-own-object-corpus.mjs`:
+  1 of 4,765 attributed export bindings lost, none gained or moved.
+- **What BL-084 binds.** A census of an object reached by a binding must
+  also census every route the language gives to that object without its
+  name; a later census of a function or class value (E-3's roots, E-4's
+  writes by other modules) inherits `ownObjectRoutes` rather than a
+  spelled-name scan. A route handed on withdraws the named exports only.
+- **`BL-087`** (RWF-118, P1, masked, found by BL-084's audit): a call that
+  returns its receiver, or a builtin handing a property value to a
+  callback, is taken for a read; a decision and a precision measurement
+  first.
+- **`BL-088`** (P3, performance, found by BL-084's audit, round 5): the
+  self-held-read replay is quadratic in self-storing owners × computed
+  reads of `module.exports` (a contrived shape).
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None

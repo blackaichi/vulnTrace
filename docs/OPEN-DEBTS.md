@@ -1349,6 +1349,25 @@ live, pre-existing, backlog `BL-084`) and `RWF-115` (the same through
 remain, with RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107,
 RWF-108, RWF-109, RWF-110, RWF-111, RWF-113, RWF-114 and RWF-115 from this family.
 
+**Progress, added by task `BL-084` (2026-10-15).** Task BL-084
+(`docs/tasks/BL-084-function-own-object.md`, `BL-086` folded in) closes
+RWF-114 and RWF-115, and RWF-116 and RWF-117, which it found: E-1's census
+of the final export object now censuses every route the language gives to
+a function or class the object may be without spelling its binding
+(`arguments.callee` and the `arguments` object, `new.target`, any
+`constructor`, `caller` or `callee` read, a key computed at run time,
+`Reflect.get`, a stack callsite's `getFunction()`), and a `super` property
+write is a `this` write (ADR 0009, BL-084's decision record). Thirty-five
+live family-C false `NOT_AFFECTED`s measured against real Node are closed
+(`tests/oracle/bl084-function-own-object.test.ts`), eighteen of them found by
+its four independent-audit rounds. Precision cost: 1 of 4,765 attributed
+export bindings, two oracle controls; a route handed on withdraws the
+named exports and keeps the whole-module function. Its audit found
+`RWF-118` (a call returning its receiver taken for a read, masked, backlog
+`BL-087`). This entry still stands: lanes E (E-3..E-5) and C (C-2..C-5)
+remain, with RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107,
+RWF-108, RWF-109, RWF-110, RWF-111, RWF-113 and RWF-118 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

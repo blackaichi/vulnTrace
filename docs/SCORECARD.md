@@ -305,10 +305,10 @@ field and the vocabulary are documented next to the table.
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 185 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 53 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-32, PRM-60, PRM-67, PRM-105, PRM-106, PRM-107, PRM-109, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-070, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090, RWF-098, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-110, RWF-111, RWF-113, RWF-114, RWF-115 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Findings recorded | 188 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 52 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-32, PRM-60, PRM-67, PRM-105, PRM-106, PRM-107, PRM-109, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-070, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090, RWF-098, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-110, RWF-111, RWF-113, RWF-118 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 4 — RWF-002, PRM-108, RWF-063, RWF-064 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
-| Recorded as fixed | 128 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
+| Recorded as fixed | 132 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
 
 ### 8.1 Outstanding findings, in their own words
 
@@ -369,8 +369,7 @@ this table except the category.
 | RWF-110 | open | Open | false NOT_AFFECTED (family C), pre-existing on the base — see below |
 | RWF-111 | open | Open | wrong attribution at the export model, masked end to end by the call graph's escape row (no false `NOT_AFFECTED` measured) — see below |
 | RWF-113 | open | Open | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
-| RWF-114 | open | Open | false NOT_AFFECTED (family C), pre-existing on the base — see below |
-| RWF-115 | open | Open | false NOT_AFFECTED (family C), pre-existing on the base — see below |
+| RWF-118 | open | Open | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
 | RWF-002 | open in part | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model |
 | PRM-108 | open in part | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below | false NOT_AFFECTED — see below |
 | RWF-063 | open in part | Fixed in part (A-3a: the `const`-alias form); the parameter and container forms remain open | false NOT_AFFECTED — see below |

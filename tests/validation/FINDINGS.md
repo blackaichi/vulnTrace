@@ -288,8 +288,11 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-111 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census's define arm (`Object.defineProperty(exports, "__esModule", …)`, `Object.assign(exports, …)`, `Reflect.set`) withdraws only the names it spells and keeps every other attribution, trusting the builtin unless THIS file replaces it by name; another module's replacement writes any name | wrong attribution at the export model, masked end to end by the call graph's escape row (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-112 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export object on the RIGHT of `instanceof` (`({}) instanceof exports`) was taken for inert, but it runs its inherited `Object.prototype[Symbol.hasInstance]` with itself as `this`, which any module may define | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-075) — see below |
 | RWF-113 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census takes a member read of a name the file never writes, and a call of a method it never writes (`isMethodWrittenElsewhere`), for reads, and trusts a plain `exports.run = …` against `Object.prototype`; another module's accessor, method or non-writable property on `Object.prototype` runs with, or intercepts, the export object | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
-| RWF-114 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A sloppy exported function writes onto itself through `arguments.callee` (`function Api() { arguments.callee.run = dangerousOp; } module.exports = Api; module.exports.run = safeOp; Api();`); the final object's alias census sees only identifiers spelled `Api` | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
-| RWF-115 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | An exported function writes onto itself through `new.target` (`function Api() { if (new.target) new.target.run = dangerousOp; }`, the entry calling `new w()` first) or a `constructor` chain; the alias census sees only identifiers spelled like the binding | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-114 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A sloppy exported function writes onto itself through `arguments.callee` (`function Api() { arguments.callee.run = dangerousOp; } module.exports = Api; module.exports.run = safeOp; Api();`); the final object's alias census sees only identifiers spelled `Api` | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-084) — see below |
+| RWF-115 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | An exported function writes onto itself through `new.target` (`function Api() { if (new.target) new.target.run = dangerousOp; }`, the entry calling `new w()` first) or a `constructor` chain; the alias census sees only identifiers spelled like the binding | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-084) — see below |
+| RWF-116 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A sloppy exported function is the `caller` of the function it calls, and its own `arguments` property is its frame's arguments object: `function helper() { helper.caller.run = dangerousOp; } function Api() { helper(); }` (and `Api.arguments.callee.run = …` in a callee) writes onto the export, which no census of its binding sees | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-084) — see below |
+| RWF-117 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A `super` property write sets the property on `this`: `module.exports = { run: safeOp, init() { super.run = dangerousOp; } }`, the entry calling `init()` first, was not censused as a write of `run` | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-084) — see below |
+| RWF-118 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The final-object censuses (of the binding and of BL-084's routes) take a member read or a method call for a use that keeps the object in this file's hands, but a call may return its receiver (`Api.valueOf().run = …`) or hand a property value to a callback (`JSON.stringify(Api.prototype, (k, v) => { v.run = … })`) | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
 
 ---
 
@@ -22006,7 +22009,7 @@ Backlog `BL-083`.
 
 ## RWF-114 — A function writes onto itself through `arguments.callee`, which no census of its binding sees
 
-**Status:** Open
+**Status:** Fixed (BL-084) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** A (wrong binding identity: the exported function's own object reached without its name)
 **Proof family affected:** C
@@ -22032,11 +22035,57 @@ runs only in the module wrapper's frame (`thisContext === "module"`).
 a sloppy function that may be an export object's value is a use of that
 object. Backlog `BL-084`. Not in BL-075's scope (no builtin involved).
 
+**Status update (task BL-084, 2026-10-15): Fixed, with RWF-115, RWF-116
+and RWF-117 (one census, one root).** E-1's census of the final object now
+has a second input besides the binding's spelled references:
+`ownObjectRoutes` (`module-model.ts`), every expression that may evaluate
+to a function or class the final object may be
+(`finalObjectOwnFunctions`) without spelling its binding, each accounted
+exactly like a reference to the binding (`accountFinalObjectUse`,
+extracted unchanged from `finalObjectAliasUses`). For this finding: the
+frame's `arguments` object, identified by binding (undeclared, or a
+`var arguments`, which re-declares the same object), in a sloppy owner's
+frame, an arrow's included; `arguments.callee` and a read by a key that
+may be `"callee"` are routes, and `arguments` handed on (an argument,
+`.apply`, a spread, a destructuring) withdraws every named export. A
+sloppy function's own `arguments` property is the same object
+(`Api.arguments.callee`), so when an owner is sloppy any read of `callee`
+is a route. Strict code (a `"use strict"` file or function, a class) has
+no such route: `callee` throws, measured. Measured against real Node with
+`tests/oracle/bl084-function-own-object.test.ts`: the three recorded
+spellings, and `arguments` handed on, an arrow's `arguments`, an alias, a
+string, run-time or shorthand-destructured key, a destructured `callee`,
+`var arguments`, an assignment's value or chain, a write back into an
+export, `Api.arguments.callee`, `arguments.callee.arguments.callee`,
+`helper.caller.arguments.callee`, and a self-reference stored and read back
+(`module.exports.self = arguments.callee; module.exports.self.run = …`;
+the binding's own `Api.self = Api; Api.self.run = …` had the same gap),
+and a named function expression's own name (`const Api = function
+Inner() { Inner.run = … }`, a second binding to the same object, strict
+code included) -- each `NOT_AFFECTED` on BL-084's base
+`e7cb576` while Node calls `parse`, each `UNKNOWN` now.
+
+**Correction.** The record's cause ("the census of `arguments` runs only in
+the module wrapper's frame") is right but incomplete: `var arguments`
+hid the route from an ambient-name test (BL-084's audit, round 1), and the
+arguments object is also any sloppy function's `arguments` property
+(round 2). Both are defect class A (a name matched by spelling where the
+binding decides) and are fixed here.
+
+**Precision.** Measured by `scripts/bl084-function-own-object-corpus.mjs`
+against the base, for all of BL-084: 1 of 4,765 attributed export bindings
+lost (locate-path's `sync`, a parameter used as a property key: a
+computed read), none gained or moved; two oracle controls move
+`NOT_AFFECTED → UNKNOWN` (`cost.sloppy-arguments-handed-on`,
+`cost.computed-read-returned`). A route
+handed on withdraws every NAMED export but keeps the whole-module
+function, which no property write replaces.
+
 ---
 
 ## RWF-115 — An exported function writes onto itself through `new.target` or a `constructor` chain, which no census of its binding sees
 
-**Status:** Open
+**Status:** Fixed (BL-084) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** A (wrong binding identity: the exported function's own object reached without its name)
 **Proof family affected:** C
@@ -22066,3 +22115,130 @@ identifiers spelled like the binding.
 `prototype` or of an instance, `this` in a static member) inside a file
 whose export may be that function is a use of the export object. Backlog
 `BL-086` (may fold into `BL-084`).
+
+**Status update (task BL-084, 2026-10-15): Fixed, in BL-084** (`BL-086`
+folded in by the project owner's go). The routes of RWF-114's status
+update, for this finding: `new.target` in an owner's frame (a function,
+or a class's constructor) and, when an owner class has a heritage clause,
+in any constructor or function of the file (`super()` passes it on); any
+read of `constructor`, by any base (the `prototype`, an instance, `this`,
+a parameter: no census follows where an instance flows); a read by a key
+computed at run time, unless the key is provably a number or a boolean
+(`isNumericValue`: a loop counter is no `"constructor"`); `Reflect.get`;
+and, as handed-on routes withdrawing every named export, a descriptor or
+value holder (`Object.getOwnPropertyDescriptor(s)`, `Object.values` /
+`entries`), `Reflect` or `Object` aliased, keyed at run time or read from
+the global object, and `with`. `this` in a static member was already
+censused (`method-this-write`). Measured against real Node: the recorded
+`new.target` shape, its alias and hand-off, `Api.prototype[k]` with a
+run-time key or a counter later written a string -- each `NOT_AFFECTED`
+on the base while Node calls `parse`, each `UNKNOWN` now.
+
+**Correction.** The record says the `constructor` shapes "keep `run`
+attributed" at the model. Measured on the base `e7cb576`: only when no
+top-level statement before the export's write is unproven. With E-1's
+fixture prelude (`const lib = require("vuln-lib")` first) every spelled
+`constructor` shape is withdrawn by BL-064's `exportWritesMayFail` (any
+spelled `constructor` is a hazard) or by `propertiesCarriedBy` answering
+`"all"` (a class; `new Api()`); with the load moved inside the functions,
+`Api.prototype.constructor.run = …`, `this.constructor.run = …` in `Api`
+and `p.constructor.run = …` with `Api.prototype` handed to a function are
+attributed (the `lazy.*` oracle cases, `UNKNOWN` end to end through the
+call graph). All are withdrawn by the census now.
+
+---
+
+## RWF-116 — A sloppy exported function reached as the `caller` of what it calls
+
+**Status:** Fixed (BL-084)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (wrong binding identity: the exported function's own object reached without its name)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-084, measuring its premises against real Node
+v22.11.0 with the oracle harness and E-1's loud fixture. In
+`wrap/index.js`: `function helper() { helper.caller.run = dangerousOp; }
+function Api() { helper(); } module.exports = Api; module.exports.run =
+safeOp; Api();` (also with the entry calling `w()` first). Real Node calls
+`parse` (`Function.prototype.caller` returns a sloppy caller); the
+analyzer answers `NOT_AFFECTED` on the base `e7cb576`. BL-084's audit
+(round 2) found the same object through a sloppy function's own
+`arguments` property (`Api.arguments.callee`,
+`helper.caller.arguments.callee`), recorded with RWF-114. A stack
+callsite's `getFunction()` / `getThis()` (`Error.prepareStackTrace`) gives
+a sloppy frame's function as well (masked end to end on the base).
+
+**Cause.** RWF-114's.
+
+**Fixed by BL-084:** when an owner is sloppy, a read of `caller` (or of
+`callee`) from any base is a route; a callsite's `getFunction()` /
+`getThis()` called directly is a route, and either taken as a value or
+keyed by a string, or a spelled `prepareStackTrace`, withdraws every named
+export. A strict function is no `caller` (measured,
+`strict.function-is-no-caller`). Accepted bound: a function of ANOTHER
+module this file's functions call may read its `caller` (writes by other
+modules, E-4's).
+
+---
+
+## RWF-117 — A `super` property write in a method is a write onto `this`
+
+**Status:** Fixed (BL-084)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (correct binding, wrong runtime-value semantics: `super.p = v` sets `p` on the receiver)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-084, against real Node v22.11.0 with the
+oracle harness and E-1's loud fixture. In `wrap/index.js`: `module.exports
+= { run: safeOp, init() { super.run = dangerousOp; } };`, the entry
+calling `w.init()` before `w.run("x")`. Real Node calls `parse` (a
+`super` property assignment performs `[[Set]]` with `this` as the
+receiver); the analyzer answers `NOT_AFFECTED` on the base `e7cb576`. The
+static-method form (`class Api extends B { static init() { super.run = …
+} }`) was `UNKNOWN` (a class whole-module value carries every name).
+
+**Cause.** E-1's census (`classifyExportReference`) classifies `this` in a
+method but not `super`.
+
+**Fixed by BL-084:** a `super` property write in a method is a
+`method-this-write` with the written names, exactly as `this.p = v` is; a
+read or a call through `super` reads the home object's prototype.
+
+---
+
+## RWF-118 — A call that returns its receiver, or hands a property value to a callback, is taken for a read of the final object
+
+**Status:** Open
+**Failure class:** wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured)
+**Defect class:** B (correct binding, wrong runtime-value semantics: a member read assumed to keep the object in this file's hands)
+**Proof family affected:** C (latent)
+**Severity:** P1 / masked
+**Fix lane:** E (ADR 0009 § 1)
+
+**Discovered:** by task BL-084's independent audit (round 2), against
+real Node v22.11.0 with the oracle harness and E-1's loud fixture, the
+lazy prelude at the model. `Api.valueOf().run = dangerousOp`,
+`arguments.callee.valueOf().run = …` and
+`Api.prototype.constructor.valueOf().run = …` (`Object.prototype.valueOf`
+returns its receiver); and `JSON.stringify(Api.prototype, (k, v) => { if
+(typeof v === "function") v.run = dangerousOp; … })` after a
+`defineProperty` that makes `constructor` enumerable under a key built at
+run time. Real Node calls `parse`; the model attributes `run` to `safeOp`
+on the base `e7cb576` and on BL-084's head; the verdict is `UNKNOWN` on
+both, through the call graph.
+
+**Cause.** `accountFinalObjectUse` (and `finalObjectAliasUses` before it)
+takes a member read, and a call through one, for a use that writes
+nothing; the call's RESULT may be the object itself (`valueOf`, any
+method returning `this`), and a builtin may hand a property value to a
+callback. This holds for the binding's census as much as for BL-084's
+routes.
+
+**What it needs.** A decision with a precision measurement: treat the
+result of a method call on the final object (or a route) as a route
+itself, and a builtin handed the object together with a callback as a
+hand-off. Backlog `BL-087`.
