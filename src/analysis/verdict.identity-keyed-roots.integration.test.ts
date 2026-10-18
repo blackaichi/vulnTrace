@@ -198,6 +198,31 @@ describe("V-3: a configured symbol is rooted at the declaration its export binds
       SYMBOL,
     );
     expect(finding?.verdict).toBe("UNKNOWN");
+    // Task BL-081: `target.main = source.main` stores a value the graph
+    // cannot attribute onto a parameter, which may be a builtin object
+    // (RWF-063): an escape, whose unknown edge is reached first. The root
+    // incompleteness is still V-3's; the next case isolates it.
+    expect(reasonsOf(finding)).toContain("escaped_value");
+  });
+
+  it("applies an export-object mutation that names no export to the symbol, with an attributable value: UNKNOWN, entrypoint_root_incomplete", async () => {
+    // The same mutation storing a function the graph can attribute, which
+    // reaches nothing: the escape gives it only a possible edge, so what is
+    // left to say is V-3's root incompleteness (`main` may no longer be the
+    // declaration the file binds).
+    const finding = await scan(
+      {
+        "src/index.js":
+          LIB +
+          `function extend(target) { target.main = function () { return lib.safe(); }; }\n` +
+          `function main() { return lib.safe(); }\n` +
+          `exports.main = main;\n` +
+          `extend(module.exports);\n`,
+      },
+      "src/index.js",
+      SYMBOL,
+    );
+    expect(finding?.verdict).toBe("UNKNOWN");
     expect(reasonsOf(finding)).toContain("entrypoint_root_incomplete");
   });
 

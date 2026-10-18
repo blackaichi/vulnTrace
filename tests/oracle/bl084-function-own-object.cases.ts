@@ -31,7 +31,9 @@ import type { E1Case } from "./e1-export-write-set.cases.js";
  * is a live false `NOT_AFFECTED` BL-084 closes; `masked.*` were already
  * `UNKNOWN` (through BL-064's taint or the call graph's escape backstop);
  * `strict.*` ground the routes strict code does not have; `cost.*` is the
- * precision BL-084 gives up; `control.*` keeps its precision.
+ * precision BL-084 gives up; `control.*` keeps its precision. Two
+ * `strict.*` cases answer `UNKNOWN` since task BL-081, each marked as its
+ * precision cost.
  */
 
 /** The entry calls the export first. */
@@ -622,7 +624,12 @@ export const BL084_CASES: readonly E1Case[] = [
     app: tolerant(`w()`),
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // Task BL-081's precision cost, measured: real Node never calls the
+    // target, but the store onto `arguments.callee` (a member read) is an escape; that strict code throws before it stores is not modeled
+    // (RWF-110, RWF-063), and the stored function gets a possible edge.
+    // The export-model precision this control guards is unchanged; a
+    // wrong attribution would still answer AFFECTED, never UNKNOWN.
+    expected: "UNKNOWN",
   },
   {
     id: "strict.function-is-no-caller",
@@ -633,7 +640,12 @@ export const BL084_CASES: readonly E1Case[] = [
     app: CALL_APP,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // Task BL-081's precision cost, measured: real Node never calls the
+    // target, but the store onto `helper.caller` (a member read) is an escape; that a strict caller is `null` is not modeled
+    // (RWF-110, RWF-063), and the stored function gets a possible edge.
+    // The export-model precision this control guards is unchanged; a
+    // wrong attribution would still answer AFFECTED, never UNKNOWN.
+    expected: "UNKNOWN",
   },
   {
     id: "strict.class-constructor-callee-throws",

@@ -141,8 +141,12 @@ const SITE_EXAMPLES: Readonly<
     site: "protocol_member",
   },
   ForOfStatement: {
-    source: "for (o.toString of fns) {}",
-    site: "protocol_member",
+    source: "for (Object.keys of fns) {}",
+    site: "escaping_assignment",
+  },
+  Parameter: {
+    source: "class D extends B { constructor(public keys: any) { super(); } }",
+    site: "escaping_assignment",
   },
   FunctionDeclaration: {
     source: "export function then() {}",
@@ -251,18 +255,45 @@ describe("invocationSiteOf agrees with the census", () => {
     expect(mismatches).toEqual([]);
   });
 
-  it("an assignment storing into a member under a protocol key is a protocol_member site (task A-4); into an ambient value, an escaping_assignment", () => {
+  it("an assignment storing into a member under a protocol key is a protocol_member site (task A-4); into an ambient value, or an object not proven to be the program's (task BL-081), an escaping_assignment", () => {
+    // Task BL-081: the protocol cases store onto an object the program
+    // created (`const o = {}`, a function's `prototype`); onto any other
+    // object, which may be a builtin, the store is an escape first.
     const cases: readonly [string, string | undefined][] = [
-      ["o.toString = () => 1;", "protocol_member"],
-      ["C.prototype.then = function () {};", "protocol_member"],
-      ["o[Symbol.iterator] = function* () {};", "protocol_member"],
-      ["({ a: o.valueOf } = src);", "protocol_member"],
-      ["o.name = () => 1;", undefined],
+      ["const o = {}; o.toString = () => 1;", "protocol_member"],
+      ["function C() {} C.prototype.then = function () {};", "protocol_member"],
+      ["({})[Symbol.iterator] = function* () {};", "protocol_member"],
+      ["const o = {}; ({ a: o.valueOf } = src);", "protocol_member"],
+      ["const o = {}; o.name = () => 1;", undefined],
       ["o.toString = 1;", undefined],
       ["Error.prepareStackTrace = () => 1;", "escaping_assignment"],
+      ["o.name = () => 1;", "escaping_assignment"],
+      ["o.toString = () => 1;", "escaping_assignment"],
+      ["with (o) { name = () => 1; }", "escaping_assignment"],
+      ["const o = {}; o.name = 1;", undefined],
     ];
     for (const [source, site] of cases) {
       const [node] = nodesOfKind(source, ts.SyntaxKind.BinaryExpression);
+      expect(invocationSiteOf(node!)?.kind, source).toBe(site);
+    }
+  });
+
+  it("a for…of head stores each element: an escaping_assignment where an assignment would be one (task BL-081, RWF-120), otherwise a protocol_member under a protocol key", () => {
+    const cases: readonly [string, string | undefined][] = [
+      ["for (Object.keys of fns) {}", "escaping_assignment"],
+      ["for (O.keys of [f]) {}", "escaping_assignment"],
+      ["for ({ a: O.keys } of fns) {}", "escaping_assignment"],
+      ["const o = {}; for (o.toString of fns) {}", "protocol_member"],
+      ["const o = {}; for (o.run of fns) {}", undefined],
+      // An iterator may be replaced to yield anything (task BL-081's
+      // second audit round): an iterable of primitives stores too.
+      ["for (Object.keys of ['a', 'b']) {}", "escaping_assignment"],
+      ["for (Object.keys of 'ab') {}", "escaping_assignment"],
+      ["for (const keys of fns) {}", undefined],
+      ["for (x of fns) {}", undefined],
+    ];
+    for (const [source, site] of cases) {
+      const [node] = nodesOfKind(source, ts.SyntaxKind.ForOfStatement);
       expect(invocationSiteOf(node!)?.kind, source).toBe(site);
     }
   });

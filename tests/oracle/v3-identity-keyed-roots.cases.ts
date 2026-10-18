@@ -250,7 +250,13 @@ export const ALL_CASES: readonly V3Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    expectedReason: "entrypoint_root_incomplete",
+    // Task BL-081: `target.main = source.main` stores a value the graph
+    // cannot attribute onto a parameter, which may be a builtin object
+    // (RWF-063), so the escape's unknown edge answers first. V-3's root
+    // incompleteness for this shape, isolated from the escape, is
+    // `verdict.identity-keyed-roots.integration.test.ts`'s "with an
+    // attributable value" case.
+    expectedReason: "escaped_value",
   },
   {
     id: "symbol.nested-write",

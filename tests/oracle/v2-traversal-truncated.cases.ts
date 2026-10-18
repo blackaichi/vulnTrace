@@ -103,7 +103,8 @@ const LIB: Readonly<Record<string, string>> = {
  * `require("./safe.cjs")` returns `vuln-lib`'s exports: one `require.cache`
  * entry copied over another. The closure records it
  * (`loader_hook_mutation`) when it reaches the file; the call graph, which
- * walks it, withdraws family C on it first (`protocol_value`).
+ * walks it, withdraws family C on it first (`protocol_value`; since task
+ * BL-081, `escaped_value`: the store onto `require.cache` is an escape).
  */
 const HOOK =
   `const path = require("path");\n` +
@@ -224,7 +225,11 @@ export const ALL_CASES: readonly V2Case[] = [
     called: true,
     base: { verdict: "UNKNOWN", reason: "protocol_value" },
     expected: "UNKNOWN",
-    expectedReason: "protocol_value",
+    // Task BL-081: the hook's computed-key store onto `require.cache` (a
+    // member read, so not proven to be an object the program created) is
+    // an escape before it is a protocol store: its unknown edge is
+    // `escaped_value`.
+    expectedReason: "escaped_value",
   },
   {
     id: "truncated.reexport-barrel.inert-hook",
@@ -242,12 +247,16 @@ export const ALL_CASES: readonly V2Case[] = [
   {
     id: "untruncated.reexport-barrel.cache-hook",
     mechanism:
-      "the default limit: the closure reaches the hook too (`loader_hook_mutation`), and the call graph's `protocol_value` answers first",
+      "the default limit: the closure reaches the hook too (`loader_hook_mutation`), and the call graph's unknown edge at the store answers first (`protocol_value` until task BL-081, `escaped_value` since)",
     files: barrel(HOOK),
     called: true,
     base: { verdict: "UNKNOWN", reason: "protocol_value" },
     expected: "UNKNOWN",
-    expectedReason: "protocol_value",
+    // Task BL-081: the hook's computed-key store onto `require.cache` (a
+    // member read, so not proven to be an object the program created) is
+    // an escape before it is a protocol store: its unknown edge is
+    // `escaped_value`.
+    expectedReason: "escaped_value",
   },
   {
     id: "truncated.reexport-barrel.round-1-hook",

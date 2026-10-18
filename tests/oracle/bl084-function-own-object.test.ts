@@ -13,7 +13,9 @@ import { TARGET_MARKER, oracleCase } from "./e1-export-write-set.cases.js";
  * false `NOT_AFFECTED`s BL-084 closes; `lazy.*` and `masked.*` were
  * already `UNKNOWN`; `strict.*` ground the routes strict code does not
  * have; `cost.*` is the precision BL-084 gives up, measured; `control.*`
- * keeps its precision.
+ * keeps its precision. Two `strict.*` cases answer `UNKNOWN` since task
+ * BL-081 (a store through a member read is an escape), each marked as
+ * that task's precision cost.
  */
 
 // One macrotask turn before each case (backlog BL-033).
