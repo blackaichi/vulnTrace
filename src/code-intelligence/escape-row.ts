@@ -666,9 +666,7 @@ function denotedThroughRoutes(expr: ts.Expression, hops: number): ts.Node[] {
   // -- gets an unknown edge at that store or call (`storesUnderPrototypeKey`,
   // `builtinMayStoreUnderModelKey`), so the stores spelled here are all
   // this relation needs (task BL-081's fifth to ninth audit rounds).
-  return throughStores(
-    storesOnto(object, member.key).map((store) => store.value),
-  );
+  return storeValueDefinitions(storesOnto(object, member.key), hops);
 }
 
 const namespaceNamesCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
@@ -1642,8 +1640,8 @@ function prototypeMayBeChanged(
     return index.byKey.has("__proto__");
   }
   return (
-    storesOnto(object, "__proto__").length > 0 ||
-    storesOnto(object, COMPUTED_KEY).length > 0
+    hasStores(storesOnto(object, "__proto__")) ||
+    hasStores(storesOnto(object, COMPUTED_KEY))
   );
 }
 
@@ -1872,13 +1870,11 @@ function everyMemberStoreIsFresh(
   if (
     index.nonNameKeys.has(key) ||
     index.nonNameKeys.has(COMPUTED_KEY) ||
-    storesOnto(object, COMPUTED_KEY).length > 0
+    hasStores(storesOnto(object, COMPUTED_KEY))
   ) {
     return false;
   }
-  return storesOnto(object, key).every(
-    (store) => store.value !== undefined && isFresh(store.value, hops + 1),
-  );
+  return everyStoreValueIsFresh(storesOnto(object, key), hops);
 }
 
 /** The key under which {@link memberStoreIndex} files a store whose key is computed at run time. */
@@ -1909,13 +1905,19 @@ const memberStoreIndexCache = new WeakMap<ts.SourceFile, MemberStoreIndex>();
 
 let memberStoreIndexBuilds = 0;
 let fullSameObjectChecks = 0;
+let storeVisits = 0;
 
 /** Operation counts of the own-member and freshness bookkeeping, for the structural performance test (ARCHITECTURE § 10). */
 export function ownMemberBookkeepingCounts(): {
   readonly indexBuilds: number;
   readonly fullSameObjectChecks: number;
+  readonly storeVisits: number;
 } {
-  return { indexBuilds: memberStoreIndexBuilds, fullSameObjectChecks };
+  return {
+    indexBuilds: memberStoreIndexBuilds,
+    fullSameObjectChecks,
+    storeVisits,
+  };
 }
 
 function memberStoreIndex(sourceFile: ts.SourceFile): MemberStoreIndex {
@@ -1973,11 +1975,95 @@ function memberStoreIndex(sourceFile: ts.SourceFile): MemberStoreIndex {
   return index;
 }
 
+/**
+ * The stores {@link storesOnto} answers: the ones found for this object
+ * alone, and the list every object shares ({@link SharedStores}).
+ */
+interface StoreSet {
+  readonly own: readonly FileStore[];
+  readonly shared: SharedStores | undefined;
+}
+
+/**
+ * A list of stores that is part of many answers: the stores onto a base
+ * that cannot be followed, which may be onto any object. It is never
+ * copied into an answer (task BL-091, observation 1: copying it into every
+ * answer, and walking it for every object a caller asked about, made the
+ * work quadratic in the file's member stores), and what callers ask of it
+ * is computed once per alias-hop budget.
+ */
+class SharedStores {
+  private readonly answers = new Map<string, unknown>();
+
+  constructor(readonly stores: readonly FileStore[]) {}
+
+  /** `compute()`, once per `question`; a question that throws is not remembered. */
+  memo<T>(question: string, compute: () => T): T {
+    if (this.answers.has(question)) {
+      return this.answers.get(question) as T;
+    }
+    const answer = compute();
+    this.answers.set(question, answer);
+    return answer;
+  }
+}
+
+/** Whether any store is onto the object. */
+function hasStores(set: StoreSet): boolean {
+  return set.own.length > 0 || (set.shared?.stores.length ?? 0) > 0;
+}
+
+/** Whether every store is of a value {@link isFresh} proves (one `isFresh` per store of the shared list, not per answer). */
+function everyStoreValueIsFresh(set: StoreSet, hops: number): boolean {
+  const fresh = (store: FileStore): boolean => {
+    storeVisits += 1;
+    return store.value !== undefined && isFresh(store.value, hops + 1);
+  };
+  return (
+    set.own.every(fresh) &&
+    (set.shared === undefined ||
+      set.shared.memo(`fresh@${hops}`, () => set.shared!.stores.every(fresh)))
+  );
+}
+
+/**
+ * The definitions {@link definitionsDenotedBy} follows the stored values
+ * to; throws {@link DenotationUnknown} when any value cannot be followed.
+ * The shared list's definitions are followed once per alias-hop budget.
+ */
+function storeValueDefinitions(set: StoreSet, hops: number): ts.Node[] {
+  const definitions = (store: FileStore): ts.Node[] => {
+    storeVisits += 1;
+    return store.value === undefined
+      ? []
+      : definitionsDenotedBy(store.value, hops + 1);
+  };
+  const own = set.own.flatMap(definitions);
+  if (set.shared === undefined) {
+    return own;
+  }
+  const shared = set.shared;
+  const followed = shared.memo(`definitions@${hops}`, () => {
+    try {
+      return [...new Set(shared.stores.flatMap(definitions))];
+    } catch (error) {
+      if (error instanceof DenotationUnknown) {
+        return undefined;
+      }
+      throw error;
+    }
+  });
+  if (followed === undefined) {
+    throw new DenotationUnknown();
+  }
+  return [...own, ...followed];
+}
+
 /** The name-based stores under `key` whose base may denote the object `object` names ({@link mayDenoteSameObject}). */
-function storesOnto(object: ts.Identifier, key: string): FileStore[] {
+function storesOnto(object: ts.Identifier, key: string): StoreSet {
   const entry = memberStoreIndex(object.getSourceFile()).byKey.get(key);
   if (!entry) {
-    return [];
+    return { own: [], shared: undefined };
   }
   // Memoized per binding and key (task BL-081's sixth audit round: the
   // `others` bucket was checked per pair of objects): the answer depends
@@ -1992,8 +2078,17 @@ function storesOnto(object: ts.Identifier, key: string): FileStore[] {
   }
   // Inside a `with` body the name cannot be followed (it may be the `with`
   // object's member), so the answer differs there (task BL-081's tenth
-  // audit round: a lookup from a `with` body cached a smaller set).
-  const memoKey = `${object.text}\u0000${key}\u0000${binding.kind}\u0000${String(insideWith(object))}`;
+  // audit round: a lookup from a `with` body cached a smaller set). Nor are
+  // all unresolved names of one spelling alike: only the module's own
+  // `exports` (no declaration, in a CommonJS module) is followed through
+  // the values stored to it, a parameter or a `var exports;` of the same
+  // spelling is not (task BL-091, observation 2), so the cause is part of
+  // the key.
+  const kind =
+    binding.kind === "unresolved"
+      ? `unresolved:${binding.cause}`
+      : binding.kind;
+  const memoKey = `${object.text}\u0000${key}\u0000${kind}\u0000${String(insideWith(object))}`;
   const memo = perBinding.get(memoKey);
   if (memo) {
     return memo;
@@ -2003,7 +2098,7 @@ function storesOnto(object: ts.Identifier, key: string): FileStore[] {
   return result;
 }
 
-const storesOntoCache = new WeakMap<object, Map<string, FileStore[]>>();
+const storesOntoCache = new WeakMap<object, Map<string, StoreSet>>();
 
 function computeStoresOnto(
   object: ts.Identifier,
@@ -2012,7 +2107,7 @@ function computeStoresOnto(
     readonly byDefinition: Map<ts.Node, FileStore[]>;
     readonly others: { base: ts.Identifier; store: FileStore }[];
   },
-): FileStore[] {
+): StoreSet {
   const found = new Set<FileStore>(entry.bySpelling.get(object.text) ?? []);
   let denoted: readonly ts.Node[] | undefined;
   try {
@@ -2046,7 +2141,7 @@ function computeStoresOnto(
         }
       }
     }
-    return [...found];
+    return { own: [...found], shared: undefined };
   }
   // `mayDenoteSameObject(base, object)` holds exactly when the base's alias
   // chain spells the object's name, when what the base denotes meets what
@@ -2060,14 +2155,18 @@ function computeStoresOnto(
       found.add(store),
     );
   }
-  others.unknown.forEach((store) => found.add(store));
-  return [...found];
+  // The stores onto a base that cannot be followed are every such object's:
+  // shared, not copied into each answer.
+  return {
+    own: [...found],
+    shared: others.unknown.stores.length > 0 ? others.unknown : undefined,
+  };
 }
 
 interface OthersIndex {
   readonly byAliasSpelling: Map<string, FileStore[]>;
   readonly byDenotation: Map<ts.Node, FileStore[]>;
-  readonly unknown: FileStore[];
+  readonly unknown: SharedStores;
 }
 
 const othersIndexCache = new WeakMap<object, OthersIndex | "building">();
@@ -2084,11 +2183,9 @@ function othersIndexOf(entry: {
     return cached;
   }
   othersIndexCache.set(entry, "building");
-  const index: OthersIndex = {
-    byAliasSpelling: new Map(),
-    byDenotation: new Map(),
-    unknown: [],
-  };
+  const byAliasSpelling = new Map<string, FileStore[]>();
+  const byDenotation = new Map<ts.Node, FileStore[]>();
+  const unknown: FileStore[] = [];
   const push = <K>(map: Map<K, FileStore[]>, k: K, store: FileStore) => {
     const list = map.get(k);
     if (list) {
@@ -2100,23 +2197,28 @@ function othersIndexOf(entry: {
   try {
     for (const { base, store } of entry.others) {
       for (const spelling of aliasSpellingsOf(base)) {
-        push(index.byAliasSpelling, spelling, store);
+        push(byAliasSpelling, spelling, store);
       }
       try {
         for (const definition of definitionsDenotedBy(base, 0)) {
-          push(index.byDenotation, definition, store);
+          push(byDenotation, definition, store);
         }
       } catch (error) {
         if (!(error instanceof DenotationUnknown)) {
           throw error;
         }
-        index.unknown.push(store);
+        unknown.push(store);
       }
     }
   } catch (error) {
     othersIndexCache.delete(entry);
     throw error;
   }
+  const index: OthersIndex = {
+    byAliasSpelling,
+    byDenotation,
+    unknown: new SharedStores(unknown),
+  };
   othersIndexCache.set(entry, index);
   return index;
 }
@@ -2204,7 +2306,17 @@ function mayDenoteSameObject(
   }
 }
 
-/** The function or class definition a stable name denotes, if any. */
+/**
+ * The function or class definition a stable name denotes, if any. Its
+ * `value` branch is not a second copy of {@link definitionsDenotedBy}'s
+ * route through a stable name (task BL-091, observation 3: mutant M23
+ * removed it, and the suites passed): `resolveNamedBinding` follows an alias
+ * chain in one step, and `definitionsDenotedBy` follows one hop at a time
+ * for at most {@link MAX_ALIAS_HOPS}. A name four or more aliases from a
+ * function expression (measured: four to twelve) is denoted precisely only
+ * through this branch; without it the relation answers "unknown" for it
+ * (safe, but every store onto it is then every object's).
+ */
 function denotedDefinitionOf(id: ts.Identifier): ts.Node | undefined {
   const binding = resolveNamedBinding(id);
   if (

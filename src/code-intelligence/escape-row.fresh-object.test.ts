@@ -642,6 +642,59 @@ describe("the own-member and freshness bookkeeping is linear in a file's member 
     }
   });
 
+  describe("stores onto bases whose aliases cannot be followed (task BL-091, observation 1)", () => {
+    // `c6` is five aliases from `{}`: `definitionsDenotedBy` follows at most
+    // `MAX_ALIAS_HOPS` of them and answers "unknown" (every question about
+    // a store onto it is "may be any object"). Every store below is onto
+    // `c6`, so every question about any object gets the whole list.
+    const chain = Array.from(
+      { length: 7 },
+      (_, i) => `const c${i} = ${i === 0 ? "{}" : `c${i - 1}`};\n`,
+    ).join("");
+
+    function visits(shape: (i: number) => string, n: number): number {
+      let source = chain;
+      for (let i = 0; i < n; i += 1) {
+        source += shape(i);
+      }
+      const before = ownMemberBookkeepingCounts();
+      const visit = (node: ts.Node): void => {
+        if (ts.isPropertyAccessExpression(node) && node.name.text === "probe") {
+          isProvenFreshObject(node.expression);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(parse(source));
+      return ownMemberBookkeepingCounts().storeVisits - before.storeVisits;
+    }
+
+    it.each([
+      [
+        "a `prototype` store of a function, asked of every function",
+        (i: number) =>
+          `function F${i}() {}\nc6.prototype = {};\nF${i}.prototype.probe = f;\n`,
+      ],
+      [
+        "a `prototype` store of a function, asked through names bound to `F.prototype` that a computed-key store names",
+        (i: number) =>
+          `function F${i}() {}\nconst p${i} = F${i}.prototype;\np${i}[k] = 1;\nc6.prototype = function () {};\nF${i}.prototype.probe = f;\n`,
+      ],
+      [
+        "a `__proto__` store, asked of every object",
+        (i: number) =>
+          `const o${i} = {};\nc6.__proto__ = null;\no${i}.probe = f;\n`,
+      ],
+    ])("reads each store a constant number of times: %s", (_name, shape) => {
+      const small = visits(shape, 100);
+      const large = visits(shape, 400);
+      // Linear: four times the stores, about four times the reads. The
+      // per-object copy and walk of the whole list was N squared (160,000
+      // reads at 400 stores, measured before task BL-091).
+      expect(large).toBeLessThanOrEqual(20 * 400);
+      expect(large).toBeLessThanOrEqual(5 * small);
+    });
+  });
+
   it("builds each file's member-store index once, and runs no full same-object check per pair of objects", () => {
     const small = measure(50);
     const large = measure(400);
@@ -650,6 +703,161 @@ describe("the own-member and freshness bookkeeping is linear in a file's member 
     // Every base here names its function directly: no full check at all.
     expect(large.checks).toBe(0);
   });
+});
+
+describe("a store through a name whose aliases cannot be followed may be onto any object (task BL-091: the shared list)", () => {
+  // Twenty aliases: more than `definitionsDenotedBy` follows, and more
+  // than `resolveNamedBinding` follows in one step, so a store through
+  // `a20` is filed in the list every object's answer shares.
+  const chain = (head: string) =>
+    Array.from(
+      { length: 20 },
+      (_, i) => `const a${i + 1} = ${i === 0 ? head : `a${i}`};\n`,
+    ).join("");
+
+  it("its value is checked: a `prototype` stored through it is not the program's own", () => {
+    expect(
+      proven(
+        `function F() {}\n${chain("F")}a20.prototype = globalThis;\nF.prototype.probe = f;`,
+      ),
+    ).toBe(false);
+  });
+
+  it("its presence is checked: a `__proto__` stored through it may change any object's [[Prototype]]", () => {
+    expect(
+      proven(
+        `const o = {};\n${chain("o")}a20.__proto__ = globalThis;\no.probe = f;`,
+      ),
+    ).toBe(false);
+  });
+
+  // The store through `a20` is itself an escape (its base is not proven
+  // the program's own), and an escaping store under a `prototype` key makes
+  // its value opaque on its own: this answer does not depend on the shared
+  // list being followed (dropping it from `storeValueDefinitions` is an
+  // equivalent mutant), but it must not change if either rule goes.
+  it("its value is followed: a function stored as a `prototype` through it carries the members stored there", () => {
+    const store = probeStore(
+      `function F() {}\nfunction K() {}\n${chain("F")}a20.prototype = K;\nF.prototype.max = f;\nG.probe = K;`,
+    );
+    expect(escapingValuesOf(store.right).map((v) => v.kind)).toContain(
+      "opaque",
+    );
+  });
+});
+
+describe("a memoized answer is shared only by names it is the same answer for (task BL-091, observation 2)", () => {
+  // Every unresolved name of one spelling shares one memo slot per file and
+  // key. A parameter named `exports` is unresolved, and so is the module's
+  // own `exports` -- which `definitionsDenotedBy` follows through the
+  // values stored to it (`exports = G`), and the parameter not. Whichever
+  // was asked first used to fix the answer for the other.
+  const shadowed =
+    "function g(exports) { const s = exports.prototype; s.z = f; }\n";
+  // `q` is `F` (`exports = G; G.prototype = F`).
+  const alias =
+    "function G() {}\nexports = G;\nfunction F() {}\nG.prototype = F;\n" +
+    "const q = exports.prototype;\n";
+
+  /** The store `<name>.probe = …`, and the store `Z.handed = F`. */
+  function storesOf(source: string): {
+    probe: ts.BinaryExpression;
+    handed: ts.BinaryExpression;
+  } {
+    const found: Record<string, ts.BinaryExpression> = {};
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        ts.isPropertyAccessExpression(node.left) &&
+        ["probe", "handed"].includes(node.left.name.text)
+      ) {
+        found[node.left.name.text] = node;
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(parse(source));
+    return { probe: found.probe!, handed: found.handed! };
+  }
+
+  it.each([
+    ["alone", "", ""],
+    ["after the shadowing parameter's question", shadowed, ""],
+    ["before the shadowing parameter's question", "", shadowed],
+  ])(
+    "`F`'s [[Prototype]] may be changed through `q`, whatever was asked first: %s",
+    (_name, before, after) => {
+      // `q.__proto__ = X` is `F.__proto__ = X`: `F` is not the program's own.
+      const source = `${before}${alias}q.__proto__ = globalThis;\nF.probe = f;\nZ.handed = F;\n${after}`;
+      const { probe, handed } = storesOf(source);
+      // The shadowing parameter's question first: what `F` hands over.
+      escapingValuesOf(handed.right);
+      expect(
+        isProvenFreshObject(
+          (probe.left as ts.PropertyAccessExpression).expression,
+        ),
+      ).toBe(false);
+    },
+  );
+
+  it.each([
+    ["alone", "", ""],
+    ["after the shadowing parameter's question", shadowed, ""],
+    ["before the shadowing parameter's question", "", shadowed],
+  ])(
+    "`F` carries the member stored through `q`, whatever was asked first: %s",
+    (_name, before, after) => {
+      const source = `${before}${alias}q.max = f;\nZ.handed = F;\n${after}`;
+      const kinds = escapingValuesOf(storesOf(source).handed.right).map(
+        (value) => value.kind,
+      );
+      expect(kinds).toEqual(["function", "opaque"]);
+    },
+  );
+});
+
+describe("a name bound to a function expression denotes it through a longer alias chain than the denotation relation follows (task BL-091, observation 3)", () => {
+  // `denotedDefinitionOf` asks `resolveNamedBinding`, which follows an alias
+  // chain in one step; `definitionsDenotedBy` follows one hop at a time for
+  // at most `MAX_ALIAS_HOPS` (four). A name four or more aliases from a
+  // function expression (measured: four to twelve) is therefore denoted
+  // precisely only through the shortcut: without it the relation answers
+  // "unknown", and every function of the file may carry the member stored.
+  const chain = (length: number) =>
+    "const k = function () {};\n" +
+    Array.from(
+      { length },
+      (_, i) => `const a${i + 1} = ${i === 0 ? "k" : `a${i}`};\n`,
+    ).join("") +
+    `a${length}.max = f;\n` +
+    "const other = function () {};\n";
+
+  const kindsHandedOver = (source: string, name: string): string[] => {
+    const handed = parse(`${source}Z.handed = ${name};\n`);
+    const stores: ts.BinaryExpression[] = [];
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        ts.isPropertyAccessExpression(node.left) &&
+        node.left.name.text === "handed"
+      ) {
+        stores.push(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(handed);
+    return escapingValuesOf(stores[0]!.right).map((value) => value.kind);
+  };
+
+  it.each([1, 3, 4, 6, 12])(
+    "a store through a chain of %i aliases is a store onto the function expression, and onto no other",
+    (length) => {
+      expect(kindsHandedOver(chain(length), "k")).toEqual([
+        "function",
+        "opaque",
+      ]);
+      expect(kindsHandedOver(chain(length), "other")).toEqual(["function"]);
+    },
+  );
 });
 
 describe("an object whose [[Prototype]] may change, or that binds no value, is not proven its own (task BL-081's seventh audit round)", () => {
