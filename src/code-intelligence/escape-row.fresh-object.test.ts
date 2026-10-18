@@ -102,11 +102,11 @@ describe("an object the program created is proven its own (task BL-081)", () => 
     ],
     [
       "`this` in a static field initializer (the class)",
-      "class K extends B { static x = (this.probe = f); }",
+      "class B {}\nclass K extends B { static x = (this.probe = f); }",
     ],
     [
       "`this` in a static block (the class)",
-      "class K extends B { static { this.probe = f; } }",
+      "class B {}\nclass K extends B { static { this.probe = f; } }",
     ],
     ["a class's `prototype`", "class C {}\nC.prototype.probe = f;"],
     [
@@ -200,6 +200,34 @@ describe("every other object may be a builtin (task BL-081, RWF-110, RWF-063)", 
     [
       "the `prototype` of a parameter",
       "function g(F) { F.prototype.probe = f; }",
+    ],
+    [
+      "a derived class's `prototype` (it inherits from its base's: task BL-091, RWF-124)",
+      "function X() {}\nX.prototype = globalThis;\nclass C extends X {}\nC.prototype.probe = f;",
+    ],
+    [
+      "a derived class expression's `prototype` (task BL-091, RWF-124)",
+      "function X() {}\nconst C = class extends X {};\nC.prototype.probe = f;",
+    ],
+    [
+      "a class derived from a value that is not the program's own (its static side: task BL-091, RWF-126)",
+      "class K extends B {}\nK.probe = f;",
+    ],
+    [
+      "a derived class expression's static side (task BL-091, RWF-126)",
+      "(class extends B {}).probe = f;",
+    ],
+    [
+      "a class derived from a class derived from an ambient value",
+      "class A extends B {}\nclass K extends A {}\nK.probe = f;",
+    ],
+    [
+      "`this` in a derived class's static block, base not the program's own",
+      "class K extends B { static { this.probe = f; } }",
+    ],
+    [
+      "`this` in a derived class's static field, base not the program's own",
+      "class K extends B { static x = (this.probe = f); }",
     ],
     ["a reassigned class", "class C {}\nC = Object;\nC.probe = f;"],
     [
@@ -389,6 +417,26 @@ describe("stores with no assignment expression (task BL-081's audit)", () => {
     expect(at("class D extends B { keys = f; }")).toBeDefined();
     expect(at("class K { keys = f; }")).toBeUndefined();
     expect(at("class D extends B { static keys = f; }")).toBeUndefined();
+  });
+
+  it("a static field of a class whose base is not the program's own stores in a TypeScript file, whose emit may assign it (task BL-091, RWF-127)", () => {
+    const at = (source: string, fileName: string) =>
+      declarationStoreOf(first(source, ts.isPropertyDeclaration, fileName));
+    expect(
+      at("class D extends B { static keys = f; }", "index.ts"),
+    ).toBeDefined();
+    expect(
+      at("const D = class extends B { static keys = f; };", "index.ts"),
+    ).toBeDefined();
+    // A base the program owns, or no base: no inherited setter.
+    expect(
+      at("class B {}\nclass D extends B { static keys = f; }", "index.ts"),
+    ).toBeUndefined();
+    expect(at("class K { static keys = f; }", "index.ts")).toBeUndefined();
+    // JavaScript defines a static field: no setter runs.
+    expect(
+      at("class D extends B { static keys = f; }", "index.js"),
+    ).toBeUndefined();
   });
 
   it("a decorated instance field of a derived class stores, whatever its initializer (a TC39 field decorator may replace it)", () => {
@@ -858,6 +906,80 @@ describe("a name bound to a function expression denotes it through a longer alia
       expect(kindsHandedOver(chain(length), "other")).toEqual(["function"]);
     },
   );
+});
+
+describe("a class's `prototype` may be replaced under TypeScript's ES5 emit (task BL-091, RWF-128)", () => {
+  it.each([
+    [
+      "a store onto the `prototype` of a class whose `prototype` is stored",
+      "class C {}\n(C as any).prototype = globalThis;\nC.prototype.probe = f;",
+    ],
+    [
+      "`this` in the constructor of a class whose `prototype` is stored",
+      "class C { constructor() { this.probe = f; } }\n(C as any).prototype = globalThis;",
+    ],
+    [
+      "`this` in an instance field initializer, a `prototype` stored through a computed key",
+      "class C { x = (this.probe = f); }\n(C as any)[k] = globalThis;",
+    ],
+  ])("%s is not proven the program's own", (_name, source) => {
+    expect(proven(source, "index.ts")).toBe(false);
+  });
+
+  it.each([
+    [
+      "`this` in a constructor",
+      "class C { constructor() { this.probe = f; } }",
+    ],
+    ["a class's `prototype`", "class C {}\nC.prototype.probe = f;"],
+  ])("%s, no `prototype` stored, stays proven", (_name, source) => {
+    expect(proven(source, "index.ts")).toBe(true);
+  });
+
+  it("`this` stored as a class's `prototype` from its own constructor is not proven, and the proof ends (task BL-091's independent audit: it recursed without bound)", () => {
+    expect(
+      proven(
+        "class C { constructor() { (C as any).prototype = this; this.probe = f; } }",
+        "index.ts",
+      ),
+    ).toBe(false);
+    expect(
+      proven(
+        "class C { x = ((C as any).prototype = this); y = (this.probe = f); }",
+        "index.ts",
+      ),
+    ).toBe(false);
+  });
+
+  it("checks a file's `prototype` stores once, however many `this` positions ask (task BL-091's independent audit: once per `this` was quadratic)", () => {
+    let source = "";
+    for (let i = 0; i < 200; i += 1) {
+      source += `function F${i}() {}\nF${i}.prototype = {};\nclass C${i} { constructor() { this.probe = f; } }\n`;
+    }
+    const sf = parse(source, "index.ts");
+    const before = ownMemberBookkeepingCounts();
+    const visit = (node: ts.Node): void => {
+      if (ts.isPropertyAccessExpression(node) && node.name.text === "probe") {
+        isProvenFreshObject(node.expression);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sf);
+    const after = ownMemberBookkeepingCounts();
+    expect(
+      after.prototypeStabilityComputations -
+        before.prototypeStabilityComputations,
+    ).toBe(1);
+  });
+
+  it("JavaScript keeps the constructor's `this`: a class's `prototype` is non-writable", () => {
+    expect(
+      proven(
+        "class C { constructor() { this.probe = f; } }\nC.prototype = globalThis;",
+        "index.js",
+      ),
+    ).toBe(true);
+  });
 });
 
 describe("an object whose [[Prototype]] may change, or that binds no value, is not proven its own (task BL-081's seventh audit round)", () => {
