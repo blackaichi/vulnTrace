@@ -237,14 +237,14 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-060 | `vuln-lib` (synthetic fixture) | A derived class with no constructor whose base is an ambient or builtin constructor (`class P extends Promise {}`, a `stream.Readable` subclass) forwards `new P(...)`'s arguments to the base, and a callback among them runs; nothing accounts for them | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | RWF-061 | `vuln-lib` (synthetic fixture) | A `vm.Script` reached through a subclass (`class X extends vm.Script {}`) or a factory function (`function mk(c) { return new vm.Script(c); }`) runs its code through `.runInThisContext()`, but the module-load closure records nothing | false NOT_AFFECTED (family A) — see below | Open |
 | RWF-062 | `vuln-lib` (synthetic fixture) | With TypeScript constructor overloads, `new A()` resolves to the first overload SIGNATURE, a node with no body; the implementation's calls hang from a node nothing reaches | false NOT_AFFECTED — see below | Open |
-| RWF-063 | `vuln-lib` (synthetic fixture) | A builtin trusted by the builtin table (task A-3a) can be monkeypatched through a user binding the escape row does not follow -- a parameter, a container element -- so a later call of the builtin gets a no-edge proof while it runs the program's function | false NOT_AFFECTED — see below | Fixed in part (A-3a: the `const`-alias form); the parameter and container forms remain open |
+| RWF-063 | `vuln-lib` (synthetic fixture) | A builtin trusted by the builtin table (task A-3a) can be monkeypatched through a user binding the escape row does not follow -- a parameter, a container element -- so a later call of the builtin gets a no-edge proof while it runs the program's function | false NOT_AFFECTED — see below | Fixed in part (BL-081; its independent audit did not certify the class: RWF-122, RWF-123, re-audit backlog `BL-091`) |
 | RWF-064 | the H-0 builtin probe (`src/testing/oracle/builtin-probe.ts`) | The probe read the hooks that fired synchronously after the call, and each probe template fixed the builtin's other arguments, so a hook the builtin schedules for later, or fires only in another context, was never observed -- an admission test built on it could admit a position that runs user code | a test instrument could not enforce the guarantee it exists for (mechanical admission) — see below | Fixed in part (A-3a): deferred hooks, contexts and throws are observed; a hook only a STRUCTURED argument reaches is not — see below |
 | RWF-065 | `vuln-lib` (synthetic fixture) | A module loaded through the module's own loader API in a shape the loader classifier does not recognise -- `module.parent.require("pkg")`, `module.children[i].require("pkg")` -- is invisible to the module-load closure | false NOT_AFFECTED (family A) — see below | Open (families B and C fail closed since A-3b; family A: backlog `BL-040`) |
 | RWF-066 | `vuln-lib` (synthetic fixture) | Under TypeScript's automatic JSX runtime (`jsx: react-jsx`, or an `@jsxImportSource` pragma), a JSX element compiles to `require("<importSource>/jsx-runtime")`, which no source line spells, so the module-load closure never sees the load | false NOT_AFFECTED (family A) — see below | **Fixed** (A-3b), through the fail-closed default — see below |
 | RWF-067 | `vuln-lib` (synthetic fixture) | A loader capability that escapes through a for-of destructuring assignment (`for ({ _load: h } of [require("module")])`) rebinds a name to `Module._load` unseen by the loader classifier, so the load it then performs is invisible to the module-load closure | false NOT_AFFECTED (family A) — see below | Open (backlog `BL-043`) |
 | RWF-068 | `vuln-lib` (synthetic fixture) | Every consumer of an iterator calls the `next` / `return` / `throw` methods of the object `[Symbol.iterator]()` returns, and ADR 0008 § 2's closed protocol list does not name them | false NOT_AFFECTED — see below | **Fixed** (A-4) — see below |
 | RWF-069 | `vuln-lib` (synthetic fixture) | Admitted non-invoking builtin positions (`path.*`; a candidate `EventEmitter` position) run a `util.inspect.custom` method through an argument-type error message that inspects a structured null-prototype value, which the builtin probe never builds | admission rule violated; false NOT_AFFECTED until task A-4 — see below | Open (backlog `BL-045`); no live false `NOT_AFFECTED` since A-4 — see below |
-| RWF-070 | `vuln-lib` (synthetic fixture) | `await` reaches a promise's `constructor` and `Symbol.species` and constructs the class they name (SpeciesConstructor) with no call in the program; neither key is in ADR 0008 § 2's protocol list | false NOT_AFFECTED — see below | Open (backlog `BL-046`) |
+| RWF-070 | `vuln-lib` (synthetic fixture) | `await` reaches a promise's `constructor` and `Symbol.species` and constructs the class they name (SpeciesConstructor) with no call in the program; neither key is in ADR 0008 § 2's protocol list | false NOT_AFFECTED — see below | Fixed in part (BL-081: a `constructor` store onto a promise); `static [Symbol.species]` remains open (backlog `BL-046`) |
 | RWF-071 | `vuln-lib` (synthetic fixture) | VT-210 reads the argument written at a higher-order parameter's position with no check for a spread argument at or before it, so the parameter is attributed to an expression that does not land there | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | RWF-072 | `vuln-lib` (synthetic fixture) | The member-write scanner (`isMemberAssignedWithin`) misses a member written as a destructuring or `for…of` target, or through a value-free wrapper, so an object-literal member is resolved to a value it no longer holds | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | RWF-073 | `vuln-lib` (synthetic fixture) | VT-210 counts a TypeScript `this` parameter, which is erased, as an argument position, so every later parameter is attributed to the argument one place to its right | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
@@ -284,7 +284,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-107 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | BL-074's census treats a load's value as confined when it is called, constructed or the receiver of a member call, without following what the call RETURNS, which may be this file's exports object (`module.exports = () => require("./index")` then `set(require("./g")())`; `require("./other").valueOf()`) | fabricated attribution at the model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-108 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | Another module stores this file's exports object on a third module's exports object (`require("wrap/store").lib = require("wrap")` in the app), and this file's own load of the third module then writes through it (`patch(require("./store").lib)`): the static load closure of `./store` does not contain this file, so BL-074's graph answers "cannot reach back" | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
 | RWF-109 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | BL-074's module graph taints a closure member that spells a frame-reaching member name (`caller`, `getThis`, …), but a key computed at run time spells none: a getter returning `g[k].arguments[0]` with `k` = `"cal" + "ler"` (the module wrapper's `exports`) answers "cannot reach back". Narrowed by BL-074 (status update below): the global-object spellings first recorded here were live and are fixed | wrong reach answer at the graph, masked end to end by the call graph for the frame spelling (no false `NOT_AFFECTED` measured) — see below | Open |
-| RWF-110 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The call graph takes a call of an ambient builtin (`Object.keys({})`) for the builtin, and A-3a's assignment escape row sees a replacement only when it spells an ambient builtin's name: a builtin replaced without its name (`({}).constructor.keys = f`, or `function install(O) { O.keys = f; } install(Object)` in another module) runs `f` with no edge | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
+| RWF-110 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The call graph takes a call of an ambient builtin (`Object.keys({})`) for the builtin, and A-3a's assignment escape row sees a replacement only when it spells an ambient builtin's name: a builtin replaced without its name (`({}).constructor.keys = f`, or `function install(O) { O.keys = f; } install(Object)` in another module) runs `f` with no edge | false NOT_AFFECTED (family C), pre-existing on the base — see below | Fixed in part (BL-081; its independent audit did not certify the class: RWF-122, RWF-123, re-audit backlog `BL-091`) |
 | RWF-111 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census's define arm (`Object.defineProperty(exports, "__esModule", …)`, `Object.assign(exports, …)`, `Reflect.set`) withdraws only the names it spells and keeps every other attribution, trusting the builtin unless THIS file replaces it by name; another module's replacement writes any name | wrong attribution at the export model, masked end to end by the call graph's escape row (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-112 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export object on the RIGHT of `instanceof` (`({}) instanceof exports`) was taken for inert, but it runs its inherited `Object.prototype[Symbol.hasInstance]` with itself as `this`, which any module may define | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-075) — see below |
 | RWF-113 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census takes a member read of a name the file never writes, and a call of a method it never writes (`isMethodWrittenElsewhere`), for reads, and trusts a plain `exports.run = …` against `Object.prototype`; another module's accessor, method or non-writable property on `Object.prototype` runs with, or intercepts, the export object | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
@@ -294,6 +294,10 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-117 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A `super` property write sets the property on `this`: `module.exports = { run: safeOp, init() { super.run = dangerousOp; } }`, the entry calling `init()` first, was not censused as a write of `run` | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-084) — see below |
 | RWF-118 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The final-object censuses (of the binding and of BL-084's routes) take a member read or a method call for a use that keeps the object in this file's hands, but a call may return its receiver (`Api.valueOf().run = …`) or hand a property value to a callback (`JSON.stringify(Api.prototype, (k, v) => { v.run = … })`) | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-119 | n/a — the repository's own workflow records | `docs/WORKFLOW.md` § 3, `AGENTS.md` § I, `docs/progress.md` and the pull request template said `test:validation` keeps five cases failing, and the committed `tests/validation/REPORT.md` showed `RWB-09a` passing; since task BL-075 the suite fails six and OPEN-DEBTS D-09 lists six (`RWB-09a` added, pending the project owner's decision) | record — a case-by-case comparison against WORKFLOW § 3 takes `RWB-09a`'s documented failure for a new one, and a reader of `REPORT.md` takes it for passing — see below | **Fixed** (BL-089) — see below |
+| RWF-120 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A-3a's escape row read only assignment expressions: a `for…of` head (`for (Object.keys of [f]) {}`), a bare name or a `var` stored in a `with` body (`with (Object) { keys = f; }`), and an array pattern or `for…of` over an iterable object (whose iterator yields what is stored) replaced a builtin unseen, even when the store spelled the builtin's name | false NOT_AFFECTED (family C), pre-existing — see below | Fixed in part (BL-081; its independent audit did not certify the class: RWF-122, RWF-123, re-audit backlog `BL-091`) |
+| RWF-121 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A documented invoking builtin keeps its RESOLVED edge to the callback it is handed when another module, or a store through a parameter, has replaced the builtin with a function that never calls it (`globalThis.setTimeout = () => 0` in a sibling; `stub(globalThis)`), so `setTimeout(dangerousOp, 0)` answers `AFFECTED` | false AFFECTED, pre-existing (named in RWF-063's second audit append) — see below | Open (backlog `BL-090`) |
+| RWF-122 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's builtin-call rule read a `prototype` / `exports` key through fewer forms (no `?:`, `||`, `&&`, `??`, comma, `=`) than the value collector reads a value; once the value-use rule was removed, `Object.assign(F, c ? { prototype: K } : {})` gave `K` only a possible edge, and `F.prototype.max = f` added `K`'s own member unseen | false NOT_AFFECTED (family C), also on the base; reopened on the branch by removing the value-use rule — see below | Fixed (BL-081, after its tenth audit round; re-audit backlog `BL-091`) |
+| RWF-123 | `vuln-lib` (synthetic fixture); a gap in BL-081's own bookkeeping, not tied to one package | BL-081's memoized `storesOnto` was keyed by binding and spelling only, but a lookup from a `with` body cannot follow the name; that smaller answer was then reused outside the `with` body, so `const A = F; with ({}) { F.prototype.z = g; } A.prototype = Math; F.prototype.max = f` lost the store through the alias | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-081, after its tenth audit round; re-audit backlog `BL-091`) |
 
 ---
 
@@ -15514,6 +15518,23 @@ receiver. Not independently remediated here; see
 `docs/audits/2026-09-premise-sweep-round-1.md` § 3 (`PRM-11`) for the
 full reproduction.
 
+**Status update by task BL-081 (2026-10-16).** Step 2's verdict record
+(`step 2: a displacing wrapper reaches pkg#danger`, in
+`src/analysis/verdict.require-member-write-authority.integration.test.ts`)
+flipped and was replaced by its expected outcome, `UNKNOWN`: BL-081 made a
+store onto an object not proven to be the program's own an escape (RWF-110,
+RWF-063), and a load's object is one, so `mod.run = wrapper` gives
+`wrapper` a possible edge from `normalize`, and the target, reached through
+it, is `UNKNOWN` (`possible_invocation`). This closes the false
+`NOT_AFFECTED` of this shape at the verdict, as a side effect of a rule
+about builtins, not by deciding RWF-047's class: the call-site attribution
+itself is unchanged -- `mod.run(input)` still resolves to the stale
+`pkg#run` (both call-site records stand, re-measured unchanged), and Step
+1's false `AFFECTED` stands. The re-export path above (`exports.run =
+impl.run` after `impl.run = danger`) was not re-measured. The records'
+probe now takes the call site's own edge (by line): since BL-081 the store
+before it is a site of its own.
+
 ---
 
 ## RWF-048 — The binding-form grammar, swept: 264 cells, zero fabrications, eight refusal families
@@ -19509,6 +19530,116 @@ handed to a builtin (`Object.assign(Array, { isArray: setTimeout })`) was
 treated as carrying nothing, so the call claimed a
 `primitive_only_arguments` proof -- it is now opaque.
 
+**Status update by task BL-081 (2026-10-16): Fixed in part** (the audit
+did not certify the class; RWF-122, RWF-123, backlog `BL-091`). The parameter,
+container and returned-value forms are closed, with the load, the
+destructured `constructor`, a builtin module handed to a parameter
+(`install(path)`, `install(fs)`) and the global object through a parameter
+or a sloppy call's `this` (`patch(globalThis)`, `function patch() {
+this.setTimeout = f; }`): RWF-110's rule, one for both records. A store is
+an escape unless the object it writes onto is PROVEN to be one the program
+created (`escape-row.ts`, `isProvenFreshObject`); every other object may be
+a builtin. A builtin module's function handed to a builtin call is now
+fail-closed like an ambient builtin function (the third audit round's
+`Object.assign(Array, { isArray: setTimeout })` rule did not reach
+`fs.promises` and the like), and stored beside the program's function
+(`O.k = c ? f : timers.setTimeout`) it gets its unknown edge, where it got
+none. Oracle cases: `rwf063.*` in
+`tests/oracle/bl081-builtin-replaced-without-name.cases.ts`, each `NOT_AFFECTED`
+on the base. The false `AFFECTED` this record's second append names (a
+stub in another file leaves `setTimeout(cb)`'s resolved edge to `cb`) is
+registered on its own, RWF-121.
+
+**Appended after BL-081's second audit round (2026-10-18).** A function
+or class carries its OWN members, which whoever receives it calls: `class
+K { static max(a) { … } }` stored as the global `Math` through a parameter
+(`function install(G) { G.Math = K; } install(globalThis)`) or a sloppy
+call's `this`, then `Math.max(1, 2)`, runs `K.max`; so does a function
+whose member the file stores (`fn.max = f`). Live false `NOT_AFFECTED`s on
+the base; the first fix gave the stored class only an edge to itself.
+Fixed: a function or class that may carry own members (a static member, a
+base class, a decorator, a store onto one of its members in the file) is
+also an opaque value wherever it is handed over (`escapingValuesOf`), so
+the store gets an unknown edge. Oracle cases
+`rwf063.class-with-a-static-method-stored-as-a-builtin` and
+`rwf063.function-with-a-stored-member-stored-as-a-builtin`.
+
+**Appended after BL-081's third audit round (2026-10-18).** The own-member
+rule reached only a function or class of the SAME file, and only member
+stores through its plain name. Live false `NOT_AFFECTED`s on the base,
+measured: a function of another file whose member that file stores
+(`k.js`: `function K() {} K.max = g; exports.K = K`, then `G.Math = k.K`),
+a class with a static method imported by a destructured `require`, and
+member stores through an assignment's value (`(a = K).max = f`) or a
+function's `prototype` that holds `K`. Fixed: a value attributed to
+another file's function or class is read in that file
+(`importedCarriesOwnMembers`), and own members are counted through every
+route a freshness proof accepts (`definitionsDenotedBy`), including a
+merged TypeScript `namespace`.
+
+**Appended after BL-081's fourth audit round (2026-10-18).** The third
+round's claim, "through every route a freshness proof accepts", was false
+as first implemented: a stable name bound to a non-name route (`const p =
+F.prototype` with `F.prototype = K`, `const a = (b = K)`, `const m =
+module.exports` with `module.exports = K`) was accepted as the program's
+own object, so a store through it was no escape, yet neither the
+own-member bookkeeping nor the `prototype` proof followed it. Live false
+`NOT_AFFECTED`s on the base, measured. Fixed by making
+`definitionsDenotedBy` the ONE relation both use (`mayDenoteSameObject`
+reads it too), following a value binding one hop at a time; a cycle or a
+chain too long to follow is unknown, read as "may be the object" and "may
+carry members" (fail closed), and a table-driven unit test checks every
+route against both uses. Oracle cases `*.through-a-const-bound-to-*`.
+
+**Appended after BL-081's fifth audit round (2026-10-18).** The fourth
+round's relation still answered from the stores the file SPELLS, so a
+function's `prototype` set by a route no such store shows -- `function
+setP(X) { X.prototype = K; } setP(F)`, `Object.assign(F, { prototype: K
+})`, `Object.defineProperty(F, "prototype", …)`, `Reflect.set(F, k, K)`,
+`for (const Q of [F]) Q.prototype = K`, `f.F.prototype = K` from another
+file -- left `F.prototype.max = f` adding an own member to `K` unseen.
+Live false `NOT_AFFECTED`s on the base, measured. Fixed: when a function
+or its `prototype` is used as a value anywhere in its file (handed to a
+call, stored, put in a container, exported), its `prototype` cannot be
+followed and is unknown (`usedAsValue`); and an escaping store under a
+`prototype` key (spelled or computed) gives a function or class value an
+unknown edge as well (`storesUnderPrototypeKey`). The claim "through every
+route a freshness proof accepts" in the third and fourth appends above is
+true only with these two rules. The same round measured the bookkeeping
+quadratic in a file's member stores (9.3 s for 400 prototype-style
+functions); it is indexed once per file now (196 ms for 800), with an
+operation-count test.
+
+**Appended after BL-081's sixth audit round (2026-10-18).** The fifth
+round's rules were keyed by spelling and by store syntax: a function's
+`prototype` set by a builtin under another name (`const G = F;
+Object.defineProperty(F, "prototype", { value: K }); G.prototype.max =
+f`), for an ES module's `export function F` (no value use), or through a
+bare `prototype` in a `with` body (`with (F.prototype.constructor) {
+prototype = K; }`, a `var` there) still lost `K`'s members. Live false
+`NOT_AFFECTED`s on the base, measured. Fixed: a builtin call that may store
+what it is handed under a `prototype` or `exports` key -- a key spelled in
+any argument, a computed object-literal key, or a non-literal key at the
+key position of `Object.defineProperty`, `Reflect.defineProperty` or
+`Reflect.set` -- gives a function or class value an unknown edge
+(`builtinMayStoreUnderModelKey`), and a bare `prototype` / `exports` in a
+`with` body is under the key. The same round measured `exports.x = …`
+stores quadratic (46 s for 4,000); the bare-name stores are indexed once
+per file now (449 ms for 8,000), and the per-pair check of the remaining
+stores is memoized.
+
+**Appended after BL-081's ninth audit round (2026-10-18).** The fifth
+round's value-use rule (a function handed on as a value made its
+`prototype` unknown) was removed: once an escaping store under a
+`prototype`, `exports` or computed key and a builtin call that may store
+under one give a stored function or class an unknown edge, every route by
+which a definition can become a `prototype` without a store the file
+spells has its own edge -- such a store, such a call, an unknown callee,
+or a store in another file onto an object that is not proven (an escape
+there). No case of the oracle suite moved when it was removed; the tenth audit round
+found it was not (RWF-122), as recorded there. The remaining per-pair check is indexed too (by
+alias spelling and by what each base denotes).
+
 ## RWF-064 — The H-0 builtin probe could not see a deferred hook, or a hook another context fires
 
 **Status:** Fixed in part (A-3a): see "What the probe still cannot see" below
@@ -19875,6 +20006,17 @@ an open-soundness-defect case, `species.promise-constructor-store` in
 `Symbol.species` to the protocol list, with the class value's constructor
 as the possible edge's target -- an amendment of the list the project
 owner decides, as for RWF-068.
+
+**Status update by task BL-081 (2026-10-16): fixed in part.** The
+recorded form, `x.constructor = Q` onto a promise, is closed: a promise is
+never proven to be an object the program created (a `new` or builtin
+result), so BL-081 makes the store an escape and `Q` gets a possible edge;
+`species.promise-constructor-store` was an open-defect record and asserts
+`UNKNOWN` now (its negative control drops the store, since `Q`'s own
+`super(ex)` into `Promise` is an unknown edge). Still open: a class's
+`static [Symbol.species]` member, and a `constructor` member a class or
+object literal DEFINES (no store). Backlog `BL-046` keeps the decision on
+the protocol list.
 
 ## RWF-071 — VT-210 reads the argument written at a parameter's position, ignoring a spread before it
 
@@ -21880,6 +22022,90 @@ through a base that may be a builtin object (a parameter, a computed or
 call is unresolved whenever a module that may run can replace a builtin.
 Both are precision trade-offs to measure first. Backlog `BL-081`.
 
+**Status update by task BL-081 (2026-10-16): Fixed in part** (its independent
+audit, ten rounds, did not certify the class: see the end of this update,
+RWF-122, RWF-123 and backlog `BL-091`), by option (a), the
+project owner's go with the measured recommendation (ADR 0008's BL-081
+decision record). Measured on the base `5db3c81` with the oracle harness
+(Node v22.11.0) and E-1's loud fixture: the three recorded spellings and
+seventy-one more live shapes answered `NOT_AFFECTED` while Node calls the
+target -- `install(Object)` in the same file, the entry replacing
+`Object.keys` through `({}).constructor` before it loads `wrap`, a
+destructured `constructor`, `exports.constructor`, an opaque value stored
+through a parameter, RWF-063's twenty-nine forms, RWF-120's fifteen store forms,
+and twenty-two shapes that attack the new proofs (`exports = Object`; a
+function's `prototype` replaced directly, through an alias, and by
+`Object.assign(P, { prototype: fs.promises })`; a builtin stored beside
+the program's function; a reassigned class; a derived class's field
+defined onto what its base constructor returned; a function's `prototype`
+replaced through an assignment's value, `(a = Fn).prototype = Object`, and
+through a function expression's own name; a function's `prototype`
+replaced through a stable name bound to an assignment; an async function's
+inherited `prototype`; an object whose [[Prototype]] was made the global
+object, whose own setters store into it; a symbol key read off a global
+`Symbol` the program may have replaced or extended). Each answers `UNKNOWN`
+on the branch (`tests/oracle/bl081-builtin-replaced-without-name.cases.ts`,
+102 cases with the masked shapes, controls and costs).
+
+The rule: a store is an escape unless the object it writes onto is proven
+to be one the program created -- a literal, a stably bound `function`,
+undecorated `class` or literal, `this` in a base class's constructor or
+instance field (or a static block or field: the class) or at a module's
+top level, `exports` / `module` / `module.exports` in a proven CommonJS
+scope and a function's `prototype` when every store the file makes to the
+name or member holds such an object (aliases included), a class's
+`prototype`. The argument is inductive over a closed list of store forms
+(`escape-row.ts`, `isProvenFreshObject`): an object's identity never
+changes, so a proof fails only through a store, and a store that makes a
+proven binding or member hold a builtin is checked by the proof or is
+itself an escape. The argument is audited, not proven: the independent
+audit's first six rounds each found store forms or value flows the lists
+had missed (each closed here, each recorded below and in RWF-063 and
+RWF-120), and so did the seventh: a proof assumed that `F.prototype` is
+an own property and that a fresh object keeps its default [[Prototype]].
+An async function's `prototype` is inherited (`A.__proto__ = { prototype:
+Object }` redirects it), and an object whose [[Prototype]] is changed to
+the global object runs the global's own setters (`o.Buffer = X` with `o =
+{ __proto__: globalThis }` replaces `Buffer`, measured). Fixed: an async
+non-generator function's `prototype` is never proven, and an object is
+not proven when its [[Prototype]] may change -- a literal with
+`__proto__:`, a name with a store under `__proto__` or a computed key, and
+any instance, function `prototype` or exports object in a file that
+stores `__proto__` (`prototypeMayBeChanged`); a TypeScript declaration
+that binds no run-time value (`declare class Object {}`) is never proven
+either. The eighth and ninth rounds found the same in a key spelling: a
+`Symbol.x` key was taken for a constant, but `Symbol.foo` holds whatever
+the program stored there (`Symbol.foo = "__proto__"`), and even a
+well-known symbol is read off the global `Symbol`, which another module
+may replace with a primitive store no escape sees; every symbol key is a
+computed key now. The tenth round was BLOCKED, on two findings (RWF-122, a key read through fewer forms
+than its value once the value-use rule was gone; RWF-123, a lookup cache
+that ignored a `with` body), each a live false `NOT_AFFECTED` measured
+against real Node, both `NOT_AFFECTED` on the base as well; by the project
+owner's decision of 2026-10-18 round 10 was the last round, and the two
+fixes its auditor proposed and measured were applied after it without a
+further round (backlog `BL-091` re-audits them). The class is NOT certified
+closed.
+What a pattern or a `for…of` head stores is read from its source or
+yielded by an iterator: an iteration always adds an unknown edge, an
+object pattern is attributed only from an object literal one level deep.
+A function or class that may carry its own members is also an opaque
+value wherever it is handed over. Option (b) (every builtin call unresolved when a module
+that may run can replace one) was not built: it cannot close the class
+alone -- Node invokes a replaced builtin member with no call site to make
+unknown (`[].__proto__.join = f; String([1])` and `RegExp.prototype.exec`
+through `"abc".replace(/b/, …)` call `f`, measured) -- so it needs (a)'s
+detection and account anyway; measured as an upper bound (every builtin
+callee unattributed) it loses 2,013 of the 31,641 clean `node_modules`
+graph nodes, (a) 1,880 (5.9 %), gaining none (`scripts/bl081-builtin-store-escape-corpus.mjs`,
+no time limit).
+No corpus verdict moved; six oracle controls of earlier tasks
+(`bl074-load-result-dataflow`: three, `e2-forwarding-write-set`: one,
+`bl084-function-own-object`: the two `strict.*` cases) answer `UNKNOWN`
+now, each marked as BL-081's precision cost: each stores the program's
+function onto a parameter, an array element, a load's `module.exports`,
+`arguments.callee` or `helper.caller`, none proven the program's own.
+
 ---
 
 ## RWF-111 — The export census's define arm trusts the builtin for the names it does not spell
@@ -22282,3 +22508,150 @@ made: both read the `knownFailure` marks, the suite's own baseline. The
 regenerated `REPORT.md` is committed. `cases.json` is not touched:
 marking `RWB-09a` `knownFailure` is the decision D-09 leaves to the
 project owner.
+
+## RWF-120 — A `for…of` head and a `with` body store into a builtin unseen, even by name
+
+**Status:** Fixed in part (BL-081; its independent audit did not certify the class: RWF-122, RWF-123, re-audit backlog `BL-091`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (a store the escape row does not read is assumed to
+store nothing)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing on the base
+**Fix lane:** A (ADR 0008 § 2's escape row)
+
+**Discovered:** by task BL-081, measuring RWF-110's neighbours against real
+Node v22.11.0 with the oracle harness (E-1's loud fixture), on the base
+`5db3c81`. A-3a's escape row (`escapingAssignmentOf`) reads only assignment
+EXPRESSIONS. Two other store forms replace a builtin:
+
+```js
+for (Object.keys of [function (o) { dangerousOp(o); return []; }]) {}
+with (Object) { keys = function (o) { dangerousOp(o); return []; }; }
+Object.keys({});                    // Node calls the target
+```
+
+and the `for…of` form through a parameter (`function install(O) { for
+(O.keys of [f]) {} } install(Object)`). The analyzer answered
+`NOT_AFFECTED` for all three, though the first spells `Object`. (A
+bare-name head, `for (Object of …)`, already withdrew `Object`'s ambient
+identity in its own file through `assignedNames`, but was no escape for
+another file's trusted call either.)
+
+**Appended after BL-081's independent audit (2026-10-18).** Three more
+forms, each a live false `NOT_AFFECTED` on the base, measured against real
+Node: a `for…of` head or an array pattern over an iterable that is not an
+array literal (`for (Object.keys of { *[Symbol.iterator]() { yield f; }
+})`, `[O.keys] = …` through a parameter: the store takes what the iterator
+yields, which the first fix read from the iterable's own members); and a
+`var` with an initializer in a `with` body (`with (Object) { var keys =
+f; }`, a `var` pattern, a `for (var keys of …)` head, through a
+parameter), which stores through the `with` object. And one regression of
+the first fix: `[o.toString] = <iterable object>` through a parameter was
+A-4's always-unknown `pattern_store`, and the escape's account replaced it
+with the iterable's members (base `UNKNOWN`, first fix `NOT_AFFECTED`).
+
+**Fix (BL-081).** A `for…of` head is an escaping store where an assignment
+to its target would be one (`escapingForOfStoreOf`; an iterable of
+primitives stores nothing); a bare name stored in a `with` body, and a
+`var` declared there (`declarationStoreOf`), may store onto the `with`
+object, an object not proven to be the program's own. What an array
+pattern or a `for…of` head stores is attributed only from a plain array
+literal; any other iterable gives the store an unknown edge
+(`storeIteratesUnseen` in the first fix, `storeReadsUnseen` since the
+second round). Oracle cases `rwf120.*` and `audit.*`; the
+bare-name head is an escape too.
+
+**Appended after BL-081's second audit round (2026-10-18).** Three more
+forms, each a live false `NOT_AFFECTED` on the base: an object pattern
+reads a MEMBER of its source, which the fix attributed from the source
+itself (`fn.a = f; ({ a: Object.keys } = fn)`, and through a parameter);
+a binding pattern's default in a `with` body (`with (Object) { var { keys
+= f } = 0; }`, a `for (var { keys = f } of …)` head) was dropped with a
+primitive or literal source; and even an array literal's iteration is not
+its elements, since `Array.prototype[Symbol.iterator]` (and a string's)
+can be replaced to yield anything. The rule that replaces the first fix's
+(`storeReadsUnseen`): an iteration always adds an unknown edge, an object
+pattern is attributed only from an object literal one level deep, and a
+binding pattern's defaults are stored values (`bindingPatternDefaults`).
+A `for…of` over primitives is therefore a store too (a precision cost,
+`cost.for-of-primitives`). The third round added a shorthand default in an assignment pattern
+(`with (Object) { ({ keys = f } = { a: g }); }`), which is no assignment
+expression of its own (`shorthandDefaultsOf`).
+
+## RWF-121 — A documented invoking builtin keeps its resolved callback edge after a module replaced it
+
+**Status:** Open (backlog `BL-090`)
+**Failure class:** false `AFFECTED`
+**Defect class:** B (the binding `setTimeout` is right; the value assumed
+for it is not what real Node holds)
+**Proof family affected:** none (an `AFFECTED` path)
+**Severity:** P2 (a false `AFFECTED`: SOUNDNESS-CONTRACT § 1 requires a
+concrete path; not the critical failure)
+**Fix lane:** A (ADR 0008 § 4's documented invoking builtins)
+
+**Discovered:** named in RWF-063's second audit append (A-3a, 2026-10-01)
+and in `call-graph.ts`'s receiver-bound builtin comment, never registered
+on its own; re-measured by task BL-081 against real Node v22.11.0 on the
+branch: with `globalThis.setTimeout = function () { return 0; }` in a
+sibling the file loads, or `function stub(g) { g.setTimeout = …; }
+stub(globalThis)` in the same file, `setTimeout(dangerousOp, 0)` answers
+`AFFECTED` while Node never calls the target. The store is an escape (its
+stub gets a possible edge, so nothing the stub runs is missed: no false
+`NOT_AFFECTED`), but the call keeps ADR 0008 § 4's RESOLVED edge to its
+callback.
+
+**What it needs.** A decision: a documented invoking builtin's edge is
+resolved only when no store that may replace the builtin can run before
+the call (a whole-program question), or it is always `possible` where any
+such store exists. A precision trade-off on the `AFFECTED` side, to
+measure first. Backlog `BL-090`.
+
+## RWF-122 — A builtin call's key was read through fewer forms than its value
+
+**Status:** Fixed (BL-081, after its tenth audit round; re-audit backlog `BL-091`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (a conditional / logical value collapsed to its literal form only)
+**Proof family affected:** C
+**Severity:** P1 (a live false `NOT_AFFECTED`; contrived shapes)
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by BL-081's tenth independent audit round, measured against
+real Node v22.11.0: `function F() {} function K() {} const c = true;
+Object.assign(F, c ? { prototype: K } : {}); F.prototype.max = f;` then
+`K` installed as `Math` through a parameter and `Math.max(1, 2)` calls the
+target; the branch answered `NOT_AFFECTED` (the base too). Also through
+`&&`, `||`, `??`, the comma operator, `=`, a spread of a conditional and
+`Object.defineProperties`. `builtinMayStoreUnderModelKey` read a key only
+through literals, while `escapingValuesOf` reads a value through every one
+of these forms, so `K` got a possible edge and the call no unknown edge.
+The fifth round's value-use rule had masked it; removing that rule as
+redundant (after the ninth round) reopened it on the branch.
+
+**Fix (BL-081).** The key reader follows the same forms the value
+collector does. Oracle cases
+`rwf063.prototype-set-by-object-assign-under-a-conditional` and `…-under-a-spread-conditional`.
+Applied after the tenth round by the project owner's decision (round 10
+was the last); not re-audited (backlog `BL-091`).
+
+## RWF-123 — BL-081's lookup cache reused an answer computed inside a `with` body
+
+**Status:** Fixed (BL-081, after its tenth audit round; re-audit backlog `BL-091`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (an answer keyed by spelling, not by what the name can denote there)
+**Proof family affected:** C
+**Severity:** P1 (a live false `NOT_AFFECTED`; contrived shapes)
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by BL-081's tenth independent audit round, measured against
+real Node v22.11.0: `function F() {} const A = F; with ({}) { F.prototype.z
+= function () {}; } A.prototype = Math; F.prototype.max = f; Math.max(1,
+2)` calls the target; the branch answered `NOT_AFFECTED` (the base too).
+`storesOnto`'s memo (added by BL-081's sixth round) was keyed by binding,
+spelling and kind; inside a `with` body `definitionsDenotedBy` follows
+nothing, so the smaller set computed there was reused outside it and the
+store through the alias `A` was lost.
+
+**Fix (BL-081).** The memo key includes whether the name sits in a `with`
+body. Oracle case `fresh.prototype-proof-looked-up-from-a-with-body`.
+Applied after the tenth round, not re-audited (backlog `BL-091`).
+

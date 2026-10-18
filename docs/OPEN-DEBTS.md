@@ -657,6 +657,16 @@ correctly bound. Both times the corpus reported no movement.
 Recorded in full, with both reproductions, the real-`node` ground truth
 and the widening table, as RWF-047 in `tests/validation/FINDINGS.md`.
 
+**Progress, added by task `BL-081` (2026-10-16).** Step 2's direct shape
+(`mod.run = wrapper; mod.run()`, the wrapper calling the target) no longer
+answers `NOT_AFFECTED`: BL-081 made a store onto an object not proven to
+be the program's own an escape, and a load's object is one, so the stored
+wrapper gets a possible edge and the target is `UNKNOWN`. Its open-defect
+record was replaced by that expected outcome. The defect itself stands:
+the call site still resolves to the stale `pkg#run` (Step 1's false
+`AFFECTED` and both call-site records), and the re-export path (PRM-11)
+was not re-measured. This entry stays OPEN.
+
 ### D-17 — Three read-only audits found ~70 further reproduced defects; the soundness contract does not hold on `main`
 
 **OPEN. Documentation only — recorded by task `record-soundness-audits`;
@@ -1367,6 +1377,31 @@ named exports and keeps the whole-module function. Its audit found
 `BL-087`). This entry still stands: lanes E (E-3..E-5) and C (C-2..C-5)
 remain, with RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107,
 RWF-108, RWF-109, RWF-110, RWF-111, RWF-113 and RWF-118 from this family.
+
+**Progress, added by task `BL-081` (2026-10-16).** Task BL-081
+(`docs/tasks/BL-081-builtin-replaced-without-name.md`, `BL-039` folded in)
+closes RWF-110 and RWF-063 with option (a) (ADR 0008, "Decision record —
+BL-081"): a store is an escape unless the object it writes onto is proven
+to be one the program created, since a builtin object reaches a user
+binding through routes no spelling shows. It found and closes `RWF-120`
+(a `for…of` head, a `with` body and an iteration stored into a builtin
+unseen, even by name), and closes the recorded form of `RWF-070` (`x.constructor = Q` onto
+a promise; `static [Symbol.species]` stays open, `BL-046`) and, at the
+verdict, D-16's Step 2. Seventy-four live family-C false `NOT_AFFECTED`s
+measured against real Node are closed
+(`tests/oracle/bl081-builtin-replaced-without-name.test.ts`). Precision
+cost: no corpus verdict moved; 1,880 of 31,641 `node_modules` graph
+nodes lose a search region free of unknown edges
+(`scripts/bl081-builtin-store-escape-corpus.mjs`); six oracle controls of
+earlier tasks. It registered `RWF-121` (a replaced documented invoking
+builtin keeps its resolved callback edge: a false `AFFECTED`,
+pre-existing, backlog `BL-090`). Its independent audit ran ten rounds
+and did not certify the class: the last round's RWF-122 and RWF-123 were
+fixed after it without a further round, by the project owner's decision,
+and backlog `BL-091` re-audits them. This entry still stands: lanes E
+(E-3..E-5) and C (C-2..C-5) remain, with RWF-070's species member,
+RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108,
+RWF-109, RWF-111, RWF-113, RWF-118 and RWF-121 from this family.
 
 ## 2. Target intelligence is not analyzer uncertainty
 

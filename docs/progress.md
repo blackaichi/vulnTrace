@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-16, by `BL-089`.
+**Last updated:** 2026-10-18, by `BL-081`.
 
 ## Objective
 
@@ -78,6 +78,17 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   fixed); a destructured require is named by its key (PRM-108's origin; a
   computed key is still open at the consumer, C-4). What binds A-7, E and C
   next: REMEDIATION-PLAN § 5a, "A-3a additions" through "A-6 additions".
+  `BL-081` (`BL-039` folded in) widened § 2's escape row by ADR 0008's
+  BL-081 decision record (option (a)): a store is an escape unless the
+  object it writes onto is proven to be one the program created
+  (`isProvenFreshObject`), since a builtin object reaches a user binding
+  through routes no spelling shows; a `for…of` head and a `with` body are
+  stores. RWF-110, RWF-063 and RWF-120 (found by it) are fixed in part:
+  its independent audit ran ten rounds without certifying the class, the
+  last round's RWF-122 and RWF-123 were fixed after it without a further
+  round (the project owner's decision), and `BL-091` re-audits. RWF-070's
+  recorded form and D-16's Step 2 verdict close as a side effect.
+  REMEDIATION-PLAN § 5a, "BL-081 additions".
 - Lane V has started. `V-1` (ADR 0011 predicates 2 and 3) deleted Site
   B's phantom target: a package with no node in the call graph is proved
   unreachable only by family A, and is otherwise `UNKNOWN` (PRM-101); Site
@@ -270,18 +281,18 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-089` — Speed up the local gate run without weakening any gate
-([task file](tasks/BL-089-gate-speedup.md), placed first by the project
-owner; tooling only): `READY_FOR_REVIEW`. `BL-084` merged as PR #106.
+`BL-081` — A store that may land on a builtin object is an escape,
+whatever route reached it
+([task file](tasks/BL-081-builtin-replaced-without-name.md), `BL-039`
+folded in): `READY_FOR_REVIEW`. `BL-089` merged as PR #107.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-089`:
-`BL-081` (RWF-110, P0, live, lane A: a builtin replaced without its name
-runs with no call edge; needs the owner's decision and a precision
-measurement), `BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-081`:
+`BL-091` (re-audit BL-081's last fixes and the class, P1), `BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
 (entrypoint roots), `E-4`, `E-5`. `BL-078` (RWF-107), `BL-080` (RWF-109)
-and `BL-082` (RWF-111), `BL-083` (RWF-113) and `BL-087` (RWF-118) need decisions. The P1 gaps `BL-057` and
+and `BL-082` (RWF-111), `BL-083` (RWF-113), `BL-087` (RWF-118) and
+`BL-090` (RWF-121) need decisions. The P1 gaps `BL-057` and
 `BL-058` (small, `module-resolver.ts` only, from C-1), `BL-048`
 (RWF-074), `BL-050` (RWF-076), `BL-040`, `BL-043` and `BL-051` (live
 family-A false `NOT_AFFECTED`s) are candidates to reorder ahead of the
@@ -289,6 +300,14 @@ rest of lane E. `BL-068` is narrowed to RWF-098's single-write unit
 records (P2).
 
 ## Recently discovered
+
+From `BL-081`: `RWF-120` (a `for…of` head, a `with` body and an iteration
+stored into a builtin unseen, even by name; live, fixed in part in BL-081),
+`RWF-122` and `RWF-123` (found by its tenth audit round, fixed after it,
+not re-audited: backlog `BL-091`, P1) and `RWF-121`
+(`BL-090`, P2: a replaced documented invoking builtin keeps its resolved
+callback edge, a false `AFFECTED`, pre-existing; named in RWF-063 since
+A-3a, never registered). `BL-046` is narrowed to `static [Symbol.species]`.
 
 From `BL-089`: `RWF-119` (records, fixed in BL-089: three records still
 said `test:validation` keeps five cases failing, and the committed

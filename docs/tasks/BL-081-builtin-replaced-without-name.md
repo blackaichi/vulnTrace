@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-081 (with `BL-039` folded in)
 - **Branch**: `bl-081-builtin-replaced-without-name`
 - **Base SHA**: `5db3c81d9f3848aff559247ccb7190f94c088c4f` (BL-089's merge, PR #107)
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): BL-081 task file — a store that may land on a builtin object is an escape, whatever route reached it`
+  - `test(BL-081): a store that may land on a builtin object, against real Node — RWF-110, RWF-063, RWF-120`
+  - `fix(BL-081): a store onto an object not proven to be the program's own is an escape — RWF-110, RWF-063, RWF-120`
+  - (this commit) `docs(BL-081): records — RWF-110, RWF-063, RWF-120 fixed in part, RWF-120..123 found, ADR 0008 decision record (option (a)), plan § 5a, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -174,3 +178,76 @@ is the six known failures of OPEN-DEBTS D-09 (`RWB-03`, `RWB-05`,
 ## Report
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
+
+## Corrections and outcome (appended by the last commit)
+
+- **The decision: option (a), as "unless proven".** A store is an escape
+  unless the object it writes onto is proven to be one the program
+  created (`isProvenFreshObject`). Option (b) was measured, not built: its
+  upper bound (every builtin callee unattributed) loses 2,013 of the
+  31,641 `node_modules` graph nodes whose search region had no unknown
+  edge, against (a)'s 1,880 (5.9 %); and it cannot close the class alone, since
+  Node invokes a replaced builtin member where the program has no call of
+  it (`[].__proto__.join = f; String([1])`, a replaced
+  `RegExp.prototype.exec` through `"abc".replace(/b/, …)`, measured).
+  Keying the escape by builtin member names was rejected: Node reads its
+  own dictionary objects (an emitter's `_events`) by names they do not
+  have by default.
+- **A measurement premise was false at first.** The first graph
+  measurement capped each package at 120 s and ran three passes at once;
+  the cap made the walk depend on the machine's load, and it read a
+  load-dependent truncation of `typescript` as 8,886 "gained" nodes and
+  option (b)'s cost as 3,564. Every number recorded here comes from
+  `scripts/bl081-builtin-store-escape-corpus.mjs`, with no time limit.
+- **The scope grew, by the independent audit, ten rounds.** Premise 3's
+  two store forms (RWF-120) were found while measuring; the audit then
+  found, each a live false `NOT_AFFECTED` on the base and each fixed here:
+  round 1, iteration (a `for…of` / array pattern over an iterable object),
+  `var` in a `with` body, a derived class's field, a decorated class, and
+  one regression of the first fix (a protocol-keyed array pattern through a
+  parameter, base `UNKNOWN`, first fix `NOT_AFFECTED`); round 2, object
+  patterns reading a member, binding-pattern defaults, any iteration
+  (an array literal's iterator can be replaced), a function or class
+  carrying its own members, TC39 decorators, a `prototype` replaced through
+  an assignment's value or a function expression's own name; round 3, own
+  members across files and through every freshness route, TypeScript
+  namespace merging, shorthand defaults; round 4, a stable name bound to a
+  non-name route (one relation, `definitionsDenotedBy`, now serves both
+  the own-member and the `prototype` proofs); round 5, a `prototype` set by
+  a route no store spells (a function handed on as a value), and a
+  quadratic cost (indexed once per file now, with an operation-count
+  test); round 6, a `prototype` set by a builtin under another name or for
+  an ES module export (a builtin-call twin of the prototype-key rule), a
+  bare `prototype` in a `with` body, and a quadratic cost on `exports.x =
+  …` stores; round 7, an async function's inherited `prototype`, an
+  object whose [[Prototype]] may be changed to the global object (whose own
+  setters store into it), and TypeScript declarations that bind no
+  run-time value; rounds 8 and 9, a `Symbol.x` key taken for a constant
+  (every symbol key is computed now: the global `Symbol` can be replaced),
+  and two more quadratic costs in the bookkeeping (each indexed); the
+  fifth round's value-use rule was then removed as redundant with the
+  `prototype`-key rules (no oracle case moved); round 10 was BLOCKED, on two findings (RWF-122, a key read through fewer forms
+  than its value once the value-use rule was gone; RWF-123, a lookup cache
+  that ignored a `with` body), each a live false `NOT_AFFECTED` measured
+  against real Node, both `NOT_AFFECTED` on the base as well; by the project
+  owner's decision of 2026-10-18 round 10 was the last round, and the two
+  fixes its auditor proposed and measured were applied after it without a
+  further round (backlog `BL-091` re-audits them). The class is NOT certified
+  closed.
+- **RWF-047's Step 2 verdict closed as a side effect**, and RWF-070's
+  recorded form: their open-defect records were replaced by the expected
+  outcomes, as the records demand. RWF-047's call-site attribution and
+  Step 1 stay open; RWF-070's `static [Symbol.species]` stays open
+  (`BL-046`, narrowed).
+- **Registered, not fixed:** RWF-121 (a replaced documented invoking
+  builtin keeps its resolved callback edge: a false `AFFECTED`,
+  pre-existing; backlog `BL-090`).
+- **Precision cost.** No corpus verdict moved (139 cases); 1,880 (5.9 %) of
+  31,641 clean `node_modules` graph nodes; six oracle controls of earlier
+  tasks and three cost cases of this one answer `UNKNOWN`, each marked.
+- **Tests that changed** (each re-grounded, none pinning a wrong verdict):
+  the protocol-member and census unit tests now store onto `const o = {}`
+  (onto a parameter the store is an escape first, with its own test); the
+  V-2 and V-3 oracle reasons read `escaped_value` (the escape answers
+  first; V-3's root incompleteness is isolated by a new integration case);
+  the RWF-047 integration test's probe takes the call site's own edge.

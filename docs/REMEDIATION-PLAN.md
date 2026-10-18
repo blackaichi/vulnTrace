@@ -2015,6 +2015,48 @@ status update), RWF-115, RWF-116, RWF-117.
   self-held-read replay is quadratic in self-storing owners × computed
   reads of `module.exports` (a contrived shape).
 
+**BL-081 additions** (task `BL-081`, 2026-10-16; `BL-039` folded in).
+RWF-110 and RWF-063 are closed, and RWF-120 (found by BL-081 and its
+audit): a store is an escape unless the object it writes onto is proven to
+be one the program created, over a closed list of store forms (a `for…of`
+head, a `with` body, a derived class's field among them), what a pattern
+or an iteration stores is read or yielded, never the source itself, and a
+value that may carry its own members is opaque (ADR 0008,
+decision record of 2026-10-16). RWF-070's recorded form and D-16's Step 2
+verdict close as a consequence. Full record: FINDINGS RWF-110 (BL-081
+status update), RWF-063, RWF-070, RWF-047, RWF-120.
+
+- **Differentials.** `node scripts/differential.mjs` against `5db3c81`,
+  139 corpus cases: graph 17 cases (call sites +644/−194; 17 retargeted, 2 withdrawn to
+  unknown -- lodash's `toString`, a protocol value now also opaque),
+  proof 0, verdict 0 (none into `NOT_AFFECTED`, none removed, none
+  unmeasured). The validation baseline stays D-09's six. A first prototype
+  that took `module` itself for an unproven object moved RWB-07
+  (`NOT_AFFECTED → UNKNOWN`, `module.exports = { … }`); the `module` proof
+  restores it.
+- **Precision, measured** by `scripts/bl081-builtin-store-escape-corpus.mjs`
+  (every `node_modules` package, every file an entry, no time limit):
+  1,880 (5.9 %) of 31,641 graph nodes whose search region had no unknown edge
+  lose it, none gain. Option (b)'s upper bound loses 2,013, and cannot
+  account a replaced member Node invokes with no call site (ADR 0008's
+  record).
+- **What BL-081 binds.** Any later rule that trusts what an object holds
+  -- a builtin call, a receiver, a module object (E-4) -- must ask whether
+  the object is proven to be the program's own (`isProvenFreshObject`),
+  not whether its name is a builtin's; a new proof must come with the
+  store census that keeps it (every store to the binding or member,
+  aliases included) and a real-Node control.
+- **Not certified.** The independent audit ran ten rounds; the last one's
+  two findings (RWF-122, RWF-123) were fixed after it without a further
+  round, by the project owner's decision. **`BL-091`** (P1) re-audits them
+  and the class; RWF-110, RWF-063 and RWF-120 are "fixed in part" until
+  then.
+- **`BL-046`** (RWF-070) is narrowed to a class's `static [Symbol.species]`
+  member and a defined (not stored) `constructor`.
+- **`BL-090`** (RWF-121, P2, false `AFFECTED`, pre-existing, registered by
+  BL-081): a documented invoking builtin's resolved callback edge is kept
+  after a module replaced the builtin; a decision and a measurement first.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None
