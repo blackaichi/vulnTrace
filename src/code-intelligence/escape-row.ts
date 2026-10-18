@@ -901,6 +901,11 @@ export function escapingForOfStoreOf(
   return root;
 }
 
+/** Whether the file is TypeScript, whose emit may lower a class field to an assignment. */
+function isTypeScriptSource(sourceFile: ts.SourceFile): boolean {
+  return /\.[cm]?tsx?$/.test(sourceFile.fileName);
+}
+
 function isVarList(list: ts.VariableDeclarationList): boolean {
   return (list.flags & ts.NodeFlags.BlockScoped) === 0;
 }
@@ -938,8 +943,22 @@ export function declarationStoreOf(node: ts.Node): ts.Expression | undefined {
     }
     value = stores ? node.initializer : undefined;
   } else if (ts.isPropertyDeclaration(node)) {
+    // An instance field of a derived class is defined onto whatever the
+    // base constructor returned. A STATIC field of a class whose static
+    // chain is not the program's own is a store onto a class that inherits
+    // its base constructor's setters under TypeScript's legacy emit
+    // (`useDefineForClassFields: false`, the default below target ES2022):
+    // `static defaultOptions = v` compiles to `D.defaultOptions = v`, which
+    // runs `util.inspect`'s inherited setter (task BL-091, RWF-127). The
+    // file's target is not read, so every TypeScript file is taken as that
+    // emit; a JavaScript source compiled the same way (Babel's or swc's
+    // loose mode) is not covered.
     const derived =
-      ts.isClassLike(node.parent) && isDerived(node.parent) && !isStatic(node);
+      ts.isClassLike(node.parent) &&
+      (isStatic(node)
+        ? isTypeScriptSource(node.getSourceFile()) &&
+          !hasOwnStaticChain(node.parent, 0)
+        : isDerived(node.parent));
     const decorators = ts.getDecorators(node) ?? [];
     if (derived && decorators.length > 0) {
       // A field decorator may replace the initializer with any function's
@@ -1522,7 +1541,9 @@ function isFresh(raw: ts.Expression, hops: number): boolean {
     ts.isArrayLiteralExpression(expr) ||
     ts.isFunctionExpression(expr) ||
     ts.isArrowFunction(expr) ||
-    (ts.isClassExpression(expr) && !isDecorated(expr)) ||
+    (ts.isClassExpression(expr) &&
+      !isDecorated(expr) &&
+      hasOwnStaticChain(expr, hops)) ||
     ts.isRegularExpressionLiteral(expr)
   ) {
     return true;
@@ -1560,14 +1581,25 @@ function isFresh(raw: ts.Expression, hops: number): boolean {
   }
   if (member.key === "prototype" && isFreshBinding(member.object, hops)) {
     const binding = resolveNamedBinding(member.object);
-    if (
-      binding.kind === "class" ||
-      (binding.kind === "value" &&
-        ts.isClassExpression(skipOuterExpressions(binding.value)))
-    ) {
+    const cls =
+      binding.kind === "class"
+        ? binding.declaration
+        : binding.kind === "value"
+          ? skipOuterExpressions(binding.value)
+          : undefined;
+    if (cls !== undefined && ts.isClassLike(cls)) {
       // A class's `prototype` is non-writable and non-configurable (the
-      // binding is proven above, so it is the class, undecorated).
-      return true;
+      // binding is proven above, so it is the class, undecorated). A
+      // derived class's inherits from its base's `prototype`, which a store
+      // onto a fresh function can make the global object, whose own
+      // setters then install what is stored as a builtin (task BL-091,
+      // RWF-124: `X.prototype = globalThis; class C extends X {}`).
+      // Under TypeScript's ES5 emit a class is a function, whose `prototype`
+      // is writable: the stores to it are checked as a function's are.
+      return (
+        !isDerived(cls) &&
+        everyMemberStoreIsFresh(member.object, "prototype", hops)
+      );
     }
     return (
       isFunctionBinding(binding) &&
@@ -1747,7 +1779,11 @@ function isFreshThisPosition(node: ts.Node): boolean {
     if (ts.isClassStaticBlockDeclaration(current)) {
       // The class itself -- unless a class decorator stands in for it
       // (TC39 decorators run static code on the decorator's result).
-      return ts.isClassLike(current.parent) && !isDecorated(current.parent);
+      return (
+        ts.isClassLike(current.parent) &&
+        !isDecorated(current.parent) &&
+        hasOwnStaticChain(current.parent, 0)
+      );
     }
     if (ts.isPropertyDeclaration(current) && ts.isClassLike(current.parent)) {
       // A field initializer: `this` is the class for a static field (the
@@ -1756,12 +1792,17 @@ function isFreshThisPosition(node: ts.Node): boolean {
       return (
         child === current.initializer &&
         (isStatic(current)
-          ? !isDecorated(current.parent)
-          : !isDerived(current.parent))
+          ? !isDecorated(current.parent) && hasOwnStaticChain(current.parent, 0)
+          : !isDerived(current.parent) &&
+            classPrototypeIsStable(current.parent))
       );
     }
     if (ts.isConstructorDeclaration(current)) {
-      return ts.isClassLike(current.parent) && !isDerived(current.parent);
+      return (
+        ts.isClassLike(current.parent) &&
+        !isDerived(current.parent) &&
+        classPrototypeIsStable(current.parent)
+      );
     }
     if (ts.isFunctionLike(current) || ts.isClassLike(current)) {
       // A function's or method's `this` is its receiver; a computed key or
@@ -1773,6 +1814,62 @@ function isFreshThisPosition(node: ts.Node): boolean {
   return false;
 }
 
+const prototypeStabilityCache = new WeakMap<ts.SourceFile, boolean>();
+const prototypeStabilityPending = new Set<ts.SourceFile>();
+
+/**
+ * Whether the instances of a class inherit from its own `prototype` object:
+ * always, natively (a class's `prototype` is non-writable), but not under
+ * TypeScript's ES5 emit, where the class is a function whose `prototype` a
+ * store replaces (`(C as any).prototype = globalThis`).
+ */
+function classPrototypeIsStable(cls: ts.ClassLikeDeclaration): boolean {
+  const sourceFile = cls.getSourceFile();
+  if (!isTypeScriptSource(sourceFile)) {
+    return true;
+  }
+  const cached = prototypeStabilityCache.get(sourceFile);
+  if (cached !== undefined) {
+    return cached;
+  }
+  if (prototypeStabilityPending.has(sourceFile)) {
+    // Re-entrant: a stored value holds a `this` whose proof needs this
+    // answer (`C.prototype = this` in a constructor). Not proven (task
+    // BL-091's independent audit: the recursion was unbounded).
+    return false;
+  }
+  prototypeStabilityPending.add(sourceFile);
+  try {
+    const stable = computePrototypeStability(sourceFile);
+    prototypeStabilityCache.set(sourceFile, stable);
+    return stable;
+  } finally {
+    prototypeStabilityPending.delete(sourceFile);
+  }
+}
+
+/** Computed once per file (task BL-091's independent audit: once per `this` was quadratic). */
+function computePrototypeStability(sourceFile: ts.SourceFile): boolean {
+  prototypeStabilityComputations += 1;
+  // Every `prototype` store of the file, through any base: a store whose
+  // base or key is not a name may be onto this class too.
+  const index = memberStoreIndex(sourceFile);
+  if (
+    index.nonNameKeys.has("prototype") ||
+    index.nonNameKeys.has(COMPUTED_KEY) ||
+    index.byKey.has(COMPUTED_KEY)
+  ) {
+    return false;
+  }
+  const entry = index.byKey.get("prototype");
+  return (
+    entry === undefined ||
+    [...entry.bySpelling.values()]
+      .flat()
+      .every((store) => store.value !== undefined && isFresh(store.value, 1))
+  );
+}
+
 function isDecorated(cls: ts.ClassLikeDeclaration): boolean {
   return (ts.getDecorators(cls)?.length ?? 0) > 0;
 }
@@ -1781,6 +1878,30 @@ function isStatic(node: ts.PropertyDeclaration): boolean {
   return (ts.getModifiers(node) ?? []).some(
     (modifier) => modifier.kind === ts.SyntaxKind.StaticKeyword,
   );
+}
+
+/**
+ * Whether the class object's own [[Prototype]] chain is the program's own: a
+ * base class (Function.prototype), or a derived class whose `extends`
+ * expression is itself proven the program's own (task BL-091, RWF-126: a
+ * derived class's STATIC members are looked up on its base constructor, so a
+ * store onto the class runs the base's inherited setter --
+ * `class D extends util.inspect {} D.defaultOptions = { sorted: f }` installs
+ * `f` as Node's inspect default, and `class D extends Module {} D.wrap = f`
+ * as the CommonJS wrapper).
+ */
+function hasOwnStaticChain(
+  cls: ts.ClassLikeDeclaration,
+  hops: number,
+): boolean {
+  const clause = (cls.heritageClauses ?? []).find(
+    (candidate) => candidate.token === ts.SyntaxKind.ExtendsKeyword,
+  );
+  if (clause === undefined) {
+    return true;
+  }
+  const base = clause.types[0]?.expression;
+  return base !== undefined && isFresh(base, hops + 1);
 }
 
 function isDerived(cls: ts.ClassLikeDeclaration): boolean {
@@ -1818,7 +1939,8 @@ function isFreshBinding(id: ts.Identifier, hops: number): boolean {
       if (
         (binding.kind === "class" &&
           ts.isClassLike(binding.declaration) &&
-          isDecorated(binding.declaration)) ||
+          (isDecorated(binding.declaration) ||
+            !hasOwnStaticChain(binding.declaration, hops))) ||
         isAmbientDeclaration(binding.declaration) ||
         prototypeMayBeChanged(id, sourceFile)
       ) {
@@ -1906,17 +2028,20 @@ const memberStoreIndexCache = new WeakMap<ts.SourceFile, MemberStoreIndex>();
 let memberStoreIndexBuilds = 0;
 let fullSameObjectChecks = 0;
 let storeVisits = 0;
+let prototypeStabilityComputations = 0;
 
 /** Operation counts of the own-member and freshness bookkeeping, for the structural performance test (ARCHITECTURE § 10). */
 export function ownMemberBookkeepingCounts(): {
   readonly indexBuilds: number;
   readonly fullSameObjectChecks: number;
   readonly storeVisits: number;
+  readonly prototypeStabilityComputations: number;
 } {
   return {
     indexBuilds: memberStoreIndexBuilds,
     fullSameObjectChecks,
     storeVisits,
+    prototypeStabilityComputations,
   };
 }
 
