@@ -12,7 +12,9 @@ import { TARGET_MARKER, oracleCase } from "./e1-export-write-set.cases.js";
  * `rwf103.*` and `rwf106.*` cases whose `base` is `NOT_AFFECTED` while
  * `called` is true are the live false `NOT_AFFECTED`s BL-074 closes;
  * `control.*` keep their precision; `cost.*` is the precision the rule
- * gives up, measured.
+ * gives up, measured. Three controls that store the program's function
+ * onto an object not proven to be the program's own answer `UNKNOWN`
+ * since task BL-081, each marked as that task's precision cost.
  */
 
 // One macrotask turn before each case (backlog BL-033).

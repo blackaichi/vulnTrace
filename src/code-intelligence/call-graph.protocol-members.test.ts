@@ -272,16 +272,26 @@ describe("a protocol member is reached by a possible edge from the owner that ev
 });
 
 describe("a value that cannot be attributed gets an unknown protocol_value edge (ADR 0008 § 3)", () => {
+  // Task BL-081: each store writes onto an object the program created
+  // (`const o = {}`). Onto a parameter, which may be a builtin object, the
+  // same store is an escape first (`escaped_value`; see
+  // `call-graph.escape-row.test.ts`).
   it.each([
-    ["a stored parameter", `function f(o, v) { o.then = v; }\nf({}, 1);\n`],
+    [
+      "a stored parameter",
+      `function f(v) { const o = {}; o.then = v; }\nf(1);\n`,
+    ],
     [
       "a dynamic-key store (the project owner's decision of 2026-10-04)",
-      `function f(o, k, v) { o[k] = v; }\nf({}, "x", 1);\n`,
+      // Onto a literal no name holds: a computed-key store onto a NAMED
+      // object may set its [[Prototype]] (`k` may be `"__proto__"`), so
+      // the name is no longer proven the program's own (task BL-081).
+      `function f(k, v) { ({})[k] = v; }\nf("x", 1);\n`,
     ],
     ["a property", `function f(v) { return { toString: v }; }\nf(1);\n`],
     [
       "a destructuring store into a protocol member",
-      `function f(o, src) { ({ a: o.toString } = src); }\nf({}, {});\n`,
+      `function f(src) { const o = {}; ({ a: o.toString } = src); }\nf({});\n`,
     ],
   ])("%s", async (_name, source) => {
     const built = await build(source);
@@ -304,9 +314,18 @@ describe("a value that cannot be attributed gets an unknown protocol_value edge 
     );
   });
 
-  it("a store under a key proven not to be a protocol key gets nothing", async () => {
-    const built = await build(`function f(o, v) { o.run = v; }\nf({}, 1);\n`);
+  it("a store under a key proven not to be a protocol key, onto an object the program created, gets nothing", async () => {
+    const built = await build(
+      `function f(v) { const o = {}; o.run = v; }\nf(1);\n`,
+    );
     expect(describeEdges(built.graph, nodeNamed(built.graph, "f"))).toEqual([]);
+  });
+
+  it("the same store onto a parameter, which may be a builtin object, is an escape (task BL-081, RWF-063)", async () => {
+    const built = await build(`function f(o, v) { o.run = v; }\nf({}, 1);\n`);
+    expect(describeEdges(built.graph, nodeNamed(built.graph, "f"))).toEqual([
+      "unknown escaped_value",
+    ]);
   });
 
   it("a protocol GETTER's returned value is invoked: a possible edge from the getter", async () => {

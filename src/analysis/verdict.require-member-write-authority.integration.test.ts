@@ -246,8 +246,21 @@ async function run(options: {
 
   let callSite: EdgeObservation;
   const probe = graph.nodes.find((n) => n.name === "normalize");
+  // The probed call site is the `….run(input)` call: since task BL-081 the
+  // member write before it (`mod.run = patched`) is a site of its own, an
+  // escape (a load's object may be a builtin), so `normalize` has two
+  // accounts and only the call's is this probe's.
+  const callLine =
+    options.entrySrc
+      .split("\n")
+      .findIndex((line) => line.includes(".run(input)")) + 1;
   const probeEdges = probe
-    ? graph.edges.filter((e) => e.from === probe.id && e.type !== "module_load")
+    ? graph.edges.filter(
+        (e) =>
+          e.from === probe.id &&
+          e.type !== "module_load" &&
+          e.location?.line === callLine,
+      )
     : [];
   const [edge] = probeEdges;
   if (!probe) {
@@ -480,26 +493,6 @@ const STEP1_CALL_SITE: OpenSoundnessDefect<EdgePattern, EdgeObservation> = {
   observed: { kind: "exact", target: "node_modules/pkg/index.js#run" },
 };
 
-/**
- * STEP 2, verdict. Real node reaches `pkg#danger` through the displacing
- * wrapper (fixture row P3), so `NOT_AFFECTED` is unsound -- the critical
- * failure. `AFFECTED` would be sound; the fail-closed fix gives `UNKNOWN`.
- */
-const STEP2_VERDICT: OpenSoundnessDefect<Verdict, VerdictObservation> = {
-  caseId: "step 2: a displacing wrapper reaches pkg#danger",
-  rwf: "RWF-047",
-  debt: "D-16",
-  admissible: ["UNKNOWN", "AFFECTED"],
-  expected: "UNKNOWN",
-  observed: {
-    verdict: "NOT_AFFECTED",
-    proofFamily: "C",
-    target: "node_modules/pkg/index.js#run",
-    reachableSubgraphComplete: true,
-    unknownEdges: 0,
-  },
-};
-
 /** STEP 2, call site: the written value is the local `wrapper`. */
 const STEP2_CALL_SITE: OpenSoundnessDefect<EdgePattern, EdgeObservation> = {
   caseId: "step 2: the mod.run(input) call site after mod.run = wrapper",
@@ -566,18 +559,23 @@ describe("RWF-047: a member write on a require-bound module object (open soundne
   // STEP 2 -- the false-NOT_AFFECTED direction (the displacement chain)
   // ------------------------------------------------------------------
 
-  it("is not NOT_AFFECTED when a displacing wrapper reaches the vulnerable export (known open defect RWF-047)", async () => {
+  it("is not NOT_AFFECTED when a displacing wrapper reaches the vulnerable export: UNKNOWN", async () => {
     const outcome = await run({
       entrySrc: DISPLACES_THE_HONEST_BLOCKER,
       target: "danger",
     });
 
     // Ground truth (fixture row P3): the patched wrapper executes and
-    // reaches the vulnerable sink on this load. The record's `observed`
-    // carries the whole closed chain -- a Family C proof, a complete
-    // reachable subgraph, zero unresolved edges -- so ANY link changing
-    // fails this test.
-    expectOpenDefect(STEP2_VERDICT, VERDICT_DOMAIN, outcome.observation);
+    // reaches the vulnerable sink on this load. Until task BL-081 this was
+    // an open-defect record observing the closed chain -- a Family C proof,
+    // a complete reachable subgraph, zero unresolved edges. BL-081 made
+    // `mod.run = wrapper` an escape (a load's object may be a builtin, so
+    // whoever holds it may call what is stored): `wrapper` gets a possible
+    // edge from `normalize`, and the target, reached through it, is
+    // UNKNOWN (`possible_invocation`) -- the record's expected outcome. The
+    // stale call-site attribution (STEP2_CALL_SITE below) is still open.
+    expect(outcome.verdict).toBe("UNKNOWN");
+    expect(outcome.family).toBe("-");
   });
 
   it("refuses the call site after the displacing write (known open defect RWF-047)", async () => {

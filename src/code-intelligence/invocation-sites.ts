@@ -1,6 +1,11 @@
 import { isBuiltin } from "node:module";
 import ts from "typescript";
-import { escapingAssignmentOf, type EscapeRoot } from "./escape-row.js";
+import {
+  declarationStoreOf,
+  escapingAssignmentOf,
+  escapingForOfStoreOf,
+  type EscapeRoot,
+} from "./escape-row.js";
 import { isJsxSite, type JsxSite } from "./jsx-runtime.js";
 import {
   protocolDefinitionOf,
@@ -76,11 +81,24 @@ export type InvocationSite =
        * assignment to a member rooted in an ambient or builtin value". The
        * runtime may invoke what is stored (`Error.prepareStackTrace = f`,
        * PRM-114), and a later call of the builtin reaches it
-       * (`Math.max = f; Math.max(1)`).
+       * (`Math.max = f; Math.max(1)`). Since task BL-081, a store onto any
+       * object not proven to be one the program created (RWF-110,
+       * RWF-063), the head of a `for…of`, which stores each element of
+       * its iterable (RWF-120), and the stores with no assignment
+       * expression (`escape-row.ts`'s `declarationStoreOf`): a `var` in a
+       * `with` body, a derived class's instance field or parameter
+       * property.
        */
       readonly kind: "escaping_assignment";
-      readonly node: ts.BinaryExpression;
+      readonly node:
+        | ts.BinaryExpression
+        | ts.ForOfStatement
+        | ts.VariableDeclaration
+        | ts.PropertyDeclaration
+        | ts.ParameterDeclaration;
       readonly root: EscapeRoot;
+      /** What is stored: the right-hand side, or the iterable whose elements a `for…of` head stores. */
+      readonly value: ts.Expression;
     }
   | {
       /**
@@ -144,7 +162,33 @@ export function invocationSiteOf(node: ts.Node): InvocationSite | undefined {
     // stores an edge.
     const root = escapingAssignmentOf(node, isBuiltin);
     if (root) {
-      return { kind: "escaping_assignment", node, root };
+      return { kind: "escaping_assignment", node, root, value: node.right };
+    }
+  }
+  if (
+    ts.isVariableDeclaration(node) ||
+    ts.isPropertyDeclaration(node) ||
+    ts.isParameter(node)
+  ) {
+    const value = declarationStoreOf(node);
+    if (value) {
+      return {
+        kind: "escaping_assignment",
+        node,
+        root: { kind: "unproven_object" },
+        value,
+      };
+    }
+  }
+  if (ts.isForOfStatement(node)) {
+    const root = escapingForOfStoreOf(node, isBuiltin);
+    if (root) {
+      return {
+        kind: "escaping_assignment",
+        node,
+        root,
+        value: node.expression,
+      };
     }
   }
   if (isJsxSite(node)) {
@@ -414,7 +458,7 @@ export const SYNTAX_KIND_CENSUS = {
     role: "site",
     site: "escaping_assignment",
     also: ["protocol_member"],
-    when: "an assignment (`=`, `||=`, `&&=`, `??=`) that stores a value which may carry the program's own code into an ambient global, a member of one, or a member of a builtin module's value (task A-3a, ADR 0008 § 2's escape row, PRM-114); otherwise one storing into a member under a key that may be a protocol member's (task A-4). Its operators' coercions are use sites (see USE_SITE)",
+    when: "an assignment (`=`, `||=`, `&&=`, `??=`) that stores a value which may carry the program's own code into an ambient global, a member of one, or a member of a builtin module's value (task A-3a, ADR 0008 § 2's escape row, PRM-114), a member of any object not proven to be one the program created, or a bare name in a `with` body (task BL-081, RWF-110, RWF-063, RWF-120); otherwise one storing into a member under a key that may be a protocol member's (task A-4). Its operators' coercions are use sites (see USE_SITE)",
   },
   MethodDeclaration: PROTOCOL_MEMBER(
     "a method with a body, of a class or object literal, under a key that may be a protocol member's",
@@ -425,12 +469,18 @@ export const SYNTAX_KIND_CENSUS = {
   ShorthandPropertyAssignment: PROTOCOL_MEMBER(
     "a shorthand property of an object literal (not a destructuring pattern) named like a protocol member, whose value may carry the program's code",
   ),
-  PropertyDeclaration: PROTOCOL_MEMBER(
-    "a class field whose initializer may carry the program's code, under a key that may be a protocol member's",
-  ),
-  ForOfStatement: PROTOCOL_MEMBER(
-    "a `for…of` whose target writes a member under a key that may be a protocol member's; otherwise a use site of the iterator protocol (see USE_SITE)",
-  ),
+  PropertyDeclaration: {
+    role: "site",
+    site: "protocol_member",
+    also: ["escaping_assignment"],
+    when: "a class field whose initializer may carry the program's code, under a key that may be a protocol member's (task A-4); first, an instance field of a derived class, defined onto whatever the base constructor returned (task BL-081)",
+  },
+  ForOfStatement: {
+    role: "site",
+    site: "escaping_assignment",
+    also: ["protocol_member"],
+    when: "a `for…of` whose head stores elements that may carry the program's own code where an assignment would be an escaping one (task BL-081, RWF-120); otherwise one whose target writes a member under a key that may be a protocol member's (task A-4); otherwise a use site of the iterator protocol (see USE_SITE)",
+  },
   GetAccessor: ACCESSOR_SITE,
   SetAccessor: ACCESSOR_SITE,
 
@@ -466,10 +516,17 @@ export const SYNTAX_KIND_CENSUS = {
   ClassStaticBlockDeclaration: none(
     "a definition whose body runs at class definition: every call in it is its own site, attributed to the owner that evaluates the class",
   ),
-  Parameter: DEFINITION,
-  VariableDeclaration: PROTOCOL_MEMBER(
-    "an exported variable under a protocol name (`export const then = …`) whose value may carry the program's code (task A-4); otherwise a definition",
-  ),
+  Parameter: {
+    role: "site",
+    site: "escaping_assignment",
+    when: "a TypeScript parameter property of a derived class's constructor, compiled to a store onto whatever `super()` returned (task BL-081); otherwise a definition",
+  },
+  VariableDeclaration: {
+    role: "site",
+    site: "protocol_member",
+    also: ["escaping_assignment"],
+    when: "an exported variable under a protocol name (`export const then = …`) whose value may carry the program's code (task A-4); a `var` with an initializer in a `with` body, which stores through the `with` object (task BL-081); otherwise a definition",
+  },
   EnumDeclaration: none(
     "evaluated where it is declared: its member initializers run at once, and every call in them is its own site under the enclosing owner",
   ),

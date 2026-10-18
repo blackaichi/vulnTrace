@@ -11,7 +11,9 @@ import { E2_CASES } from "./e2-forwarding-write-set.cases.js";
  * `rwf105.*` cases whose `base` is `NOT_AFFECTED` while `called` is true
  * are the live false `NOT_AFFECTED`s E-2 closes; `prm61.*` are PRM-61's
  * reproduced shapes, closed by E-1's model; `control.*` keep their
- * precision; `cost.*` is the precision E-2 gives up, measured.
+ * precision; `cost.*` is the precision E-2 gives up, measured. One control
+ * answers `UNKNOWN` since task BL-081, marked as that task's precision
+ * cost.
  */
 
 // One macrotask turn before each case (backlog BL-033).

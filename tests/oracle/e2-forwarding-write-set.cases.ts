@@ -196,7 +196,12 @@ export const E2_CASES: readonly E1Case[] = [
     wrap: `module.exports = require("./safe");\n[module.exports.other] = [require("./danger").run];\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // Task BL-081's precision cost, measured: real Node never calls the
+    // target, but `module.exports` holds a load's object, which may be a builtin, so the destructuring store onto it is an escape
+    // (RWF-110, RWF-063), and the stored function gets a possible edge.
+    // The export-model precision this control guards is unchanged; a
+    // wrong attribution would still answer AFFECTED, never UNKNOWN.
+    expected: "UNKNOWN",
   }),
   forwarding({
     id: "control.other-name-withdrawn-affected",

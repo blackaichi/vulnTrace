@@ -714,21 +714,17 @@ export const AUDIT_CASES: readonly A4Case[] = [
     mechanism:
       "`await` reads a promise's `constructor` and constructs the subclass it names (SpeciesConstructor): keys outside ADR 0008's list",
     source: `function exec() {}\nclass Q extends Promise { constructor(ex) { super(ex); CALL } }\nconst x = new Promise(exec);\nx.constructor = Q;\nasync function main() { await x; }\nmain();\n`,
+    // Task BL-081 closed this form: `x` is a `new` result, not proven to
+    // be an object the program created, so `x.constructor = Q` is an
+    // escape and `Q` gets a possible edge (it was an open-defect record,
+    // observing family C over a region no edge into `Q` reached). The
+    // negative control drops the store: with it, `Q`'s `super(ex)` into
+    // `Promise` (an unknown edge) is in the searched region whatever `Q`
+    // calls. `static [Symbol.species]` stays open (RWF-070, BL-046).
+    negative: `function exec() {}\nclass Q extends Promise { constructor(ex) { super(ex); CALL } }\nconst x = new Promise(exec);\nvoid Q;\nasync function main() { await x; }\nmain();\n`,
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: {
-      rwf: "RWF-070",
-      observed: {
-        verdict: "NOT_AFFECTED",
-        proofFamily: "C",
-        target: "vuln-lib#parse",
-        reachableSubgraphComplete: true,
-        // The `super(ex)` into `Promise`, in `Q`'s constructor, which no
-        // edge reaches: outside the searched region.
-        unknownEdges: 1,
-      },
-    },
   },
 ];
 

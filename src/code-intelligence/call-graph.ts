@@ -26,6 +26,12 @@ import {
   memberChainOf,
   skipOuterExpressions,
   type EscapingValue,
+  bindingPatternDefaults,
+  builtinMayStoreUnderModelKey,
+  mayCarryOwnMembers,
+  storesUnderPrototypeKey,
+  shorthandDefaultsOf,
+  storeReadsUnseen,
 } from "./escape-row.js";
 import type { KnownPackageRoots } from "../domain/resolved-target.js";
 import {
@@ -2171,6 +2177,8 @@ interface WalkContext {
    * calls anything but one).
    */
   readonly nodeKindOf: (id: GraphNodeId) => GraphNodeKind | undefined;
+  /** Task BL-081: a registered node, to find the definition behind an attributed value. */
+  readonly nodeOf: (id: GraphNodeId) => GraphNode | undefined;
   /**
    * Task A-3b: the project's JSX compiler options, which decide what a JSX
    * site compiles to (`jsx-runtime.ts`); `undefined` without a project,
@@ -2319,9 +2327,10 @@ const ARRAY_CALLBACK_METHODS: ReadonlySet<string> = new Set([
  * NOT_AFFECTED direction only: the stored function gets its own edge, so
  * its code is searched, but the resolved edge to the callback stays, and a
  * replacement that never calls it makes that edge a false AFFECTED, as for
- * the global builtins (task A-5a's re-audit). A builtin reached through a
- * parameter or a container is RWF-063's open case (backlog BL-039), which
- * these share with the global builtins. Every other position is the escape
+ * the global builtins (task A-5a's re-audit; RWF-121, backlog BL-090). A
+ * builtin reached through a parameter or a container was RWF-063's open
+ * case, closed by task BL-081: a store onto an object not proven to be the
+ * program's own is an escape. Every other position is the escape
  * row's: possible for an attributable function, unknown otherwise.
  * VT-213 used to cover these shapes with a resolved edge on no authority
  * (PRM-13).
@@ -2525,6 +2534,77 @@ async function escapeTargetOf(
   }
 }
 
+/**
+ * Task BL-081 (its third audit round): whether the function or class a
+ * value of ANOTHER file was attributed to may carry its own members, which
+ * are stored in its own file, where that store is no escape (`k.js`:
+ * `function K() {} K.max = g; exports.K = K`). Read in that file
+ * (`escape-row.ts`'s `mayCarryOwnMembers`); a definition that cannot be
+ * found is taken to carry some.
+ */
+function importedCarriesOwnMembers(
+  target: GraphNodeId,
+  ctx: WalkContext,
+): boolean {
+  const node = ctx.nodeOf(target);
+  const line = node?.location?.line;
+  const column = node?.location?.column;
+  const prepared = node ? ctx.ensurePrepared(node.module) : undefined;
+  if (!prepared || line === undefined || column === undefined) {
+    return true;
+  }
+  const sourceFile = prepared.index.sourceFile;
+  let position: number;
+  try {
+    position = sourceFile.getPositionOfLineAndCharacter(line - 1, column - 1);
+  } catch {
+    return true;
+  }
+  let definition: ts.Node | undefined;
+  const visit = (at: ts.Node): void => {
+    if (at.getStart(sourceFile) <= position && position < at.end) {
+      if (
+        at.getStart(sourceFile) === position &&
+        (ts.isFunctionLike(at) || ts.isClassLike(at)) &&
+        definition === undefined
+      ) {
+        definition = at;
+      }
+      ts.forEachChild(at, visit);
+    }
+  };
+  visit(sourceFile);
+  if (definition === undefined) {
+    // A class relying on its default constructor is indexed at its name.
+    const name = findTokenAt(sourceFile, position);
+    definition =
+      name !== undefined && ts.isClassLike(name.parent)
+        ? name.parent
+        : undefined;
+  }
+  if (definition !== undefined && ts.isConstructorDeclaration(definition)) {
+    definition = definition.parent;
+  }
+  return definition === undefined || mayCarryOwnMembers(definition);
+}
+
+function findTokenAt(
+  sourceFile: ts.SourceFile,
+  position: number,
+): ts.Node | undefined {
+  let found: ts.Node | undefined;
+  const visit = (at: ts.Node): void => {
+    if (at.getStart(sourceFile) <= position && position < at.end) {
+      if (at.getStart(sourceFile) === position && ts.isIdentifier(at)) {
+        found = at;
+      }
+      ts.forEachChild(at, visit);
+    }
+  };
+  visit(sourceFile);
+  return found;
+}
+
 /** The arguments of a site, or `"forwarded"`: values the site cannot see (an implicit constructor's `...args`, a decorator's target). */
 type SiteArguments = readonly ts.Expression[] | "forwarded";
 
@@ -2614,14 +2694,30 @@ async function builtinAccount(
           value.kind === "opaque"
             ? undefined
             : await escapeTargetOf(value, prepared, ctx);
-        if (target === "builtin") {
-          continue;
-        }
-        if (target === undefined) {
+        // A builtin module's own function handed to a builtin carries none
+        // of the program's code, but the receiving builtin may store it
+        // (`Object.assign(F, { prototype: fs.promises })`), and a store a
+        // builtin makes is no store the escape row sees: like an ambient
+        // builtin function (`escapingValuesOf`), it is fail-closed unless
+        // the position is admitted (task BL-081).
+        if (target === undefined || target === "builtin") {
           if (!admitted) {
             edges.push(escapedValueEdge(from, argLocation));
           }
           continue;
+        }
+        if (
+          !admitted &&
+          ((value.kind === "import" &&
+            importedCarriesOwnMembers(target, ctx)) ||
+            builtinMayStoreUnderModelKey(key, args))
+        ) {
+          // Its own members, which the builtin may store or call (task
+          // BL-081's third audit round; `escape-row.ts`'s `pushOwnMembers`
+          // for a local value), or a `prototype` / `exports` key it may
+          // store the value under, where it gains members unseen (the sixth
+          // round).
+          edges.push(escapedValueEdge(from, argLocation));
         }
         const kind = ctx.nodeKindOf(target);
         const guaranteed =
@@ -3895,8 +3991,19 @@ const INVOCATION_SITE_HANDLERS = {
       env.ctx,
     ),
   escaping_assignment: (site, env) =>
-    fromEvaluatingOwner(site.node, env, (from) =>
-      classifyEscapingAssignment(site.node, from, env.prepared, env.ctx),
+    // A class field's initializer runs in the constructor (the owner that
+    // evaluates it), not where the class is defined.
+    fromEvaluatingOwner(
+      ts.isPropertyDeclaration(site.node) ? site.value : site.node,
+      env,
+      (from) =>
+        classifyEscapingAssignment(
+          site.node,
+          site.value,
+          from,
+          env.prepared,
+          env.ctx,
+        ),
     ),
   jsx: (site, env) =>
     fromEvaluatingOwner(site.node, env, (from) =>
@@ -3908,35 +4015,82 @@ const INVOCATION_SITE_HANDLERS = {
 
 /**
  * Task A-3a, PRM-114: an assignment that stores a value into an ambient or
- * builtin value (`invocation-sites.ts` decides which assignments are
- * sites). The runtime, or a later call of the builtin, may invoke what is
- * stored, and nothing proves it does: each attributable function the value
- * carries gets a POSSIBLE edge from the owner that performs the
- * assignment, and anything else an UNKNOWN one (ADR 0008 § 2's escape row,
- * § 3). A builtin's own function stored there (ambient or from a builtin
- * module) carries none of the program's code, but it changes what a later
- * call trusted as the builtin does; if that is all the value holds, the
- * site gets an unknown edge rather than a no-edge account no proof in ADR
- * 0008 § 2's closed set names.
+ * builtin value -- since task BL-081, into any object not proven to be one
+ * the program created, and through a `for…of` head (`invocation-sites.ts`
+ * decides which stores are sites). The runtime, or a later call of the
+ * builtin, may invoke what is stored, and nothing proves it does: each
+ * attributable function the value carries gets a POSSIBLE edge from the
+ * owner that performs the store, and anything else an UNKNOWN one (ADR
+ * 0008 § 2's escape row, § 3). A builtin's own function stored there
+ * (ambient or from a builtin module) carries none of the program's code,
+ * but it changes what a later call trusted as the builtin does: an unknown
+ * edge, whatever else the value holds (since BL-081; before it, only when
+ * that was all the value held), rather than a no-edge account no proof in
+ * ADR 0008 § 2's closed set names.
  */
 async function classifyEscapingAssignment(
-  node: ts.BinaryExpression,
+  node: Extract<
+    InvocationSite,
+    { readonly kind: "escaping_assignment" }
+  >["node"],
+  stored: ts.Expression,
   from: GraphNodeId,
   prepared: FileGraphData,
   ctx: WalkContext,
 ): Promise<InvocationAccount> {
   const location = toSourceLocation(prepared.index.sourceFile, node);
   const edges: CallEdge[] = [];
-  for (const value of escapingValuesOf(node.right)) {
+  // Task BL-081's audits: what a pattern or a `for…of` head stores is read
+  // from its source or yielded by an iterator, not the source itself
+  // (`storeReadsUnseen`); a decorated field stores a decorator's result.
+  if (
+    storeReadsUnseen(node, stored) ||
+    (ts.isPropertyDeclaration(node) &&
+      (ts.getDecorators(node)?.length ?? 0) > 0)
+  ) {
+    edges.push(escapedValueEdge(from, location));
+  }
+  // A binding pattern's defaults are stores too (`var { keys = f } = 0`
+  // in a `with` body, a `for (var … of …)` head there).
+  const defaults = ts.isVariableDeclaration(node)
+    ? bindingPatternDefaults(node.name)
+    : ts.isForOfStatement(node)
+      ? ts.isVariableDeclarationList(node.initializer)
+        ? node.initializer.declarations.flatMap((declaration) =>
+            bindingPatternDefaults(declaration.name),
+          )
+        : shorthandDefaultsOf(node.initializer)
+      : ts.isBinaryExpression(node)
+        ? shorthandDefaultsOf(node.left)
+        : [];
+  for (const value of [stored, ...defaults].flatMap((expression) =>
+    escapingValuesOf(expression),
+  )) {
     const target =
       value.kind === "opaque"
         ? undefined
         : await escapeTargetOf(value, prepared, ctx);
-    if (target === "builtin") {
-      continue;
+    // A builtin's own function, stored over a member of a builtin, changes
+    // what a later call trusted as that builtin does even when the store
+    // may also hold the program's function (`O.k = c ? f : fs.readFile`):
+    // an unknown edge, never nothing (task BL-081). So does a function or
+    // class of another file that carries its own members.
+    if (
+      value.kind === "import" &&
+      target !== undefined &&
+      target !== "builtin" &&
+      importedCarriesOwnMembers(target, ctx)
+    ) {
+      edges.push(escapedValueEdge(from, location));
+    }
+    // A function or class stored under a `prototype` key gains, unseen,
+    // every member later stored through that prototype (task BL-081's
+    // fifth audit round).
+    if (value.kind !== "opaque" && storesUnderPrototypeKey(node)) {
+      edges.push(escapedValueEdge(from, location));
     }
     edges.push(
-      target === undefined
+      target === undefined || target === "builtin"
         ? escapedValueEdge(from, location)
         : {
             from,
@@ -4777,6 +4931,7 @@ export async function buildCallGraph(
     },
     onInvocationAccount: options.onInvocationAccount,
     nodeKindOf: (id) => nodes.get(id)?.kind,
+    nodeOf: (id) => nodes.get(id),
     jsx: options.project?.rawCompilerOptions,
   };
 

@@ -524,7 +524,12 @@ export const BL074_CASES: readonly E1Case[] = [
     ),
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // Task BL-081's precision cost, measured: real Node never calls the
+    // target, but the store `m.run = dangerousOp` is onto a parameter, which may be a builtin object
+    // (RWF-110, RWF-063), and the stored function gets a possible edge.
+    // The export-model precision this control guards is unchanged; a
+    // wrong attribution would still answer AFFECTED, never UNKNOWN.
+    expected: "UNKNOWN",
   }),
   bl074({
     id: "control.array-holder-leaf",
@@ -534,7 +539,12 @@ export const BL074_CASES: readonly E1Case[] = [
     wrap: own(`const a = [require("./leaf")];\na[0].run = dangerousOp;\n`),
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // Task BL-081's precision cost, measured: real Node never calls the
+    // target, but the store `a[0].run = dangerousOp` is onto an array element, which may be a builtin object
+    // (RWF-110, RWF-063), and the stored function gets a possible edge.
+    // The export-model precision this control guards is unchanged; a
+    // wrong attribution would still answer AFFECTED, never UNKNOWN.
+    expected: "UNKNOWN",
   }),
   bl074({
     id: "control.argument-package",
@@ -555,7 +565,12 @@ export const BL074_CASES: readonly E1Case[] = [
     ),
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    // Task BL-081's precision cost, measured: real Node never calls the
+    // target, but the store `o.run = …` is onto a parameter, which may be a builtin object
+    // (RWF-110, RWF-063), and the stored function gets a possible edge.
+    // The export-model precision this control guards is unchanged; a
+    // wrong attribution would still answer AFFECTED, never UNKNOWN.
+    expected: "UNKNOWN",
   }),
   // A load that reaches back, published as an export property by a file
   // that never reads its export objects back: nothing of this file can
