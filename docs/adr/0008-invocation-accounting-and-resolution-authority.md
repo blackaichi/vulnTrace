@@ -696,3 +696,97 @@ possible edge in any case. Measured cost on the corpora: no verdict
 changed over the 139 cases; RWB-05 (already `UNKNOWN`) gained five
 `protocol_value` reasons. The cost on real projects with property-copy
 loops is not measured.
+
+## Decision record — BL-081: a store onto an object not proven to be the program's own is an escape (2026-10-16)
+
+Taken by task [`BL-081`](../tasks/BL-081-builtin-replaced-without-name.md)
+on the project owner's go of 2026-10-16, given on the announced plan
+(measure both options of RWF-110, take the one the measurements support,
+record it here for the owner to confirm by merging). This ADR's body and
+every earlier section are unchanged; this section is appended.
+
+**The question.** § 2's escape row makes a store an escape when its target
+is "a member rooted in an ambient or builtin value", which A-3a read as a
+store that SPELLS the value: its ambient name, a `const` alias, a builtin
+module binding. § 4's builtin table then trusts a call of the builtin by
+its identity at the call site. But a builtin object reaches a user binding
+through routes no spelling shows -- a parameter (`install(Object)`), a
+container, a returned value, a load, `({}).constructor`, `__proto__`,
+`Object.getPrototypeOf`, a sloppy call's `this` -- and a store through any
+of them replaces what the trusted call runs (RWF-110, RWF-063; with RWF-120,
+seventy-four live false `NOT_AFFECTED`s on the base, measured against real
+Node).
+RWF-110 named two options: **(a)** a store through a base that may be a
+builtin object is an escape; **(b)** every builtin call is unresolved
+whenever a module that may run can replace a builtin.
+
+**Decision: option (a), in the form "unless proven".** The routes to a
+builtin object are unbounded, so (a) is decided by the converse: a store
+is an escape unless the object it writes onto is PROVEN to be one the
+program created (`escape-row.ts`, `isProvenFreshObject`; the proofs and
+their inductive argument, over a closed list of store forms, are in its
+comment). The escape's account is § 2's: a possible edge from the storing
+owner to each attributable function stored, an unknown edge for anything
+else. The store forms are an assignment (every destructuring target
+too), a `for…of` head, a bare name or a `var` in a `with` body, and a
+derived class's instance field or parameter property (RWF-120; the last
+three found by this task's independent audit, whose later rounds found
+the pattern, own-member, decorator, `prototype`-route and [[Prototype]] gaps below; ten rounds in all, each recorded in FINDINGS RWF-063, RWF-110 and RWF-120). What a pattern or a `for…of`
+head stores is read from its source or yielded by an iterator: an
+iteration always adds an unknown edge (an array literal's or a string's
+iterator can be replaced too), and an object pattern is attributed only
+from an object literal one level deep; a binding pattern's defaults are
+stored values. A function or class that may carry its own members (a
+static member, a base class, a decorator, a merged namespace, a store onto
+one of its members in its own file through any route a freshness proof
+accepts, followed by one relation that answers "unknown" when a route is
+handed on) is also an opaque value wherever it is handed over, from its
+own file or another (`G.Math = K`, then `Math.max(1)` runs `K.max`); a
+function or class an escaping store or a builtin call may store under a
+`prototype` or `exports` key is one too. A decorated class is never proven
+fresh, nor its static `this`; nor an async function's `prototype`
+(inherited), an object whose [[Prototype]] a `__proto__` or computed-key
+store may change (an inherited setter would run -- the global object's
+own, too), or a TypeScript declaration that binds no run-time value. A builtin's own function stored there, or handed to a
+builtin at a non-admitted position, is fail-closed whatever else the
+value holds.
+
+**Why not (b).** (b) cannot close the class alone: Node invokes a
+replaced builtin member where the program has no call of it --
+`[].__proto__.join = f; String([1])` runs `f` through
+`Array.prototype.toString`, `"abc".replace(/b/, …)` runs a replaced
+`RegExp.prototype.exec` (measured) -- so there is no call site for (b) to
+make unknown, and (b) needs (a)'s detection and account anyway. Measured
+as an upper bound (every builtin callee unattributed), (b) loses 2,013 of
+the 31,641 `node_modules` graph nodes whose search region had no unknown
+edge; (a) loses 1,880 (5.9 %) and gains none (`scripts/bl081-builtin-store-escape-corpus.mjs`,
+no time limit: a first, time-capped measurement gave load-dependent
+numbers and is not quoted).
+
+**Rejected refinement: keying the escape by member name.** Escaping only
+stores under a name some builtin member has (`keys`, `join`, …) costs
+less (measured only with a time cap, not quoted), but its soundness rests
+on a claim no table can carry: Node reads members of its own objects by
+names they do not have by default -- dictionary objects such as an
+emitter's `_events` -- so a store under any name can matter.
+
+**Cost.** No corpus verdict moved (139 cases); 1,880 of 31,641 clean
+`node_modules` graph nodes; six oracle controls of earlier tasks answer
+`UNKNOWN` (a store through a parameter, an array element, a load's
+`module.exports`, `arguments.callee`, `helper.caller`), each marked as
+this decision's cost. Not addressed: a documented invoking builtin keeps
+its resolved callback edge after a replacement (RWF-121, a false
+`AFFECTED`, backlog `BL-090`).
+
+**The class is not certified closed.** The task's independent audit ran
+ten rounds; each of the first ten found further store forms, value flows
+or key spellings the proofs had missed, every one a live false
+`NOT_AFFECTED` on the base as well, and each fixed on the branch. By the
+project owner's decision of 2026-10-18 the tenth round was the last: its
+two findings (RWF-122, a builtin call's key read through fewer forms than
+its value; RWF-123, a lookup cache that ignored a `with` body) were fixed
+after it as its auditor proposed and measured, without a further round.
+Backlog `BL-091` re-audits them and the class; FINDINGS RWF-110, RWF-063
+and RWF-120 are "fixed in part" until then. The precision figure above
+was measured on the code before those two fixes, which only add edges.
+
