@@ -815,8 +815,17 @@ them (RWF-127 in part, see below). They refine which objects the rule proves the
   file is taken as that emit for these two forms. Two more stores the same
   emit makes, through a namespace merged with a class (RWF-131) and a
   field named `__proto__` (RWF-132), were found by BL-091's independent
-  audit and are not covered (backlog `BL-095`). Nor is a JavaScript source
-  compiled with Babel's or swc's loose class fields (not measured).
+  audit. Task BL-095 covers them, and the wider class they belong to: a
+  namespace's exported members and an enum's members are stores onto an
+  object the emit creates or reads, a use of a namespace's exported
+  variable is a member access on it, and a legacy-emit field or parameter
+  property is an assignment, under a key the freshness proofs read
+  (`namespaceObjectIsOwn`, `enumObjectIsOwn`, `legacyFieldStoreKeys`,
+  `legacyFieldTargetIsOwn` in `escape-row.ts`). Still not covered: a call
+  through a namespace's exported variable resolves to its initializer
+  (RWF-141, backlog `BL-099`), TypeScript's decorator helpers' implicit
+  calls (RWF-142, backlog `BL-100`), and a JavaScript source compiled with
+  Babel's or swc's loose class fields (not measured).
 
 **The class is still not certified.** Every one of the thirteen audit
 rounds, BL-081's ten and BL-091's three, found further shapes, and so

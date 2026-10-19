@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-19, by `BL-092`.
+**Last updated:** 2026-10-19, by `BL-095`.
 
 ## Objective
 
@@ -293,19 +293,22 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-092` — The loader capability seen only when spelled
-([task file](tasks/BL-092-loader-capability-routes.md)):
-`READY_FOR_REVIEW`, with the decision `BL-096` for the project owner.
-`BL-091` merged as PR #109.
+`BL-095` — Stores TypeScript's emit makes that the source shows as
+declarations ([task file](tasks/BL-095-typescript-emit-stores.md)):
+`READY_FOR_REVIEW`, with a decision for the project owner: its
+independent audit ran five rounds without certifying (round five's
+findings 1 to 3 fixed after it, without a sixth round; see `BL-094`).
+`BL-092` merged as PR #110.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-092`:
-`BL-095` (RWF-131, RWF-132, P0; BL-094's decision may subsume it),
-`BL-097` (RWF-137: the wrapper's `arguments` through a frame, P0, lane C),
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-095`:
+`BL-099` (RWF-141, P0, call resolution), `BL-100` (RWF-142, P0, decorator
+helpers), `BL-097` (RWF-137: the wrapper's `arguments` through a frame, P0, lane C),
 `BL-094` (the decision on the escape row's rule, P1), `BL-096` (the
 decision on `module.paths`'s read-only exemptions, RWF-136, P1), `BL-098`
-(the decision on `process` handed on, RWF-140, P1),
+(the decision on `process` handed on, RWF-140, P1), `BL-101` (RWF-143,
+P1, an ES5 class's methods),
 `BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
 (entrypoint roots), `E-4`, `E-5`. `BL-078` (RWF-107), `BL-080` (RWF-109)
 and `BL-082` (RWF-111), `BL-083` (RWF-113), `BL-087` (RWF-118) and
@@ -317,6 +320,12 @@ rest of lane E. `BL-068` is narrowed to RWF-098's single-write unit
 records (P2).
 
 ## Recently discovered
+
+From `BL-095`, by its independent audit (five rounds): twenty-seven live
+false `NOT_AFFECTED`s of RWF-131's and RWF-132's class, fixed in BL-095;
+`RWF-141` (a call through a namespace's exported variable: `BL-099`, P0),
+`RWF-142` (TypeScript's decorator helpers: `BL-100`, P0) and `RWF-143` (an
+ES5 class's methods: `BL-101`, P1), all live and pre-existing.
 
 From `BL-092`: `RWF-133` (a write target the loader check did not read),
 `RWF-134` (the wrapper's `arguments`), `RWF-135` (an aliased

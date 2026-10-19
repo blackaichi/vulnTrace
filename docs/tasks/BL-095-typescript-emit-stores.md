@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-095
 - **Branch**: `bl-095-ts-emit-stores`
 - **Base SHA**: `09d9b614489eb119eafd5ae00578dd2ff50d8cd4` (BL-092's merge, PR #110)
-- **Commits**: filled in at `READY_FOR_REVIEW`
+- **Commits**:
+  - `docs(tasks): BL-095 task file — stores TypeScript's emit makes that the source shows as declarations`
+  - `test(BL-095): TypeScript's emit stores against real Node — RWF-131, RWF-132`
+  - `fix(BL-095): the stores TypeScript's emit makes that the source shows as declarations are escape-row stores — RWF-131, RWF-132`
+  - (this commit) `docs(BL-095): records — RWF-131, RWF-132 fixed, RWF-141..143, the independent audit's five rounds, ADR 0008 note, debts, backlog (BL-099..101), progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -171,3 +175,58 @@ OPEN-DEBTS D-09's six known failures; no change is expected.
 ## Report
 
 In the format of `AGENTS.md` § J (`docs/WORKFLOW.md` § 5).
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW`; the sections above are as written at the
+start.
+
+- **Scope, by the independent audit** (five fresh-context rounds, none
+  certifying). Every round found further live false `NOT_AFFECTED`s of the
+  class, every one also on the base; twenty-seven are cases
+  (`audit*.*`), fixed in this task. What to do now reads, beyond items 2
+  to 5:
+  - item 2: a namespace nested in another (exported or dotted) is never
+    the program's own (its object is read from the parent's, which may be
+    any store's or an inherited member: round 1), nor is one merged with
+    an enum (round 1), with a bodiless overload (round 2), or named like a
+    CommonJS wrapper parameter (round 4); blocks are grouped by qualified
+    name per file (round 2);
+  - item 3: a write to a name an enclosing namespace exports is an escape
+    whatever the object (round 2); a class or function merged with a
+    namespace is never proven fresh, as a name or as `this` in its static
+    code (rounds 3 and 4); an enum member is an escape when its enum's
+    object is not proven the program's own, and an enum member named
+    `__proto__` or `prototype` is filed as a store (round 2);
+  - item 4: a use of an exported variable is never proven fresh, whatever
+    the object (round 1), nor an alias of one (round 5); a namespace's or
+    enum's member handed over by a name the resolver binds to an outer
+    declaration is opaque (round 5); an `export declare let` is a member
+    (round 1);
+  - item 5: a decorated class's static field is a store onto an object not
+    proven the program's own (round 1);
+  - and the cost (rounds 1, 3, 4): one namespace index per file, with
+    operation counters and two structural tests.
+- **Round five's findings 1 to 3 were fixed after it without a sixth
+  round.** Whether that is enough, or the class needs further rounds or
+  BL-094's structural change, is the project owner's decision.
+- **Registered, not fixed** (outside the escape row's stores and
+  freshness proofs, or a new form): `RWF-141` (a call through a
+  namespace's exported variable resolves to its initializer while an own
+  accessor answers the read: call resolution, `BL-099`), `RWF-142`
+  (TypeScript's decorator helpers' implicit calls: `BL-100`) and `RWF-143`
+  (an ES5 class's methods are assignments: `BL-101`).
+- **Premise corrected**: "a store written out onto a namespace's object
+  (`N.h = v`) is already an escape" held for a namespace alone, not for
+  one merged with a class or function, which the escape row proved fresh
+  (round 3, finding 1; fixed).
+- **Controls**: seventeen of the fifty-six cases declare their negative
+  control inapplicable, each with its reason in the cases file: the store
+  that makes an object a builtin one (a `__proto__` field or enum member,
+  a store onto a class merged with a namespace) is itself an escape now,
+  an array pattern's iterator, or a member handed over by a name the
+  resolver binds elsewhere, each an unknown edge in the negative control
+  too. Precision is measured by the six `control.*` cases.
+- **Tooling**: `scripts/bl081-builtin-store-escape-corpus.mjs` gained
+  `--typescript`, to measure the precision cost on TypeScript sources.
+
