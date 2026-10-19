@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-097
 - **Branch**: `bl-097-wrapper-arguments-caller`
 - **Base SHA**: `670a839b78e90a0227d85e7962543c8c56ea14bd` (BL-095's merge, PR #111)
-- **Commits**: filled in by the last commit
+- **Commits**:
+  - `docs(tasks): BL-097 task file — the CommonJS wrapper's arguments reached through a function's frame`
+  - `test(BL-097): a caller's frame against real Node — RWF-137, RWF-144`
+  - `fix(BL-097): a read of a caller's frame, by a name it spells, is a loader capability escape — RWF-137`
+  - (this commit) `docs(BL-097): records — RWF-137 fixed, RWF-144, AUD-04's second inspector route, the independent audit's two rounds, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -118,14 +122,14 @@ Defect class A: the wrapper's `arguments` recognised by its name.
 
 ## Acceptance criteria
 
-- [ ] Every RWF-137 reproduction and every measured spelled route answers
+- [x] Every RWF-137 reproduction and every measured spelled route answers
       `UNKNOWN` against real Node's ground truth; each fails on the base.
-- [ ] The precision control stays `NOT_AFFECTED`.
-- [ ] Each spelling of the rule is pinned by a named unit test.
-- [ ] The computed-key routes are registered (RWF-144) and held by
+- [x] The precision control stays `NOT_AFFECTED`.
+- [x] Each spelling of the rule is pinned by a named unit test.
+- [x] The computed-key routes are registered (RWF-144) and held by
       open-soundness-defect records.
-- [ ] The graph, proof and verdict differentials are reported separately.
-- [ ] The full gate set passes; validation matches OPEN-DEBTS D-09.
+- [x] The graph, proof and verdict differentials are reported separately.
+- [x] The full gate set passes; validation matches OPEN-DEBTS D-09.
 
 ## Gates
 
@@ -136,3 +140,42 @@ evidence of soundness, D-12); validation's known failures unchanged.
 ## Report
 
 In the format of `AGENTS.md` § J.
+
+## Corrections
+
+Appended after work started (README.md): what the task found that its
+text above did not say.
+
+- **The rule's spellings, widened by the independent audit.** Round 1
+  (`BLOCKED`) measured three live false `NOT_AFFECTED`s on the base and on
+  the first fix, all in the spelled class or at its edge: a bare `caller`
+  / `getFunction` in a `with` body (F-1, in this module, in a second one,
+  and on a call site), and the name as a regular expression's pattern,
+  `g[/caller/.source]` (F-3). Both are fixed: a bare name in a `with` body
+  (not its head; nested functions included) and a regular expression whose
+  whole pattern is the name are spellings. The census's rule fails closed
+  on any `with`; the narrower rule was kept, and round 2 judged it sound
+  for the spelled class. Round 1's F-2 (a frame member by enumeration,
+  `Object.values(Object.getOwnPropertyDescriptors(g))[3].value`, no key
+  at all) is registered under RWF-144, whose wording and BL-080's now
+  cover enumeration. Comments, the fix commit's subject and the test
+  titles no longer say "by any spelling".
+- **Round 2 (`CERTIFIED`)** for the scoped claim, with a records finding:
+  `inspector`'s `Debugger.evaluateOnCallFrame` runs code in the wrapper's
+  frame (a live false `NOT_AFFECTED`, pre-existing; verified against real
+  Node). It is neither the fixed class nor RWF-144's; recorded as a status
+  update to AUD-04 (whose text named `Runtime.evaluate` only) and in C-4's
+  row, which owns the inspector surface. Its F-2 (``g[`${''}caller`]``) is
+  inside RWF-144.
+- **Deviation from the backlog row's fix direction.** The row said
+  "computed keys included". Failing closed on a key computed at run time
+  (or an enumeration) of a value that may be a function is RWF-109's open
+  precision decision (BL-080), so this task registered those routes as
+  RWF-144, held by open-soundness-defect records, and raised BL-080 to P0
+  (RWF-144 is a live false `NOT_AFFECTED`).
+- **The measured cost.** Corpus differentials: zero graph, proof and
+  verdict changes over 139 cases (the corpora spell the names only in
+  comments). On the JavaScript in `node_modules`, four files of 2,527
+  (three packages: `typescript`, `vitest`, `@vitest/mocker`) spell a name.
+- **Records gap fixed in passing.** BACKLOG § 2 had no rows for RWF-141,
+  RWF-142 and RWF-143 (BL-095's); added beside RWF-144's.

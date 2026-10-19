@@ -1478,6 +1478,28 @@ records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111,
 RWF-113, RWF-118, RWF-121, RWF-136, RWF-137, RWF-139, RWF-140, RWF-141,
 RWF-142 and RWF-143 from this family.
 
+**Progress, added by task `BL-097` (2026-10-19).** Task BL-097
+(`docs/tasks/BL-097-wrapper-arguments-frame.md`) made the loader
+classifier count a read of a caller's frame as a loader capability escape:
+`caller`, `getFunction` or `getThis` spelled as a member, a literal key, a
+string literal, a destructuring key, a regular expression's whole pattern
+or a bare name in a `with` body. It fixes `RWF-137`: fifteen live false
+`NOT_AFFECTED`s on its base (family B in the measured setup, a correction
+to the record) among twenty-two real-Node cases
+(`tests/oracle/bl097-wrapper-arguments-frame.test.ts`), four of them found
+by its independent audit. No corpus graph, proof or verdict moved; on the
+JavaScript in `node_modules` four files of 2,527 spell a name. The audit
+ran two rounds: round one blocked on three live routes (two fixed, one
+registered), round two certified the scoped claim. Registered, not fixed:
+`RWF-144` (a frame name built at run time or a frame member reached by
+enumeration, a live false `NOT_AFFECTED` under RWF-109's decision, backlog
+`BL-080`, raised to P0) and a second inspector route under `AUD-04`
+(`Debugger.evaluateOnCallFrame`, backlog `C-4`). This entry still stands:
+lanes E (E-3..E-5) and C (C-2..C-5) remain, with RWF-070's species member,
+RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108,
+RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136, RWF-139, RWF-140,
+RWF-141, RWF-142, RWF-143 and RWF-144 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
