@@ -2,11 +2,16 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-091
 - **Branch**: `bl-091-builtin-store-reaudit`
 - **Base SHA**: `5de489375f0babf3f6f2a3ea4c9d789d271739e9` (BL-081's merge, PR #108)
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `docs(tasks): BL-091 task file — re-audit BL-081's post-round-10 fixes and the builtin-store class`
+  - `perf(BL-091): round 10's observations — one shared list for unfollowable stores, the memo keyed by an unresolved name's cause, M23 pinned`
+  - `test(BL-091): the re-audit's live false NOT_AFFECTEDs, against real Node — RWF-124, RWF-126, RWF-127, RWF-128`
+  - `fix(BL-091): a class is the program's own only when what it inherits from is — RWF-124, RWF-126, RWF-127, RWF-128`
+  - (this commit) `docs(BL-091): records — RWF-124..132, the re-audit's three rounds and the independent audit, ADR 0008 note, debts, backlog (BL-092..095), progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -161,3 +166,70 @@ new escape adds an edge.
 
 In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5). Add: the
 re-audit's rounds and verdicts, and whether the class is now certified.
+
+## Corrections and outcome (appended by the last commit)
+
+- **Premises, measured.** The three RWF-122 / RWF-123 oracle cases pass
+  on `5de4893`. Observation 1 is real (640,000 store reads at 800 stores,
+  N squared, in the copy and in the callers' walk), but "10 s at 800" was
+  not reproduced: 4.5–5.3 s on a loaded machine. Observation 2 is a real
+  latent defect (RWF-125). The answer to the question "can a parameter
+  named `exports` share the module's memo slot" is yes. No end-to-end
+  false `NOT_AFFECTED` was found: the store through the alias is an
+  escape of its own. **Observation 3's premise was false:** M23 is not an
+  equivalent mutant. `resolveNamedBinding` follows an alias chain of up
+  to about twelve hops in one step, and `definitionsDenotedBy` follows
+  four, so the branch is kept and documented, and a test now kills the
+  mutant.
+- **The re-audit: three rounds, each BLOCKED, the class not certified.**
+  Round 1 (about 190 shapes): RWF-122's and RWF-123's fixes held, and it
+  found RWF-124. Round 2 (an interrupted auditor's leads, then about 70
+  shapes): RWF-126. Round 3 (about 270 shapes, the last the round bound
+  allows): RWF-127 and RWF-128 in the class, and RWF-129 and RWF-130 in the
+  loader (lane C, outside this task: registered, backlog `BL-092`). Every
+  finding was also `NOT_AFFECTED` on BL-081's base. The four in the class
+  are fixed (RWF-127 in part: see the independent audit below) with failing-first oracle cases (26 live false `NOT_AFFECTED`s,
+  `tests/oracle/bl091-builtin-store-reaudit.test.ts`). As the STOP
+  condition requires, the task asks the project owner the structural
+  question (backlog `BL-094`).
+- **One premise of a test was false.** BL-081's unit rows "`this` in a
+  static field initializer / static block (the class)" proved a class
+  derived from an undeclared `B` the program's own. That is RWF-126's
+  defect, so the rows were re-grounded on a declared `class B {}`.
+- **Mutations.** Each new rule is killed by a named test. These were run:
+  `return true` for `!isDerived(cls)` (RWF-124); `hasOwnStaticChain`
+  always true (RWF-126); the TypeScript static-field store removed
+  (RWF-127); `classPrototypeIsStable` always true, its computed-key guard
+  removed, and the class `prototype` store check removed (RWF-128); the
+  memo key's cause removed (RWF-125); the `fresh@` memo removed (the
+  operation-count test); and the shared list dropped from `hasStores` and
+  from `everyStoreValueIsFresh`. **Equivalent:** the shared list dropped
+  from `storeValueDefinitions`. A store through a base that cannot be
+  followed is itself an escape, and an escaping store under a `prototype`
+  or `exports` key makes its value opaque by another rule. The branch is
+  kept (BL-081's removal of a "redundant" rule reopened RWF-122), and the
+  reason is in its test.
+- **Precision.** No corpus verdict, proof or graph moved (139 cases). On
+  every `node_modules` package
+  (`scripts/bl081-builtin-store-escape-corpus.mjs`, against `5de4893`), no
+  clean graph node was lost; unknown edges went 661,160 → 661,183 and
+  possible edges 84,690 → 84,718. The TypeScript-only rules (RWF-127,
+  RWF-128) are not measured on real TypeScript: installed packages are
+  JavaScript, and no TypeScript corpus exists. Their cost is the oracle
+  case `cost.static-field-of-a-derived-class-under-define-semantics`.
+- **The independent audit of the diff: BLOCKED, then fixed in part.** It
+  found a regression of this branch, an unbounded recursion in
+  `classPrototypeIsStable` (`(C as any).prototype = this` in a TypeScript
+  constructor stopped the scan with a stack overflow, exit 3, where the base
+  answered `UNKNOWN`). It also found a quadratic cost in the same function.
+  Both are fixed, with failing-first unit tests. It also found two more
+  stores TypeScript's emit makes, RWF-131 (a namespace merged with a class)
+  and RWF-132 (a field named `__proto__`), live and pre-existing. Both
+  were measured against real Node. They come after the round bound, so
+  they are registered, not fixed (backlog `BL-095`, P0), and RWF-127 is
+  "fixed in part". The fix of the regression was re-audited by a narrow
+  further round (see the pull request).
+- **Found and not acted on:** two pre-existing super-linear costs (the
+  re-entrant `storesOnto` path, and `isFresh` exponential in stores per
+  binding; backlog `BL-093`); a JavaScript source compiled with loose class
+  fields (RWF-127, not measured; in `BL-094`).

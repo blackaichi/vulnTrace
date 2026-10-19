@@ -1403,6 +1403,32 @@ and backlog `BL-091` re-audits them. This entry still stands: lanes E
 RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108,
 RWF-109, RWF-111, RWF-113, RWF-118 and RWF-121 from this family.
 
+**Progress, added by task `BL-091` (2026-10-19).** Task BL-091
+(`docs/tasks/BL-091-builtin-store-reaudit.md`) re-audited BL-081's rule
+in three fresh-context rounds. RWF-122's and RWF-123's fixes held. The
+rounds found, and BL-091 closes, `RWF-124`, `RWF-126` and `RWF-128`,
+and `RWF-127` in part, each also on BL-081's base. Each is an object proven the
+program's own that inherits an accessor (a derived class's `prototype`
+or static side), or a store only TypeScript's emit makes (a static field
+emitted as an assignment, a class's `prototype` writable at target ES5).
+Twenty-six live family-C false `NOT_AFFECTED`s measured against real
+Node are closed (`tests/oracle/bl091-builtin-store-reaudit.test.ts`).
+Measuring BL-081's tenth round's observations found and fixed `RWF-125`
+(a memo shared by a parameter named `exports` and the module's
+`exports`, masked) and a quadratic cost. Precision cost: no corpus
+verdict moved, and no clean `node_modules` graph node lost. The third
+round found `RWF-129` and `RWF-130` outside the class (the loader
+capability seen only when spelled: live, pre-existing, lane C, backlog
+`BL-092`). Its independent audit found two more stores TypeScript's emit
+makes, `RWF-131` (a namespace merged with a class) and `RWF-132` (a field
+named `__proto__`), both live and pre-existing, registered, not fixed
+(backlog `BL-095`), so RWF-127 is fixed in part. The class is still not certified, and BL-091 asks the project
+owner whether the rule needs a structural change (backlog `BL-094`). This
+entry still stands: lanes E (E-3..E-5) and C (C-2..C-5) remain, with
+RWF-070's species member, RWF-098's unit records, RWF-099, RWF-101,
+RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121,
+RWF-129, RWF-130, RWF-131 and RWF-132 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
