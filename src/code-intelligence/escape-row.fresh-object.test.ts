@@ -8,6 +8,7 @@ import {
   escapingForOfStoreOf,
   isProvenFreshObject,
   storeReadsUnseen,
+  storesUnderPrototypeKey,
 } from "./escape-row.js";
 
 /**
@@ -622,6 +623,86 @@ describe("the own-member and freshness bookkeeping is linear in a file's member 
       checks: after.fullSameObjectChecks - before.fullSameObjectChecks,
     };
   }
+
+  it("takes a namespace merged with an enum as an object not proven the program's own (task BL-095's independent audit, round 1, finding 4)", () => {
+    const declaration = (source: string) => {
+      const found: ts.VariableDeclaration[] = [];
+      const visit = (node: ts.Node): void => {
+        if (ts.isVariableDeclaration(node)) {
+          found.push(node);
+        }
+        ts.forEachChild(node, visit);
+      };
+      visit(parse(source, "index.ts"));
+      return found[0]!;
+    };
+    expect(
+      declarationStoreOf(
+        declaration(
+          "enum E { A }\nnamespace E { export const k = { f() {} }; }",
+        ),
+      ),
+    ).toBeDefined();
+    expect(
+      declarationStoreOf(
+        declaration("namespace E { export const k = { f() {} }; }"),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("reads a namespace's export keys and prototype-key check once per namespace, not per block (task BL-095's independent audit, round 3, finding 2)", () => {
+    let source = "class D extends Map {}\n";
+    for (let i = 0; i < 400; i += 1) {
+      source += `namespace D { export function f${i}() {} }\n`;
+    }
+    const sourceFile = parse(source, "index.ts");
+    const before = ownMemberBookkeepingCounts();
+    const visit = (node: ts.Node): void => {
+      if (ts.isModuleDeclaration(node)) {
+        storesUnderPrototypeKey(node);
+      }
+      if (ts.isIdentifier(node)) {
+        isProvenFreshObject(node);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    const after = ownMemberBookkeepingCounts();
+    // Two keys per block for the prototype-key check, two per namespace for
+    // the export keys: linear in the blocks.
+    expect(
+      after.namespaceMemberLookups - before.namespaceMemberLookups,
+    ).toBeLessThanOrEqual(2 * 400 + 2);
+  });
+
+  it("indexes a namespace's blocks once per statement list, and judges its object once (task BL-095's independent audit, finding 7)", () => {
+    let source = "class D extends Map {}\n";
+    for (let i = 0; i < 400; i += 1) {
+      source += `namespace D { export let v${i}: any = {}; v${i}.x = 1; }\n`;
+    }
+    const sourceFile = parse(source, "index.ts");
+    const before = ownMemberBookkeepingCounts();
+    let stores = 0;
+    const visit = (node: ts.Node): void => {
+      if (ts.isVariableDeclaration(node) && declarationStoreOf(node)) {
+        stores += 1;
+      }
+      if (
+        ts.isPropertyAccessExpression(node) &&
+        ts.isIdentifier(node.expression)
+      ) {
+        expect(isProvenFreshObject(node.expression)).toBe(false);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    const after = ownMemberBookkeepingCounts();
+    expect(stores).toBe(400);
+    expect(after.namespaceGroupBuilds - before.namespaceGroupBuilds).toBe(1);
+    expect(
+      after.namespaceOwnComputations - before.namespaceOwnComputations,
+    ).toBe(1);
+  });
 
   it("checks `exports.x = …` stores against the file's bare-name stores through one index (task BL-081's sixth audit round)", () => {
     let source = "";

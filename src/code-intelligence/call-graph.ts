@@ -31,6 +31,7 @@ import {
   mayCarryOwnMembers,
   storesUnderPrototypeKey,
   shorthandDefaultsOf,
+  namespaceDeclarationStoresOf,
   storeReadsUnseen,
 } from "./escape-row.js";
 import type { KnownPackageRoots } from "../domain/resolved-target.js";
@@ -4052,17 +4053,21 @@ async function classifyEscapingAssignment(
   }
   // A binding pattern's defaults are stores too (`var { keys = f } = 0`
   // in a `with` body, a `for (var … of …)` head there).
-  const defaults = ts.isVariableDeclaration(node)
-    ? bindingPatternDefaults(node.name)
-    : ts.isForOfStatement(node)
-      ? ts.isVariableDeclarationList(node.initializer)
-        ? node.initializer.declarations.flatMap((declaration) =>
-            bindingPatternDefaults(declaration.name),
-          )
-        : shorthandDefaultsOf(node.initializer)
-      : ts.isBinaryExpression(node)
-        ? shorthandDefaultsOf(node.left)
-        : [];
+  // A namespace declaration stores every exported function, class and
+  // `export import` alias (task BL-095).
+  const defaults = ts.isModuleDeclaration(node)
+    ? namespaceDeclarationStoresOf(node).filter((value) => value !== stored)
+    : ts.isVariableDeclaration(node)
+      ? bindingPatternDefaults(node.name)
+      : ts.isForOfStatement(node)
+        ? ts.isVariableDeclarationList(node.initializer)
+          ? node.initializer.declarations.flatMap((declaration) =>
+              bindingPatternDefaults(declaration.name),
+            )
+          : shorthandDefaultsOf(node.initializer)
+        : ts.isBinaryExpression(node)
+          ? shorthandDefaultsOf(node.left)
+          : [];
   for (const value of [stored, ...defaults].flatMap((expression) =>
     escapingValuesOf(expression),
   )) {
