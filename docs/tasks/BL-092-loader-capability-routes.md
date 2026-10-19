@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-092
 - **Branch**: `bl-092-loader-capability-routes`
 - **Base SHA**: `f3b1dcabf4b3f2c71fe3308e7be5407fb4030cb1` (BL-091's merge, PR #109)
-- **Commits**: —
+- **Commits**:
+  - `docs(tasks): BL-092 task file — the loader capability seen only when spelled`
+  - `test(BL-092): the loader capability's unspelled routes against real Node — RWF-129, RWF-130, PRM-107, RWF-133, RWF-134, RWF-135`
+  - `fix(BL-092): a Module instance's lookup list, prototype and inherited loaders are capabilities by what they are, and every write target is read — RWF-129, RWF-130, RWF-133, RWF-134, RWF-135`
+  - (this commit) `docs(BL-092): records — RWF-129, RWF-130, PRM-107 in part, RWF-133..140, the independent audit's three rounds, ADR 0010 note, plan, debts, backlog (BL-096..098), progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -177,3 +181,42 @@ OPEN-DEBTS D-09's six known failures; no change is expected.
 ## Report
 
 In the format of `AGENTS.md` § J (`docs/WORKFLOW.md` § 5).
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW`; the sections above are as written at the
+start.
+
+- **Scope, by the independent audit** (three rounds, `CERTIFIED` at the
+  last). Round 1 found two more live routes of this class, both fixed in
+  this task: a same-name `const arguments` anywhere in the file switched
+  the wrapper rule off (its finding 3; RWF-134's record), and a `with`
+  head (its finding 4; `RWF-138`). Round 2 found that the first fix of
+  finding 3 resolved every non-wrapper `arguments` to nothing, a false
+  `NOT_AFFECTED` at that intermediate commit only (`audit2.*` cases), and
+  that a `with (process)` head was still unseen; both fixed. What to do,
+  item 6, therefore reads: the wrapper's `arguments` is decided before the
+  whole-file shadow lookup, and any other `arguments` is resolved as an
+  ordinary name. The cases file holds thirty-one real-Node cases, not the
+  count the premises list implies.
+- **Registered, not fixed** (outside this task's boundaries or needing a
+  decision): `RWF-136` (the read-only exemptions assume Node's own
+  `Array.prototype`; decision `BL-096`), `RWF-137` (the wrapper's
+  `arguments` through a function's `caller`; `BL-097`), `RWF-139` (a
+  concise arrow called on the spot; C-3), `RWF-140` (`process` handed on
+  or wrapped; decision `BL-098`). The audit's finding 7
+  (`process.mainModule.children[i]`) is a note on `BL-040`'s row.
+- **"Any route" is bounded.** The `module_paths` and
+  `module_instance_member` kinds are reached through what the relation
+  follows: a same-file `const` looked up by name until C-2 (PRM-21,
+  PRM-22; the audit's finding 6). The comments say so.
+- **A premise this task first stated too strongly.** The comments on
+  `MODULE_PATHS_READ_METHODS` and `isIteratedLookupList` said the read-only
+  uses hand the list to nothing; that holds only for Node's own
+  `Array.prototype` (RWF-136). Corrected before review.
+- **Reason refinement in existing tests.** Three cases of
+  `src/analysis/module-load-closure.test.ts` that asserted the generic
+  `loader_capability_escape` for `module['require'](x)`, `const m =
+  module; m.require(x)` and `globalThis.process.mainModule.require(x)` now
+  assert `module_require`, the reason the spelled `module.require(x)`
+  has: still closure-widening, now precise.

@@ -212,7 +212,7 @@ A mismatch either way fails the generator, naming the ID.
 | PRM-104 | `vuln-lib` (synthetic fixture) | A `FunctionDeclaration` binding used as an export has no reassignment check, unlike the class/function-expression branches next to it | false NOT_AFFECTED — see below | **Fixed** (A-5a) — see below |
 | PRM-105 | `vuln-lib` (synthetic fixture) | Member access and call results are treated as opaque in the escape sweep, hiding a capability reached through `[x][0]`, `.at(0)`, a computed key or `Reflect.get` | false NOT_AFFECTED — see below | Open |
 | PRM-106 | `vuln-lib` (synthetic fixture) | `require.bind(...)` is deliberately excluded from the capability-receiver check | false NOT_AFFECTED — see below | Open |
-| PRM-107 | `vuln-lib` (synthetic fixture), nested + top instance | `module.paths` is recognized only through a small, fully-enumerated set of literal method-name calls | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below | Open |
+| PRM-107 | `vuln-lib` (synthetic fixture), nested + top instance | `module.paths` is recognized only through a small, fully-enumerated set of literal method-name calls | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below | Fixed in part (BL-092: the false NOT_AFFECTED, family B; the false AFFECTED is C-5's) |
 | PRM-108 | `vuln-lib` (synthetic fixture) | A destructured builtin binding's imported name falls back to the local name for a string-literal or computed property key | false NOT_AFFECTED — see below | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below |
 | PRM-109 | `vuln-lib` (synthetic fixture) | `graph.ts` restates the same "`unsupported_*` reasons cannot introduce a new module" premise PRM-60 disproves | false NOT_AFFECTED — see below | Open |
 | PRM-110 | `vuln-lib` (synthetic fixture) | The HTML report's per-finding summary reads only the first `unknownReasons` entry, so a rule mismatch reads as "no reason recorded" | false reason — see below | **Fixed** (B-5) — see below |
@@ -303,10 +303,18 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-126 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's freshness proof took every undecorated class for the program's own, but a derived class's [[Prototype]] is its base constructor: `class D extends util.inspect {} D.defaultOptions = { sorted: f }` (or `this.defaultOptions = …` in a static block) runs Node's own setter and installs `f` as the inspect default | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-091) |
 | RWF-127 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's escape row read a static class field as a define, which it is natively; TypeScript's legacy class-field emit (`useDefineForClassFields: false`, the default below target ES2022) assigns it after the class, so `class D extends util.inspect { static defaultOptions = … }` runs the inherited setter | false NOT_AFFECTED (family C), also on the base — see below | Fixed in part (BL-091; the same emit through a namespace merged with a class and a field named `__proto__`: RWF-131, RWF-132) |
 | RWF-128 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's freshness proof took a class's `prototype` for non-writable, which it is natively; TypeScript's ES5 emit makes the class a function whose `prototype` a store replaces (`(C as any).prototype = globalThis`), and a store onto it, or onto the constructor's `this`, then runs the global object's setters | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-091) |
-| RWF-129 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The loader-capability check sees `module.paths` changed only through the spelled forms `module.paths = …` and `module.paths.<mutator>(…)`; an alias (`const p = module.paths; p.shift()`), a parameter, `Array.prototype.shift.call(module.paths)`, an element store or a destructuring store changes where `require` resolves, unseen | false NOT_AFFECTED (family A/B), pre-existing — see below | Open (backlog `BL-092`) |
-| RWF-130 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `module.__proto__` is not a recognised route to `Module.prototype`: `module.__proto__.require = …` redirects every later `require`, unseen (`Object.getPrototypeOf(module).require = …` is seen) | false NOT_AFFECTED (family A/B), pre-existing — see below | Open (backlog `BL-092`) |
+| RWF-129 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The loader-capability check sees `module.paths` changed only through the spelled forms `module.paths = …` and `module.paths.<mutator>(…)`; an alias (`const p = module.paths; p.shift()`), a parameter, `Array.prototype.shift.call(module.paths)`, an element store or a destructuring store changes where `require` resolves, unseen | false NOT_AFFECTED (family A/B), pre-existing — see below | **Fixed** (BL-092) — see below |
+| RWF-130 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `module.__proto__` is not a recognised route to `Module.prototype`: `module.__proto__.require = …` redirects every later `require`, unseen (`Object.getPrototypeOf(module).require = …` is seen) | false NOT_AFFECTED (family A/B), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-131 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | TypeScript emits each exported member of a namespace merged with a class as an assignment onto the class (`namespace D { export const defaultOptions = … }` → `D.defaultOptions = …`); when the class's base is not the program's own the assignment runs an inherited setter (RWF-126's mechanism), and the escape row reads no store there | false NOT_AFFECTED (family C), also on the base — see below | Open (backlog `BL-095`) |
 | RWF-132 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | TypeScript's legacy class-field emit assigns a field named `__proto__` (`class C { __proto__: any = globalThis; }` → `this.__proto__ = globalThis`), which changes the object's [[Prototype]]; the freshness proofs see a `__proto__` store only in an assignment, so a later store onto the object runs the global object's setters | false NOT_AFFECTED (family C), also on the base — see below | Open (backlog `BL-095`) |
+| RWF-133 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The loader-capability check read only a member-shaped left side of `=`, `\|\|=`, `&&=` and `??=`: a destructuring target (`[Module._resolveFilename] = [hook]`, `({ paths: module.paths } = o)`), a `for…in` / `for…of` head, `++` / `--` and a compound operator (`module.paths[0] += "/x"`) each replaced loader state unseen | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
+| RWF-134 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The CommonJS wrapper's own `arguments` holds `require` (`arguments[1]`) and `module` (`arguments[2]`); read at module scope in a file with no `require` call of its own, it loads or redirects unseen (`arguments[2].constructor._resolveFilename = hook`) | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
+| RWF-135 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `Module` instance's inherited loader methods resolved only in the spelled call `module.require(x)`: `const r = module.require; r(path)` loads unseen | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
+| RWF-136 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The read-only exemptions for `module.paths` (ADR 0010 § 4's `slice` / `includes` / `indexOf`, BL-092's iteration and the primitive-result operators) assume `Array.prototype` is Node's own: a module that replaces `includes`, the array iterator or `join` runs with the list as `this` and changes it | false NOT_AFFECTED (family A), pre-existing — see below | Open (decision, backlog `BL-096`) |
+| RWF-137 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The wrapper's `arguments` is reachable through a function's `caller` without spelling `arguments` at module scope (`function g() { return g.caller.arguments[2]; }`, called at module scope, returns `module`) | false NOT_AFFECTED (family A), pre-existing — see below | Open (backlog `BL-097`) |
+| RWF-138 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `with` head was no position the loader-capability check read: `with (module.paths) { shift(); }`, `with (module) { paths.shift(); }` and `with (process) { mainModule.require(p); }` redirect or load under bare names | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
+| RWF-139 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A concise arrow called on the spot returns its body, which the value-flow walk does not follow through a call: `(() => module.paths)().shift()` and `(() => require("module"))()._resolveFilename = hook` change loader state unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (backlog `C-3`) |
+| RWF-140 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `process` is a resolution-only kind (global-object detection preambles), so `process.mainModule` is recognised only on a chain from `process` itself: passed to a function (`mm(process).require(p)`) or wrapped (`Object.create(process)`, `{ __proto__: process }`, `[process][0]`, each as a `with` head) it reaches the entry `Module` instance unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (decision, backlog `BL-098`) |
 
 ---
 
@@ -18181,7 +18189,7 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-106`
 
 ## PRM-107 — `module.paths` is recognized only through a small, fully-enumerated set of literal method-name calls
 
-**Status:** Open
+**Status:** Fixed in part (BL-092) — see the status update below
 **Failure class:** false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance)
 **Defect class:** A (the mutator is matched by exact literal call shape, not by what `module.paths` actually is)
 **Proof family affected:** B
@@ -18191,6 +18199,16 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-106`
 `resolveLoaderCapability` has no capability kind for `module.paths` beyond a small enumerated set of literal `module.paths.<mutator>(…)` call shapes. `const p = module.paths; p.unshift(dir);` and `Array.prototype.unshift.call(module.paths, dir);` both escape that enumeration: the nested `vuln-lib` copy that becomes resolvable through the mutated path list is certified NOT_AFFECTED (family B), while the direct, recognized `module.paths.unshift(dir)` form instead gives UNKNOWN.
 
 Full reproduction: `docs/audits/2026-09-premise-sweep-round-2.md § 3 (`PRM-107`) and § 4 (`paths2`)`. Not fixed here; this section records the finding only, per this task's boundaries.
+
+**Status update (task BL-092, 2026-10-19): Fixed in part.** Its false
+`NOT_AFFECTED` is closed by RWF-129's fix (the same defect): `const p =
+module.paths; p.unshift(dir)` and `Array.prototype.unshift.call(module.paths,
+dir)`, rebuilt on BL-092's fixture, were `NOT_AFFECTED` on the base
+`f3b1dca` while Node loads the affected instance, and are `UNKNOWN` now
+(`tests/oracle/bl092-loader-capability-routes.test.ts`, `prm107.*`). Its
+false `AFFECTED` (an `AFFECTED` path through an instance a reachable
+loader mutation may replace) is task C-5's and stays open. C-4's
+"`module.paths` as a registry kind" item is done.
 
 ---
 
@@ -22923,7 +22941,7 @@ class's `prototype` from its own constructor …" and "checks a file's
 
 ## RWF-129 — `module.paths` changed through any route but its spelled forms is unseen
 
-**Status:** Open (backlog `BL-092`)
+**Status:** Fixed (BL-092) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** A (the capability is recognised by its spelling, not by
 the object it names)
@@ -22956,9 +22974,34 @@ that any use of `module.paths` or `require.main.paths` as a value, as an
 element-store base or as an argument is a loader capability. Backlog
 `BL-092`.
 
+**Status update (task BL-092, 2026-10-19): Fixed.** A `Module` instance's
+`.paths` is a capability kind of its own (`module_paths`,
+`src/code-intelligence/loader-constructs.ts`), reached through every route
+the loader-capability relation follows (`module`, `require.main`,
+`process.mainModule`, an instance from `new Module`, a same-file `const`
+alias of any of them, either member spelling). It is a capability value
+(stored other than by a followable `const` alias, passed, returned, held
+in a composite: `loader_capability_escape`) and a receiver: any write
+through it, element or named, by any assignment operator or write target,
+is `loader_hook_mutation`; a `delete` or reflection mutation through it is
+`loader_capability_escape`. A call of one of its methods is
+`loader_hook_mutation` for a mutating one, nothing for ADR 0010 § 4's
+read-only ones (extended to a reviewed list, `MODULE_PATHS_READ_METHODS`),
+and `loader_capability_escape` for any other, a callback method included
+(it hands the list to its callback). Iterating the list directly is a
+read. Measured against real Node v22.11.0
+(`tests/oracle/bl092-loader-capability-routes.test.ts`): the six recorded
+reproductions and six more (a compound element store, a `for…of` head, an
+object pattern replacing the list, `Object.assign`, an array holder, a
+returned list) were `NOT_AFFECTED` on the base `f3b1dca` and are `UNKNOWN`
+now. "Any route" is bounded by what the relation follows: a same-file
+`const` looked up by name until task C-2 (PRM-21, PRM-22), and not
+`module.parent` / `module.children` (BL-040). The read-only exemptions
+assume Node's own `Array.prototype`: RWF-136.
+
 ## RWF-130 — `module.__proto__` is not a route to `Module.prototype`
 
-**Status:** Open (backlog `BL-092`)
+**Status:** Fixed (BL-092) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** A (the route to `Module.prototype` is recognised by its
 spelling)
@@ -22974,6 +23017,14 @@ load the real `vuln-lib` and call the target. The analyzer answers
 `NOT_AFFECTED`, on the branch and on the base. `Object.getPrototypeOf(module).require
 = …` and the `module.constructor._load` / `_resolveFilename` forms answer
 `UNKNOWN`. Backlog `BL-092`.
+
+**Status update (task BL-092, 2026-10-19): Fixed.** `<a Module
+instance>.__proto__` (either spelling, through a `const` alias) resolves
+to `Module.prototype`, so a write of a loader member through it is
+`loader_hook_mutation` and a call keeps `Module.prototype`'s reasons.
+Measured against real Node: `module.__proto__.require = …`,
+`module["__proto__"].require = …` and `const P = module.__proto__;
+P.require = …` were `NOT_AFFECTED` on the base and are `UNKNOWN` now.
 
 ## RWF-131 — A namespace merged with a class stores onto the class
 
@@ -23035,3 +23086,198 @@ instead and the target is never called. Declaration stores are not in
 `memberStoreIndex`, so `prototypeMayBeChanged` never sees them. The fix
 direction, in a TypeScript file: a field or parameter property whose key
 may be `__proto__` is a `__proto__` store. Backlog `BL-095`.
+
+## RWF-133 — A write the loader-capability check did not read: destructuring, loop heads, `++`/`--`, compound operators
+
+**Status:** Fixed (BL-092)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (a write the classifier does not read is taken to
+write nothing)
+**Proof family affected:** A
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (`loader-constructs.ts`)
+
+**Discovered:** by task BL-092, measuring RWF-129's routes against real
+Node v22.11.0 on the base `f3b1dca`. `isModuleLoaderAssignmentMutation`
+read only the left side of `=`, `||=`, `&&=` and `??=`, and only when it
+was a member access. `const Module = require("module"); [Module._resolveFilename]
+= [hook];` redirects a later `require` while the module-load closure stays
+complete; so do `[module.paths[0]] = [dir]`, `({ paths: module.paths } =
+o)`, `for (module.paths[0] of [dir]);` and `module.paths[0] += "/x"`. Each
+was `NOT_AFFECTED` on the base and is `UNKNOWN` at BL-092. The fix reads
+every target any assignment operator writes, each target of a
+destructuring pattern at any depth (elements, property values, rests,
+defaulted targets), a `for…in` / `for…of` head that is an expression, and
+the operand of `++` / `--`.
+
+## RWF-134 — The CommonJS wrapper's own `arguments` reaches `require` and `module`
+
+**Status:** Fixed (BL-092); its route through a function's `caller` is
+RWF-137
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (`require` and `module` recognised by their names)
+**Proof family affected:** A
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (`loader-constructs.ts`)
+
+**Discovered:** by task BL-092. The wrapper is `function (exports,
+require, module, __filename, __dirname)`, so at module scope `arguments[1]`
+is `require` and `arguments[2]` is `module`. In a module with no `require`
+call of its own (one that has one is already `UNKNOWN`: its `require` is
+then no proven wrapper binding, task A-5a), `arguments[2].constructor._resolveFilename
+= hook` and `arguments[1](path)` were `NOT_AFFECTED` on the base while
+Node loads the affected instance. The fix resolves an `arguments` no
+non-arrow function encloses (a method's computed name and decorators are
+outside the method) to `ambiguous`, so every use fails closed. BL-092's
+independent audit found the rule switched off by a same-name `const`
+anywhere in the file (the whole-file shadow lookup); the rule now runs
+before that lookup. The audit's second round found that first fix wrong
+in the other direction: it resolved every `arguments` that is not the
+wrapper's to nothing, so a function's own `const arguments =
+require("module")` (or `= module.paths`, or `= require`) was no longer
+followed as an alias -- a false `NOT_AFFECTED` at that intermediate commit
+only, never on `main`. Only the wrapper's `arguments` is decided early
+now; any other falls through to the ordinary alias resolution. All are
+measured in `tests/oracle/bl092-loader-capability-routes.test.ts`
+(`measured.wrapper-*`, `audit.wrapper-*`, `audit2.function-const-arguments-*`).
+
+## RWF-135 — A `Module` instance's inherited loader methods, held in an alias
+
+**Status:** Fixed (BL-092)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (the loader recognised only in its spelled call)
+**Proof family affected:** A
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (`loader-constructs.ts`)
+
+**Discovered:** by task BL-092. `module.require(x)` was `module_require`
+only as a literal call chain; `module.require` resolved to nothing, so
+`const r = module.require; r(<the affected instance's path>)` was
+`NOT_AFFECTED` on the base while Node loads it. An instance's `require`,
+`load` and `_compile` (inherited from `Module.prototype`) now resolve to
+a kind of their own that keeps each spelled call's reason
+(`module_require`, `module_internal_load`, `vm_execution`); an alias
+called keeps it, and storing or passing the member is an escape. Three
+`module-load-closure.test.ts` cases that pinned the generic
+`loader_capability_escape` for `module['require'](x)`, `const m = module;
+m.require(x)` and `globalThis.process.mainModule.require(x)` now assert
+`module_require`: still widening, now precise. `.bind` on these members is
+PRM-106's (C-3).
+
+## RWF-136 — The read-only exemptions for `module.paths` assume Node's own `Array.prototype`
+
+**Status:** Open (decision, backlog `BL-096`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the method is taken to be Node's; a replacement runs
+with the list as `this`)
+**Proof family affected:** A
+**Severity:** P1 / a live false `NOT_AFFECTED`, pre-existing; it needs a
+module that replaces an `Array.prototype` member
+**Fix lane:** C, with lane A's builtin-replacement rule (RWF-110)
+
+**Discovered:** by task BL-092's independent audit, against real Node
+v22.11.0 on BL-092's commit and its base `f3b1dca`, both `NOT_AFFECTED`:
+`const inc = Array.prototype.includes; Array.prototype.includes =
+function (x) { this.shift(); return inc.call(this, x); }; const p =
+module.paths; p.includes("x");`; the same with `Array.prototype[Symbol.iterator]`
+replaced, then `for (const d of module.paths) {}`; and with
+`Array.prototype.join` replaced, then `` `${module.paths}` `` (a primitive
+conversion runs user code with the list as `this`). The spelled
+`module.paths.slice()` is `UNKNOWN` only through the call graph's
+`moduleScopeCalleeReason`. ADR 0010 § 4 admits the read-only methods on
+purpose (precision controls in `module-load-closure.test.ts`), and
+polyfills write `Array.prototype`, so the fix trades precision for
+soundness: make each exemption depend on no loaded file writing a builtin
+prototype member, or fail closed. A decision for the project owner
+(backlog `BL-096`). BL-092's comments on `MODULE_PATHS_READ_METHODS` and
+`isIteratedLookupList`, which first stated the premise unqualified, were
+corrected before merge.
+
+## RWF-137 — The wrapper's `arguments` through a function's `caller`
+
+**Status:** Open (backlog `BL-097`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (the wrapper's `arguments` recognised by its name)
+**Proof family affected:** A
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (`loader-constructs.ts`)
+
+**Discovered:** by task BL-092's independent audit, against real Node,
+`NOT_AFFECTED` on BL-092's commit and its base: `function g() { return
+g.caller.arguments[2]; } const m = g(); m.paths.shift();`,
+`function g() { return g.caller.arguments[1]; } g()(<path>)`, and in a
+second file `function g() { return g.caller.arguments; }
+g()[2].constructor._resolveFilename = hook;`. A sloppy function called at
+module scope has the wrapper as its `caller`, whose `arguments` are the
+wrapper's. The fix direction is the frame-reach rule BL-074 and BL-084
+apply elsewhere (a function's `caller` and `arguments` read by any route,
+`Reflect.get` and a computed key included, and V8's call sites through
+`Error.prepareStackTrace`, not measured): fail closed in the loader
+classifier. A name-only rule for `.caller` would be a class-A fix with
+known holes, so it is not done in BL-092. Backlog `BL-097`.
+
+## RWF-138 — A `with` head reaches a loader capability's members under bare names
+
+**Status:** Fixed (BL-092)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (a member recognised only through a member access)
+**Proof family affected:** A
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (`loader-constructs.ts`)
+
+**Discovered:** by task BL-092's independent audit: `with (module.paths)
+{ shift(); }` and `with (module) { paths.shift(); }` were `NOT_AFFECTED`
+on the base and on BL-092's first fix commit while Node loads the affected
+instance. RWF-120 covered `with` for the escape row only. The fix makes a
+`with` head a consumed position (`consumedValuePositionOf`): a capability
+there escapes, as an argument does. The audit's second round found `with
+(process) { mainModule.require(path); }` still `NOT_AFFECTED`: `process`
+and the global object are resolution-only kinds as values, but as a
+`with` head they put `mainModule` / `process` in scope under bare names,
+so such a head is an escape too (`isWithHeadReachingLoader`). Measured in
+`tests/oracle/bl092-loader-capability-routes.test.ts` (`audit.with-*`,
+`audit2.with-process`).
+
+## RWF-139 — A concise arrow called on the spot hands its body back unread
+
+**Status:** Open (backlog `C-3`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (the value a call returns is not followed)
+**Proof family affected:** A
+**Severity:** P1 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (C-3's total value-flow table)
+
+**Discovered:** by task BL-092's independent audit, `NOT_AFFECTED` on
+BL-092's commit and its base while Node loads the affected instance:
+`(() => module.paths)().shift();` and `(() =>
+require("module"))()._resolveFilename = hook;`. `valueFlowOperandsOf` reads
+a concise arrow's body as its value, but a call's result is opaque
+(Exclusion 2), so an arrow called where it is written returns a
+capability no position sees. It applies to every capability, not only
+BL-092's, so it belongs to C-3's value-flow table.
+
+## RWF-140 — `process` handed on or wrapped reaches `process.mainModule` unseen
+
+**Status:** Open (decision, backlog `BL-098`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (a value that may hold `process` is taken to hold no
+capability)
+**Proof family affected:** A
+**Severity:** P1 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (`loader-constructs.ts`)
+
+**Discovered:** by task BL-092's independent audit, round 3, against real
+Node v22.11.0, `NOT_AFFECTED` on BL-092's commit and on its base
+`f3b1dca` while Node calls the target: `function mm(p) { return
+p.mainModule; } mm(process).require(<path>).parse("x");`, and as `with`
+heads `Object.create(process)`, `{ __proto__: process }` and
+`[process][0]` with `mainModule.require(<path>)` in the body.
+`isAuthoritativeCapabilityValue` excludes `ambient_process` (and the
+global object) from the escape sweep on purpose: global-object detection
+preambles (lodash, url-parse) are ubiquitous, and counting them was
+measured and reverted. So `process` reaches `mainModule` only on a chain
+the relation resolves from `process` itself. Closing it means counting
+`process` as an escaping value (a measured precision cost) or modelling
+`mainModule` through any value that may hold `process`: a decision for
+the project owner (backlog `BL-098`). BL-092 closed only the direct
+`with (process)` / `with (globalThis)` head (RWF-138).
