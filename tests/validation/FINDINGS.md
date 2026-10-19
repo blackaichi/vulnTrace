@@ -318,6 +318,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-141 | `vuln-lib` (synthetic fixture); a gap in call resolution, not tied to one package | TypeScript compiles a use of a namespace's exported variable in its body to a member read of the namespace's object (`h(1)` → `N.h(1)`), but the call graph resolves the bare name to the variable's initializer; when the program's own static accessor on a class merged with the namespace answers the read, the call reaches what the getter returns, unseen | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-099`) |
 | RWF-142 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | TypeScript's decorator helpers make implicit calls the graph does not model: a legacy decorator's returned descriptor installed by `__decorate` (a setter a later field store or `this.x = …` runs), and a TC39 field decorator's returned initializer run by `__runInitializers` on the field's value | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-100`) |
 | RWF-143 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | At target ES5 TypeScript compiles a class's methods to assignments (`C.prototype.m = function …`, `C.m = …` for a static one); when `C.prototype` or `C` inherits from an object the program does not own (`X.prototype = globalThis; class C extends X { Buffer() {} }`), the assignment runs that object's setter, and the escape row reads a method as a definition | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-101`) |
+| RWF-144 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A caller's frame read through a key computed at run time (`g["call" + "er"]`, `Reflect.get(g, ["call", "er"].join(""))`, a template key, a call site's `getFunction` under a joined key) spells no name, so the loader classifier does not see the wrapper's `require` / `module` it reaches | false NOT_AFFECTED (family B), pre-existing — see below | Open (backlog `BL-080`) |
 
 ---
 
@@ -23443,3 +23444,34 @@ target is not read): a method or static method of a class whose
 `prototype` or static chain is not proven the program's own is a store, as
 BL-095 made fields.
 
+## RWF-144 — A caller's frame read through a key computed at run time, in the loader classifier
+
+**Status:** Open (backlog `BL-080`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (a frame read recognised by the name it spells)
+**Proof family affected:** B (measured); A where no other instance of the
+package name is discovered (not measured)
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (`loader-constructs.ts`), with RWF-109's decision
+
+**Discovered:** by task BL-097, measuring its backlog row's fix direction
+("computed keys included") against real Node v22.11.0, `NOT_AFFECTED` on
+its base `670a839` and after its fix alike, while Node calls the target
+(`tests/oracle/bl097-wrapper-arguments-frame.cases.ts`, the `rwf144.*`
+cases, held by open-soundness-defect records):
+
+```js
+function g() { return g["call" + "er"].arguments[2]; }
+g().paths.shift();   // then require("vuln-lib/index.js") loads the top-level instance
+```
+
+and `Reflect.get(g, ["call", "er"].join(""))`, ``g[`${a}er`]`` with `a`
+= `"call"`, and, after `Error.prepareStackTrace = (e, s) => s`, a
+module-scope call site's `getFunction` under a joined key (the wrapper,
+whose `arguments` hold `module`). BL-097 fixed every spelled form (RWF-137);
+a key computed at run time spells no name. RWF-109 states that its class
+covers the frame names and that no false `NOT_AFFECTED` was measured for
+it: for the loader classifier this measures one. The fix is RWF-109's
+precision decision: a read through a key computed at run time from a
+value that may be a function (or a V8 call site) fails closed. Backlog
+`BL-080`.
