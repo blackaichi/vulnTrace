@@ -4307,9 +4307,12 @@ describe("ModuleLoadClosure: shared provenance across all modeled builtins (VT-3
       "module_internal_load",
     ],
     [
+      // `loader_capability_escape` until task BL-092, which resolves an
+      // instance's inherited `require` to the reason its spelled call has
+      // (RWF-135).
       "F2 globalThis.process.mainModule.require(...)",
       "globalThis.process.mainModule.require('vuln');\nmodule.exports={};\n",
-      "loader_capability_escape",
+      "module_require",
     ],
     [
       "F-CONTROL unprefixed process.mainModule.constructor",
@@ -5104,14 +5107,6 @@ describe("ModuleLoadClosure: every literal-match miss fails closed (VT-307c-stru
     // The literal `module_require` chain walk misses these; each must
     // still fail closed rather than silently stay unclassified.
     [
-      "module['require'](name) -- element-access loader call",
-      "module['require'](process.env.N || 'x');\nmodule.exports={};\n",
-    ],
-    [
-      "const m = module; m.require(name) -- aliased owner",
-      "const m = module;\nm.require(process.env.N || 'x');\nmodule.exports={};\n",
-    ],
-    [
       "globalThis.module.require(name)",
       "globalThis.module = module;\nglobalThis.module.require(process.env.N || 'x');\nmodule.exports={};\n",
     ],
@@ -5136,6 +5131,29 @@ describe("ModuleLoadClosure: every literal-match miss fails closed (VT-307c-stru
 
     expect(closure.complete).toBe(false);
     expect(reasonsOf(closure)).toContain("loader_capability_escape");
+  });
+
+  // Task BL-092 (RWF-135): these two failed closed as
+  // `loader_capability_escape` until an instance's inherited `require`
+  // resolved, by any spelling or alias, to the reason the spelled
+  // `module.require(name)` has always had.
+  it.each([
+    [
+      "module['require'](name) -- element-access loader call",
+      "module['require'](process.env.N || 'x');\nmodule.exports={};\n",
+    ],
+    [
+      "const m = module; m.require(name) -- aliased owner",
+      "const m = module;\nm.require(process.env.N || 'x');\nmodule.exports={};\n",
+    ],
+  ])("%s fails closed as module_require", async (_label, source) => {
+    const root = tempProject();
+    const entry = write(root, "src/index.js", source);
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(reasonsOf(closure)).toContain("module_require");
   });
 
   it.each([

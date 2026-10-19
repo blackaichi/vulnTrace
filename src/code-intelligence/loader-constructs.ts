@@ -343,38 +343,6 @@ function isVmConstructedInstance(
 }
 
 /**
- * Whether `expr` is one of the three ambient references to a real `Module`
- * INSTANCE every CommonJS file already has, with no `new` or import
- * involved (VT-307c-fix-7 Parts 3/7; VT-307c-fix-10 adds the third): the
- * current file's own `module`; `require.main`; or `process.mainModule` --
- * Node's historical, still-supported alias for the exact same entry-module
- * object `require.main` refers to (both are the same real `Module`
- * instance, not two different ones). Every one of these is a real `Module`
- * instance, not a wrapper around one, the same way `module` is. The final
- * VT-307d go/no-go audit found this a genuine gap, not merely a missed
- * spelling: `classifyLoaderConstruct` already recognized
- * `process.mainModule.require` as `module_require` (see the bare
- * property-chain check near the bottom of that function), but
- * `isAmbientModuleInstance` -- which backs every OTHER ambient-instance
- * check in this file, including `.constructor` resolution
- * ({@link resolvesToModuleConstructor}) and the `.paths`-array checks
- * ({@link isAmbientModulePathsArray}) -- did not, leaving
- * `process.mainModule.constructor._resolveFilename = fn` and
- * `process.mainModule.paths.unshift(dir)` both invisible even though the
- * `require.main` spelling of the identical attack was already caught.
- * Matched by literal identifier chain only -- the same deliberate
- * ambient-global simplification already applied throughout this file --
- * never something reached through an import, and never a same-file
- * `require`/`process` shadowed by a local variable of that name.
- */
-function isAmbientModuleInstance(
-  expr: ts.Expression,
-  context: LoaderClassificationContext,
-): boolean {
-  return resolveLoaderCapability(expr, context)?.kind === "module_instance";
-}
-
-/**
  * Whether `localName` is bound, in this file, as an ESM NAMESPACE import
  * (`import * as localName from "..."`) of Node builtin `builtin` -- the
  * receiver-side half of the `.default` self-reference check below
@@ -507,6 +475,36 @@ type ResolvedLoaderCapability =
   | { readonly kind: "module_constructor_member"; readonly member: string }
   | { readonly kind: "module_prototype_member"; readonly member: string }
   /**
+   * A loader method a `Module` INSTANCE inherits from `Module.prototype`,
+   * read off the instance -- `module.require`, `require.main.load`, an
+   * alias's `._compile` -- named in {@link MODULE_INSTANCE_METHOD_REASONS}
+   * (task BL-092, RWF-135). A kind of its own rather than
+   * `module_prototype_member` so that every spelling keeps the reason its
+   * direct call already had (`module.require(x)` is `module_require`,
+   * `Module.prototype.require(x)` is `module_internal_load`), while an
+   * alias of it (`const r = module.require; r(path)`, a live false
+   * `NOT_AFFECTED` while the member resolved to nothing) is the same
+   * capability, and storing or passing it is an escape.
+   */
+  | { readonly kind: "module_instance_member"; readonly member: string }
+  /**
+   * A `Module` instance's own `.paths` -- `module.paths`,
+   * `require.main.paths`, an alias of either -- the ordered list of
+   * directories `require()` searches for a bare specifier (task BL-092,
+   * RWF-129). Changing it in place, by any route, changes which installed
+   * instance a later `require` loads, so it is a capability like a
+   * registry: a value whose escape widens the closure, and a receiver
+   * through which every write is a mutation. "An alias" means what this
+   * relation follows: a same-file `const`, looked up by name until task
+   * C-2's lexical provenance (PRM-21, PRM-22). Recognising it only in its
+   * spelled forms (`module.paths.<mutator>(…)`, `module.paths = …`) let an
+   * alias, a parameter, `Array.prototype.shift.call(module.paths)`, an
+   * element or destructuring store and an object holder each redirect a
+   * load unseen. A member READ through it (an element, `length`, a method)
+   * is never itself a capability: the list holds strings.
+   */
+  | { readonly kind: "module_paths" }
+  /**
    * The WHOLE value of one of the OTHER modeled loader/execution builtins
    * -- `vm`, `child_process`, `worker_threads` (VT-307c-builtin-closure).
    * `module` never produces this kind: Node's own loader does
@@ -636,6 +634,38 @@ function memberAccessOf(
     };
   }
   return undefined;
+}
+
+/**
+ * Whether `identifier` (spelled `arguments`) is the CommonJS module
+ * wrapper's own arguments object -- `function (exports, require, module,
+ * __filename, __dirname)` -- rather than an enclosing function's (task
+ * BL-092, RWF-134): no non-arrow function encloses it, since an arrow
+ * shares the `arguments` of the scope it is in. A method's computed name
+ * and its decorators are evaluated in the enclosing scope, not the
+ * method's, so they do not count as enclosed. The same reading as
+ * `ambient-names.ts`'s wrapper-`arguments` rule (task A-5a), which
+ * withholds the proof of a CommonJS `require` binding for the same reason.
+ * In an ES module the same read throws, so treating it as the wrapper's
+ * fails closed and costs nothing real.
+ */
+function isModuleWrapperArguments(identifier: ts.Identifier): boolean {
+  let child: ts.Node = identifier;
+  for (
+    let node: ts.Node | undefined = identifier.parent;
+    node !== undefined;
+    child = node, node = node.parent
+  ) {
+    if (
+      ts.isFunctionLike(node) &&
+      !ts.isArrowFunction(node) &&
+      child !== node.name &&
+      !ts.isDecorator(child)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 /**
@@ -821,6 +851,25 @@ function resolveLoaderCapability(
   // A same-file `const <name> = ...` shadows the ambient global and is
   // resolved as the ordinary alias it is (the `require` case matters in
   // real ESM code: `const require = createRequire(import.meta.url)`).
+  // The CommonJS wrapper's own `arguments` (task BL-092, RWF-134):
+  // `arguments[1]` is `require` and `arguments[2]` is `module`, read with
+  // no spelling of either. Which element a use reaches is not resolved
+  // here, so every use fails closed. Decided before the shadow check
+  // below, whose lookup is by name over the whole file: a `const
+  // arguments` in some function must not switch the rule off at module
+  // scope (its independent audit's finding 3). A real module-scope
+  // shadow is rare and only costs precision. Any other `arguments` falls
+  // through to the ordinary resolution below: a function's own `const
+  // arguments = require("module")` is an alias like any other (the
+  // audit's second round, R2-1, measured the false NOT_AFFECTED an early
+  // `undefined` here made).
+  if (
+    ts.isIdentifier(expr) &&
+    expr.text === "arguments" &&
+    isModuleWrapperArguments(expr)
+  ) {
+    return { kind: "ambiguous" };
+  }
   if (ts.isIdentifier(expr)) {
     const shadowed =
       resolveSingleAssignmentValue(expr.text, context.index.sourceFile) !==
@@ -892,6 +941,15 @@ function resolveLoaderCapability(
       depth + 1,
     );
 
+    // A member of the lookup list -- an element, `length`, a method --
+    // under any key, computed or not: the list holds strings, so no member
+    // read through it is a capability. What is DONE through it is the
+    // receiver side's question ({@link modulePathsMethodReason},
+    // {@link capabilityWriteTargetReason}).
+    if (receiverKind?.kind === "module_paths") {
+      return undefined;
+    }
+
     // A COMPUTED key into an authoritative receiver could name any member
     // at all -- including one this classifier models as dangerous -- so it
     // must fail closed rather than resolve to nothing. `"ambiguous"` is
@@ -949,6 +1007,22 @@ function resolveLoaderCapability(
     if (receiverKind?.kind === "ambient_process") {
       // `process.<anything else>` is an ordinary process read.
       return undefined;
+    }
+
+    // Task BL-092: what a `Module` INSTANCE reaches without spelling the
+    // constructor -- its own lookup list (RWF-129), its [[Prototype]]
+    // through the legacy `__proto__` accessor, which IS `Module.prototype`
+    // (RWF-130), and the loader methods it inherits (RWF-135).
+    if (receiverKind?.kind === "module_instance") {
+      if (memberName === "paths") {
+        return { kind: "module_paths" };
+      }
+      if (memberName === "__proto__") {
+        return { kind: "module_prototype" };
+      }
+      if (MODULE_INSTANCE_METHOD_REASONS.has(memberName)) {
+        return { kind: "module_instance_member", member: memberName };
+      }
     }
 
     // `<X>.Module` self-reference off an already-resolved constructor
@@ -1109,11 +1183,18 @@ function resolvesToModulePrototype(
  *   real module -- `vm_execution` rather than a dedicated reason, since it
  *   compiles-then-runs exactly like `vm`'s own execution methods do (see
  *   this task's Part 3 "reuse over proliferation" instruction).
+ * - `require` (task BL-092, RWF-135): `module.require(id)` loads `id`
+ *   relative to the instance -- `module_require`, the reason its spelled
+ *   call (`module.require`, `require.main.require`,
+ *   `process.mainModule.require`) has had since VT-307b. Listed here so
+ *   that {@link resolveLoaderCapability} resolves the member off ANY
+ *   instance, an alias of the member included, to the same reason.
  */
 const MODULE_INSTANCE_METHOD_REASONS: ReadonlyMap<string, DynamicCallReason> =
   new Map([
     ["load", "module_internal_load"],
     ["_compile", "vm_execution"],
+    ["require", "module_require"],
   ]);
 
 /**
@@ -1390,6 +1471,11 @@ export function classifyLoaderConstruct(
       return "aliased_eval";
     case "ambient_require":
       return "aliased_require";
+    case "module_instance_member":
+      // Task BL-092: an instance's inherited loader method however it is
+      // reached -- spelled (`module.require(x)`, the reason it always
+      // had) or held in an alias (`const r = module.require; r(x)`).
+      return MODULE_INSTANCE_METHOD_REASONS.get(calleeCapability.member);
     case "ambiguous":
       // The callee is rooted in an authoritative capability but could
       // not be resolved to a specific one -- a computed member key
@@ -1466,6 +1552,19 @@ export function classifyLoaderConstruct(
     return undefined;
   }
 
+  // Task BL-092 (RWF-129): a method of a `Module` instance's lookup list,
+  // reached through any route and either member spelling -- see
+  // {@link modulePathsMethodReason}.
+  {
+    const member = memberAccessOf(expr);
+    if (
+      member !== undefined &&
+      resolveLoaderCapability(member.receiver, context)?.kind === "module_paths"
+    ) {
+      return modulePathsMethodReason(member.name);
+    }
+  }
+
   // VT-307c-element-closure: the unknown-member fail-closed fallback,
   // applied to BOTH member spellings. The per-shape branch below is
   // reached only by `PropertyAccessExpression`, so `module['require']
@@ -1540,16 +1639,6 @@ export function classifyLoaderConstruct(
           return instanceReason;
         }
       }
-    }
-
-    // Mutating-array-method calls on an ambient Module instance's own
-    // `.paths` (VT-307c-fix-9 Part 6/7): `module.paths.unshift(dir)` /
-    // `require.main.paths.push(dir)` and friends. Provenance is to the
-    // ambient VALUE (`module`/`require.main`), same shape as the vm/Module
-    // instance-method checks above -- see
-    // {@link isModuleLoaderPathArrayMutatingCall}.
-    if (isModuleLoaderPathArrayMutatingCall(expr, context)) {
-      return "loader_hook_mutation";
     }
 
     // Ambient ECMAScript/Node globals (`module`, `process`, `require`,
@@ -1985,6 +2074,9 @@ function isAuthoritativeCapabilityReceiver(
     capability?.kind === "module_constructor" ||
     capability?.kind === "module_instance" ||
     capability?.kind === "module_prototype" ||
+    // Task BL-092 (RWF-129): a write, `delete` or reflection mutation
+    // through the lookup list changes a later load.
+    capability?.kind === "module_paths" ||
     capability?.kind === "ambiguous"
   );
 }
@@ -2625,6 +2717,16 @@ function consumedValuePositionOf(
     return { expression: node.expression, aliasFollowable: false };
   }
 
+  // Category 5 (task BL-092, RWF-138): a `with` head. `with (module.paths)
+  // { shift(); }` and `with (module) { paths.shift(); }` reach the object's
+  // members under bare names no member access spells, so the object
+  // escapes this classifier exactly as an argument does. (A head that is
+  // `process` or the global object escapes too, though neither is a
+  // capability value elsewhere: {@link isWithHeadReachingLoader}.)
+  if (ts.isWithStatement(node)) {
+    return { expression: node.expression, aliasFollowable: false };
+  }
+
   // Category 4: extended. `class H extends <expr>` evaluates `<expr>` as a
   // value AND makes every static member of it reachable through `H`, which
   // this model does not track -- `class H extends Module {}` followed by
@@ -2699,9 +2801,9 @@ const MODULE_CONSTRUCTOR_SAFE_CALLS: ReadonlySet<string> = new Set([
  * most common statement in all of CommonJS, an ordinary data assignment
  * with no relationship to loader/resolution state. No other ambient-
  * instance property is safe-listed for writes: `.paths` mutation is
- * already precisely modeled above ({@link isAmbientModulePathsArray}/
- * {@link isModuleLoaderPathArrayMutatingCall}) and therefore never reaches
- * this fallback at all (precedence); everything else (`.id`, `.filename`,
+ * already precisely modeled above (the `module_paths` capability kind,
+ * {@link modulePathsMethodReason}) and therefore never reaches this
+ * fallback at all (precedence); everything else (`.id`, `.filename`,
  * `.loaded`, `.parent`, `.children`, `.path`, `.isPreloading`, or any
  * future member) is rare enough in ordinary code, and unproven enough to
  * be safe, that an unrecognized write to it fails closed.
@@ -2824,27 +2926,6 @@ function isModuleConstructorMutablePrototypeMember(
 }
 
 /**
- * Whether `expr` is an ambient Module instance's own `.paths` array
- * (VT-307c-fix-9, reproduced blockers D/E) -- `module.paths` or
- * `require.main.paths`, Node's own ordered list of directories `require()`
- * searches for a bare (non-relative, non-builtin) specifier. Reuses
- * {@link isAmbientModuleInstance}, the same ambient-reference provenance
- * every other `module`/`require.main` check in this file applies -- never
- * a same-file `obj.paths`/`obj.main.paths` that merely happens to share the
- * name (see this file's precision-control tests).
- */
-function isAmbientModulePathsArray(
-  expr: ts.Expression,
-  context: LoaderClassificationContext,
-): boolean {
-  return (
-    ts.isPropertyAccessExpression(expr) &&
-    expr.name.text === "paths" &&
-    isAmbientModuleInstance(expr.expression, context)
-  );
-}
-
-/**
  * `Array.prototype`'s own COMPLETE set of in-place-mutating method names
  * (VT-307c-fix-9 Part 7) -- every method that can alter an array's contents
  * or ordering, as opposed to a non-mutating method (`slice`, `indexOf`,
@@ -2861,10 +2942,11 @@ function isAmbientModulePathsArray(
  * remove an entry, which can likewise expose a farther, already-installed
  * instance that a nearer entry was previously shadowing; `copyWithin`/
  * `fill` are the two remaining ways to overwrite array contents in place.
- * Deliberately this small, fully-enumerated method-name set -- never "any
- * method call on `.paths`" -- so a genuinely read-only inspection
- * (`module.paths.slice()`, `.includes(x)`, `.indexOf(x)`) is never flagged
- * (see this file's precision-control tests).
+ * The mutating half of {@link modulePathsMethodReason}'s split; its
+ * read-only half is {@link MODULE_PATHS_READ_METHODS}, so a genuinely
+ * read-only inspection (`module.paths.slice()`, `.includes(x)`,
+ * `.indexOf(x)`) is never flagged (see this file's precision-control
+ * tests), and a method on neither list fails closed.
  */
 const ARRAY_MUTATING_METHODS: ReadonlySet<string> = new Set([
   "push",
@@ -2879,24 +2961,60 @@ const ARRAY_MUTATING_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * Whether `expr` is a mutating-array-method CALL on an ambient Module
- * instance's own `.paths` (VT-307c-fix-9) -- e.g.
- * `module.paths.unshift(dir)`, `require.main.paths.push(dir)`. This is a
- * CALL-shaped construct (unlike every other check in this section, which
- * detects an assignment), so it is consulted from
- * {@link classifyLoaderConstruct} rather than from
- * {@link isModuleLoaderAssignmentMutation} below -- see that call site's
- * own comment.
+ * `Array.prototype` methods that, AS NODE SHIPS THEM, leave a `Module`
+ * instance's lookup list untouched and hand it to nothing (task BL-092):
+ * each returns a new array, an element, an index, a boolean, a string or
+ * an iterator, and none takes a callback that receives the array. That
+ * premise fails when a module replaces the method: the replacement runs
+ * with the list as `this` (`Array.prototype.includes = function () {
+ * this.shift(); }`, then `p.includes(x)`, is a live false NOT_AFFECTED on
+ * this commit and its base; RWF-136, backlog `BL-096`, a decision for the
+ * project owner, since ADR 0010 § 4 admits `slice` / `includes` /
+ * `indexOf` deliberately). A method that does --
+ * `forEach`, `map`, `filter`, `some`, `every`, `find`, `findIndex`,
+ * `findLast`, `findLastIndex`, `reduce`, `reduceRight`, `flatMap` -- passes
+ * the list itself to its callback as the last argument
+ * (`module.paths.forEach((p, i, a) => a.shift())` redirects a load), so it
+ * is absent here and fails closed. `toSorted`'s comparator receives only
+ * elements.
  */
-function isModuleLoaderPathArrayMutatingCall(
-  expr: ts.Expression,
-  context: LoaderClassificationContext,
-): boolean {
-  return (
-    ts.isPropertyAccessExpression(expr) &&
-    ARRAY_MUTATING_METHODS.has(expr.name.text) &&
-    isAmbientModulePathsArray(expr.expression, context)
-  );
+const MODULE_PATHS_READ_METHODS: ReadonlySet<string> = new Set([
+  "at",
+  "concat",
+  "entries",
+  "flat",
+  "includes",
+  "indexOf",
+  "join",
+  "keys",
+  "lastIndexOf",
+  "slice",
+  "toReversed",
+  "toSorted",
+  "toSpliced",
+  "toString",
+  "values",
+  "with",
+]);
+
+/**
+ * The closure-widening reason for calling member `name` of a `Module`
+ * instance's lookup list, reached by any route (task BL-092, RWF-129):
+ * `loader_hook_mutation` for a mutating method (the reason
+ * `module.paths.unshift(dir)` has had since VT-307c-fix-9), nothing for a
+ * reviewed read-only one, and `loader_capability_escape` for a computed
+ * key or any other method, whose effect on the list is not established.
+ */
+function modulePathsMethodReason(
+  name: string | undefined,
+): DynamicCallReason | undefined {
+  if (name !== undefined && ARRAY_MUTATING_METHODS.has(name)) {
+    return "loader_hook_mutation";
+  }
+  if (name !== undefined && MODULE_PATHS_READ_METHODS.has(name)) {
+    return undefined;
+  }
+  return "loader_capability_escape";
 }
 
 /**
@@ -2927,11 +3045,12 @@ function isModuleLoaderPathArrayMutatingCall(
  *   {@link isModuleConstructorMutableStaticMember};
  * - Module PROTOTYPE loader member replacement (VT-307c-fix-9 Part 4,
  *   reproduced blocker B): {@link isModuleConstructorMutablePrototypeMember};
- * - ambient Module instance PATH-ARRAY whole-array replacement
- *   (VT-307c-fix-9 Part 6, reproduced blockers D/E):
- *   `module.paths = [...]`, `require.main.paths = [...]` -- the
- *   assignment-shaped sibling of {@link isModuleLoaderPathArrayMutatingCall}
- *   above, which handles the CALL-shaped mutating-method forms instead.
+ * - Module instance PATH-ARRAY whole-array replacement (VT-307c-fix-9
+ *   Part 6, reproduced blockers D/E): `module.paths = [...]`,
+ *   `require.main.paths = [...]`, and since task BL-092 any write into the
+ *   array through any route -- the assignment-shaped sibling of
+ *   {@link modulePathsMethodReason}, which handles the CALL-shaped
+ *   mutating-method forms instead.
  *
  * Every one of these mutates the module-LOADING MECHANISM itself for every
  * SUBSEQUENT load, not a call/construct that merely reaches one more
@@ -2956,17 +3075,151 @@ function isModuleLoaderAssignmentMutation(
   node: ts.BinaryExpression,
   context: LoaderClassificationContext,
 ): DynamicCallReason | undefined {
-  // VT-307c-value-flow-closure widens this from `=` alone to the three
-  // logical assignments as well: `Module._resolveFilename ||= hook`
-  // replaces the resolver exactly as `Module._resolveFilename = hook`
-  // does, and an `EqualsToken`-only guard let it through untouched.
-  if (!isCapabilityStoringAssignmentOperator(node.operatorToken.kind)) {
+  // VT-307c-value-flow-closure widened this from `=` alone to the three
+  // logical assignments: `Module._resolveFilename ||= hook` replaces the
+  // resolver exactly as `Module._resolveFilename = hook` does. Task BL-092
+  // widens it to EVERY assignment operator, because the target is written
+  // whatever the operator: `module.paths[0] += "/x"` rewrites a lookup
+  // directory (RWF-129), a live false NOT_AFFECTED under the narrower
+  // guard. Only `=` can take a destructuring pattern, whose targets are
+  // each written (RWF-133: `[Module._resolveFilename] = [hook]`).
+  const operator = node.operatorToken.kind;
+  if (
+    operator < ts.SyntaxKind.FirstAssignment ||
+    operator > ts.SyntaxKind.LastAssignment
+  ) {
     return undefined;
   }
-  const target = node.left;
+  const targets =
+    operator === ts.SyntaxKind.EqualsToken
+      ? writtenTargetsOf(node.left)
+      : [node.left];
+  return firstWriteTargetReason(targets, context);
+}
+
+/**
+ * The closure-widening reason for a write the language makes WITHOUT an
+ * assignment expression (task BL-092): a `for…in` / `for…of` head that is
+ * an expression rather than a declaration (`for (module.paths[0] of xs)`
+ * stores each element there; RWF-129), and `++` / `--`, which store into
+ * their operand. `undefined` when `node` is neither, or writes nothing
+ * this classifier models.
+ */
+function implicitWriteReason(
+  node: ts.Node,
+  context: LoaderClassificationContext,
+): DynamicCallReason | undefined {
+  if (
+    (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+    !ts.isVariableDeclarationList(node.initializer)
+  ) {
+    return firstWriteTargetReason(writtenTargetsOf(node.initializer), context);
+  }
+  if (
+    (ts.isPrefixUnaryExpression(node) || ts.isPostfixUnaryExpression(node)) &&
+    (node.operator === ts.SyntaxKind.PlusPlusToken ||
+      node.operator === ts.SyntaxKind.MinusMinusToken)
+  ) {
+    return capabilityWriteTargetReason(node.operand, context);
+  }
+  return undefined;
+}
+
+/** The first of `targets`' {@link capabilityWriteTargetReason}s, or `undefined`. */
+function firstWriteTargetReason(
+  targets: readonly ts.Expression[],
+  context: LoaderClassificationContext,
+): DynamicCallReason | undefined {
+  for (const target of targets) {
+    const reason = capabilityWriteTargetReason(target, context);
+    if (reason !== undefined) {
+      return reason;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Every expression `target` writes when it is an assignment's left side or
+ * a `for…in` / `for…of` head (task BL-092, RWF-133): itself, or -- for a
+ * destructuring pattern -- each element, each property value, each rest
+ * and each defaulted target, at any depth. A shorthand property
+ * (`({ a } = o)`) writes a plain binding, never a member, and contributes
+ * nothing. Before this, only a member-shaped left side was read, so
+ * `[module.paths[0]] = [dir]`, `({ paths: module.paths } = o)` and
+ * `[Module._resolveFilename] = [hook]` each replaced loader state unseen.
+ */
+function writtenTargetsOf(target: ts.Expression): ts.Expression[] {
+  const inner = skipTransparentWrappers(target);
+  if (ts.isArrayLiteralExpression(inner)) {
+    return inner.elements.flatMap((element) =>
+      ts.isOmittedExpression(element)
+        ? []
+        : writtenTargetsOf(
+            ts.isSpreadElement(element) ? element.expression : element,
+          ),
+    );
+  }
+  if (ts.isObjectLiteralExpression(inner)) {
+    return inner.properties.flatMap((property) =>
+      ts.isPropertyAssignment(property)
+        ? writtenTargetsOf(property.initializer)
+        : ts.isSpreadAssignment(property)
+          ? writtenTargetsOf(property.expression)
+          : [],
+    );
+  }
+  if (
+    ts.isBinaryExpression(inner) &&
+    inner.operatorToken.kind === ts.SyntaxKind.EqualsToken
+  ) {
+    // A defaulted target inside a pattern: `[module.paths[0] = d] = []`.
+    return writtenTargetsOf(inner.left);
+  }
+  return [inner];
+}
+
+/**
+ * `expr` without the wrappers that leave a write target the same
+ * reference: parentheses and TypeScript's erased assertions
+ * (`(module.paths)[0] = d`, `(Module as any)._load = f`).
+ */
+function skipTransparentWrappers(expr: ts.Expression): ts.Expression {
+  let current = expr;
+  while (
+    ts.isParenthesizedExpression(current) ||
+    ts.isAsExpression(current) ||
+    ts.isSatisfiesExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isTypeAssertionExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+/**
+ * The closure-widening reason for WRITING `target` -- one assignment
+ * target, whatever construct writes it ({@link isModuleLoaderAssignmentMutation},
+ * {@link implicitWriteReason}) -- or `undefined` when the write touches
+ * nothing this classifier models.
+ */
+function capabilityWriteTargetReason(
+  written: ts.Expression,
+  context: LoaderClassificationContext,
+): DynamicCallReason | undefined {
+  const target = skipTransparentWrappers(written);
 
   if (ts.isElementAccessExpression(target)) {
     if (isLoaderHookRegistryObject(target.expression, context)) {
+      return "loader_hook_mutation";
+    }
+    // An element of a `Module` instance's lookup list (task BL-092,
+    // RWF-129): `module.paths[0] = dir`, through any route.
+    if (
+      resolveLoaderCapability(target.expression, context)?.kind ===
+      "module_paths"
+    ) {
       return "loader_hook_mutation";
     }
     if (isAuthoritativeCapabilityReceiver(target.expression, context)) {
@@ -2986,13 +3239,22 @@ function isModuleLoaderAssignmentMutation(
     return "loader_hook_mutation";
   }
 
-  // Whole-OBJECT replacement of the registry itself, or of an ambient
-  // Module instance's own `.paths` array -- here `target` ITSELF is the
-  // thing being replaced, not something reached through it.
+  // Any named member of a `Module` instance's lookup list, through any
+  // route (task BL-092, RWF-129): `module.paths.length = 0` empties it.
+  if (
+    resolveLoaderCapability(target.expression, context)?.kind === "module_paths"
+  ) {
+    return "loader_hook_mutation";
+  }
+
+  // Whole-OBJECT replacement of the registry itself, or of a Module
+  // instance's own `.paths` array (through any route since task BL-092)
+  // -- here `target` ITSELF is the thing being replaced, not something
+  // reached through it.
   if (isLoaderHookRegistryObject(target, context)) {
     return "loader_hook_mutation";
   }
-  if (isAmbientModulePathsArray(target, context)) {
+  if (resolveLoaderCapability(target, context)?.kind === "module_paths") {
     return "loader_hook_mutation";
   }
 
@@ -3026,6 +3288,48 @@ function isModuleLoaderAssignmentMutation(
   }
 
   return undefined;
+}
+
+/**
+ * Whether `node` is a `with` whose head is `process` or the global object
+ * (task BL-092; its independent audit's second round, R2-2): the head puts
+ * their members in scope under bare names, so `with (process) {
+ * mainModule.require(path); }` reaches the entry `Module` instance with no
+ * member access to resolve. Both are resolution-only kinds as VALUES
+ * ({@link isAuthoritativeCapabilityValue}: global-object detection
+ * preambles are ubiquitous), but as a `with` head they are a route.
+ */
+function isWithHeadReachingLoader(
+  node: ts.Node,
+  context: LoaderClassificationContext,
+): node is ts.WithStatement {
+  if (!ts.isWithStatement(node)) {
+    return false;
+  }
+  const kind = resolveLoaderCapability(node.expression, context)?.kind;
+  return kind === "ambient_process" || kind === "ambient_global";
+}
+
+/**
+ * Whether `consumed` is a `for…in` / `for…of` iterating a `Module`
+ * instance's lookup list itself (task BL-092): with Node's own array
+ * iterator, iteration hands the loop its elements (strings) or its
+ * indices, never the list, so it is a read like `module.paths[i]`, not an
+ * escape. A replaced `Array.prototype[Symbol.iterator]` runs with the list
+ * as `this`: the same open premise as {@link MODULE_PATHS_READ_METHODS}
+ * (RWF-136, backlog `BL-096`). A list held in anything else
+ * (`for (const p of [module.paths])`) still escapes.
+ */
+function isIteratedLookupList(
+  node: ts.Node,
+  consumed: ConsumedValuePosition,
+  context: LoaderClassificationContext,
+): boolean {
+  return (
+    (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+    resolveLoaderCapability(consumed.expression, context)?.kind ===
+      "module_paths"
+  );
 }
 
 /**
@@ -3065,8 +3369,7 @@ function isModuleLoaderAssignmentMutation(
  * edge shape for a non-call mutation (see `loader_hook_mutation`'s own doc
  * comment in domain/graph.ts) and does not attempt to represent it. The
  * CALL-shaped sibling of the `.paths`-array case
- * ({@link isModuleLoaderPathArrayMutatingCall}, e.g.
- * `module.paths.unshift(dir)`) IS an ordinary call/`new` node, so it is
+ * ({@link modulePathsMethodReason}, e.g. `module.paths.unshift(dir)`) IS an ordinary call/`new` node, so it is
  * classified through {@link classifyLoaderConstruct} instead and DOES
  * automatically get a `CallGraph` `unknown(loader_hook_mutation)` edge,
  * same as any other call-shaped loader construct.
@@ -3142,6 +3445,13 @@ export function findClosureWideningConstructs(
   }
 
   function visit(node: ts.Node): void {
+    // Task BL-092: the writes no assignment expression spells -- a
+    // `for…in` / `for…of` head and `++` / `--` -- recorded at the node,
+    // beside whatever the chain below records for it.
+    const implicitWrite = implicitWriteReason(node, context);
+    if (implicitWrite !== undefined) {
+      record(implicitWrite, node);
+    }
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       // VT-307c-capability-floor/flow: reflection-API mutation calls and
       // argument-position capability escapes (including a capability
@@ -3260,8 +3570,11 @@ export function findClosureWideningConstructs(
       // declaration form whose alias this classifier can follow
       // afterwards (`const alias = Module`).
       const consumed = consumedValuePositionOf(node);
-      if (
+      if (isWithHeadReachingLoader(node, context)) {
+        record("loader_capability_escape", node.expression);
+      } else if (
         consumed !== undefined &&
+        !isIteratedLookupList(node, consumed, context) &&
         (consumed.aliasFollowable
           ? isNonAliasCapabilityEscape(consumed.expression, context)
           : isEscapingCapabilityUse(consumed.expression, context))
