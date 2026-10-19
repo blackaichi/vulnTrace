@@ -3291,6 +3291,97 @@ function capabilityWriteTargetReason(
 }
 
 /**
+ * Member names that reach a caller's frame, whose values include a module
+ * wrapper's `require` and `module` (task BL-097, RWF-137): a sloppy
+ * function's `caller` (the wrapper itself, for a function called at a
+ * module's top level, and `wrapper.arguments` is then its arguments
+ * object), and V8's call sites (`getFunction()` is the frame's function,
+ * `getThis()` its `this`). The frame names of the export census's
+ * `REGISTRY_REACHING_MEMBER_NAMES` (`module-model.ts`, task BL-074), read
+ * here for the loader classifier.
+ */
+const FRAME_REACHING_MEMBER_NAMES: ReadonlySet<string> = new Set([
+  "caller",
+  "getFunction",
+  "getThis",
+]);
+
+/**
+ * Whether `node` spells a {@link FRAME_REACHING_MEMBER_NAMES} name as a
+ * member, a literal key or a string literal (`g.caller`, `Reflect.get(g,
+ * "caller")`, `Object.getOwnPropertyDescriptor(g, "caller")`), as a
+ * destructuring key (`const { caller } = g`, `({ caller: c } = g)`) -- the
+ * spellings the export census reads (BL-074) -- or as a regular
+ * expression's whole pattern, or a bare name in a `with` body. By name,
+ * whatever object it is read from: which functions run with the wrapper as
+ * their caller is not a question this classifier answers, and another
+ * module's function called at this module's top level reaches this
+ * module's wrapper. A name built at run time, or a frame member reached by
+ * enumerating an object's properties, spells no name: RWF-144 (backlog
+ * `BL-080`).
+ */
+function spellsFrameReachingName(node: ts.Node): boolean {
+  if (ts.isPropertyAccessExpression(node)) {
+    return FRAME_REACHING_MEMBER_NAMES.has(node.name.text);
+  }
+  if (ts.isStringLiteralLike(node)) {
+    return FRAME_REACHING_MEMBER_NAMES.has(node.text);
+  }
+  // A regular expression whose pattern is the name: `g[/caller/.source]`
+  // (BL-097's independent audit, F-3).
+  if (node.kind === ts.SyntaxKind.RegularExpressionLiteral) {
+    const text = (node as ts.RegularExpressionLiteral).text;
+    return FRAME_REACHING_MEMBER_NAMES.has(
+      text.slice(1, text.lastIndexOf("/")),
+    );
+  }
+  // A bare name inside a `with` body, which may be the head's member:
+  // `with (g) { caller.arguments[2]; }`, `with (site) { getFunction(); }`
+  // (BL-097's independent audit, F-1). Any reference, a nested function's
+  // included: its scope chain holds the head too.
+  if (
+    ts.isIdentifier(node) &&
+    FRAME_REACHING_MEMBER_NAMES.has(node.text) &&
+    isInsideWithBody(node)
+  ) {
+    return true;
+  }
+  // A key of an object literal, which is a destructuring assignment's
+  // pattern (`({ caller: c } = g)`, `({ caller } = g)`).
+  if (
+    ts.isIdentifier(node) &&
+    node.parent !== undefined &&
+    ((ts.isPropertyAssignment(node.parent) && node.parent.name === node) ||
+      ts.isShorthandPropertyAssignment(node.parent))
+  ) {
+    return FRAME_REACHING_MEMBER_NAMES.has(node.text);
+  }
+  if (ts.isBindingElement(node) && ts.isObjectBindingPattern(node.parent)) {
+    const key = node.propertyName ?? node.name;
+    return (
+      (ts.isIdentifier(key) || ts.isStringLiteralLike(key)) &&
+      FRAME_REACHING_MEMBER_NAMES.has(key.text)
+    );
+  }
+  return false;
+}
+
+/** Whether `node` is in the body of a `with` statement (not its head). */
+function isInsideWithBody(node: ts.Node): boolean {
+  let child: ts.Node = node;
+  for (
+    let current: ts.Node | undefined = node.parent;
+    current !== undefined;
+    child = current, current = current.parent
+  ) {
+    if (ts.isWithStatement(current) && current.statement === child) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/**
  * Whether `node` is a `with` whose head is `process` or the global object
  * (task BL-092; its independent audit's second round, R2-2): the head puts
  * their members in scope under bare names, so `with (process) {
@@ -3445,6 +3536,10 @@ export function findClosureWideningConstructs(
   }
 
   function visit(node: ts.Node): void {
+    // Task BL-097 (RWF-137): a read of a caller's frame, by a name it spells.
+    if (spellsFrameReachingName(node)) {
+      record("loader_capability_escape", node);
+    }
     // Task BL-092: the writes no assignment expression spells -- a
     // `for…in` / `for…of` head and `++` / `--` -- recorded at the node,
     // beside whatever the chain below records for it.
