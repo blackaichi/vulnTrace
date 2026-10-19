@@ -179,3 +179,16 @@ text above did not say.
   (three packages: `typescript`, `vitest`, `@vitest/mocker`) spell a name.
 - **Records gap fixed in passing.** BACKLOG § 2 had no rows for RWF-141,
   RWF-142 and RWF-143 (BL-095's); added beside RWF-144's.
+- **CI on Node 26 (after the pull request was opened).** Two cases failed
+  their ground-truth check on Node 26: V8 no longer gives a sloppy function
+  an own `caller` (measured on v26.12.0), so
+  `Object.getOwnPropertyDescriptor(g, "caller")` reaches nothing there, and
+  the frame is reached through `Function.prototype`'s `caller` getter
+  instead, which throws on Node 20 and 22. The premise above ("a sloppy
+  function's `caller` is an own data property in V8") holds on Node 20 and 22
+  only. The cases now probe the running V8: the own-descriptor case states
+  its ground truth from it, a new case covers the `Function.prototype`
+  getter (a live false `NOT_AFFECTED` on Node 26's base, `UNKNOWN` with the
+  fix), and RWF-144's enumeration record takes the route the runtime has.
+  23 cases pass on Node 22 and on Node 26.
+

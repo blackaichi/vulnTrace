@@ -48,6 +48,31 @@ export const oracleCase = bl092OracleCase;
 /** The top-level `vuln-lib`'s `index.js`, an absolute path computed in `wrap`. */
 const REAL_PATH = `require("path").join(__dirname, "..", "vuln-lib", "index.js")`;
 
+/**
+ * Where the running V8 keeps a sloppy function's `caller` (measured in
+ * BL-097 on Node v22.11.0 and v26.12.0). On Node 22 (and Node 20, by CI; Node 24 not measured) it is an own data
+ * property of the function (own keys `length`, `name`, `arguments`,
+ * `caller`, `prototype`), and `Function.prototype`'s `caller` getter
+ * throws for it; on Node 26 the function has no such own property, and
+ * that getter returns the caller. `g.caller` reaches the frame on both.
+ * The oracle runs the `node` on `PATH`, the same one that runs this file,
+ * so a case whose route exists in one layout only states its ground truth
+ * from this probe. `Function` builds a sloppy function, which strict code
+ * here cannot declare.
+ */
+const SLOPPY_PROBE = Function("return function () {};")() as object;
+const OWN_FRAME_PROPERTIES =
+  Object.getOwnPropertyDescriptor(SLOPPY_PROBE, "caller") !== undefined;
+
+/**
+ * The enumeration route to a sloppy function's caller in the running V8,
+ * by position, spelling no name: its own descriptors' value where the
+ * property is its own, otherwise `Function.prototype`'s getter.
+ */
+const ENUMERATED_CALLER = OWN_FRAME_PROPERTIES
+  ? `Object.values(Object.getOwnPropertyDescriptors(g))[${Reflect.ownKeys(SLOPPY_PROBE).indexOf("caller")}].value`
+  : `Object.values(Object.getOwnPropertyDescriptors(Function.prototype))[${Reflect.ownKeys(Function.prototype).indexOf("caller")}].get.call(g)`;
+
 /** A `_resolveFilename` replacement that sends `vuln-lib/index.js` to the top-level instance. */
 const HOOK = `function (r) { return r === "vuln-lib/index.js" ? __dirname + "/../vuln-lib/index.js" : r; }`;
 
@@ -134,7 +159,21 @@ export const ALL_CASES: readonly Bl097Case[] = [
     redirect:
       `function g() { return Object.getOwnPropertyDescriptor(g, "caller").value.arguments[2]; }\n` +
       `g().paths.shift();\n`,
-    called: true,
+    // Node 26 has no own `caller`: the read throws, and Node calls nothing.
+    called: OWN_FRAME_PROPERTIES,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "measured.function-prototype-caller-getter",
+    finding: "RWF-137",
+    mechanism:
+      '`Object.getOwnPropertyDescriptor(Function.prototype, "caller").get.call(g)`: the inherited accessor, which answers on Node 26',
+    redirect:
+      `function g() { return Object.getOwnPropertyDescriptor(Function.prototype, "caller").get.call(g).arguments[2]; }\n` +
+      `g().paths.shift();\n`,
+    // On Node 20 and 22 the getter throws for a sloppy function.
+    called: !OWN_FRAME_PROPERTIES,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
   },
@@ -340,14 +379,17 @@ export const ALL_CASES: readonly Bl097Case[] = [
     id: "rwf144.enumerated-caller-descriptor",
     finding: "RWF-144",
     mechanism:
-      "`Object.values(Object.getOwnPropertyDescriptors(g))[3].value`: a sloppy function's own `caller`, by its position among the own properties",
+      "a sloppy function's `caller` by its position among the descriptors (its own, `Object.values(Object.getOwnPropertyDescriptors(g))[3].value`, on Node 20 and 22; `Function.prototype`'s getter on Node 26)",
     redirect:
-      `function g() { return Object.values(Object.getOwnPropertyDescriptors(g))[3].value.arguments[2]; }\n` +
+      `function g() { return ${ENUMERATED_CALLER}.arguments[2]; }\n` +
       `g().paths.shift();\n`,
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-144", observed: rwf144Observed(2) },
+    openDefect: {
+      rwf: "RWF-144",
+      observed: rwf144Observed(OWN_FRAME_PROPERTIES ? 2 : 4),
+    },
   },
   {
     id: "rwf144.enumerated-call-site-get-function",

@@ -23337,6 +23337,20 @@ reached by enumeration (RWF-144); a frame reached through the debugger
 protocol (`inspector`'s `Debugger.evaluateOnCallFrame`, AUD-04, backlog
 `C-4`), found by the audit's second round.
 
+**Correction (task BL-097, 2026-10-19, after CI on Node 26).** Where V8
+keeps a sloppy function's `caller` depends on the Node version, measured on
+v22.11.0 and v26.12.0: on Node 22 (and Node 20, by CI; Node 24 not measured) it is an own data property of the
+function, and `Function.prototype`'s `caller` getter throws for it; on Node
+26 the function has no own `caller` or `arguments`, and that getter returns
+the caller. `g.caller` reaches the frame on both. So
+`Object.getOwnPropertyDescriptor(g, "caller").value` reaches the wrapper
+only on Node 20 and 22, and
+`Object.getOwnPropertyDescriptor(Function.prototype, "caller").get.call(g)`
+only on Node 26 (a live false `NOT_AFFECTED` there on the base, `UNKNOWN`
+with the fix); the oracle cases state their ground truth from the running
+V8. Each runtime has fifteen live reproductions; the route that does not
+exist in a runtime answers `UNKNOWN` there, a precision cost.
+
 
 ## RWF-138 — A `with` head reaches a loader capability's members under bare names
 
@@ -23539,3 +23553,11 @@ precision decision: a read through a key computed at run time, or an
 enumeration of the properties (`Object.getOwnPropertyDescriptors`,
 `Reflect.ownKeys`, `Object.getOwnPropertyNames` and the like), of a value
 that may be a function or a V8 call site fails closed. Backlog `BL-080`.
+
+**Correction (task BL-097, 2026-10-19, after CI on Node 26).** The own-key
+order above is Node 22's. On Node 26 a sloppy function has no own `caller`;
+the same enumeration reaches it through `Function.prototype`
+(`Object.values(Object.getOwnPropertyDescriptors(Function.prototype))[8].get.call(g)`),
+measured as a live false `NOT_AFFECTED` on v26.12.0 as well. The
+open-soundness-defect record picks the route the running V8 has.
+

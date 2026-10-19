@@ -1485,7 +1485,7 @@ classifier count a read of a caller's frame as a loader capability escape:
 string literal, a destructuring key, a regular expression's whole pattern
 or a bare name in a `with` body. It fixes `RWF-137`: fifteen live false
 `NOT_AFFECTED`s on its base (family B in the measured setup, a correction
-to the record) among twenty-two real-Node cases
+to the record) among twenty-three real-Node cases (on each of Node 22 and Node 26, whose V8 keeps a sloppy function's `caller` in different places)
 (`tests/oracle/bl097-wrapper-arguments-frame.test.ts`), four of them found
 by its independent audit. No corpus graph, proof or verdict moved; on the
 JavaScript in `node_modules` four files of 2,527 spell a name. The audit
