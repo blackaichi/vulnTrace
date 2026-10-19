@@ -237,7 +237,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-060 | `vuln-lib` (synthetic fixture) | A derived class with no constructor whose base is an ambient or builtin constructor (`class P extends Promise {}`, a `stream.Readable` subclass) forwards `new P(...)`'s arguments to the base, and a callback among them runs; nothing accounts for them | false NOT_AFFECTED — see below | **Fixed** (A-3a) — see below |
 | RWF-061 | `vuln-lib` (synthetic fixture) | A `vm.Script` reached through a subclass (`class X extends vm.Script {}`) or a factory function (`function mk(c) { return new vm.Script(c); }`) runs its code through `.runInThisContext()`, but the module-load closure records nothing | false NOT_AFFECTED (family A) — see below | Open |
 | RWF-062 | `vuln-lib` (synthetic fixture) | With TypeScript constructor overloads, `new A()` resolves to the first overload SIGNATURE, a node with no body; the implementation's calls hang from a node nothing reaches | false NOT_AFFECTED — see below | Open |
-| RWF-063 | `vuln-lib` (synthetic fixture) | A builtin trusted by the builtin table (task A-3a) can be monkeypatched through a user binding the escape row does not follow -- a parameter, a container element -- so a later call of the builtin gets a no-edge proof while it runs the program's function | false NOT_AFFECTED — see below | Fixed in part (BL-081; its independent audit did not certify the class: RWF-122, RWF-123, re-audit backlog `BL-091`) |
+| RWF-063 | `vuln-lib` (synthetic fixture) | A builtin trusted by the builtin table (task A-3a) can be monkeypatched through a user binding the escape row does not follow -- a parameter, a container element -- so a later call of the builtin gets a no-edge proof while it runs the program's function | false NOT_AFFECTED — see below | Fixed in part (BL-081; BL-091's re-audit, three rounds, did not certify the class: RWF-124, RWF-126, RWF-127, RWF-128 fixed in BL-091; decision backlog `BL-094`) |
 | RWF-064 | the H-0 builtin probe (`src/testing/oracle/builtin-probe.ts`) | The probe read the hooks that fired synchronously after the call, and each probe template fixed the builtin's other arguments, so a hook the builtin schedules for later, or fires only in another context, was never observed -- an admission test built on it could admit a position that runs user code | a test instrument could not enforce the guarantee it exists for (mechanical admission) — see below | Fixed in part (A-3a): deferred hooks, contexts and throws are observed; a hook only a STRUCTURED argument reaches is not — see below |
 | RWF-065 | `vuln-lib` (synthetic fixture) | A module loaded through the module's own loader API in a shape the loader classifier does not recognise -- `module.parent.require("pkg")`, `module.children[i].require("pkg")` -- is invisible to the module-load closure | false NOT_AFFECTED (family A) — see below | Open (families B and C fail closed since A-3b; family A: backlog `BL-040`) |
 | RWF-066 | `vuln-lib` (synthetic fixture) | Under TypeScript's automatic JSX runtime (`jsx: react-jsx`, or an `@jsxImportSource` pragma), a JSX element compiles to `require("<importSource>/jsx-runtime")`, which no source line spells, so the module-load closure never sees the load | false NOT_AFFECTED (family A) — see below | **Fixed** (A-3b), through the fail-closed default — see below |
@@ -284,7 +284,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-107 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | BL-074's census treats a load's value as confined when it is called, constructed or the receiver of a member call, without following what the call RETURNS, which may be this file's exports object (`module.exports = () => require("./index")` then `set(require("./g")())`; `require("./other").valueOf()`) | fabricated attribution at the model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-108 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | Another module stores this file's exports object on a third module's exports object (`require("wrap/store").lib = require("wrap")` in the app), and this file's own load of the third module then writes through it (`patch(require("./store").lib)`): the static load closure of `./store` does not contain this file, so BL-074's graph answers "cannot reach back" | false NOT_AFFECTED (family C), pre-existing on the base — see below | Open |
 | RWF-109 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | BL-074's module graph taints a closure member that spells a frame-reaching member name (`caller`, `getThis`, …), but a key computed at run time spells none: a getter returning `g[k].arguments[0]` with `k` = `"cal" + "ler"` (the module wrapper's `exports`) answers "cannot reach back". Narrowed by BL-074 (status update below): the global-object spellings first recorded here were live and are fixed | wrong reach answer at the graph, masked end to end by the call graph for the frame spelling (no false `NOT_AFFECTED` measured) — see below | Open |
-| RWF-110 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The call graph takes a call of an ambient builtin (`Object.keys({})`) for the builtin, and A-3a's assignment escape row sees a replacement only when it spells an ambient builtin's name: a builtin replaced without its name (`({}).constructor.keys = f`, or `function install(O) { O.keys = f; } install(Object)` in another module) runs `f` with no edge | false NOT_AFFECTED (family C), pre-existing on the base — see below | Fixed in part (BL-081; its independent audit did not certify the class: RWF-122, RWF-123, re-audit backlog `BL-091`) |
+| RWF-110 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The call graph takes a call of an ambient builtin (`Object.keys({})`) for the builtin, and A-3a's assignment escape row sees a replacement only when it spells an ambient builtin's name: a builtin replaced without its name (`({}).constructor.keys = f`, or `function install(O) { O.keys = f; } install(Object)` in another module) runs `f` with no edge | false NOT_AFFECTED (family C), pre-existing on the base — see below | Fixed in part (BL-081; BL-091's re-audit, three rounds, did not certify the class: RWF-124, RWF-126, RWF-127, RWF-128 fixed in BL-091; decision backlog `BL-094`) |
 | RWF-111 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census's define arm (`Object.defineProperty(exports, "__esModule", …)`, `Object.assign(exports, …)`, `Reflect.set`) withdraws only the names it spells and keeps every other attribution, trusting the builtin unless THIS file replaces it by name; another module's replacement writes any name | wrong attribution at the export model, masked end to end by the call graph's escape row (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-112 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export object on the RIGHT of `instanceof` (`({}) instanceof exports`) was taken for inert, but it runs its inherited `Object.prototype[Symbol.hasInstance]` with itself as `this`, which any module may define | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-075) — see below |
 | RWF-113 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The export census takes a member read of a name the file never writes, and a call of a method it never writes (`isMethodWrittenElsewhere`), for reads, and trusts a plain `exports.run = …` against `Object.prototype`; another module's accessor, method or non-writable property on `Object.prototype` runs with, or intercepts, the export object | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
@@ -294,10 +294,19 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-117 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A `super` property write sets the property on `this`: `module.exports = { run: safeOp, init() { super.run = dangerousOp; } }`, the entry calling `init()` first, was not censused as a write of `run` | false NOT_AFFECTED (family C), pre-existing on the base — see below | **Fixed** (BL-084) — see below |
 | RWF-118 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | The final-object censuses (of the binding and of BL-084's routes) take a member read or a method call for a use that keeps the object in this file's hands, but a call may return its receiver (`Api.valueOf().run = …`) or hand a property value to a callback (`JSON.stringify(Api.prototype, (k, v) => { v.run = … })`) | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below | Open |
 | RWF-119 | n/a — the repository's own workflow records | `docs/WORKFLOW.md` § 3, `AGENTS.md` § I, `docs/progress.md` and the pull request template said `test:validation` keeps five cases failing, and the committed `tests/validation/REPORT.md` showed `RWB-09a` passing; since task BL-075 the suite fails six and OPEN-DEBTS D-09 lists six (`RWB-09a` added, pending the project owner's decision) | record — a case-by-case comparison against WORKFLOW § 3 takes `RWB-09a`'s documented failure for a new one, and a reader of `REPORT.md` takes it for passing — see below | **Fixed** (BL-089) — see below |
-| RWF-120 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A-3a's escape row read only assignment expressions: a `for…of` head (`for (Object.keys of [f]) {}`), a bare name or a `var` stored in a `with` body (`with (Object) { keys = f; }`), and an array pattern or `for…of` over an iterable object (whose iterator yields what is stored) replaced a builtin unseen, even when the store spelled the builtin's name | false NOT_AFFECTED (family C), pre-existing — see below | Fixed in part (BL-081; its independent audit did not certify the class: RWF-122, RWF-123, re-audit backlog `BL-091`) |
+| RWF-120 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A-3a's escape row read only assignment expressions: a `for…of` head (`for (Object.keys of [f]) {}`), a bare name or a `var` stored in a `with` body (`with (Object) { keys = f; }`), and an array pattern or `for…of` over an iterable object (whose iterator yields what is stored) replaced a builtin unseen, even when the store spelled the builtin's name | false NOT_AFFECTED (family C), pre-existing — see below | Fixed in part (BL-081; BL-091's re-audit, three rounds, did not certify the class: RWF-124, RWF-126, RWF-127, RWF-128 fixed in BL-091; decision backlog `BL-094`) |
 | RWF-121 | `vuln-lib` (synthetic fixture); a gap in the analyzer's own semantic model, not tied to one package | A documented invoking builtin keeps its RESOLVED edge to the callback it is handed when another module, or a store through a parameter, has replaced the builtin with a function that never calls it (`globalThis.setTimeout = () => 0` in a sibling; `stub(globalThis)`), so `setTimeout(dangerousOp, 0)` answers `AFFECTED` | false AFFECTED, pre-existing (named in RWF-063's second audit append) — see below | Open (backlog `BL-090`) |
-| RWF-122 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's builtin-call rule read a `prototype` / `exports` key through fewer forms (no `?:`, `||`, `&&`, `??`, comma, `=`) than the value collector reads a value; once the value-use rule was removed, `Object.assign(F, c ? { prototype: K } : {})` gave `K` only a possible edge, and `F.prototype.max = f` added `K`'s own member unseen | false NOT_AFFECTED (family C), also on the base; reopened on the branch by removing the value-use rule — see below | Fixed (BL-081, after its tenth audit round; re-audit backlog `BL-091`) |
-| RWF-123 | `vuln-lib` (synthetic fixture); a gap in BL-081's own bookkeeping, not tied to one package | BL-081's memoized `storesOnto` was keyed by binding and spelling only, but a lookup from a `with` body cannot follow the name; that smaller answer was then reused outside the `with` body, so `const A = F; with ({}) { F.prototype.z = g; } A.prototype = Math; F.prototype.max = f` lost the store through the alias | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-081, after its tenth audit round; re-audit backlog `BL-091`) |
+| RWF-122 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's builtin-call rule read a `prototype` / `exports` key through fewer forms (no `?:`, `||`, `&&`, `??`, comma, `=`) than the value collector reads a value; once the value-use rule was removed, `Object.assign(F, c ? { prototype: K } : {})` gave `K` only a possible edge, and `F.prototype.max = f` added `K`'s own member unseen | false NOT_AFFECTED (family C), also on the base; reopened on the branch by removing the value-use rule — see below | Fixed (BL-081, after its tenth audit round; re-audited by BL-091: held) |
+| RWF-123 | `vuln-lib` (synthetic fixture); a gap in BL-081's own bookkeeping, not tied to one package | BL-081's memoized `storesOnto` was keyed by binding and spelling only, but a lookup from a `with` body cannot follow the name; that smaller answer was then reused outside the `with` body, so `const A = F; with ({}) { F.prototype.z = g; } A.prototype = Math; F.prototype.max = f` lost the store through the alias | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-081, after its tenth audit round; re-audited by BL-091: held) |
+| RWF-124 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's freshness proof took every undecorated class's `prototype` for the program's own, but a derived class's `prototype` inherits from its base's, which a store onto a fresh function can make the global object (`X.prototype = globalThis; class C extends X {}`); `C.prototype.Buffer = …` then runs the global object's own `Buffer` setter and replaces the builtin | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-091) |
+| RWF-125 | `vuln-lib` (synthetic fixture); a gap in BL-081's own bookkeeping, not tied to one package | `storesOnto`'s memo put every unresolved name of one spelling in one slot, but only the module's undeclared `exports` is followed through the values stored to it: a parameter named `exports` asked first fixed a smaller answer for the module's `exports` (an object then proven the program's own though its [[Prototype]] was changed through an alias) | none measured end to end (masked: the store through the alias is an escape of its own) — see below | Fixed (BL-091) |
+| RWF-126 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's freshness proof took every undecorated class for the program's own, but a derived class's [[Prototype]] is its base constructor: `class D extends util.inspect {} D.defaultOptions = { sorted: f }` (or `this.defaultOptions = …` in a static block) runs Node's own setter and installs `f` as the inspect default | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-091) |
+| RWF-127 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's escape row read a static class field as a define, which it is natively; TypeScript's legacy class-field emit (`useDefineForClassFields: false`, the default below target ES2022) assigns it after the class, so `class D extends util.inspect { static defaultOptions = … }` runs the inherited setter | false NOT_AFFECTED (family C), also on the base — see below | Fixed in part (BL-091; the same emit through a namespace merged with a class and a field named `__proto__`: RWF-131, RWF-132) |
+| RWF-128 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's freshness proof took a class's `prototype` for non-writable, which it is natively; TypeScript's ES5 emit makes the class a function whose `prototype` a store replaces (`(C as any).prototype = globalThis`), and a store onto it, or onto the constructor's `this`, then runs the global object's setters | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-091) |
+| RWF-129 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The loader-capability check sees `module.paths` changed only through the spelled forms `module.paths = …` and `module.paths.<mutator>(…)`; an alias (`const p = module.paths; p.shift()`), a parameter, `Array.prototype.shift.call(module.paths)`, an element store or a destructuring store changes where `require` resolves, unseen | false NOT_AFFECTED (family A/B), pre-existing — see below | Open (backlog `BL-092`) |
+| RWF-130 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `module.__proto__` is not a recognised route to `Module.prototype`: `module.__proto__.require = …` redirects every later `require`, unseen (`Object.getPrototypeOf(module).require = …` is seen) | false NOT_AFFECTED (family A/B), pre-existing — see below | Open (backlog `BL-092`) |
+| RWF-131 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | TypeScript emits each exported member of a namespace merged with a class as an assignment onto the class (`namespace D { export const defaultOptions = … }` → `D.defaultOptions = …`); when the class's base is not the program's own the assignment runs an inherited setter (RWF-126's mechanism), and the escape row reads no store there | false NOT_AFFECTED (family C), also on the base — see below | Open (backlog `BL-095`) |
+| RWF-132 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | TypeScript's legacy class-field emit assigns a field named `__proto__` (`class C { __proto__: any = globalThis; }` → `this.__proto__ = globalThis`), which changes the object's [[Prototype]]; the freshness proofs see a `__proto__` store only in an assignment, so a later store onto the object runs the global object's setters | false NOT_AFFECTED (family C), also on the base — see below | Open (backlog `BL-095`) |
 
 ---
 
@@ -19640,6 +19649,21 @@ there). No case of the oracle suite moved when it was removed; the tenth audit r
 found it was not (RWF-122), as recorded there. The remaining per-pair check is indexed too (by
 alias spelling and by what each base denotes).
 
+**Appended by task BL-091 (2026-10-19).** BL-091 re-audited BL-081's
+rule in three fresh-context rounds, each measured against real Node
+v22.11.0. RWF-122's and RWF-123's fixes held (about 190 shapes in the
+first round). Each round found further live false `NOT_AFFECTED`s in the
+class, every one also `NOT_AFFECTED` on BL-081's base: RWF-124 (a
+derived class's `prototype` inherits from its base's), RWF-126 (a derived
+class's static side inherits its base constructor's setters), RWF-127
+and RWF-128 (TypeScript's emit assigns a static field and makes a class's
+`prototype` writable). All four are fixed in BL-091. All four are
+inherited accessors, or stores the source does not show. The third round
+was the task's last (its round bound), so the class is still not
+certified. Whether the "unless proven" rule needs a structural change
+instead of further point fixes is the project owner's decision (backlog
+`BL-094`).
+
 ## RWF-064 — The H-0 builtin probe could not see a deferred hook, or a hook another context fires
 
 **Status:** Fixed in part (A-3a): see "What the probe still cannot see" below
@@ -22108,6 +22132,21 @@ function onto a parameter, an array element, a load's `module.exports`,
 
 ---
 
+**Appended by task BL-091 (2026-10-19).** BL-091 re-audited BL-081's
+rule in three fresh-context rounds, each measured against real Node
+v22.11.0. RWF-122's and RWF-123's fixes held (about 190 shapes in the
+first round). Each round found further live false `NOT_AFFECTED`s in the
+class, every one also `NOT_AFFECTED` on BL-081's base: RWF-124 (a
+derived class's `prototype` inherits from its base's), RWF-126 (a derived
+class's static side inherits its base constructor's setters), RWF-127
+and RWF-128 (TypeScript's emit assigns a static field and makes a class's
+`prototype` writable). All four are fixed in BL-091. All four are
+inherited accessors, or stores the source does not show. The third round
+was the task's last (its round bound), so the class is still not
+certified. Whether the "unless proven" rule needs a structural change
+instead of further point fixes is the project owner's decision (backlog
+`BL-094`).
+
 ## RWF-111 — The export census's define arm trusts the builtin for the names it does not spell
 
 **Status:** Open
@@ -22511,7 +22550,7 @@ project owner.
 
 ## RWF-120 — A `for…of` head and a `with` body store into a builtin unseen, even by name
 
-**Status:** Fixed in part (BL-081; its independent audit did not certify the class: RWF-122, RWF-123, re-audit backlog `BL-091`)
+**Status:** Fixed in part (BL-081; BL-091's re-audit, three rounds, did not certify the class: RWF-124, RWF-126, RWF-127, RWF-128 fixed in BL-091; decision backlog `BL-094`)
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (a store the escape row does not read is assumed to
 store nothing)
@@ -22578,6 +22617,21 @@ A `for…of` over primitives is therefore a store too (a precision cost,
 (`with (Object) { ({ keys = f } = { a: g }); }`), which is no assignment
 expression of its own (`shorthandDefaultsOf`).
 
+**Appended by task BL-091 (2026-10-19).** BL-091 re-audited BL-081's
+rule in three fresh-context rounds, each measured against real Node
+v22.11.0. RWF-122's and RWF-123's fixes held (about 190 shapes in the
+first round). Each round found further live false `NOT_AFFECTED`s in the
+class, every one also `NOT_AFFECTED` on BL-081's base: RWF-124 (a
+derived class's `prototype` inherits from its base's), RWF-126 (a derived
+class's static side inherits its base constructor's setters), RWF-127
+and RWF-128 (TypeScript's emit assigns a static field and makes a class's
+`prototype` writable). All four are fixed in BL-091. All four are
+inherited accessors, or stores the source does not show. The third round
+was the task's last (its round bound), so the class is still not
+certified. Whether the "unless proven" rule needs a structural change
+instead of further point fixes is the project owner's decision (backlog
+`BL-094`).
+
 ## RWF-121 — A documented invoking builtin keeps its resolved callback edge after a module replaced it
 
 **Status:** Open (backlog `BL-090`)
@@ -22608,7 +22662,7 @@ measure first. Backlog `BL-090`.
 
 ## RWF-122 — A builtin call's key was read through fewer forms than its value
 
-**Status:** Fixed (BL-081, after its tenth audit round; re-audit backlog `BL-091`)
+**Status:** Fixed (BL-081, after its tenth audit round; re-audited by BL-091: held)
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** C (a conditional / logical value collapsed to its literal form only)
 **Proof family affected:** C
@@ -22633,9 +22687,17 @@ collector does. Oracle cases
 Applied after the tenth round by the project owner's decision (round 10
 was the last); not re-audited (backlog `BL-091`).
 
+**Appended by task BL-091 (2026-10-19).** Re-audited: the fix held in
+all three of BL-091's fresh-context rounds, which measured it against real
+Node.
+The key reader follows every form the value collector follows, and the
+only forms it does not follow (identifiers, `import` members) carry no key
+of their own. An object held by name, a call result or an accessor is
+opaque, and the receiving call gets an `escaped_value` edge.
+
 ## RWF-123 — BL-081's lookup cache reused an answer computed inside a `with` body
 
-**Status:** Fixed (BL-081, after its tenth audit round; re-audit backlog `BL-091`)
+**Status:** Fixed (BL-081, after its tenth audit round; re-audited by BL-091: held)
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** A (an answer keyed by spelling, not by what the name can denote there)
 **Proof family affected:** C
@@ -22655,3 +22717,321 @@ store through the alias `A` was lost.
 body. Oracle case `fresh.prototype-proof-looked-up-from-a-with-body`.
 Applied after the tenth round, not re-audited (backlog `BL-091`).
 
+**Appended by task BL-091 (2026-10-19).** Re-audited: the fix held in
+all three of BL-091's fresh-context rounds, which measured it against real
+Node.
+The memo's answer depends on the binding, the spelling, the kind and
+whether the name is in a `with` body. These positions were measured, and
+none gave a smaller answer: a catch clause, a parameter default, use
+before declaration, a static block, nested `with`, and alias chains of 2
+to 9 hops. One more dimension, why an unresolved name is unresolved, was
+found by BL-091 (RWF-125) and is in the key now.
+
+## RWF-124 — A derived class's `prototype` inherits from its base's, which may be the global object
+
+**Status:** Fixed (BL-091)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the binding is the class; the object its
+`prototype` inherits from is not what the proof assumed)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, also on the base
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by task BL-091's re-audit, round 1, measured against real
+Node v22.11.0 on the base `5de4893` (BL-081's merge; also on BL-081's own
+base `5db3c81`):
+
+```js
+function X() {}
+X.prototype = globalThis;           // a store onto a fresh function
+class C extends X {}                // C.prototype inherits from globalThis
+C.prototype.Buffer = { isBuffer: function (x) { dangerousOp(x); return false; } };
+Buffer.isBuffer(1);                 // Node calls the target
+```
+
+`isFresh` proved every undecorated class's `prototype` the program's own
+("non-writable and non-configurable"), which is true of the property and
+says nothing of the prototype object's [[Prototype]]. The global object's
+own accessor `Buffer` (the one BL-081's seventh round found behind `{
+__proto__: globalThis }`) installs what is stored. Nine shapes were live:
+the one above, an alias of `C.prototype`, a class expression, a function expression as
+the base, a static member, `F.prototype = C.prototype`, a class inside a
+function whose base is a parameter, and two ES module forms.
+
+**Fix (BL-091).** A derived class's `prototype` is never proven the
+program's own. Oracle cases `rwf124.*` in
+`tests/oracle/bl091-builtin-store-reaudit.cases.ts`; the control
+`control.base-class-prototype` keeps `NOT_AFFECTED`; the precision given
+up is `cost.derived-class-of-a-plain-prototype` (a base whose `prototype`
+is the program's own object).
+
+## RWF-125 — `storesOnto`'s memo shared one slot between a parameter named `exports` and the module's `exports`
+
+**Status:** Fixed (BL-091)
+**Failure class:** none measured end to end (masked); at unit level an
+object proven the program's own though its [[Prototype]] may be changed
+**Defect class:** A (an answer keyed by spelling, not by what the name
+can denote)
+**Proof family affected:** C (latent)
+**Severity:** P2 (latent, masked)
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by task BL-091, measuring BL-081's tenth audit round's
+second non-blocking observation (backlog row `BL-091`: "a parameter named
+`exports` shares a bucket with the module's `exports`; no route
+measured"). `storesOnto` memoized its answer under the binding's
+declaration, or, for an unresolved name, the key's shared bucket, with the
+binding kind `unresolved`. `resolveNamedBinding` answers `unresolved` for
+a parameter (cause `parameter`), a `var exports;` (`no_initializer`) and
+the module's undeclared `exports` (`no_declaration`), and only the last is
+followed by `definitionsDenotedBy` (through the values stored to it).
+With `function g(exports) { const s = exports.prototype; s.z = f; }`
+asked first, the smaller answer was reused for the module's `exports` in
+`function G() {} exports = G; function F() {} G.prototype = F; const q =
+exports.prototype; q.__proto__ = globalThis;`: `isProvenFreshObject(F)`
+answered `true`, and `F` handed over carried no opaque member. No route
+to a false `NOT_AFFECTED` was found: the store through `q` is an escape
+of its own, since `q` is not proven the program's own (seven values of
+`q.__proto__` measured against real Node, every one `UNKNOWN`). Masked by
+accident, so registered.
+
+**Fix (BL-091).** The memo key carries the cause of an unresolved binding
+(`unresolved:<cause>`). Unit tests "a memoized answer is shared only by
+names it is the same answer for" fail before and pass after.
+
+## RWF-126 — A derived class's static side inherits its base constructor's setters
+
+**Status:** Fixed (BL-091)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the binding is the class; the object its members are
+looked up on is its base constructor, not `Function.prototype`)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, also on the base
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by task BL-091's re-audit, round 2, measured against real
+Node v22.11.0 on the base `5de4893`:
+
+```js
+const util = require("util");
+class D extends util.inspect {}     // D's [[Prototype]] is util.inspect
+D.defaultOptions = { sorted: function (a, b) { dangerousOp(a); return 0; } };
+util.inspect({ b: 1, a: 2 });       // Node calls the target
+```
+
+`util.inspect` has an own accessor `defaultOptions`; a store onto `D`
+finds no own member and runs the inherited setter, which installs the
+options. `isFreshBinding` and `isFresh` proved every undecorated class
+the program's own, and `this` in every static block and static field
+initializer. Twelve shapes were live: the static block's `this`, a class
+expression, an intermediate class (`class B extends util.inspect {} class
+D extends B {}`), an alias of the base, an ES module import, the class as
+a function's `prototype`, an assignment's value, a mixin, a conditional
+`extends`, a call result. A direct store onto `util.inspect` was already
+an escape.
+
+**Fix (BL-091).** A derived class is the program's own only when its
+`extends` expression is (`hasOwnStaticChain`), in `isFresh`,
+`isFreshBinding` and the static `this` positions. Oracle cases `rwf126.*`;
+the controls `control.derived-of-a-user-class` and
+`…-of-a-user-function` keep `NOT_AFFECTED`; the precision given up is
+`cost.derived-of-an-ambient-constructor-other-key` (`class D extends Map
+{} D.k = …`). Two unit rows of BL-081 that proved a class derived from an
+undeclared `B` the program's own pinned this defect; they are re-grounded
+on a declared `class B {}`.
+
+## RWF-127 — TypeScript's legacy class-field emit assigns a static field
+
+**Status:** Fixed in part (BL-091; RWF-131, RWF-132)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the field's runtime semantics are a [[Set]], not the
+[[DefineOwnProperty]] the source shows)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, also on the base
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by task BL-091's re-audit, round 3. Measured against real
+Node v22.11.0 on the source compiled by the repository's own TypeScript
+at target ES2020:
+
+```ts
+import util = require("util");
+class D extends util.inspect { static defaultOptions = { sorted: function (a: any, b: any) { lib.parse(a); return 0; } } as any; }
+util.inspect({ b: 1, a: 2 });       // Node calls the target
+```
+
+Below target ES2022 (or with `useDefineForClassFields: false`) TypeScript
+emits `D.defaultOptions = …` after the class. That store runs the setter
+`D` inherits from `util.inspect` (RWF-126's mechanism). `declarationStoreOf`
+read every static field as a define, which is right for JavaScript run
+natively. The same happens through a class expression and through a base
+held in a variable.
+
+**Fix (BL-091).** In a TypeScript file, a static field of a class whose
+base is not the program's own (`hasOwnStaticChain`) is a store of its
+initializer. The analyzer does not read the file's target, so every
+TypeScript static field is taken as that emit. The cost case is
+`cost.static-field-of-a-derived-class-under-define-semantics`, at target
+ES2022. **Not covered:** a JavaScript source compiled with Babel's or
+swc's loose class fields, which the analyzer reads with native semantics
+(not measured). Oracle cases `rwf127.*`.
+
+**Appended by task BL-091's independent audit (2026-10-19).** The same
+emit makes two more stores the source does not show, also live false
+`NOT_AFFECTED`s on the base: a namespace merged with a class (RWF-131) and
+a field named `__proto__` (RWF-132). Both are registered, not fixed
+(backlog `BL-095`), so this finding is fixed in part.
+
+## RWF-128 — TypeScript's ES5 emit makes a class's `prototype` writable
+
+**Status:** Fixed (BL-091)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (natively a class's `prototype` is non-writable; the
+emitted function's is writable)
+**Proof family affected:** C
+**Severity:** P1 (a live false `NOT_AFFECTED`; it needs a cast through `any`)
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by task BL-091's re-audit, round 3. Measured against real
+Node v22.11.0 on the source compiled at target ES5:
+`class C {} (C as any).prototype = globalThis; (C as any).prototype.Buffer
+= …; Buffer.isBuffer(1)` and `class C { constructor() { (this as
+any).Buffer = …; } } (C as any).prototype = globalThis; new C()`. Real
+Node calls the target in both; the base and BL-091's second-round state
+answered `NOT_AFFECTED`. At target ES2020 the store throws, so the target
+is never called.
+
+**Fix (BL-091).** A class's `prototype` is checked against the stores
+onto it, as a function's is. In a TypeScript file, `this` in a
+constructor or an instance field initializer is the program's own only
+while no store may replace a `prototype` (`classPrototypeIsStable`). That
+includes a store whose base or key is not a name. Oracle cases
+`rwf128.*`; the control `control.es5-class-prototype-never-stored`.
+
+**Appended by task BL-091's independent audit (2026-10-19).** The first
+form of this fix recursed without bound. `(C as any).prototype = this` in
+a TypeScript constructor or instance field made the `this` proof ask the
+`prototype` proof, which asked the `this` proof again. The scan stopped
+with "Maximum call stack size exceeded" (exit 3, no finding; the base
+answered `UNKNOWN`). The same fix checked a file's `prototype` stores once
+per `this` position, which was quadratic (200 checks of 200 stores, where
+one is now made). Both were introduced by this fix, never on `main`, and
+both are fixed in BL-091. A re-entrant question answers "not proven", and
+the answer is computed once per file. Unit tests "`this` stored as a
+class's `prototype` from its own constructor …" and "checks a file's
+`prototype` stores once …".
+
+## RWF-129 — `module.paths` changed through any route but its spelled forms is unseen
+
+**Status:** Open (backlog `BL-092`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (the capability is recognised by its spelling, not by
+the object it names)
+**Proof family affected:** A / B (the instance is taken never to load)
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (the loader-capability model, `loader-constructs.ts`)
+
+**Discovered:** by task BL-091's re-audit, round 3. It is outside BL-091's
+scope and not fixed. Measured against real Node v22.11.0, on BL-091's
+branch and on its base `5de4893`. The setup: `wrap` has a decoy
+`wrap/node_modules/vuln-lib` exporting `parse` and `safe` unmarked, and
+`wrap/index.js` ends with `const l = require("vuln-lib/index.js");
+l.parse("x");`. Without a redirect, both Node and the analyzer pick the
+decoy (`NOT_AFFECTED`, target not called). These forms drop the decoy's
+directory from the lookup, so Node loads the real `vuln-lib` and calls the
+target, while the analyzer answers `NOT_AFFECTED`:
+
+- `const p = module.paths; p.shift();`
+- `function drop(a) { a.shift(); } drop(module.paths);`
+- `Array.prototype.shift.call(module.paths);`
+- `module.paths[0] = require("path").join(__dirname, "..", "nowhere");`
+- `[module.paths[0]] = [__dirname + "/zz"];`
+- `const h = { p: module.paths }; h.p.shift();`
+
+The spelled forms (`module.paths = …`, `module.paths.shift()`, `splice`,
+`sort`, `fill`, a computed key, optional chaining) answer `UNKNOWN`.
+`isAmbientModulePathsArray` and the mutation checks in
+`loader-constructs.ts` match only those spellings. The fix direction is
+that any use of `module.paths` or `require.main.paths` as a value, as an
+element-store base or as an argument is a loader capability. Backlog
+`BL-092`.
+
+## RWF-130 — `module.__proto__` is not a route to `Module.prototype`
+
+**Status:** Open (backlog `BL-092`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (the route to `Module.prototype` is recognised by its
+spelling)
+**Proof family affected:** A / B
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** C (`loader-constructs.ts`)
+
+**Discovered:** by task BL-091's re-audit, round 3, with RWF-129's setup.
+It is outside BL-091's scope and not fixed. `const orig = module.require;
+module.__proto__.require = function (id) { return orig.call(this, id ===
+"vuln-lib/index.js" ? <the real vuln-lib's path> : id); };` makes Node
+load the real `vuln-lib` and call the target. The analyzer answers
+`NOT_AFFECTED`, on the branch and on the base. `Object.getPrototypeOf(module).require
+= …` and the `module.constructor._load` / `_resolveFilename` forms answer
+`UNKNOWN`. Backlog `BL-092`.
+
+## RWF-131 — A namespace merged with a class stores onto the class
+
+**Status:** Open (backlog `BL-095`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (TypeScript's emit makes a store the source shows as a
+declaration)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, also on the base
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by task BL-091's independent audit. It was measured
+against real Node v22.11.0 on the source compiled at target ES2020 (and
+ES2022), with both controls passing:
+
+```ts
+import util = require("util");
+class D extends (util.inspect as any) {}
+namespace D { export const { defaultOptions } = { defaultOptions: { sorted: function (a: any, b: any) { lib.parse(a); return 0; } } }; }
+util.inspect({ b: 1, a: 2 });       // Node calls the target
+```
+
+TypeScript emits `D.defaultOptions = …`. That store runs the setter `D`
+inherits from `util.inspect`, RWF-126's mechanism. An array destructuring
+behaves the same, and so does a plain `export const defaultOptions = …` in
+a file that is not an entrypoint (in the entrypoint the plain form is
+masked, `UNKNOWN` through `entrypoint_root_incomplete`). BL-091's branch
+and its base both answer `NOT_AFFECTED`. The controls answer
+`NOT_AFFECTED` with the target never called: the same namespace on a base
+class, and on a class derived from the program's own. The fix direction,
+in a TypeScript file: every exported member of a namespace merged with a
+class whose static chain is not the program's own (`hasOwnStaticChain`) is
+a store of its value onto the class. Backlog `BL-095`.
+
+## RWF-132 — A field named `__proto__` changes the object's [[Prototype]] under TypeScript's legacy emit
+
+**Status:** Open (backlog `BL-095`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the emit assigns `__proto__`, which runs
+`Object.prototype`'s `__proto__` setter; natively a field defines an own
+`__proto__` property)
+**Proof family affected:** C
+**Severity:** P1 (a live false `NOT_AFFECTED`; it needs a field named
+`__proto__`)
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by task BL-091's independent audit. It was measured
+against real Node v22.11.0 on the source compiled at target ES2020, with
+both controls passing:
+`class C { __proto__: any = globalThis; constructor() { (this as any).Buffer
+= …; } } new C(); Buffer.isBuffer(1)`. TypeScript emits `this.__proto__ =
+globalThis`, so the store onto `this` runs the global object's `Buffer`
+setter. Real Node calls the target, and the branch and the base answer
+`NOT_AFFECTED`. The same happens for a static field (`static __proto__:
+any = util.inspect`, then a store onto the class), a parameter property
+(`constructor(public __proto__: any)`) and a computed key spelling
+`__proto__`. At target ES2022, and in JavaScript, the field is defined
+instead and the target is never called. Declaration stores are not in
+`memberStoreIndex`, so `prototypeMayBeChanged` never sees them. The fix
+direction, in a TypeScript file: a field or parameter property whose key
+may be `__proto__` is a `__proto__` store. Backlog `BL-095`.

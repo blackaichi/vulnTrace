@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-18, by `BL-081`.
+**Last updated:** 2026-10-19, by `BL-091`.
 
 ## Objective
 
@@ -88,7 +88,13 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   last round's RWF-122 and RWF-123 were fixed after it without a further
   round (the project owner's decision), and `BL-091` re-audits. RWF-070's
   recorded form and D-16's Step 2 verdict close as a side effect.
-  REMEDIATION-PLAN § 5a, "BL-081 additions".
+  REMEDIATION-PLAN § 5a, "BL-081 additions". `BL-091` re-audited it in
+  three rounds. RWF-122 and RWF-123 held. Every round found more live
+  shapes, each fixed (RWF-124, RWF-126 to RWF-128: a derived class
+  inherits accessors; TypeScript's emit assigns static fields and makes a
+  class's `prototype` writable). The class is still not certified, and
+  `BL-094` asks the project owner whether the rule needs a structural
+  change (ADR 0008, the note on the BL-081 decision record).
 - Lane V has started. `V-1` (ADR 0011 predicates 2 and 3) deleted Site
   B's phantom target: a package with no node in the call graph is proved
   unreachable only by family A, and is otherwise `UNKNOWN` (PRM-101); Site
@@ -281,15 +287,18 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-081` — A store that may land on a builtin object is an escape,
-whatever route reached it
-([task file](tasks/BL-081-builtin-replaced-without-name.md), `BL-039`
-folded in): `READY_FOR_REVIEW`. `BL-089` merged as PR #107.
+`BL-091` — Re-audit BL-081's post-round-10 fixes and the builtin-store
+class ([task file](tasks/BL-091-builtin-store-reaudit.md)):
+`READY_FOR_REVIEW`, with the decision `BL-094` for the project owner.
+`BL-081` merged as PR #108.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-081`:
-`BL-091` (re-audit BL-081's last fixes and the class, P1), `BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-091`:
+`BL-092` (RWF-129, RWF-130: the loader capability seen only when spelled,
+P0, lane C), `BL-095` (RWF-131, RWF-132, P0), `BL-094` (the decision on
+the escape row's rule, P1),
+`BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
 (entrypoint roots), `E-4`, `E-5`. `BL-078` (RWF-107), `BL-080` (RWF-109)
 and `BL-082` (RWF-111), `BL-083` (RWF-113), `BL-087` (RWF-118) and
 `BL-090` (RWF-121) need decisions. The P1 gaps `BL-057` and
@@ -300,6 +309,16 @@ rest of lane E. `BL-068` is narrowed to RWF-098's single-write unit
 records (P2).
 
 ## Recently discovered
+
+From `BL-091`: by its re-audit, `RWF-124` and `RWF-126` (a derived
+class's `prototype` and static side inherit from its base) and `RWF-127`
+and `RWF-128` (TypeScript's class emit), all live and fixed in BL-091;
+`RWF-129` and `RWF-130` (lane C, live, pre-existing: `BL-092`, P0); by
+its independent audit, `RWF-131` and `RWF-132` (two more stores
+TypeScript's emit makes, live, pre-existing: `BL-095`, P0). From
+measuring BL-081's last observations, `RWF-125` (a masked memo collision,
+fixed) and two pre-existing super-linear costs (`BL-093`, P3). `BL-094`
+(P1): the decision on the rule.
 
 From `BL-081`: `RWF-120` (a `for…of` head, a `with` body and an iteration
 stored into a builtin unseen, even by name; live, fixed in part in BL-081),

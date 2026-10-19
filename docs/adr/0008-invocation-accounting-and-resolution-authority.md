@@ -790,3 +790,41 @@ Backlog `BL-091` re-audits them and the class; FINDINGS RWF-110, RWF-063
 and RWF-120 are "fixed in part" until then. The precision figure above
 was measured on the code before those two fixes, which only add edges.
 
+
+## Note on the BL-081 decision record — BL-091's re-audit (2026-10-19)
+
+Appended by task [`BL-091`](../tasks/BL-091-builtin-store-reaudit.md);
+the decision record above is unchanged. BL-091 re-audited the rule in
+three fresh-context rounds, each measured against real Node. RWF-122's
+and RWF-123's fixes held. Each round found further live false
+`NOT_AFFECTED`s in the class, all also on BL-081's base, and BL-091 fixes
+them (RWF-127 in part, see below). They refine which objects the rule proves the program's own:
+
+- **A class inherits.** A derived class's `prototype` inherits from its
+  base's `prototype`, which a store onto a fresh function can make the
+  global object (RWF-124). A derived class's static side inherits its
+  base constructor's members and accessors (`class D extends util.inspect
+  {}`; RWF-126). So a derived class's `prototype` is never proven the
+  program's own. A derived class, and `this` in its static blocks and
+  static fields, is proven only when its `extends` expression is.
+- **TypeScript's emit is what runs.** The analyzer reads a TypeScript
+  source, and Node runs its emit. Below target ES2022 a static field is
+  emitted as an assignment, which runs an inherited setter (RWF-127). At
+  target ES5 a class is a function whose `prototype` is writable
+  (RWF-128). The analyzer does not read the target, so every TypeScript
+  file is taken as that emit for these two forms. Two more stores the same
+  emit makes, through a namespace merged with a class (RWF-131) and a
+  field named `__proto__` (RWF-132), were found by BL-091's independent
+  audit and are not covered (backlog `BL-095`). Nor is a JavaScript source
+  compiled with Babel's or swc's loose class fields (not measured).
+
+**The class is still not certified.** Every one of the thirteen audit
+rounds, BL-081's ten and BL-091's three, found further shapes, and so
+did BL-091's independent audit. BL-091's were all an inherited accessor,
+or a store the source does not show.
+Whether the rule should prove less (for example no class at all) or read
+more of the build (the TypeScript target, the transpiler) is the project
+owner's decision, backlog `BL-094`. The precision cost of BL-091's
+refinements, measured with `scripts/bl081-builtin-store-escape-corpus.mjs`
+against BL-081's merge: no clean `node_modules` graph node lost, and no
+corpus verdict moved.
