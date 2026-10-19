@@ -1450,6 +1450,34 @@ remain, with RWF-070's species member, RWF-098's unit records, RWF-099,
 RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118,
 RWF-121, RWF-131, RWF-132, RWF-136, RWF-137, RWF-139 and RWF-140 from this family.
 
+**Progress, added by task `BL-095` (2026-10-19).** Task BL-095
+(`docs/tasks/BL-095-typescript-emit-stores.md`) made the escape row read
+the stores TypeScript's emit makes that the source shows as declarations:
+a namespace's exported members and an enum's members onto an object the
+emit creates or reads, a use of a namespace's exported variable as a member
+access on it, and a legacy-emit field or parameter property as an
+assignment. It fixes `RWF-131` and `RWF-132`: forty-eight live family-C
+false `NOT_AFFECTED`s on its base among fifty-six real-Node cases
+(`tests/oracle/bl095-typescript-emit-stores.test.ts`), twenty-seven of
+them found by its independent audit. No corpus verdict, proof or graph
+moved; on the TypeScript sources in `node_modules`
+(`scripts/bl081-builtin-store-escape-corpus.mjs --typescript`, twelve
+packages) one clean graph node of 1,185 was lost. The audit ran five
+rounds and certified none: each round found further live shapes of the
+class, every one pre-existing on the base. Rounds one to four's were fixed
+and re-audited; round five's findings 1 to 3 were fixed after it without a
+sixth round, and it registered `RWF-141` (a call through a namespace's
+exported variable resolves to its initializer, call resolution, backlog
+`BL-099`), `RWF-142` (TypeScript's decorator helpers' implicit calls,
+`BL-100`) and `RWF-143` (an ES5 class's methods are assignments, `BL-101`),
+all live and pre-existing, registered, not fixed. Whether the escape row's
+class needs a sixth round or a structural change is the project owner's
+decision (backlog `BL-094`). This entry still stands: lanes E (E-3..E-5)
+and C (C-2..C-5) remain, with RWF-070's species member, RWF-098's unit
+records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111,
+RWF-113, RWF-118, RWF-121, RWF-136, RWF-137, RWF-139, RWF-140, RWF-141,
+RWF-142 and RWF-143 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

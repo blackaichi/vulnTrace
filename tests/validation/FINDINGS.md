@@ -305,8 +305,8 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-128 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | BL-081's freshness proof took a class's `prototype` for non-writable, which it is natively; TypeScript's ES5 emit makes the class a function whose `prototype` a store replaces (`(C as any).prototype = globalThis`), and a store onto it, or onto the constructor's `this`, then runs the global object's setters | false NOT_AFFECTED (family C), also on the base — see below | Fixed (BL-091) |
 | RWF-129 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The loader-capability check sees `module.paths` changed only through the spelled forms `module.paths = …` and `module.paths.<mutator>(…)`; an alias (`const p = module.paths; p.shift()`), a parameter, `Array.prototype.shift.call(module.paths)`, an element store or a destructuring store changes where `require` resolves, unseen | false NOT_AFFECTED (family A/B), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-130 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `module.__proto__` is not a recognised route to `Module.prototype`: `module.__proto__.require = …` redirects every later `require`, unseen (`Object.getPrototypeOf(module).require = …` is seen) | false NOT_AFFECTED (family A/B), pre-existing — see below | **Fixed** (BL-092) — see below |
-| RWF-131 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | TypeScript emits each exported member of a namespace merged with a class as an assignment onto the class (`namespace D { export const defaultOptions = … }` → `D.defaultOptions = …`); when the class's base is not the program's own the assignment runs an inherited setter (RWF-126's mechanism), and the escape row reads no store there | false NOT_AFFECTED (family C), also on the base — see below | Open (backlog `BL-095`) |
-| RWF-132 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | TypeScript's legacy class-field emit assigns a field named `__proto__` (`class C { __proto__: any = globalThis; }` → `this.__proto__ = globalThis`), which changes the object's [[Prototype]]; the freshness proofs see a `__proto__` store only in an assignment, so a later store onto the object runs the global object's setters | false NOT_AFFECTED (family C), also on the base — see below | Open (backlog `BL-095`) |
+| RWF-131 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | TypeScript emits each exported member of a namespace merged with a class as an assignment onto the class (`namespace D { export const defaultOptions = … }` → `D.defaultOptions = …`); when the class's base is not the program's own the assignment runs an inherited setter (RWF-126's mechanism), and the escape row reads no store there | false NOT_AFFECTED (family C), also on the base — see below | **Fixed** (BL-095) — see below |
+| RWF-132 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | TypeScript's legacy class-field emit assigns a field named `__proto__` (`class C { __proto__: any = globalThis; }` → `this.__proto__ = globalThis`), which changes the object's [[Prototype]]; the freshness proofs see a `__proto__` store only in an assignment, so a later store onto the object runs the global object's setters | false NOT_AFFECTED (family C), also on the base — see below | **Fixed** (BL-095) — see below |
 | RWF-133 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The loader-capability check read only a member-shaped left side of `=`, `\|\|=`, `&&=` and `??=`: a destructuring target (`[Module._resolveFilename] = [hook]`, `({ paths: module.paths } = o)`), a `for…in` / `for…of` head, `++` / `--` and a compound operator (`module.paths[0] += "/x"`) each replaced loader state unseen | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-134 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The CommonJS wrapper's own `arguments` holds `require` (`arguments[1]`) and `module` (`arguments[2]`); read at module scope in a file with no `require` call of its own, it loads or redirects unseen (`arguments[2].constructor._resolveFilename = hook`) | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-135 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `Module` instance's inherited loader methods resolved only in the spelled call `module.require(x)`: `const r = module.require; r(path)` loads unseen | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
@@ -315,6 +315,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-138 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `with` head was no position the loader-capability check read: `with (module.paths) { shift(); }`, `with (module) { paths.shift(); }` and `with (process) { mainModule.require(p); }` redirect or load under bare names | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-139 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A concise arrow called on the spot returns its body, which the value-flow walk does not follow through a call: `(() => module.paths)().shift()` and `(() => require("module"))()._resolveFilename = hook` change loader state unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (backlog `C-3`) |
 | RWF-140 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `process` is a resolution-only kind (global-object detection preambles), so `process.mainModule` is recognised only on a chain from `process` itself: passed to a function (`mm(process).require(p)`) or wrapped (`Object.create(process)`, `{ __proto__: process }`, `[process][0]`, each as a `with` head) it reaches the entry `Module` instance unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (decision, backlog `BL-098`) |
+| RWF-141 | `vuln-lib` (synthetic fixture); a gap in call resolution, not tied to one package | TypeScript compiles a use of a namespace's exported variable in its body to a member read of the namespace's object (`h(1)` → `N.h(1)`), but the call graph resolves the bare name to the variable's initializer; when the program's own static accessor on a class merged with the namespace answers the read, the call reaches what the getter returns, unseen | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-099`) |
+| RWF-142 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | TypeScript's decorator helpers make implicit calls the graph does not model: a legacy decorator's returned descriptor installed by `__decorate` (a setter a later field store or `this.x = …` runs), and a TC39 field decorator's returned initializer run by `__runInitializers` on the field's value | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-100`) |
+| RWF-143 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | At target ES5 TypeScript compiles a class's methods to assignments (`C.prototype.m = function …`, `C.m = …` for a static one); when `C.prototype` or `C` inherits from an object the program does not own (`X.prototype = globalThis; class C extends X { Buffer() {} }`), the assignment runs that object's setter, and the escape row reads a method as a definition | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-101`) |
 
 ---
 
@@ -23028,7 +23031,7 @@ P.require = …` were `NOT_AFFECTED` on the base and are `UNKNOWN` now.
 
 ## RWF-131 — A namespace merged with a class stores onto the class
 
-**Status:** Open (backlog `BL-095`)
+**Status:** Fixed (BL-095) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (TypeScript's emit makes a store the source shows as a
 declaration)
@@ -23059,9 +23062,49 @@ in a TypeScript file: every exported member of a namespace merged with a
 class whose static chain is not the program's own (`hasOwnStaticChain`) is
 a store of its value onto the class. Backlog `BL-095`.
 
+**Status update (task BL-095, 2026-10-19): Fixed.** The class is wider than
+the fix direction above, and so is the fix. TypeScript compiles a namespace
+to a function run on the namespace's object, so each exported member is a
+store onto it (a variable's initializer, `D.f = f` for a function or class,
+`D.X = B` for `export import`), each use of an exported variable in a body
+is a member access on it (`k = v` → `D.k = v`, `k.m = v` → `D.k.m = v`;
+from another block, any exported member's), a nested namespace's object is
+read from its parent's (`N = D.N || (D.N = {})`), and an enum stores each
+member onto its own object. `src/code-intelligence/escape-row.ts` now
+reads all of these: the namespace's object is proven the program's own
+(`namespaceObjectIsOwn`) only for a top-level namespace whose name nothing
+else binds or stores to, that is no CommonJS wrapper parameter, merges with
+no enum and no bodiless overload, and whose merged class is undecorated
+with its own static chain; its exported variables' initializers and its
+exported functions, classes and aliases (a new escape site at the
+namespace declaration) are escapes when it is not; a write to a name an
+enclosing namespace exports is an escape whatever the object; a use of an
+exported variable is never a proven-fresh object; a class or function
+merged with a namespace is never proven fresh, as a name or as `this` in
+its static code; an enum member is an escape when its enum's object is not
+proven the program's own (`enumObjectIsOwn`), and an enum member named
+`__proto__` or `prototype` is filed as a store under that key. Namespace
+blocks are grouped by qualified name per file. Measured against real Node
+v22.11.0 (`tests/oracle/bl095-typescript-emit-stores.test.ts`): the
+recorded reproduction and the forms above, thirty-nine live false
+`NOT_AFFECTED`s on the base `09d9b61` (twenty-six of them found by the
+task's independent audit in its five rounds), are `UNKNOWN` now. Ten of
+them have their negative control declared inapplicable, each with its
+reason in the cases file: the store that makes the object a builtin one
+is itself an escape now, an array pattern's iterator, or a member handed
+over by a name the resolver binds elsewhere, each an unknown edge. A
+namespace's or enum's member handed over by a name an outer declaration
+shares is opaque, and an alias of an exported variable is checked hop by
+hop. The precision controls (a namespace merged with a base class or a
+class derived from the program's own, a standalone namespace, a member not
+exported) stay `NOT_AFFECTED`. Not covered here: a call through an exported
+namespace variable resolves to its initializer while an own static
+accessor answers the read (RWF-141, call resolution), and the decorator
+helpers' implicit calls (RWF-142).
+
 ## RWF-132 — A field named `__proto__` changes the object's [[Prototype]] under TypeScript's legacy emit
 
-**Status:** Open (backlog `BL-095`)
+**Status:** Fixed (BL-095) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (the emit assigns `__proto__`, which runs
 `Object.prototype`'s `__proto__` setter; natively a field defines an own
@@ -23086,6 +23129,28 @@ instead and the target is never called. Declaration stores are not in
 `memberStoreIndex`, so `prototypeMayBeChanged` never sees them. The fix
 direction, in a TypeScript file: a field or parameter property whose key
 may be `__proto__` is a `__proto__` store. Backlog `BL-095`.
+
+**Status update (task BL-095, 2026-10-19): Fixed.** In a TypeScript file, a
+class field with an initializer (not `declare`, `abstract`, `accessor` or a
+private name) or a parameter property whose key is `__proto__` or
+`prototype`, or a computed key that is not a literal, is filed as a store
+under that key onto any object of the file (`legacyFieldStoreKeys`), so
+every freshness proof that reads a [[Prototype]] refuses; and any field or
+parameter property is a store onto its class or instance when that object
+is not proven the program's own (`legacyFieldTargetIsOwn`: a later field
+of a class whose `__proto__` field ran, a decorated class's static field
+under the TC39 emit). The file's target is not read: at target ES2022 the
+field is defined, and the analyzer still answers `UNKNOWN` (the `cost.*`
+case). Measured against real Node v22.11.0
+(`tests/oracle/bl095-typescript-emit-stores.test.ts`): the recorded
+reproduction and the static field, parameter property, string, computed
+and variable keys, later instance and static fields, and (found by the
+audit) a TC39-decorated class's static field, nine cases all
+`NOT_AFFECTED` on the base `09d9b61`, are `UNKNOWN` now. Their negative controls are
+`UNKNOWN` too, and declared inapplicable: the field that changes the
+[[Prototype]] stores a builtin object onto an object then not proven the
+program's own, an escape with an unknown edge, as the explicit
+`this.__proto__ = globalThis` already is.
 
 ## RWF-133 — A write the loader-capability check did not read: destructuring, loop heads, `++`/`--`, compound operators
 
@@ -23281,3 +23346,100 @@ the relation resolves from `process` itself. Closing it means counting
 `mainModule` through any value that may hold `process`: a decision for
 the project owner (backlog `BL-098`). BL-092 closed only the direct
 `with (process)` / `with (globalThis)` head (RWF-138).
+
+## RWF-141 — A call through a namespace's exported variable reads the namespace's object, not the variable
+
+**Status:** Open (backlog `BL-099`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** C (the member's values -- the initializer and whatever
+the object answers -- collapsed to the initializer), with B (a bare name
+taken as a local binding when it is a member read at run time)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** A (call resolution, `named-bindings.ts`)
+
+**Discovered:** by task BL-095's independent audit, round 3, against real
+Node v22.11.0 on the source compiled at target ES2020, `NOT_AFFECTED` on
+BL-095's branch and on its base `09d9b61` while Node calls the target:
+
+```ts
+class N { static get h(): any { return lib.parse; } static set h(_v: any) {} }
+namespace N { export let h: any = function (x: any) { return x; }; h(1); }
+```
+
+TypeScript emits `N.h = function …; N.h(1)`: the store runs the class's
+own setter, and the call reads `N.h` through its own getter, which returns
+`lib.parse`. The call graph resolves `h` to the variable's initializer. A
+store written onto the class (`N.h = lib.parse`) is an escape since
+BL-095, so only a read the source does not show as a store is left: an
+accessor on the class or in its static chain, or a getter a store installs
+unseen. The fix direction: in call resolution, a use of a namespace's
+exported variable in a body of the namespace is a member read (`N.h`), not
+the variable's initializer; resolved only when the namespace's object
+provably holds the initializer there, an unknown callee otherwise.
+
+## RWF-142 — TypeScript's decorator helpers make implicit calls the graph does not model
+
+**Status:** Open (backlog `BL-100`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the helpers' runtime behaviour is not modelled: a
+returned descriptor or initializer is taken to invoke nothing)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** A (ADR 0008 § 2's decorator row)
+
+**Discovered:** by task BL-095's independent audit, round 4, against real
+Node v22.11.0 on sources compiled at target ES2020, `NOT_AFFECTED` on
+BL-095's branch and on its base `09d9b61` while Node calls the target:
+
+- with legacy decorators, `function dec(_t: any, _k: string): any { return
+  { set(v: any) { v(1); }, configurable: true }; }` and `class C { @dec x:
+  any = lib.parse; } new C();`: `__decorate` installs the returned setter
+  on `C.prototype` with `Object.defineProperty`, and the field's legacy
+  store `this.x = lib.parse` runs it; the same with an explicit
+  `this.x = lib.parse` in the constructor, with a method decorator
+  returning a setter descriptor, and with a decorator returning `{ set:
+  lib.parse }`;
+- with TC39 decorators, a field decorator whose returned initializer `(v)
+  => { v(1); … }` runs on the field's value, `lib.parse`, through
+  `__runInitializers`.
+
+The explicit `Object.defineProperty(C.prototype, "x", { set(v) { v(1) }
+})` is `UNKNOWN` (a non-admitted position). A decorator's call is a site
+(PRM-115), but what the helpers do with its result -- install a descriptor,
+run an initializer on a value -- is not. The fix direction: a decorator's
+returned value is handed to a builtin at a non-admitted position (a
+descriptor, an initializer): what it may invoke gets a possible edge, or an
+unknown one when it is not attributable.
+
+## RWF-143 — At target ES5 a class's methods are assignments
+
+**Status:** Open (backlog `BL-101`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (a method taken as a definition, which it is natively;
+TypeScript's ES5 emit assigns it)
+**Proof family affected:** C
+**Severity:** P1 / a live false `NOT_AFFECTED`, pre-existing; it needs a
+class whose `prototype` or static side inherits from an object the
+program does not own, and an ES5 target
+**Fix lane:** A (ADR 0008's BL-081 decision record)
+
+**Discovered:** by task BL-095's independent audit, round 5, against real
+Node v22.11.0 on the source compiled at target ES5, `NOT_AFFECTED` on
+BL-095's branch and on its base `09d9b61` while Node calls the target:
+
+```ts
+function X(this: any) {}
+X.prototype = globalThis;
+class C extends (X as any) { Buffer(s: any) { lib.parse(s); return ""; } }
+(Buffer as any)("x");   // in the entrypoint
+```
+
+At ES5 the method compiles to `C.prototype.Buffer = function …`, and
+`C.prototype` inherits from the global object, whose `Buffer` setter
+installs the method as the global. At ES2020 the method is defined and
+Node never calls the target. The fix direction, in a TypeScript file (the
+target is not read): a method or static method of a class whose
+`prototype` or static chain is not proven the program's own is a store, as
+BL-095 made fields.
+

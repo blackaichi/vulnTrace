@@ -22,7 +22,13 @@
 //
 // Usage:
 //   node scripts/bl081-builtin-store-escape-corpus.mjs \
-//     --base-dist <dir> [--head-dist <dir>] [--list] [packages...]
+//     --base-dist <dir> [--head-dist <dir>] [--list] [--typescript]
+//     [packages...]
+//
+// `--typescript` (task BL-095) takes each package's TypeScript sources
+// (`.ts`, `.mts`, `.cts`, `.tsx`; not declaration files) instead of its
+// JavaScript files, for a change that only TypeScript's emit reaches; a
+// package with none is skipped.
 //
 // A base build: `git archive <base> src schemas package.json tsconfig.json
 // tsconfig.build.json | tar -x -C <dir>`, link `node_modules`, and
@@ -43,14 +49,18 @@ function option(name) {
 }
 const baseDist = option("--base-dist");
 const headDist = option("--head-dist") ?? "dist";
-const listAt = args.indexOf("--list");
-const list = listAt >= 0;
-if (list) {
-  args.splice(listAt, 1);
+function flag(name) {
+  const at = args.indexOf(name);
+  if (at >= 0) {
+    args.splice(at, 1);
+  }
+  return at >= 0;
 }
+const list = flag("--list");
+const typescript = flag("--typescript");
 if (baseDist === undefined) {
   console.error(
-    "usage: --base-dist <dir> [--head-dist <dir>] [--list] [packages...]",
+    "usage: --base-dist <dir> [--head-dist <dir>] [--list] [--typescript] [packages...]",
   );
   process.exit(2);
 }
@@ -71,7 +81,10 @@ async function load(dist) {
 const base = await load(baseDist);
 const head = await load(headDist);
 
-const EXTENSIONS = new Set([".js", ".cjs", ".mjs"]);
+const EXTENSIONS = new Set(
+  typescript ? [".ts", ".mts", ".cts", ".tsx"] : [".js", ".cjs", ".mjs"],
+);
+const DECLARATION_FILE = /\.d\.[cm]?ts$/;
 const MAX_FILE_BYTES = 2_000_000;
 const MAX_FILES = 600;
 
@@ -88,7 +101,11 @@ function* walk(dir) {
       if (entry.name !== "node_modules") {
         yield* walk(full);
       }
-    } else if (entry.isFile() && EXTENSIONS.has(path.extname(entry.name))) {
+    } else if (
+      entry.isFile() &&
+      EXTENSIONS.has(path.extname(entry.name)) &&
+      !DECLARATION_FILE.test(entry.name)
+    ) {
       yield full;
     }
   }
