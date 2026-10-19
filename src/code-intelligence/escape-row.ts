@@ -426,6 +426,33 @@ function collectIdentifier(
   ) {
     return;
   }
+  if (ts.isClassDeclaration(id.parent) && id.parent.name === id) {
+    // A class declaration's own name, which no source expression is: the
+    // value a namespace's emit stores right after the class (`D.C = C`,
+    // task BL-095), the class itself -- or, decorated, the decorator's
+    // result, which its own-member check below makes opaque.
+    out.push({ kind: "class", node: id.parent, direct });
+    pushOwnMembers(id.parent, out);
+    return;
+  }
+  const scope = memberScopeOf(id);
+  if (scope !== undefined) {
+    // A namespace's or enum's member (`N.k`, `E.A` in the emit), unless the
+    // name resolves to a declaration inside that same body: the resolver
+    // may bind it to an outer declaration of the same spelling (task
+    // BL-095's audit, round 5, finding 3), whose value is not what is
+    // handed over.
+    const declared = resolveNamedBinding(id, { followAliases: false });
+    if (
+      declared.kind === "unresolved" ||
+      declared.declaration.getSourceFile() !== id.getSourceFile() ||
+      declared.declaration.pos < scope.pos ||
+      declared.declaration.end > scope.end
+    ) {
+      out.push({ kind: "opaque", expr: id });
+      return;
+    }
+  }
   const binding = resolveNamedBinding(id);
   switch (binding.kind) {
     case "function":
@@ -910,6 +937,19 @@ function isVarList(list: ts.VariableDeclarationList): boolean {
   return (list.flags & ts.NodeFlags.BlockScoped) === 0;
 }
 
+/** Task BL-095 (RWF-131): an exported variable of a namespace whose object is not proven the program's own (`D.k = v`). */
+function isNamespaceExportStore(node: ts.VariableDeclaration): boolean {
+  const statement = node.parent.parent;
+  return (
+    ts.isVariableStatement(statement) &&
+    hasExportModifier(statement) &&
+    !isAmbientDeclaration(statement) &&
+    ts.isModuleBlock(statement.parent) &&
+    ts.isModuleDeclaration(statement.parent.parent) &&
+    !namespaceObjectIsOwn(statement.parent.parent)
+  );
+}
+
 /**
  * Task BL-081 (its audit): the stores that have no assignment expression.
  * Each writes onto an object not proven to be one the program created, so
@@ -923,7 +963,13 @@ function isVarList(list: ts.VariableDeclarationList): boolean {
  *   object, a builtin too;
  * - a TypeScript parameter property of a derived class's constructor
  *   (`constructor(public keys) { super(); }`), compiled to `this.keys =
- *   keys` after `super()`.
+ *   keys` after `super()`;
+ * - task BL-095: in a TypeScript file, a field or parameter property whose
+ *   object is not proven the program's own (RWF-132: the legacy emit
+ *   assigns it, {@link legacyFieldTargetIsOwn}), and an exported variable
+ *   of a namespace whose object is not (RWF-131: `D.k = v`,
+ *   {@link namespaceObjectIsOwn}), and an enum member's initializer when
+ *   the enum's object is not ({@link enumObjectIsOwn}).
  *
  * Returns the value the declaration stores, or `undefined` when it is no
  * such store or stores a provable primitive.
@@ -934,14 +980,24 @@ export function declarationStoreOf(node: ts.Node): ts.Expression | undefined {
     const stores =
       node.initializer !== undefined &&
       ts.isVariableDeclarationList(node.parent) &&
-      isVarList(node.parent) &&
-      insideWith(node);
+      ((isVarList(node.parent) && insideWith(node)) ||
+        isNamespaceExportStore(node));
     if (stores && !ts.isIdentifier(node.name)) {
       // A pattern reads and may iterate its source, and stores its
       // defaults: a store whatever the initializer is.
       return node.initializer;
     }
     value = stores ? node.initializer : undefined;
+  } else if (ts.isEnumMember(node)) {
+    // Task BL-095 (the audit's round 2, finding 4): an enum compiles to a
+    // function storing each member onto the enum's object (`E["k"] = v`).
+    value =
+      node.initializer !== undefined &&
+      isTypeScriptSource(node.getSourceFile()) &&
+      !isAmbientDeclaration(node.parent) &&
+      !enumObjectIsOwn(node.parent)
+        ? node.initializer
+        : undefined;
   } else if (ts.isPropertyDeclaration(node)) {
     // An instance field of a derived class is defined onto whatever the
     // base constructor returned. A STATIC field of a class whose static
@@ -953,12 +1009,19 @@ export function declarationStoreOf(node: ts.Node): ts.Expression | undefined {
     // file's target is not read, so every TypeScript file is taken as that
     // emit; a JavaScript source compiled the same way (Babel's or swc's
     // loose mode) is not covered.
+    // Task BL-095 (RWF-132): under the same emit any field is an
+    // assignment onto the class or the new instance, which runs a setter
+    // when that object's [[Prototype]] is not the program's own (a field
+    // named `__proto__` changes it).
     const derived =
       ts.isClassLike(node.parent) &&
-      (isStatic(node)
+      ((isStatic(node)
         ? isTypeScriptSource(node.getSourceFile()) &&
           !hasOwnStaticChain(node.parent, 0)
-        : isDerived(node.parent));
+        : isDerived(node.parent)) ||
+        (isTypeScriptSource(node.getSourceFile()) &&
+          legacyFieldKeyOf(node) !== undefined &&
+          !legacyFieldTargetIsOwn(node.parent, isStatic(node))));
     const decorators = ts.getDecorators(node) ?? [];
     if (derived && decorators.length > 0) {
       // A field decorator may replace the initializer with any function's
@@ -972,7 +1035,7 @@ export function declarationStoreOf(node: ts.Node): ts.Expression | undefined {
       ts.isIdentifier(node.name) &&
       ts.isParameterPropertyDeclaration(node, ctor) &&
       ts.isClassLike(ctor.parent) &&
-      isDerived(ctor.parent)
+      (isDerived(ctor.parent) || !legacyFieldTargetIsOwn(ctor.parent, false))
         ? node.name
         : undefined;
   }
@@ -1005,7 +1068,9 @@ export function storeReadsUnseen(
     | ts.ForOfStatement
     | ts.VariableDeclaration
     | ts.PropertyDeclaration
-    | ts.ParameterDeclaration,
+    | ts.ParameterDeclaration
+    | ts.ModuleDeclaration
+    | ts.EnumMember,
   stored: ts.Expression,
 ): boolean {
   if (ts.isForOfStatement(node)) {
@@ -1085,12 +1150,33 @@ export function storesUnderPrototypeKey(
     | ts.ForOfStatement
     | ts.VariableDeclaration
     | ts.PropertyDeclaration
-    | ts.ParameterDeclaration,
+    | ts.ParameterDeclaration
+    | ts.ModuleDeclaration
+    | ts.EnumMember,
 ): boolean {
   if (ts.isVariableDeclaration(node)) {
     return bindingNames(node.name).some(
-      (id) => MODEL_KEYS.has(id.text) && insideWith(id),
+      (id) =>
+        MODEL_KEYS.has(id.text) &&
+        (insideWith(id) || isNamespaceExportStore(node)),
     );
+  }
+  if (ts.isEnumMember(node)) {
+    // `enum F { prototype = <any>K }` (task BL-095).
+    return (
+      (ts.isIdentifier(node.name) || ts.isStringLiteralLike(node.name)) &&
+      MODEL_KEYS.has(node.name.text)
+    );
+  }
+  if (ts.isModuleDeclaration(node)) {
+    // `namespace D { export function prototype() {} }` (task BL-095): a
+    // set lookup per key, once per call (the audit's rounds 3 and 4,
+    // finding 2 and 3: scanning the members per call was quadratic).
+    const group = namespaceGroup(node);
+    return [...MODEL_KEYS].some((key) => {
+      namespaceMemberLookups += 1;
+      return group.declarationNames.has(key);
+    });
   }
   if (!ts.isBinaryExpression(node) && !ts.isForOfStatement(node)) {
     return false;
@@ -1297,8 +1383,12 @@ function escapeRootOf(
     }
     // Task BL-081 (RWF-120): in a `with` body a bare name may be a member
     // of the `with` object -- `with (Object) { keys = f; }` writes
-    // `Object.keys` -- and that object may be a builtin.
-    return insideWith(target) ? { kind: "unproven_object" } : undefined;
+    // `Object.keys` -- and that object may be a builtin. Task BL-095
+    // (RWF-131): in a namespace body, an exported member is one of the
+    // namespace's object (`k = v` compiles to `D.k = v`).
+    return insideWith(target) || isNamespaceMemberStore(target)
+      ? { kind: "unproven_object" }
+      : undefined;
   }
   if (
     !ts.isPropertyAccessExpression(target) &&
@@ -1778,10 +1868,12 @@ function isFreshThisPosition(node: ts.Node): boolean {
     }
     if (ts.isClassStaticBlockDeclaration(current)) {
       // The class itself -- unless a class decorator stands in for it
-      // (TC39 decorators run static code on the decorator's result).
+      // (TC39 decorators run static code on the decorator's result), or a
+      // namespace merges with it (task BL-095's audit, round 4, finding 2).
       return (
         ts.isClassLike(current.parent) &&
         !isDecorated(current.parent) &&
+        !mergesWithNamespace(current.parent) &&
         hasOwnStaticChain(current.parent, 0)
       );
     }
@@ -1792,7 +1884,9 @@ function isFreshThisPosition(node: ts.Node): boolean {
       return (
         child === current.initializer &&
         (isStatic(current)
-          ? !isDecorated(current.parent) && hasOwnStaticChain(current.parent, 0)
+          ? !isDecorated(current.parent) &&
+            !mergesWithNamespace(current.parent) &&
+            hasOwnStaticChain(current.parent, 0)
           : !isDerived(current.parent) &&
             classPrototypeIsStable(current.parent))
       );
@@ -1910,8 +2004,640 @@ function isDerived(cls: ts.ClassLikeDeclaration): boolean {
   );
 }
 
+// ---------------------------------------------------------------------------
+// The stores TypeScript's emit makes that the source shows as declarations
+// (task BL-095)
+// ---------------------------------------------------------------------------
+
+/**
+ * Task BL-095 (RWF-131): TypeScript compiles a namespace to a function run
+ * on the namespace's OBJECT -- `namespace D { export const k = v; }` to
+ * `(function (D) { D.k = v; })(D || (D = {}))` -- so each exported member
+ * is a store onto that object (`D.f = f` for a function or class, `D.X =
+ * B` for `export import X = B`), and each use of an exported variable in a
+ * body of the namespace is a member access on it (`k = v` → `D.k = v`,
+ * `k.m = v` → `D.k.m = v`; from another block of the same namespace, a use
+ * of any exported member is; an `export declare let` is rewritten too).
+ * Measured with the repository's TypeScript.
+ *
+ * The object is the class or function the namespace merges with, the
+ * `{}` a first block created, or -- for a namespace exported from another
+ * (`export namespace N`, `namespace A.N`) -- the value read from its
+ * parent's object (`N = D.N || (D.N = {})`). It is proven the program's
+ * own only when:
+ *
+ * - the namespace is not nested in another (exported or dotted, its
+ *   object is read from the parent's, which may be any store's -- `(D as
+ *   any).N = globalThis`, `static N = globalThis` -- or an inherited
+ *   member -- `N.constructor` is `Object`; the task's independent audit,
+ *   round 1, findings 1 and 2); a nested namespace that is not exported is
+ *   not proven either, for simplicity;
+ * - the name is never stored to, declared as a variable or import, nor one
+ *   of the CommonJS wrapper's parameters (`var module;` keeps Node's own
+ *   `module`: round 4, finding 1), and no store under `__proto__` may
+ *   change the object's [[Prototype]];
+ * - no `enum` merges with it (an enum member named `__proto__` changes the
+ *   [[Prototype]]: round 1, finding 4), and no `function` declaration
+ *   without a body does (an overload alone emits no binding, so the
+ *   namespace's emit writes onto the global of that name, `Buffer`: round
+ *   2, finding 3);
+ * - a merged class is undecorated (a decorator's result is the object --
+ *   any value under legacy decorators) and its static chain is the
+ *   program's own ({@link hasOwnStaticChain}; RWF-126's mechanism: a class
+ *   derived from `util.inspect` inherits its `defaultOptions` setter).
+ *
+ * Otherwise a store onto it may run a setter the program does not own.
+ * This judges only the stores the emit makes. A store written out onto a
+ * namespace's object (`N.k = v`) is an escape of its own: no freshness
+ * proof accepts a namespace's name, nor (since the audit's round 3,
+ * finding 1) a class or function merged with a namespace
+ * ({@link mergesWithNamespace}). A use of an exported variable is never a
+ * proven-fresh object, whatever the object, nor is an alias of one
+ * ({@link isFreshBinding}).
+ */
+function namespaceObjectIsOwn(ns: ts.ModuleDeclaration): boolean {
+  const group = namespaceGroup(ns);
+  if (group.own !== undefined) {
+    return group.own;
+  }
+  if (namespaceOwnPending.has(group)) {
+    // Re-entrant: a proof below needs this answer (a class's `extends`
+    // naming a member of its own namespace). Not proven.
+    return false;
+  }
+  namespaceOwnPending.add(group);
+  namespaceOwnComputations += 1;
+  try {
+    group.own = computeNamespaceObjectIsOwn(ns);
+    return group.own;
+  } finally {
+    namespaceOwnPending.delete(group);
+  }
+}
+
+const namespaceOwnPending = new Set<NamespaceGroup>();
+
+/** Computed once per namespace (the audit's round 1, finding 7: once per block was quadratic in the blocks). */
+function computeNamespaceObjectIsOwn(ns: ts.ModuleDeclaration): boolean {
+  if (!ts.isIdentifier(ns.name)) {
+    // `declare module "m"`: ambient, never emitted.
+    return true;
+  }
+  const parent = ns.parent;
+  if (!ts.isSourceFile(parent)) {
+    // Nested in another namespace (or a `declare module`).
+    return false;
+  }
+  const name = ns.name.text;
+  if (
+    // `var module;` keeps the CommonJS wrapper's parameter, Node's own
+    // `module` (the audit's round 4, finding 1).
+    MODULE_SCOPE_ROOTS.has(name) ||
+    assignedNames(parent).has(name) ||
+    variableLikeNames(parent).has(name) ||
+    prototypeMayBeChanged(ns.name, parent)
+  ) {
+    return false;
+  }
+  return (topLevelPartners(parent).get(name) ?? []).every((statement) => {
+    if (
+      isAmbientDeclaration(statement) &&
+      !ts.isFunctionDeclaration(statement)
+    ) {
+      return true;
+    }
+    if (ts.isClassDeclaration(statement)) {
+      return !isDecorated(statement) && hasOwnStaticChain(statement, 0);
+    }
+    // A function with a body binds itself; an overload alone binds
+    // nothing; an enum's members are stores of their own.
+    return ts.isFunctionDeclaration(statement) && statement.body !== undefined;
+  });
+}
+
+/** The file's top-level class, function and enum declarations by name (once per file: round 2's performance observation). */
+function topLevelPartners(
+  sourceFile: ts.SourceFile,
+): ReadonlyMap<string, readonly ts.Statement[]> {
+  let partners = topLevelPartnersCache.get(sourceFile);
+  if (!partners) {
+    const built = new Map<string, ts.Statement[]>();
+    for (const statement of sourceFile.statements) {
+      if (
+        (ts.isClassDeclaration(statement) ||
+          ts.isFunctionDeclaration(statement) ||
+          ts.isEnumDeclaration(statement)) &&
+        statement.name !== undefined
+      ) {
+        const list = built.get(statement.name.text);
+        if (list) {
+          list.push(statement);
+        } else {
+          built.set(statement.name.text, [statement]);
+        }
+      }
+    }
+    partners = built;
+    topLevelPartnersCache.set(sourceFile, partners);
+  }
+  return partners;
+}
+
+const topLevelPartnersCache = new WeakMap<
+  ts.SourceFile,
+  ReadonlyMap<string, readonly ts.Statement[]>
+>();
+
+/**
+ * Task BL-095 (the audit's round 2, finding 4): whether an enum's object
+ * -- which its emit creates (`var E; (function (E) { E["k"] = v; })(E ||
+ * (E = {}))`) and stores each member onto -- is proven the program's own:
+ * a top-level enum (one exported from a namespace is read from the
+ * parent's object, `E = N.E || (N.E = {})`) whose name nothing else binds
+ * or stores to, merged with no namespace, and whose [[Prototype]] no store
+ * may change (an enum member named `__proto__` is filed as one,
+ * {@link enumMemberStoreKeys}).
+ */
+function enumObjectIsOwn(declaration: ts.EnumDeclaration): boolean {
+  const sourceFile = declaration.getSourceFile();
+  const name = declaration.name.text;
+  return (
+    ts.isSourceFile(declaration.parent) &&
+    !MODULE_SCOPE_ROOTS.has(name) &&
+    !assignedNames(sourceFile).has(name) &&
+    !variableLikeNames(sourceFile).has(name) &&
+    !mergedNamespaceNames(sourceFile).has(name) &&
+    (topLevelPartners(sourceFile).get(name) ?? []).every((statement) =>
+      ts.isEnumDeclaration(statement),
+    ) &&
+    !prototypeMayBeChanged(declaration.name, sourceFile)
+  );
+}
+
+/** The keys of the file's enum members named `__proto__` or `prototype` (task BL-095): stores onto an enum's object. */
+function enumMemberStoreKeys(sourceFile: ts.SourceFile): readonly string[] {
+  if (!isTypeScriptSource(sourceFile)) {
+    return [];
+  }
+  const keys = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (
+      ts.isEnumMember(node) &&
+      (ts.isIdentifier(node.name) || ts.isStringLiteralLike(node.name)) &&
+      (node.name.text === "__proto__" || node.name.text === "prototype")
+    ) {
+      keys.add(node.name.text);
+    } else if (
+      ts.isEnumMember(node) &&
+      ts.isComputedPropertyName(node.name) &&
+      !ts.isStringLiteralLike(skipOuterExpressions(node.name.expression))
+    ) {
+      keys.add(COMPUTED_KEY);
+    } else if (ts.isEnumMember(node) && ts.isComputedPropertyName(node.name)) {
+      const key = (
+        skipOuterExpressions(node.name.expression) as ts.StringLiteralLike
+      ).text;
+      if (key === "__proto__" || key === "prototype") {
+        keys.add(key);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return [...keys];
+}
+
+function hasExportModifier(node: ts.Node): boolean {
+  return (
+    ts.canHaveModifiers(node) &&
+    (ts.getModifiers(node) ?? []).some(
+      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
+    )
+  );
+}
+
+/**
+ * Every name the file declares as a variable or an import binding, at any
+ * depth: over-approximated by spelling (a `var D` anywhere, hoisted or
+ * not, may be the binding a namespace `D` reuses), which can only refuse.
+ */
+function variableLikeNames(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const cached = variableLikeNamesCache.get(sourceFile);
+  if (cached) {
+    return cached;
+  }
+  const names = new Set<string>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node)) {
+      bindingNames(node.name).forEach((id) => names.add(id.text));
+    } else if (
+      (ts.isImportEqualsDeclaration(node) ||
+        ts.isImportClause(node) ||
+        ts.isNamespaceImport(node) ||
+        ts.isImportSpecifier(node)) &&
+      node.name !== undefined
+    ) {
+      names.add(node.name.text);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  variableLikeNamesCache.set(sourceFile, names);
+  return names;
+}
+
+const variableLikeNamesCache = new WeakMap<
+  ts.SourceFile,
+  ReadonlySet<string>
+>();
+
+/** One exported member of a namespace's blocks: its name and its declaration. */
+interface NamespaceMember {
+  readonly name: string;
+  readonly declaration: ts.Node;
+}
+
+/**
+ * The blocks of one namespace -- every block of the file with the same
+ * qualified name, at any depth (`namespace A { export namespace B {} }`,
+ * `namespace A.B {}` and a second `namespace A { namespace B {} }` are one;
+ * merging a block that is not exported too can only refuse) -- with their
+ * exported members and, once computed, whether their object is the
+ * program's own.
+ */
+interface NamespaceGroup {
+  readonly members: readonly NamespaceMember[];
+  readonly names: ReadonlySet<string>;
+  /** The names of the members that are not variables: a function, class, enum, namespace or `export import` (a store at the declaration). */
+  readonly declarationNames: ReadonlySet<string>;
+  own?: boolean;
+}
+
+/**
+ * The group `ns` is one of, built once per file for every namespace in it
+ * (the audit's round 1, finding 7; by qualified name since round 2,
+ * finding 2: blocks split across a parent's blocks, or spelled dotted, are
+ * one namespace). A member declared with `declare` emits no store, but a
+ * use of it in a body is rewritten as one of the others (`export declare
+ * let k` → `D.k = v`, round 1, finding 5), so it is a member here; the
+ * stores at a declaration exclude it.
+ */
+function namespaceGroup(ns: ts.ModuleDeclaration): NamespaceGroup {
+  return namespaceGroups(ns.getSourceFile()).get(qualifiedNamespaceName(ns))!;
+}
+
+/** Every namespace of the file, by qualified name ({@link namespaceGroup}). */
+function namespaceGroups(
+  sourceFile: ts.SourceFile,
+): ReadonlyMap<string, NamespaceGroup> {
+  let groups = namespaceGroupsCache.get(sourceFile);
+  if (!groups) {
+    namespaceGroupBuilds += 1;
+    const blocks = new Map<string, ts.ModuleDeclaration[]>();
+    const visit = (node: ts.Node): void => {
+      if (ts.isModuleDeclaration(node)) {
+        const path = qualifiedNamespaceName(node);
+        const list = blocks.get(path);
+        if (list) {
+          list.push(node);
+        } else {
+          blocks.set(path, [node]);
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+    groups = new Map(
+      [...blocks].map(([path, list]) => [path, groupOf(list)] as const),
+    );
+    namespaceGroupsCache.set(sourceFile, groups);
+  }
+  return groups;
+}
+
+const namespaceGroupsCache = new WeakMap<
+  ts.SourceFile,
+  ReadonlyMap<string, NamespaceGroup>
+>();
+
+/** `A.B.C` for `C` in `namespace A { export namespace B.C {} }`; a string name (`declare module "m"`) is quoted. */
+function qualifiedNamespaceName(ns: ts.ModuleDeclaration): string {
+  const parts: string[] = [];
+  let current: ts.Node = ns;
+  for (;;) {
+    if (ts.isModuleDeclaration(current)) {
+      parts.unshift(
+        ts.isIdentifier(current.name)
+          ? current.name.text
+          : JSON.stringify(current.name.text),
+      );
+      current = current.parent;
+    } else if (
+      ts.isModuleBlock(current) &&
+      ts.isModuleDeclaration(current.parent)
+    ) {
+      current = current.parent;
+    } else {
+      return parts.join(".");
+    }
+  }
+}
+
+function groupOf(blocks: readonly ts.ModuleDeclaration[]): NamespaceGroup {
+  const members: NamespaceMember[] = [];
+  for (const block of blocks) {
+    if (block.body === undefined) {
+      continue;
+    }
+    if (ts.isModuleDeclaration(block.body)) {
+      // `namespace A.B { … }`: `B` is A's exported member.
+      if (ts.isIdentifier(block.body.name)) {
+        members.push({ name: block.body.name.text, declaration: block.body });
+      }
+      continue;
+    }
+    if (!ts.isModuleBlock(block.body)) {
+      continue;
+    }
+    for (const statement of block.body.statements) {
+      if (!hasExportModifier(statement)) {
+        continue;
+      }
+      if (ts.isVariableStatement(statement)) {
+        for (const declaration of statement.declarationList.declarations) {
+          for (const id of bindingNames(declaration.name)) {
+            members.push({ name: id.text, declaration });
+          }
+        }
+      } else if (
+        (ts.isFunctionDeclaration(statement) ||
+          ts.isClassDeclaration(statement) ||
+          ts.isEnumDeclaration(statement) ||
+          ts.isModuleDeclaration(statement) ||
+          ts.isImportEqualsDeclaration(statement)) &&
+        statement.name !== undefined &&
+        ts.isIdentifier(statement.name)
+      ) {
+        members.push({ name: statement.name.text, declaration: statement });
+      }
+    }
+  }
+  return {
+    members,
+    names: new Set(members.map((member) => member.name)),
+    declarationNames: new Set(
+      members
+        .filter((member) => !ts.isVariableDeclaration(member.declaration))
+        .map((member) => member.name),
+    ),
+  };
+}
+
+/**
+ * Task BL-095 (RWF-131): whether a write to the bare name `id` may be a
+ * store onto a namespace's object -- a name an enclosing namespace exports
+ * (`k = v` → `D.k = v`). It is an escape whatever the object, as `N.k = v`
+ * written out is: a write from another block changes what the name holds
+ * in this one, and the resolver, which does not know a namespace's scope,
+ * may bind the name to an outer declaration TypeScript's namespace member
+ * shadows (the audit's round 2, finding 1).
+ */
+function isNamespaceMemberStore(id: ts.Identifier): boolean {
+  return memberScopeOf(id) !== undefined;
+}
+
+/**
+ * Task BL-095 (RWF-131): the innermost namespace or enum a bare name used
+ * in one of its bodies may be a member of -- a namespace whose blocks
+ * export a member so spelled (`k = v` → `D.k = v`), or (since its
+ * independent audit, round 5, findings 2 and 3) an enum whose blocks
+ * declare one (`enum E { A = …, B = A.x }` reads `E.A`) -- or `undefined`.
+ * The resolver, which knows neither scope, may bind such a name to an
+ * outer declaration of the same spelling. Over-approximated by spelling:
+ * a closer declaration of the same name (a parameter, a local) is not told
+ * apart, which refuses a proof or makes a value opaque.
+ */
+function memberScopeOf(
+  id: ts.Identifier,
+): ts.ModuleDeclaration | ts.EnumDeclaration | undefined {
+  for (
+    let current: ts.Node | undefined = id.parent;
+    current;
+    current = current.parent
+  ) {
+    if (
+      ts.isModuleDeclaration(current) &&
+      namespaceGroup(current).names.has(id.text)
+    ) {
+      return current;
+    }
+    if (
+      ts.isEnumDeclaration(current) &&
+      enumMemberNames(current).has(id.text)
+    ) {
+      return current;
+    }
+  }
+  return undefined;
+}
+
+/** The member names of every block of an enum: the same-name enums of its statement list. */
+function enumMemberNames(declaration: ts.EnumDeclaration): ReadonlySet<string> {
+  let names = enumMemberNamesCache.get(declaration);
+  if (!names) {
+    const container = declaration.parent;
+    const blocks =
+      ts.isSourceFile(container) || ts.isModuleBlock(container)
+        ? container.statements.filter(
+            (statement): statement is ts.EnumDeclaration =>
+              ts.isEnumDeclaration(statement) &&
+              statement.name.text === declaration.name.text,
+          )
+        : [declaration];
+    const built = new Set<string>();
+    for (const block of blocks) {
+      for (const member of block.members) {
+        if (
+          ts.isIdentifier(member.name) ||
+          ts.isStringLiteralLike(member.name)
+        ) {
+          built.add(member.name.text);
+        }
+      }
+    }
+    for (const block of blocks) {
+      enumMemberNamesCache.set(block, built);
+    }
+    names = built;
+  }
+  return names;
+}
+
+const enumMemberNamesCache = new WeakMap<
+  ts.EnumDeclaration,
+  ReadonlySet<string>
+>();
+
+/**
+ * Task BL-095 (RWF-131): the values the stores of a namespace's exported
+ * function, class and `export import` declarations put onto the namespace's
+ * object (`D.f = f`, `D.C = C`, `D.X = B`), when that object is not proven
+ * the program's own; empty otherwise. An exported variable's store is its
+ * declaration's ({@link declarationStoreOf}). The value of `export import X
+ * = A.B` is not an expression the source shows: its own name stands for
+ * it, which resolves to nothing (an unknown edge).
+ */
+export function namespaceDeclarationStoresOf(
+  ns: ts.ModuleDeclaration,
+): readonly ts.Expression[] {
+  if (
+    ns.body === undefined ||
+    !ts.isModuleBlock(ns.body) ||
+    !isTypeScriptSource(ns.getSourceFile()) ||
+    isAmbientDeclaration(ns) ||
+    namespaceObjectIsOwn(ns)
+  ) {
+    return [];
+  }
+  const values: ts.Expression[] = [];
+  for (const statement of ns.body.statements) {
+    if (!hasExportModifier(statement) || isAmbientDeclaration(statement)) {
+      continue;
+    }
+    if (
+      (ts.isFunctionDeclaration(statement) ||
+        ts.isClassDeclaration(statement)) &&
+      statement.name !== undefined
+    ) {
+      values.push(statement.name);
+    } else if (
+      ts.isImportEqualsDeclaration(statement) &&
+      !statement.isTypeOnly
+    ) {
+      values.push(
+        ts.isIdentifier(statement.moduleReference)
+          ? statement.moduleReference
+          : statement.name,
+      );
+    }
+  }
+  return values;
+}
+
+/**
+ * Task BL-095 (RWF-132): the member keys a class field or parameter
+ * property assigns under TypeScript's legacy class-field emit
+ * (`useDefineForClassFields: false`, the default below target ES2022),
+ * where `__proto__: any = p` compiles to `this.__proto__ = p` and changes
+ * the object's [[Prototype]] (a defined field would not). Only the keys
+ * that freshness proofs read: `__proto__` and `prototype`, and
+ * {@link COMPUTED_KEY} for a computed key that is not a literal (it may
+ * spell either). A field with no initializer, a `declare` or `abstract`
+ * field and a private name emit no assignment. The file's target is not
+ * read, so every TypeScript file is taken as that emit.
+ */
+function legacyFieldStoreKeys(sourceFile: ts.SourceFile): ReadonlySet<string> {
+  const cached = legacyFieldKeysCache.get(sourceFile);
+  if (cached) {
+    return cached;
+  }
+  const keys = new Set<string>();
+  if (isTypeScriptSource(sourceFile)) {
+    const visit = (node: ts.Node): void => {
+      const key = legacyFieldKeyOf(node);
+      if (key === COMPUTED_KEY || key === "__proto__" || key === "prototype") {
+        keys.add(key);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  legacyFieldKeysCache.set(sourceFile, keys);
+  return keys;
+}
+
+const legacyFieldKeysCache = new WeakMap<ts.SourceFile, ReadonlySet<string>>();
+
+/** The key a field or parameter property assigns under the legacy emit, or `undefined` when it emits no assignment. */
+function legacyFieldKeyOf(node: ts.Node): string | undefined {
+  let name: ts.Node;
+  if (ts.isPropertyDeclaration(node)) {
+    const modifiers = ts.getModifiers(node) ?? [];
+    if (
+      node.initializer === undefined ||
+      !ts.isClassLike(node.parent) ||
+      modifiers.some(
+        (modifier) =>
+          modifier.kind === ts.SyntaxKind.DeclareKeyword ||
+          modifier.kind === ts.SyntaxKind.AbstractKeyword ||
+          modifier.kind === ts.SyntaxKind.AccessorKeyword,
+      ) ||
+      ts.isPrivateIdentifier(node.name)
+    ) {
+      return undefined;
+    }
+    name = node.name;
+  } else if (
+    ts.isParameter(node) &&
+    ts.isParameterPropertyDeclaration(node, node.parent)
+  ) {
+    name = node.name;
+  } else {
+    return undefined;
+  }
+  if (
+    ts.isIdentifier(name) ||
+    ts.isStringLiteralLike(name) ||
+    ts.isNumericLiteral(name)
+  ) {
+    return name.text;
+  }
+  if (ts.isComputedPropertyName(name)) {
+    const expression = skipOuterExpressions(name.expression);
+    return ts.isStringLiteralLike(expression) || ts.isNumericLiteral(expression)
+      ? expression.text
+      : COMPUTED_KEY;
+  }
+  // A binding pattern is no parameter property.
+  return undefined;
+}
+
+/**
+ * Task BL-095 (RWF-132): whether the object a class field's legacy-emit
+ * assignment writes onto is proven the program's own -- the class for a
+ * static field, the new instance otherwise -- as `this` in its initializer
+ * would be ({@link isFreshThisPosition}: an undecorated class for a static
+ * field), with no store anywhere in the file that may change a
+ * [[Prototype]].
+ */
+function legacyFieldTargetIsOwn(
+  cls: ts.ClassLikeDeclaration,
+  isStaticField: boolean,
+): boolean {
+  if (prototypeMayBeChanged(undefined, cls.getSourceFile())) {
+    return false;
+  }
+  // A static field of a decorated class is assigned onto the decorator's
+  // result under the TC39 emit below ES2022 (`_classThis.k = v`; the
+  // decorator mode is not read): the audit's finding 6.
+  return isStaticField
+    ? !isDecorated(cls) &&
+        !mergesWithNamespace(cls) &&
+        hasOwnStaticChain(cls, 0)
+    : !isDerived(cls) && classPrototypeIsStable(cls);
+}
+
 function isFreshBinding(id: ts.Identifier, hops: number): boolean {
   if (insideWith(id)) {
+    return false;
+  }
+  // Task BL-095 (RWF-131): an exported variable used in a namespace body is
+  // a member read of the namespace's object (`k.m = v` compiles to `D.k.m
+  // = v`), whatever its declaration holds: an inherited getter answers it
+  // when the object is not the program's own, and a store onto the object
+  // (`(N as any).k = globalThis`) or an accessor in its own static chain
+  // when it is (the task's independent audit, finding 3).
+  if (memberScopeOf(id) !== undefined) {
     return false;
   }
   const sourceFile = id.getSourceFile();
@@ -1928,7 +2654,10 @@ function isFreshBinding(id: ts.Identifier, hops: number): boolean {
       stores.every((value) => value !== undefined && isFresh(value, hops + 1))
     );
   }
-  const binding = resolveNamedBinding(id);
+  // One alias hop at a time, so that every name of the chain is checked
+  // here (task BL-095's audit, round 5, finding 1: `const a = o` with `o` a
+  // namespace's exported variable was followed to `o`'s initializer).
+  const binding = resolveNamedBinding(id, { followAliases: false });
   switch (binding.kind) {
     case "function":
     case "function-expression":
@@ -1942,7 +2671,8 @@ function isFreshBinding(id: ts.Identifier, hops: number): boolean {
           (isDecorated(binding.declaration) ||
             !hasOwnStaticChain(binding.declaration, hops))) ||
         isAmbientDeclaration(binding.declaration) ||
-        prototypeMayBeChanged(id, sourceFile)
+        prototypeMayBeChanged(id, sourceFile) ||
+        mergesWithNamespace(binding.declaration)
       ) {
         return false;
       }
@@ -1960,6 +2690,25 @@ function isFreshBinding(id: ts.Identifier, hops: number): boolean {
     case "unresolved":
       return false;
   }
+}
+
+/**
+ * Task BL-095 (its independent audit, round 3, finding 1): whether a class
+ * or function is merged with a namespace, whose exported variables are its
+ * members (`namespace N { export let h = f; h(1); }` reads `N.h`). A store
+ * onto it (`N.h = lib.parse`, through any name that may denote it) changes
+ * what a namespace body's bare name holds, which the source does not show
+ * there: it is never proven the program's own -- as a name, nor as `this`
+ * in its static blocks and static fields (round 4, finding 2) -- so every
+ * such store is an escape, as a store onto a namespace alone already is.
+ */
+function mergesWithNamespace(declaration: ts.Node): boolean {
+  const name = (declaration as ts.NamedDeclaration).name;
+  return (
+    name !== undefined &&
+    ts.isIdentifier(name) &&
+    mergedNamespaceNames(declaration.getSourceFile()).has(name.text)
+  );
 }
 
 /** The CommonJS wrapper's own `module` / `exports`: no declaration of the name in the file, in a proven CommonJS module scope. */
@@ -1999,6 +2748,24 @@ function everyMemberStoreIsFresh(
   return everyStoreValueIsFresh(storesOnto(object, key), hops);
 }
 
+/** The exported members of the file's namespaces named `__proto__` or `prototype` (task BL-095, RWF-131). */
+function namespaceExportKeys(sourceFile: ts.SourceFile): readonly string[] {
+  if (!mergedNamespaceNames(sourceFile).size) {
+    return [];
+  }
+  // Once per namespace, not per block (the audit's round 3, finding 2).
+  const keys = new Set<string>();
+  for (const group of namespaceGroups(sourceFile).values()) {
+    for (const key of ["__proto__", "prototype"]) {
+      namespaceMemberLookups += 1;
+      if (group.names.has(key)) {
+        keys.add(key);
+      }
+    }
+  }
+  return [...keys];
+}
+
 /** The key under which {@link memberStoreIndex} files a store whose key is computed at run time. */
 const COMPUTED_KEY = "\u0000computed";
 
@@ -2029,6 +2796,9 @@ let memberStoreIndexBuilds = 0;
 let fullSameObjectChecks = 0;
 let storeVisits = 0;
 let prototypeStabilityComputations = 0;
+let namespaceGroupBuilds = 0;
+let namespaceOwnComputations = 0;
+let namespaceMemberLookups = 0;
 
 /** Operation counts of the own-member and freshness bookkeeping, for the structural performance test (ARCHITECTURE § 10). */
 export function ownMemberBookkeepingCounts(): {
@@ -2036,12 +2806,20 @@ export function ownMemberBookkeepingCounts(): {
   readonly fullSameObjectChecks: number;
   readonly storeVisits: number;
   readonly prototypeStabilityComputations: number;
+  /** Task BL-095: namespace member indexes built (one per file) and namespace objects judged (one per namespace). */
+  readonly namespaceGroupBuilds: number;
+  readonly namespaceOwnComputations: number;
+  /** Task BL-095: member-name lookups in a namespace's index, by the export keys and the prototype-key check. */
+  readonly namespaceMemberLookups: number;
 } {
   return {
     indexBuilds: memberStoreIndexBuilds,
     fullSameObjectChecks,
     storeVisits,
     prototypeStabilityComputations,
+    namespaceGroupBuilds,
+    namespaceOwnComputations,
+    namespaceMemberLookups,
   };
 }
 
@@ -2094,6 +2872,22 @@ function memberStoreIndex(sourceFile: ts.SourceFile): MemberStoreIndex {
     } else {
       entry.others.push({ base, store });
     }
+  }
+  // Task BL-095: the stores TypeScript's emit makes that no assignment
+  // expression shows -- a class field or parameter property under the
+  // legacy emit (RWF-132), an exported member of a namespace onto the
+  // namespace's object (RWF-131), an enum member onto the enum's object --
+  // under the keys the freshness proofs
+  // read, as stores onto a base that is not a name: they may be onto any
+  // object of the file.
+  for (const key of legacyFieldStoreKeys(sourceFile)) {
+    nonNameKeys.add(key);
+  }
+  for (const key of namespaceExportKeys(sourceFile)) {
+    nonNameKeys.add(key);
+  }
+  for (const key of enumMemberStoreKeys(sourceFile)) {
+    nonNameKeys.add(key);
   }
   const index = { nonNameKeys, byKey };
   memberStoreIndexCache.set(sourceFile, index);

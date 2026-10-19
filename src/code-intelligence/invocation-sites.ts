@@ -2,6 +2,7 @@ import { isBuiltin } from "node:module";
 import ts from "typescript";
 import {
   declarationStoreOf,
+  namespaceDeclarationStoresOf,
   escapingAssignmentOf,
   escapingForOfStoreOf,
   type EscapeRoot,
@@ -87,7 +88,14 @@ export type InvocationSite =
        * its iterable (RWF-120), and the stores with no assignment
        * expression (`escape-row.ts`'s `declarationStoreOf`): a `var` in a
        * `with` body, a derived class's instance field or parameter
-       * property.
+       * property. Since task BL-095, the stores TypeScript's emit makes
+       * that the source shows as declarations: a field or parameter
+       * property assigned onto an object not proven the program's own
+       * (RWF-132), an exported variable of a namespace whose object is not
+       * (RWF-131), an enum member onto an enum object that is not, and --
+       * at the namespace declaration -- its exported
+       * functions, classes and `export import` aliases
+       * (`namespaceDeclarationStoresOf`).
        */
       readonly kind: "escaping_assignment";
       readonly node:
@@ -95,9 +103,16 @@ export type InvocationSite =
         | ts.ForOfStatement
         | ts.VariableDeclaration
         | ts.PropertyDeclaration
-        | ts.ParameterDeclaration;
+        | ts.ParameterDeclaration
+        | ts.ModuleDeclaration
+        | ts.EnumMember;
       readonly root: EscapeRoot;
-      /** What is stored: the right-hand side, or the iterable whose elements a `for…of` head stores. */
+      /**
+       * What is stored: the right-hand side, or the iterable whose
+       * elements a `for…of` head stores; for a namespace declaration, the
+       * first of the values it stores (every one is
+       * `namespaceDeclarationStoresOf`'s).
+       */
       readonly value: ts.Expression;
     }
   | {
@@ -168,9 +183,21 @@ export function invocationSiteOf(node: ts.Node): InvocationSite | undefined {
   if (
     ts.isVariableDeclaration(node) ||
     ts.isPropertyDeclaration(node) ||
-    ts.isParameter(node)
+    ts.isParameter(node) ||
+    ts.isEnumMember(node)
   ) {
     const value = declarationStoreOf(node);
+    if (value) {
+      return {
+        kind: "escaping_assignment",
+        node,
+        root: { kind: "unproven_object" },
+        value,
+      };
+    }
+  }
+  if (ts.isModuleDeclaration(node)) {
+    const [value] = namespaceDeclarationStoresOf(node);
     if (value) {
       return {
         kind: "escaping_assignment",
@@ -473,7 +500,7 @@ export const SYNTAX_KIND_CENSUS = {
     role: "site",
     site: "protocol_member",
     also: ["escaping_assignment"],
-    when: "a class field whose initializer may carry the program's code, under a key that may be a protocol member's (task A-4); first, an instance field of a derived class, defined onto whatever the base constructor returned (task BL-081)",
+    when: "a class field whose initializer may carry the program's code, under a key that may be a protocol member's (task A-4); first, an instance field of a derived class, defined onto whatever the base constructor returned (task BL-081), or, in a TypeScript file, a field assigned under the legacy class-field emit onto a class or instance not proven the program's own (tasks BL-091, BL-095)",
   },
   ForOfStatement: {
     role: "site",
@@ -519,23 +546,27 @@ export const SYNTAX_KIND_CENSUS = {
   Parameter: {
     role: "site",
     site: "escaping_assignment",
-    when: "a TypeScript parameter property of a derived class's constructor, compiled to a store onto whatever `super()` returned (task BL-081); otherwise a definition",
+    when: "a TypeScript parameter property of a derived class's constructor, compiled to a store onto whatever `super()` returned (task BL-081), or of a class whose instance is not proven the program's own (task BL-095); otherwise a definition",
   },
   VariableDeclaration: {
     role: "site",
     site: "protocol_member",
     also: ["escaping_assignment"],
-    when: "an exported variable under a protocol name (`export const then = …`) whose value may carry the program's code (task A-4); a `var` with an initializer in a `with` body, which stores through the `with` object (task BL-081); otherwise a definition",
+    when: "an exported variable under a protocol name (`export const then = …`) whose value may carry the program's code (task A-4); a `var` with an initializer in a `with` body, which stores through the `with` object (task BL-081); an exported variable of a TypeScript namespace whose object is not proven the program's own, compiled to a store onto it (task BL-095, RWF-131); otherwise a definition",
   },
   EnumDeclaration: none(
     "evaluated where it is declared: its member initializers run at once, and every call in them is its own site under the enclosing owner",
   ),
-  EnumMember: none(
-    "evaluated where its enum is declared: a call in its initializer is its own site under the enclosing owner",
-  ),
-  ModuleDeclaration: none(
-    "a TypeScript namespace: its body runs where it is declared, and every call in it is its own site under the enclosing owner",
-  ),
+  EnumMember: {
+    role: "site",
+    site: "escaping_assignment",
+    when: "a TypeScript enum member whose initializer may carry the program's code, stored onto an enum object not proven the program's own (task BL-095); otherwise evaluated where its enum is declared: a call in its initializer is its own site under the enclosing owner",
+  },
+  ModuleDeclaration: {
+    role: "site",
+    site: "escaping_assignment",
+    when: "a TypeScript namespace whose object is not proven the program's own, exporting a function, class or `export import` alias: its emit stores each onto that object (task BL-095, RWF-131); otherwise its body runs where it is declared, and every call in it is its own site under the enclosing owner",
+  },
   SemicolonClassElement: DEFINITION,
   MissingDeclaration: DEFINITION,
 

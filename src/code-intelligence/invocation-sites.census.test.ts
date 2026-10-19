@@ -156,6 +156,14 @@ const SITE_EXAMPLES: Readonly<
     source: "export const toString = () => 1;",
     site: "protocol_member",
   },
+  EnumMember: {
+    source: "namespace N { export enum E { k = <any>(() => 1) } }",
+    site: "escaping_assignment",
+  },
+  ModuleDeclaration: {
+    source: "class D extends Map {} namespace D { export function f() {} }",
+    site: "escaping_assignment",
+  },
   ExportSpecifier: {
     source: "function f() {} export { f as valueOf };",
     site: "protocol_member",
