@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-19, by `BL-091`.
+**Last updated:** 2026-10-19, by `BL-092`.
 
 ## Objective
 
@@ -134,7 +134,13 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   audit's findings, fixed: the `types` export condition (RWF-087) and the
   declaration fallback's `exports` guard (RWF-088). The
   census `VT-INV-C-runtime-resolution` guards the authority. What binds
-  C-2..C-5: REMEDIATION-PLAN § 5a, "C-1 additions".
+  C-2..C-5: REMEDIATION-PLAN § 5a, "C-1 additions". `BL-092` made the
+  loader classifier recognise a `Module` instance's lookup list
+  (`module_paths`, C-4's registry item done early), `module.__proto__`,
+  an instance's inherited loaders and the CommonJS wrapper's `arguments`
+  by what they are, and read every write target and `with` head: fixed
+  RWF-129, RWF-130, PRM-107's false `NOT_AFFECTED`, RWF-133..135, RWF-138
+  (ADR 0010, "Note — task BL-092").
 - Lane B has started. `B-1` made every advisory OSV returns end in a
   finding or an accounted `unreportedCandidates` entry: the provider
   follows `next_page_token` to the end (a page cap, a repeated token or a
@@ -287,17 +293,19 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-091` — Re-audit BL-081's post-round-10 fixes and the builtin-store
-class ([task file](tasks/BL-091-builtin-store-reaudit.md)):
-`READY_FOR_REVIEW`, with the decision `BL-094` for the project owner.
-`BL-081` merged as PR #108.
+`BL-092` — The loader capability seen only when spelled
+([task file](tasks/BL-092-loader-capability-routes.md)):
+`READY_FOR_REVIEW`, with the decision `BL-096` for the project owner.
+`BL-091` merged as PR #109.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-091`:
-`BL-092` (RWF-129, RWF-130: the loader capability seen only when spelled,
-P0, lane C), `BL-095` (RWF-131, RWF-132, P0), `BL-094` (the decision on
-the escape row's rule, P1),
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-092`:
+`BL-095` (RWF-131, RWF-132, P0; BL-094's decision may subsume it),
+`BL-097` (RWF-137: the wrapper's `arguments` through a frame, P0, lane C),
+`BL-094` (the decision on the escape row's rule, P1), `BL-096` (the
+decision on `module.paths`'s read-only exemptions, RWF-136, P1), `BL-098`
+(the decision on `process` handed on, RWF-140, P1),
 `BL-079` (RWF-108, P0, at E-4's boundary), `E-3`
 (entrypoint roots), `E-4`, `E-5`. `BL-078` (RWF-107), `BL-080` (RWF-109)
 and `BL-082` (RWF-111), `BL-083` (RWF-113), `BL-087` (RWF-118) and
@@ -309,6 +317,15 @@ rest of lane E. `BL-068` is narrowed to RWF-098's single-write unit
 records (P2).
 
 ## Recently discovered
+
+From `BL-092`: `RWF-133` (a write target the loader check did not read),
+`RWF-134` (the wrapper's `arguments`), `RWF-135` (an aliased
+`module.require`), all live and fixed in BL-092; by its independent
+audit, `RWF-138` (a `with` head; fixed), `RWF-136` (the read-only
+exemptions under a replaced `Array.prototype`: decision `BL-096`, P1),
+`RWF-137` (the wrapper's `arguments` through `caller`: `BL-097`, P0) and
+`RWF-139` (an arrow called on the spot: C-3) and `RWF-140` (`process`
+handed on or wrapped: decision `BL-098`, P1), all live and pre-existing.
 
 From `BL-091`: by its re-audit, `RWF-124` and `RWF-126` (a derived
 class's `prototype` and static side inherit from its base) and `RWF-127`

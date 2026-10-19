@@ -1429,6 +1429,27 @@ RWF-070's species member, RWF-098's unit records, RWF-099, RWF-101,
 RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121,
 RWF-129, RWF-130, RWF-131 and RWF-132 from this family.
 
+**Progress, added by task `BL-092` (2026-10-19).** Task BL-092
+(`docs/tasks/BL-092-loader-capability-routes.md`) made the loader
+classifier recognise a `Module` instance's lookup list, `Module.prototype`
+through `__proto__`, an instance's inherited loader methods and the
+CommonJS wrapper's `arguments` by what they are, and read every write
+target and `with` head. It fixes `RWF-129`, `RWF-130`, PRM-107's false
+`NOT_AFFECTED`, and `RWF-133`, `RWF-134`, `RWF-135` and `RWF-138`, which it
+found, all live and pre-existing: twenty-six false `NOT_AFFECTED`s on
+its base among thirty-one real-Node cases
+(`tests/oracle/bl092-loader-capability-routes.test.ts`). No corpus verdict,
+proof or graph moved. Its independent audit (three rounds) found
+`RWF-136` (the read-only exemptions assume Node's own `Array.prototype`;
+a decision, backlog `BL-096`), `RWF-137` (the wrapper's `arguments`
+through a function's `caller`, backlog `BL-097`), `RWF-139` (a concise
+arrow called on the spot, C-3) and `RWF-140` (`process` handed on or
+wrapped; a decision, backlog `BL-098`), all live and pre-existing,
+registered, not fixed. This entry still stands: lanes E (E-3..E-5) and C (C-2..C-5)
+remain, with RWF-070's species member, RWF-098's unit records, RWF-099,
+RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118,
+RWF-121, RWF-131, RWF-132, RWF-136, RWF-137, RWF-139 and RWF-140 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

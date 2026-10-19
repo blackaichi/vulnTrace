@@ -302,3 +302,26 @@ Node's algorithm in every detail. Still open: TypeScript substitutes and
 prefers TypeScript extensions inside `node_modules` and for a JavaScript
 importer (RWF-086), and which file a `module-sync` export loads depends on
 the Node version (RWF-085).
+
+## Note — task BL-092: `module.paths` as a capability kind, ahead of C-4 (2026-10-19)
+
+Recorded for the reader; no decision of this ADR changes. Task BL-092
+(`docs/tasks/BL-092-loader-capability-routes.md`) did C-4's "`module.paths`
+as a registry kind" item early, because RWF-129 (found by BL-091's
+re-audit) is PRM-107's false `NOT_AFFECTED` and was live. A `Module`
+instance's `.paths` is a capability kind of its own (`module_paths`): any
+mutation through it is `loader_hook_mutation` (§ 3), its escape is
+`loader_capability_escape`, and § 4's read-only methods stay complete,
+extended to a reviewed list (`MODULE_PATHS_READ_METHODS`); a method on
+neither list fails closed, which § 4's "keeps today's
+`ARRAY_MUTATING_METHODS` split" did not say. The same task resolved
+`module.__proto__` to `Module.prototype` (RWF-130), an instance's
+inherited `require` / `load` / `_compile` (RWF-135) and the CommonJS
+wrapper's `arguments` (RWF-134), and read every write target and `with`
+head (RWF-133, RWF-138). C-2's lexical provenance is not part of it: an
+alias is still a same-file `const` looked up by name.
+
+§ 4's read-only exception rests on `Array.prototype` being Node's own. A
+module that replaces `includes`, the array iterator or `join` runs with
+the list as `this` (RWF-136, live, pre-existing). Whether the exception
+survives that is a decision for the project owner (backlog `BL-096`).

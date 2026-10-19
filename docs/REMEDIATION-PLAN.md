@@ -2057,6 +2057,37 @@ status update), RWF-063, RWF-070, RWF-047, RWF-120.
   BL-081): a documented invoking builtin's resolved callback edge is kept
   after a module replaced the builtin; a decision and a measurement first.
 
+**BL-092 additions** (task `BL-092`, 2026-10-19). RWF-129 and RWF-130 are
+closed, with PRM-107's false `NOT_AFFECTED` and RWF-133, RWF-134, RWF-135
+and RWF-138, found by BL-092 and its audit: the loader classifier
+(`loader-constructs.ts`) resolves a `Module` instance's `.paths`
+(`module_paths`), its `__proto__` (`Module.prototype`), its inherited
+`require` / `load` / `_compile` (`module_instance_member`) and the
+CommonJS wrapper's `arguments` (`ambiguous`), and reads every assignment
+operator, destructuring target, `for…in` / `for…of` head, `++` / `--` and
+`with` head as a write or an escape. Full record: FINDINGS RWF-129,
+RWF-130, PRM-107 (BL-092 status updates), RWF-133..139; ADR 0010, "Note —
+task BL-092".
+
+- **Differentials.** `node scripts/differential.mjs` against `f3b1dca`,
+  139 corpus cases: graph 0, proof 0, verdict 0. The validation baseline
+  stays D-09's six. The repository's own `node_modules` (2,318 `.js`
+  files) uses none of the forms changed.
+- **What BL-092 binds for C-2..C-5.** C-4's "`module.paths` as a registry
+  kind" is done; C-4 keeps the builtin table and destructured keys. C-2's
+  scope-aware provenance must keep `module_paths` and
+  `module_instance_member` resolving through every alias it follows, and
+  must not let a shadow lookup switch off the wrapper-`arguments` rule
+  (BL-092's audit, finding 3 and round 2). C-3's value-flow table owns
+  RWF-139 (an arrow called on the spot) and PRM-106 (`.bind`). C-5 keeps
+  PRM-107's false `AFFECTED`.
+- **Open, registered by BL-092's audit.** **`BL-096`** (RWF-136, P1, a
+  decision): ADR 0010 § 4's read-only exemptions for `module.paths`
+  assume Node's own `Array.prototype`. **`BL-097`** (RWF-137, P0): the
+  wrapper's `arguments` through a function's `caller`. **`BL-098`**
+  (RWF-140, P1, a decision): `process` handed on or wrapped reaches
+  `process.mainModule`.
+
 ## 6. Decisions for the user
 
 Each is a policy choice the design needs. Each has a recommendation. None
