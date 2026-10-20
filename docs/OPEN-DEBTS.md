@@ -1561,6 +1561,33 @@ RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136,
 RWF-139, RWF-140, RWF-143, RWF-144, RWF-145, RWF-146, RWF-148 and RWF-150
 from this family.
 
+**Progress, added by task `BL-105` (2026-10-20).** Task BL-105
+(`docs/tasks/BL-105-ts-esm-export-overwrite.md`) made E-1's export write
+set gate an ES module's own exports (`module-model.ts`,
+`withdrawOverwrittenEsmExports`): TypeScript compiles them to properties of
+the wrapper's `exports` object, which an importer reads at each use, so a
+write the file makes onto its export objects withdraws the name (every
+name, for a write the census cannot enumerate), and a withdrawn export of
+an entrypoint is a reported root gap. The census now reads the export
+objects through TypeScript's value wrappers (`as`, `<T>`, `!`,
+`satisfies`), and a value import is a load (a self-import holds this
+file's exports object). It fixes `RWF-150` (eight live false
+`NOT_AFFECTED`s and one fabricated `AFFECTED` on its base, two of them
+found by its independent audit), among twenty-eight real-Node cases
+(`tests/oracle/bl105-ts-esm-export-overwrite.test.ts`). Its own corpus
+differential caught a false `NOT_AFFECTED` the change introduced (a
+withdrawn entrypoint export lost its root while the derivation stayed
+complete; eight adversarial cases), fixed before review; the final
+differentials are zero. The cost is precision: two plain overwrites sound
+on the base (`cost.*`), and an ES module that hands an import on when the
+import may reach back (backlog `BL-106`, P3). Its independent audit ran
+two rounds: round 1 `BLOCKED` on a write to a self-import's named binding
+(in scope, fixed), round 2 `CERTIFIED`. This entry still stands: lanes E
+(E-3..E-5) and C (C-2..C-5) remain, with RWF-070's species member,
+RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108,
+RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136, RWF-139, RWF-140,
+RWF-143, RWF-144, RWF-145, RWF-146 and RWF-148 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

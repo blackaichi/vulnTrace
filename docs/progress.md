@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-20, by `BL-100`.
+**Last updated:** 2026-10-20, by `BL-105`.
 
 ## Objective
 
@@ -303,17 +303,16 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-100` — What TypeScript's decorator helpers do with a decorator's result
-([task file](tasks/BL-100-decorator-helper-calls.md)): `READY_FOR_REVIEW`;
-its independent audit ran two rounds: round 1 `BLOCKED` on two problems
-the change introduced (both fixed), round 2 `CERTIFIED`.
-`BL-099` merged as PR #113.
+`BL-105` — A TypeScript ES module's own export overwritten through its
+exports object ([task file](tasks/BL-105-ts-esm-export-overwrite.md)):
+`READY_FOR_REVIEW`; its independent audit ran two rounds: round 1
+`BLOCKED` on a write to a self-import's named binding (in scope, fixed),
+round 2 `CERTIFIED`. `BL-100` merged as PR #114.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-100`:
-`BL-105` (RWF-150, P0, a TypeScript ES module's own export overwritten
-through a cast or an alias, lane E), `BL-094` (the decision on the escape row's rule, P1), `BL-096`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-105`:
+`BL-094` (the decision on the escape row's rule, P1), `BL-096`
 (the decision on `module.paths`'s read-only exemptions, RWF-136, P1),
 `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-101`
 (RWF-143, P1, an ES5 class's methods), `BL-079` (RWF-108, P0, at E-4's
@@ -329,9 +328,19 @@ records (P2). `BL-102` (RWF-145's open part, P2, masked) records a
 namespace's and an enum's declarations; `BL-103` (RWF-146, P1, not measured
 live) makes the export model's binding lookup read a namespace's scope;
 `BL-104` (RWF-148, P1, live) stops taking a bodiless function declaration
-for a binding.
+for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
+withdrawals.
 
 ## Recently discovered
+
+From `BL-105`: RWF-150 is wider than its record (a self-import holds the
+module's own exports object: four more live false `NOT_AFFECTED`s, and two
+more, a write to a self-import's named binding, found by its independent
+audit; all fixed in BL-105) and narrower (its cast and alias call forms
+were masked `UNKNOWN`s). Its own corpus differential caught a false
+`NOT_AFFECTED` the change introduced (a withdrawn entrypoint export lost
+its root), fixed before review. The precision cost its audit measured, an
+import handed on that may reach back: `BL-106`, P3.
 
 From `BL-100`: `RWF-149` (a class decorator's result replaces the class,
 but a construction resolved to the declared one; live, pre-existing, fixed

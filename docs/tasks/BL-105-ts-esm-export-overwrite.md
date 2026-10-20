@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-105
 - **Branch**: `bl-105-ts-esm-export-cast-alias-write`
 - **Base SHA**: `05996e199996c3e4ad5223577b6d6dd132f983ec` (BL-100's merge, PR #114)
-- **Commits**: —
+- **Commits**:
+  - `docs(tasks): BL-105 task file — a TypeScript ES module's own export overwritten through its exports object`
+  - `test(BL-105): a TypeScript ES module's own export overwritten through its exports object, against real Node — RWF-150`
+  - `fix(BL-105): the export write set gates an ES module's own exports; casts and imports reach the census — RWF-150`
+  - (this commit) `docs(BL-105): records — RWF-150 fixed, the independent audit's two rounds, debts, backlog (BL-106), progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -121,16 +125,16 @@ C (the export's values collapsed to the declaration).
 
 ## Acceptance criteria
 
-- [ ] Every case in `tests/oracle/bl105-ts-esm-export-overwrite.cases.ts`
+- [x] Every case in `tests/oracle/bl105-ts-esm-export-overwrite.cases.ts`
       answers its `expected` verdict with real Node's ground truth, and every
       case whose `base` differs from its `expected` failed on the base.
-- [ ] The `control.*` cases keep their verdicts.
-- [ ] Each rule is pinned by a named unit test, and each mutation of it is
+- [x] The `control.*` cases keep their verdicts.
+- [x] Each rule is pinned by a named unit test, and each mutation of it is
       caught by one.
-- [ ] The graph, proof and verdict differentials are reported separately; no
+- [x] The graph, proof and verdict differentials are reported separately; no
       corpus case moves away from its expected verdict.
-- [ ] RWF-150 is recorded as fixed.
-- [ ] The independent audit certifies the change, or its findings are
+- [x] RWF-150 is recorded as fixed.
+- [x] The independent audit certifies the change, or its findings are
       handled per WORKFLOW § 1.5.
 
 ## Gates
@@ -144,3 +148,36 @@ modules).
 ## Report
 
 In the format of `AGENTS.md` § J (`docs/WORKFLOW.md` § 5).
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW`; the sections above are as written at the
+start, except the commit list and the acceptance boxes.
+
+- **The entrypoint root gap was introduced by this change and fixed in
+  it.** The first corpus differential moved eight adversarial cases into
+  `NOT_AFFECTED` (ADV-014, ADV-019, ADV-030, ADV2-017, ADV2-025, ADV2-037,
+  ADV2-040, ADV2-042): a withdrawn ES export of an entrypoint lost its root
+  and the derivation stayed complete. Two causes, both fixed: a withdrawn
+  ES export is now a reported root gap (`entrypointRootCandidates`), and
+  the module-graph query asks about import specifiers (`loadReachQuery`;
+  without it every import "may reach back"). The final differentials are
+  zero.
+- **The independent audit, round 1: `BLOCKED`** on a write to a
+  self-import's named binding (`import { dec as d2 } from "./decs"; d2 =
+  …`, emitted `decs_1.dec = …`), pre-existing and inside the mechanism this
+  task folded in: fixed (`importedNameOf`), with two oracle cases
+  (`audit.*`) and unit tests. Its non-blocking findings: the precision cost
+  of imports as loads, measured (four probes `AFFECTED` → `UNKNOWN`),
+  registered as backlog `BL-106`; the oracle test's header copied from
+  BL-099, fixed. **Round 2: `CERTIFIED`.**
+- **Folded in, and why**: the self-import routes (`import * as self`,
+  `import self = require`, a named binding written) are the same defect --
+  the module's own export overwritten through an alias of its exports
+  object -- and stayed live false `NOT_AFFECTED`s after the cast and alias
+  fix.
+- **Removed as unreachable**: `propertiesUnenumerable` in the ES gate
+  (BL-084's routes need a whole-module value, which already withdraws every
+  name), and the redundant cast unwrapping in `baseMayBeLoaded`
+  (`valueMayBeLoaded` unwraps), each found as a mutation no test could
+  catch.
