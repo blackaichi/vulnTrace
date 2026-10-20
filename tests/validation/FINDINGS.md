@@ -315,10 +315,14 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-138 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `with` head was no position the loader-capability check read: `with (module.paths) { shift(); }`, `with (module) { paths.shift(); }` and `with (process) { mainModule.require(p); }` redirect or load under bare names | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-139 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A concise arrow called on the spot returns its body, which the value-flow walk does not follow through a call: `(() => module.paths)().shift()` and `(() => require("module"))()._resolveFilename = hook` change loader state unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (backlog `C-3`) |
 | RWF-140 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `process` is a resolution-only kind (global-object detection preambles), so `process.mainModule` is recognised only on a chain from `process` itself: passed to a function (`mm(process).require(p)`) or wrapped (`Object.create(process)`, `{ __proto__: process }`, `[process][0]`, each as a `with` head) it reaches the entry `Module` instance unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (decision, backlog `BL-098`) |
-| RWF-141 | `vuln-lib` (synthetic fixture); a gap in call resolution, not tied to one package | TypeScript compiles a use of a namespace's exported variable in its body to a member read of the namespace's object (`h(1)` → `N.h(1)`), but the call graph resolves the bare name to the variable's initializer; when the program's own static accessor on a class merged with the namespace answers the read, the call reaches what the getter returns, unseen | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-099`) |
+| RWF-141 | `vuln-lib` (synthetic fixture); a gap in call resolution, not tied to one package | TypeScript compiles a use of a namespace's exported variable in its body to a member read of the namespace's object (`h(1)` → `N.h(1)`), but the call graph resolves the bare name to the variable's initializer; when the program's own static accessor on a class merged with the namespace answers the read, the call reaches what the getter returns, unseen | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-099) — see below |
 | RWF-142 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | TypeScript's decorator helpers make implicit calls the graph does not model: a legacy decorator's returned descriptor installed by `__decorate` (a setter a later field store or `this.x = …` runs), and a TC39 field decorator's returned initializer run by `__runInitializers` on the field's value | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-100`) |
 | RWF-143 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | At target ES5 TypeScript compiles a class's methods to assignments (`C.prototype.m = function …`, `C.m = …` for a static one); when `C.prototype` or `C` inherits from an object the program does not own (`X.prototype = globalThis; class C extends X { Buffer() {} }`), the assignment runs that object's setter, and the escape row reads a method as a definition | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-101`) |
 | RWF-144 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A caller's frame read through a key computed at run time (`g["call" + "er"]`, `Reflect.get(g, ["call", "er"].join(""))`, a template key, a call site's `getFunction` under a joined key) or reached by enumerating an object's properties (`Object.values(Object.getOwnPropertyDescriptors(g))[3].value`) spells no name, so the loader classifier does not see the wrapper's `require` / `module` it reaches | false NOT_AFFECTED (family B), pre-existing — see below | Open (backlog `BL-080`) |
+| RWF-145 | `vuln-lib` (synthetic fixture); a gap in call resolution, not tied to one package | The resolver records an `import X = A.b`, a namespace and an enum as declarations at file scope only (the last two nowhere), but each is a local binding of the namespace body or block that declares it (`var X = A.b`, `var M`, `let E`): a use there binds to an outer declaration spelled the same (`const g = f; namespace N { import g = I.h; g(1); }` calls `I.h`) | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** in part (BL-099: `import X =`); a namespace and an enum open, masked (backlog `BL-102`) — see below |
+| RWF-146 | `vuln-lib` (synthetic fixture); a gap in the export model's binding lookup, not tied to one package | `lexicalDeclarationOf` (`named-bindings.ts`), which the export model and its censuses read, does not read a TypeScript namespace's scope: a use the emit compiles to a read of the namespace's object (`h` → `N.h`) denotes the member's declaration, or an outer declaration spelled the same, or ("no declaration") a global | not measured live: masked in the one shape measured — see below | Open (backlog `BL-103`) |
+| RWF-147 | `vuln-lib` (synthetic fixture); a gap in the scope-aware binding resolver, not tied to one package | The resolver owned a function declared in a nested block (`{ function h() {} }`, an `if` or `case` body) by the enclosing function scope, so a use outside the block bound to it; in strict code (every module) it is scoped to its block and the name outside is an outer binding -- in a namespace, the member read `N.h` | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-099) — see below |
+| RWF-148 | `vuln-lib` (synthetic fixture); a gap in the scope-aware binding resolver, not tied to one package | A function declaration with no body (`declare function L(…)` in a namespace or block, a lone overload signature) is taken as the name's binding, though the emit erases it and the call reads the outer binding or the global: a resolved callee with no body, so no edge | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-104`) |
 
 ---
 
@@ -23420,7 +23424,7 @@ the project owner (backlog `BL-098`). BL-092 closed only the direct
 
 ## RWF-141 — A call through a namespace's exported variable reads the namespace's object, not the variable
 
-**Status:** Open (backlog `BL-099`)
+**Status:** Fixed (BL-099) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** C (the member's values -- the initializer and whatever
 the object answers -- collapsed to the initializer), with B (a bare name
@@ -23448,6 +23452,68 @@ unseen. The fix direction: in call resolution, a use of a namespace's
 exported variable in a body of the namespace is a member read (`N.h`), not
 the variable's initializer; resolved only when the namespace's object
 provably holds the initializer there, an unknown callee otherwise.
+
+**Status update (task BL-099, 2026-10-20): Fixed.** The class is wider than
+the record, measured with the repository's TypeScript at ES5, ES2020 and
+ES2022: in its own block, every use of an exported variable (a destructured
+one included) and of an `export import` alias is a member read (a call, an
+alias `const a = h`, `new h()`, a tagged template, an argument such as
+`setTimeout(h, 0)`), while an exported function or class keeps its local
+binding; and a bare name used in a namespace's body that the body does not
+declare is a member read whenever the namespace's merged symbol has a member
+of that name -- another block's export (the function and class included),
+an ambient block's declaration (exported without the keyword), a member a
+module augmentation adds (`declare module "./impl" { namespace N { let h:
+any; } }`, in any file, reaching the namespace through any alias: `export =
+N.P`, `import P = N.P; export { P }`, `export import X = N.P`), a member
+another file's block adds in a file that is not a module, or an `export {
+h }` TypeScript reports and still emits. So the defect has a class-A half
+the record did not name: from another block the resolver bound the name to
+an outer declaration spelled the same, which the namespace member shadows
+(`const h = f; namespace N { export let h = g; } namespace N { h(1); }`
+calls `g`). The task's independent audit found the ambient, augmentation
+and `export { h }` forms in its rounds 1 to 3, one enumeration after
+another.
+
+So the fix is structural. The resolver's scope walk
+(`findBindingDeclaration`, `named-bindings.ts`) refuses, with the cause
+`namespace_member`, an exported variable or `export import` found in a
+namespace's body, and **every** name a use walks out of a namespace for
+(`leavesNamespace`): which names the namespace's object answers is decided
+by a merged symbol no file's syntax shows. The use is an unknown callee:
+proving what the object holds (the record's "resolved only when …") is not
+attempted, since a merged class's own or inherited accessor, a store from
+another block or module, or an `Object.prototype` accessor (RWF-113's open
+decision) may answer the read. The escape row's over-approximating "may be
+the ambient global" questions read the new cause as maybe the global, and
+its namespace member index (BL-095's, moved to `namespace-members.ts`)
+counts an ambient block's declarations. Not changed: `lexicalDeclarationOf`,
+which the export model reads, still denotes a namespace member's
+declaration (RWF-146).
+
+The cost is precision: an import or a global used in a namespace's body is
+an unknown callee too (`lib.parse(x)`, `require("m")`, `Reflect.apply(…)`
+in a namespace), so the builtin, ambient-`require` and module-scope proofs
+do not reach into a namespace's body.
+
+Measured against real Node v22.11.0
+(`tests/oracle/bl099-namespace-export-member-read.test.ts`, forty-nine cases,
+RWF-145's and RWF-147's among them): twenty-three of RWF-141's live false
+`NOT_AFFECTED`s on the base `692b365` (nine through an accessor answering
+the read, four through an outer declaration, three through an ambient
+block's member, six through a module augmentation or an `export { h }`, one
+through an `export var` in a nested block, an error TypeScript still emits)
+are `UNKNOWN` now; four controls (an exported function in its own block, a
+member not exported, an inner declaration shadowing the export, the outer
+name outside the namespace) stay `NOT_AFFECTED`; seven `AFFECTED`s are
+given up (`cost.*`, one of them RWF-147's). Twenty-eight of BL-095's cases now declare their negative
+control inapplicable for this reason (their case verdicts are unchanged;
+BL-095's `control.*` cases stay `NOT_AFFECTED`). No corpus graph, proof or
+verdict moved. On the TypeScript sources in `node_modules`
+(`scripts/bl081-builtin-store-escape-corpus.mjs --typescript`, twelve
+packages, 6,568 graph nodes) four of 1,184 clean nodes were lost, all in
+zod's namespaces; that corpus has few namespaces, so a namespace-heavy
+codebase pays more.
 
 ## RWF-142 — TypeScript's decorator helpers make implicit calls the graph does not model
 
@@ -23561,3 +23627,161 @@ the same enumeration reaches it through `Function.prototype`
 measured as a live false `NOT_AFFECTED` on v26.12.0 as well. The
 open-soundness-defect record picks the route the running V8 has.
 
+## RWF-145 — A namespace's own import alias, nested namespace and enum are declarations of the block that makes them
+
+**Status:** Fixed in part (BL-099: `import X =`); a nested namespace and an
+enum open, masked (backlog `BL-102`)
+**Failure class:** false `NOT_AFFECTED` (the `import X =` form); a
+fabricated binding masked end to end (the other two)
+**Defect class:** A (a name bound to an outer declaration its own block's
+declaration shadows)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing (`import X =`);
+P2 / masked (a nested namespace, an enum)
+**Fix lane:** A (call resolution, `named-bindings.ts`)
+
+**Discovered:** by task BL-099, measuring RWF-141's namespace scope against
+real Node v22.11.0 (`tests/oracle/bl099-namespace-export-member-read.cases.ts`,
+the `scope.*` and `masked.*` RWF-145 cases), on its base `692b365`:
+
+```ts
+const g: any = function (x: any) { return x; };
+namespace I { export const h: any = function (x: any) { lib.parse(x); return x; }; }
+namespace N { import g = I.h; g(1); }   // var g = I.h; g(1): calls lib.parse
+```
+
+The resolver's declaration index (`buildDeclarationIndex`) recorded an
+`import … =` only at file scope, so a namespace's own `import g = I.h`
+(emitted `var g = I.h`) was invisible to the walk, and `g` bound to the
+outer `const g`: `NOT_AFFECTED` while Node calls `parse`. **Fixed in
+BL-099**: an `import X = A.b` (an entity name) directly in a namespace's
+body is a declaration of that block (an import binding whose provenance
+names no module, so it resolves to nothing: an unknown callee); an exported
+one is RWF-141's member read. Its `import X = require("m")` form is not
+recorded: TypeScript reports it as an error there and emits nothing for it,
+so `X` stays the outer binding. Recording it too, as BL-099 first did, made
+the provenance resolver take it for a load of `m` -- a false `NOT_AFFECTED`
+the task's independent audit (round 2) found before merge, held by the case
+`audit2.import-require-in-a-namespace`.
+
+The resolver records **no** namespace or enum declaration at all, though a
+nested `namespace M` is a local `var M` and an `enum E` (which may be
+declared in a function) a local `let E`; a use of `M` or `E` binds to an
+outer declaration of the same spelling (`const M = { run: f }; namespace N
+{ namespace M { export const run = g; } M.run(1); }` resolves `M.run` to
+`f`). Both are masked end to end on the base: the call answers `UNKNOWN`
+(`unsupported_receiver_binding`), its negative control too. Not fixed:
+recording them needs a rule for TypeScript's declaration merging (a
+namespace merged with a function, class or enum of the same scope is that
+value, not a second declaration, and a namespace with no values emits no
+binding at all), which every file-scope consumer of the resolver reads
+(ambient roots, the module-scope roots, the escape row). Backlog
+`BL-102`.
+
+## RWF-146 — The export model's binding lookup does not read a namespace's scope
+
+**Status:** Open (backlog `BL-103`)
+**Failure class:** wrong attribution in the export model (not measured live)
+**Defect class:** A (a namespace member's use denoting a declaration or an
+outer binding) and C (the member's values collapsed to its initializer)
+**Proof family affected:** C, if live
+**Severity:** P1 / not measured live; masked in the one shape measured
+**Fix lane:** E (the export model, `module-model.ts`), with
+`named-bindings.ts`
+
+**Discovered:** by task BL-099's independent audit, round 1, finding 2.
+BL-099 first refused a namespace member in `lexicalDeclarationOf` too
+(`undefined`), but its consumers in `module-model.ts` give `undefined`
+several meanings: "an undeclared global" (`isAmbientReference`, the
+`?? sourceFile` key of `finalObjectAliasUses`), and "holds no load / is not
+the global object / no function of this file" (`bindingMayHoldLoad`,
+`reachesGlobalObject`, `valueIsGlobalObject`, the function collection near
+`isOwnBaseCallable`). For those, an `undefined` refusal answers in the
+unsafe direction, where the base had followed the declaration. So BL-099
+left `lexicalDeclarationOf` as it was: a use the emit compiles to
+`N.h` still denotes `h`'s declaration (its initializer is taken for what
+the object holds), and from another block an outer declaration spelled the
+same, or a global. Measured against real Node v22.11.0, one shape:
+`class N { static get run() { return lib.parse; } … } namespace N { export
+let run = f; exports.run = run; }` exports what the getter returns, and the
+importer's call is `UNKNOWN` on the base and after BL-099 alike
+(`unsupported_callee_binding`; the case
+`masked.exported-onto-the-exports-object`). Whether another census
+reaches a false `NOT_AFFECTED` through it is not measured. The fix needs
+`lexicalDeclarationOf` to tell "no declaration" from "refused", and each
+consumer to take "refused" in its own fail-closed direction. Backlog
+`BL-103`.
+
+## RWF-147 — A function declared in a nested block, seen from outside it
+
+**Status:** Fixed (BL-099)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (a name bound to a declaration whose scope does not
+reach the use)
+**Proof family affected:** C
+**Severity:** P1 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** A (`named-bindings.ts`)
+
+**Discovered:** by task BL-099's independent audit, round 4, against real
+Node v22.11.0, `NOT_AFFECTED` on the base `692b365` while Node calls the
+target (`tests/oracle/bl099-namespace-export-member-read.cases.ts`, the
+`audit4.*` cases):
+
+```ts
+namespace N { export var h: any = lib.parse; }
+namespace N { { function h(x: any) { return x; } } h(1); }   // N.h(1): calls lib.parse
+```
+
+and without a namespace, in a module: `const h = lib.parse; function g() { {
+function h(x) { return x; } } h(1); } g();`. The declaration index
+(`buildDeclarationIndex`) hoists every function declaration to the
+enclosing function scope, which only sloppy code's Annex B does (and only
+once the block has run); in strict code -- every ES module, every
+TypeScript module, a `"use strict"` file -- the function is scoped to its
+block, and the name outside is the outer binding. **Fixed in BL-099**: a
+function declared in a nested block (its statement list is not a file's, a
+namespace's, a function body's or a class static block's) is refused
+(`block_function`) for a use outside that block, an unknown callee; a use
+inside the block still binds to it. Whether the file is strict is not
+decided, so a sloppy file's Annex B use outside the block is a precision
+cost (`cost.annex-b-block-function-in-a-script`). The audit's round 5 found
+the rest of the resolver's block-function model wrong too, each a live false
+`NOT_AFFECTED` on the base, fixed in BL-099: a use inside the block missed
+the block's function when a declaration of the name sat between the block
+and the scope the function was hoisted to (`function g() { const h = f; {
+function h(x) { lib.parse(x); } h(1); } }`: the index now also records a
+nested-block function in its own block; `AFFECTED` now, as Node); and a
+class static block was no var scope, so its functions and `var`s hoisted
+into the enclosing namespace or function (`namespace N { class C { static {
+var h = f; } } h(1); }` with `h` exported by another block). A function
+that is a statement's whole body (`if (x) function f() {}`, sloppy only) is
+its own container.
+
+## RWF-148 — A function declaration with no body taken as a binding
+
+**Status:** Open (backlog `BL-104`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** A (a name bound to a declaration the emit erases)
+**Proof family affected:** C
+**Severity:** P1 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** A (`named-bindings.ts`)
+
+**Discovered:** by task BL-099's independent audit, round 4, against real
+Node v22.11.0, `NOT_AFFECTED` on the base `692b365` and on BL-099's branch
+while Node calls the target:
+
+```ts
+const L: any = lib.parse;
+namespace N { declare function L(x: any): any; L(1); }   // emit: L(1), the outer L
+```
+
+also with `function L(x) { lib.parse(x); }` outside, in a dotted
+namespace, and with a lone overload signature in a function body
+(`function h(x: any): any; h(1);`, which TypeScript reports and still
+emits). `findBindingDeclaration` returns the bodiless declaration as a
+`function` binding, and the call graph resolves the call to a node with no
+body. Fix direction: a function declaration with no body is no binding --
+refuse it (an unknown callee), or look past it. `lexicalDeclarationOf`
+filters bodiless declarations already, and then answers `undefined` (a
+global) for a lone one: RWF-146's region. Out of BL-099's scope (it is not
+a namespace's scope rule); backlog `BL-104`.

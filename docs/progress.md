@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-19, by `BL-097`.
+**Last updated:** 2026-10-20, by `BL-099`.
 
 ## Objective
 
@@ -94,7 +94,17 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   inherits accessors; TypeScript's emit assigns static fields and makes a
   class's `prototype` writable). The class is still not certified, and
   `BL-094` asks the project owner whether the rule needs a structural
-  change (ADR 0008, the note on the BL-081 decision record).
+  change (ADR 0008, the note on the BL-081 decision record). `BL-099`
+  carried TypeScript's namespace scope into call resolution
+  (`named-bindings.ts`): an exported variable used in its own block is a
+  read of the namespace's object (`h(1)` → `N.h(1)`), and no name is
+  looked up past a namespace, whose merged members no file's syntax shows
+  (both `namespace_member`, an unknown callee; an import or a global used
+  in a namespace's body too, a precision cost); a namespace's own
+  `import X = A.b` is a declaration of its block. Fixed RWF-141 and
+  RWF-145's `import X =` form; and, from its audit, RWF-147: a function
+  declared in a nested block is not seen outside it (strict code), and a
+  class static block is a var scope.
 - Lane V has started. `V-1` (ADR 0011 predicates 2 and 3) deleted Site
   B's phantom target: a package with no node in the call graph is proved
   unreachable only by family A, and is otherwise `UNKNOWN` (PRM-101); Site
@@ -293,16 +303,18 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-097` — The CommonJS wrapper's `arguments` reached through a
-function's frame ([task file](tasks/BL-097-wrapper-arguments-frame.md)):
-`READY_FOR_REVIEW`; its independent audit certified it in round two.
-`BL-095` merged as PR #111.
+`BL-099` — A use of a namespace's exported member is a read of the
+namespace's object ([task file](tasks/BL-099-namespace-export-member-read.md)):
+`READY_FOR_REVIEW`; its independent audit ran five rounds and certified
+none (each found more live shapes, all pre-existing, all fixed); round
+five's were fixed after it without a sixth round, as BL-095's were -- the
+project owner's decision.
+`BL-097` merged as PR #112.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-097`:
-`BL-099` (RWF-141, P0, call resolution), `BL-100` (RWF-142, P0, decorator
-helpers), `BL-094` (the decision on the escape row's rule, P1), `BL-096`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-099`:
+`BL-100` (RWF-142, P0, decorator helpers), `BL-094` (the decision on the escape row's rule, P1), `BL-096`
 (the decision on `module.paths`'s read-only exemptions, RWF-136, P1),
 `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-101`
 (RWF-143, P1, an ES5 class's methods), `BL-079` (RWF-108, P0, at E-4's
@@ -314,9 +326,29 @@ since BL-097, RWF-144, a live false `NOT_AFFECTED`: raised to P0),
 (RWF-074), `BL-050` (RWF-076), `BL-040`, `BL-043` and `BL-051` (live
 family-A false `NOT_AFFECTED`s) are candidates to reorder ahead of the
 rest of lane E. `BL-068` is narrowed to RWF-098's single-write unit
-records (P2).
+records (P2). `BL-102` (RWF-145's open part, P2, masked) records a
+namespace's and an enum's declarations; `BL-103` (RWF-146, P1, not measured
+live) makes the export model's binding lookup read a namespace's scope;
+`BL-104` (RWF-148, P1, live) stops taking a bodiless function declaration
+for a binding.
 
 ## Recently discovered
+
+From `BL-099`: `RWF-145` (a namespace's own `import X =`, nested
+namespace and enum are declarations of the block that makes them; the
+`import X =` form live and fixed in BL-099, the other two masked:
+`BL-102`, P2). RWF-141's class is wider than its record: from another
+block of the namespace the resolver bound an exported member's name to an
+outer declaration (defect class A), fixed with it. By its independent
+audit: an ambient block's implicit exports and module augmentation of an
+exported namespace (both live, pre-existing, fixed), a regression of its
+own first fix (`import x = require(…)` in a namespace taken for a load;
+fixed before merge), and `RWF-146` (the
+export model's `lexicalDeclarationOf` does not read a namespace's scope:
+`BL-103`, P1); `RWF-147` (a function declared in a nested block, and a
+class static block's hoisting; live, pre-existing, fixed) and `RWF-148` (a
+bodiless function declaration taken as a binding; live, pre-existing:
+`BL-104`, P1).
 
 From `BL-097`: `RWF-144` (a frame name built at run time or a frame
 member reached by enumeration, live, pre-existing: `BL-080`, raised to

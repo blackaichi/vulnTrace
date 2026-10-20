@@ -1500,6 +1500,39 @@ RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108,
 RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136, RWF-139, RWF-140,
 RWF-141, RWF-142, RWF-143 and RWF-144 from this family.
 
+**Progress, added by task `BL-099` (2026-10-20).** Task BL-099
+(`docs/tasks/BL-099-namespace-export-member-read.md`) made the resolver's
+scope walk (`named-bindings.ts`) read a TypeScript namespace's scope as
+its emit does: an exported variable or `export import` used in its own
+block is a read of the namespace's object, and no name is looked up past a
+namespace, since which names its object answers is decided by a merged
+symbol (other blocks, ambient blocks, module augmentation through any
+alias, other files' blocks in a script) no file's syntax shows -- both the
+cause `namespace_member`, an unknown callee. A namespace's own
+`import X = A.b` is a declaration of its block. Its audit also led it to
+fix the resolver's model of a function declared in a nested block, which
+strict code scopes to the block (`block_function`), and of a class static
+block as a var scope. It fixes `RWF-141` (twenty-three live false
+`NOT_AFFECTED`s on its base, ten of them found by its independent audit),
+the `import X =` form of `RWF-145` (one) and `RWF-147` (six), among
+forty-nine real-Node cases
+(`tests/oracle/bl099-namespace-export-member-read.test.ts`). The cost is
+precision: an import or a global used in a namespace's body is an unknown
+callee too, and so is a sloppy file's Annex B use of a block function
+outside its block; seven `AFFECTED`s given up (`cost.*`), and twenty-eight
+of BL-095's cases declare their negative control inapplicable. Its audit
+ran five rounds and certified none; round five's findings were fixed after
+it without a sixth round (the project owner's decision, as for BL-095).
+Registered, not fixed: RWF-145's nested namespace and enum, masked end to
+end (backlog `BL-102`), `RWF-146` (the export model's binding lookup,
+`lexicalDeclarationOf`, does not read a namespace's scope; not measured
+live, backlog `BL-103`) and `RWF-148` (a function declaration with no body
+taken as a binding; live, backlog `BL-104`). This entry still stands:
+lanes E (E-3..E-5) and C (C-2..C-5) remain, with RWF-070's species member,
+RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108,
+RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136, RWF-139, RWF-140,
+RWF-142, RWF-143, RWF-144, RWF-145, RWF-146 and RWF-148 from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

@@ -821,10 +821,14 @@ them (RWF-127 in part, see below). They refine which objects the rule proves the
   variable is a member access on it, and a legacy-emit field or parameter
   property is an assignment, under a key the freshness proofs read
   (`namespaceObjectIsOwn`, `enumObjectIsOwn`, `legacyFieldStoreKeys`,
-  `legacyFieldTargetIsOwn` in `escape-row.ts`). Still not covered: a call
-  through a namespace's exported variable resolves to its initializer
-  (RWF-141, backlog `BL-099`), TypeScript's decorator helpers' implicit
-  calls (RWF-142, backlog `BL-100`), and a JavaScript source compiled with
+  `legacyFieldTargetIsOwn` in `escape-row.ts`). Task BL-099 carried the
+  member access into call resolution: an exported variable used in its own
+  block, and every name a use walks out of a namespace for (the merged
+  symbol's members are not all in the file's syntax), is an unknown callee,
+  never the declaration's initializer or an outer declaration spelled the
+  same (RWF-141, `namespace_member` in `named-bindings.ts`).
+  Still not covered: TypeScript's decorator helpers' implicit calls
+  (RWF-142, backlog `BL-100`), and a JavaScript source compiled with
   Babel's or swc's loose class fields (not measured).
 
 **The class is still not certified.** Every one of the thirteen audit
