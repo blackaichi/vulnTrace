@@ -1533,6 +1533,34 @@ RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108,
 RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136, RWF-139, RWF-140,
 RWF-142, RWF-143, RWF-144, RWF-145, RWF-146 and RWF-148 from this family.
 
+**Progress, added by task `BL-100` (2026-10-20).** Task BL-100
+(`docs/tasks/BL-100-decorator-helper-calls.md`) made the call graph
+account what TypeScript's decorator helpers do with a decorator's result
+(`call-graph.ts`): the values a decorator may return, read from the
+function it denotes by the escape row's authority, are handed to the helper
+at a non-admitted position (a possible edge to each attributable function
+or class, an unknown edge for anything else), and a construction of a
+class a class decorator may replace gets a possible edge to the declared
+constructor, never a resolved one. Both decorator modes are assumed. It
+fixes `RWF-142` (seventeen live false `NOT_AFFECTED`s on its base, one
+found by its independent audit) and `RWF-149` (registered by it: the class
+replacement's fabricated construction edge, four false `AFFECTED`s and one
+false `NOT_AFFECTED`), among thirty-two real-Node cases
+(`tests/oracle/bl100-decorator-helper-calls.test.ts`). The cost is
+precision: one measured case (`cost.*`, a legacy method decorator
+returning a function) and BL-095's `audit.tc39-decorated-class-static-field`
+negative control. Its independent audit ran two rounds: round 1
+`BLOCKED` on two problems the change introduced (a per-construction
+definition lookup quadratic in a file's statements, and a mutation no
+test caught), both fixed; round 2 `CERTIFIED`. Registered, not fixed: `RWF-150` (a
+TypeScript ES module's own export overwritten through a cast or an alias
+is no export write; live, pre-existing, backlog `BL-105`, P0). This entry
+still stands: lanes E (E-3..E-5) and C (C-2..C-5) remain, with RWF-070's
+species member, RWF-098's unit records, RWF-099, RWF-101, RWF-102,
+RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136,
+RWF-139, RWF-140, RWF-143, RWF-144, RWF-145, RWF-146, RWF-148 and RWF-150
+from this family.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

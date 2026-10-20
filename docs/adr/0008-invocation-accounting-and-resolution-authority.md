@@ -826,10 +826,17 @@ them (RWF-127 in part, see below). They refine which objects the rule proves the
   block, and every name a use walks out of a namespace for (the merged
   symbol's members are not all in the file's syntax), is an unknown callee,
   never the declaration's initializer or an outer declaration spelled the
-  same (RWF-141, `namespace_member` in `named-bindings.ts`).
-  Still not covered: TypeScript's decorator helpers' implicit calls
-  (RWF-142, backlog `BL-100`), and a JavaScript source compiled with
-  Babel's or swc's loose class fields (not measured).
+  same (RWF-141, `namespace_member` in `named-bindings.ts`). Task BL-100
+  carried the `Decorator` row past the call: what a decorator returns is
+  handed to TypeScript's helpers, which install it, run it as an
+  initializer, or make it the class, so its returned values get the escape
+  row's account at a non-admitted position (`decoratorResultOf`,
+  `decoratorResultEdges` in `call-graph.ts`; RWF-142), and a construction
+  of a class a class decorator may replace gets a possible edge to the
+  declared constructor, never a resolved one (`replacedClassEdges`;
+  RWF-149). Both decorator modes are assumed (the mode is not read).
+  Still not covered: a JavaScript source compiled with Babel's or swc's
+  loose class fields (not measured).
 
 **The class is still not certified.** Every one of the thirteen audit
 rounds, BL-081's ten and BL-091's three, found further shapes, and so

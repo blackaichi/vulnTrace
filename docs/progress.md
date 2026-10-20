@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-20, by `BL-099`.
+**Last updated:** 2026-10-20, by `BL-100`.
 
 ## Objective
 
@@ -303,18 +303,17 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-099` — A use of a namespace's exported member is a read of the
-namespace's object ([task file](tasks/BL-099-namespace-export-member-read.md)):
-`READY_FOR_REVIEW`; its independent audit ran five rounds and certified
-none (each found more live shapes, all pre-existing, all fixed); round
-five's were fixed after it without a sixth round, as BL-095's were -- the
-project owner's decision.
-`BL-097` merged as PR #112.
+`BL-100` — What TypeScript's decorator helpers do with a decorator's result
+([task file](tasks/BL-100-decorator-helper-calls.md)): `READY_FOR_REVIEW`;
+its independent audit ran two rounds: round 1 `BLOCKED` on two problems
+the change introduced (both fixed), round 2 `CERTIFIED`.
+`BL-099` merged as PR #113.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-099`:
-`BL-100` (RWF-142, P0, decorator helpers), `BL-094` (the decision on the escape row's rule, P1), `BL-096`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-100`:
+`BL-105` (RWF-150, P0, a TypeScript ES module's own export overwritten
+through a cast or an alias, lane E), `BL-094` (the decision on the escape row's rule, P1), `BL-096`
 (the decision on `module.paths`'s read-only exemptions, RWF-136, P1),
 `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-101`
 (RWF-143, P1, an ES5 class's methods), `BL-079` (RWF-108, P0, at E-4's
@@ -333,6 +332,15 @@ live) makes the export model's binding lookup read a namespace's scope;
 for a binding.
 
 ## Recently discovered
+
+From `BL-100`: `RWF-149` (a class decorator's result replaces the class,
+but a construction resolved to the declared one; live, pre-existing, fixed
+in BL-100); by its independent audit, a shadowed `undefined` taken for a
+decorator's `nothing` under a mutation no test caught (a test gap, closed),
+a per-construction definition lookup quadratic in a file's statements
+(introduced, fixed with a per-file index) and `RWF-150` (a TypeScript ES
+module's own export overwritten through a cast or an alias is no export
+write; live, pre-existing: `BL-105`, P0).
 
 From `BL-099`: `RWF-145` (a namespace's own `import X =`, nested
 namespace and enum are declarations of the block that makes them; the
