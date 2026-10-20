@@ -4,6 +4,13 @@ import {
   isKnownBuiltinCallable,
 } from "./builtin-callables.js";
 import { resolveNamedBinding } from "./named-bindings.js";
+import {
+  exportedNamespaceMembers,
+  hasExportModifier,
+  namespaceBlocks,
+  qualifiedNamespaceName,
+  type NamespaceMember,
+} from "./namespace-members.js";
 import { importSpecifierOf } from "./symbol-binder.js";
 import {
   GLOBAL_OBJECT_NAMES,
@@ -1377,7 +1384,7 @@ function escapeRootOf(
     if (
       AMBIENT_GLOBAL_NAMES.has(target.text) &&
       binding.kind === "unresolved" &&
-      binding.cause === "no_declaration"
+      mayBeUndeclaredGlobal(binding.cause)
     ) {
       return { kind: "ambient" };
     }
@@ -1522,7 +1529,24 @@ function mayBeAmbientGlobalValue(id: ts.Identifier): boolean {
     return false;
   }
   const binding = resolveNamedBinding(id);
-  return binding.kind === "unresolved" && binding.cause === "no_declaration";
+  return binding.kind === "unresolved" && mayBeUndeclaredGlobal(binding.cause);
+}
+
+/**
+ * For a question that over-approximates an ESCAPE (a yes only adds edges):
+ * whether a name the resolver refused may still be the undeclared global.
+ * A namespace's member may be (task BL-099): the member the resolver
+ * refuses for may not exist, and the use is then the global (the task's
+ * independent audit, round 2, finding 4); so may a name refused for a
+ * function in a nested block, which strict code does not see outside it
+ * (round 5, N3). Never asked where a yes earns a proof.
+ */
+function mayBeUndeclaredGlobal(cause: string): boolean {
+  return (
+    cause === "no_declaration" ||
+    cause === "namespace_member" ||
+    cause === "block_function"
+  );
 }
 
 /**
@@ -2207,15 +2231,6 @@ function enumMemberStoreKeys(sourceFile: ts.SourceFile): readonly string[] {
   return [...keys];
 }
 
-function hasExportModifier(node: ts.Node): boolean {
-  return (
-    ts.canHaveModifiers(node) &&
-    (ts.getModifiers(node) ?? []).some(
-      (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword,
-    )
-  );
-}
-
 /**
  * Every name the file declares as a variable or an import binding, at any
  * depth: over-approximated by spelling (a `var D` anywhere, hoisted or
@@ -2250,12 +2265,6 @@ const variableLikeNamesCache = new WeakMap<
   ts.SourceFile,
   ReadonlySet<string>
 >();
-
-/** One exported member of a namespace's blocks: its name and its declaration. */
-interface NamespaceMember {
-  readonly name: string;
-  readonly declaration: ts.Node;
-}
 
 /**
  * The blocks of one namespace -- every block of the file with the same
@@ -2293,22 +2302,10 @@ function namespaceGroups(
   let groups = namespaceGroupsCache.get(sourceFile);
   if (!groups) {
     namespaceGroupBuilds += 1;
-    const blocks = new Map<string, ts.ModuleDeclaration[]>();
-    const visit = (node: ts.Node): void => {
-      if (ts.isModuleDeclaration(node)) {
-        const path = qualifiedNamespaceName(node);
-        const list = blocks.get(path);
-        if (list) {
-          list.push(node);
-        } else {
-          blocks.set(path, [node]);
-        }
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(sourceFile);
     groups = new Map(
-      [...blocks].map(([path, list]) => [path, groupOf(list)] as const),
+      [...namespaceBlocks(sourceFile)].map(
+        ([path, list]) => [path, groupOf(list)] as const,
+      ),
     );
     namespaceGroupsCache.set(sourceFile, groups);
   }
@@ -2320,68 +2317,8 @@ const namespaceGroupsCache = new WeakMap<
   ReadonlyMap<string, NamespaceGroup>
 >();
 
-/** `A.B.C` for `C` in `namespace A { export namespace B.C {} }`; a string name (`declare module "m"`) is quoted. */
-function qualifiedNamespaceName(ns: ts.ModuleDeclaration): string {
-  const parts: string[] = [];
-  let current: ts.Node = ns;
-  for (;;) {
-    if (ts.isModuleDeclaration(current)) {
-      parts.unshift(
-        ts.isIdentifier(current.name)
-          ? current.name.text
-          : JSON.stringify(current.name.text),
-      );
-      current = current.parent;
-    } else if (
-      ts.isModuleBlock(current) &&
-      ts.isModuleDeclaration(current.parent)
-    ) {
-      current = current.parent;
-    } else {
-      return parts.join(".");
-    }
-  }
-}
-
 function groupOf(blocks: readonly ts.ModuleDeclaration[]): NamespaceGroup {
-  const members: NamespaceMember[] = [];
-  for (const block of blocks) {
-    if (block.body === undefined) {
-      continue;
-    }
-    if (ts.isModuleDeclaration(block.body)) {
-      // `namespace A.B { … }`: `B` is A's exported member.
-      if (ts.isIdentifier(block.body.name)) {
-        members.push({ name: block.body.name.text, declaration: block.body });
-      }
-      continue;
-    }
-    if (!ts.isModuleBlock(block.body)) {
-      continue;
-    }
-    for (const statement of block.body.statements) {
-      if (!hasExportModifier(statement)) {
-        continue;
-      }
-      if (ts.isVariableStatement(statement)) {
-        for (const declaration of statement.declarationList.declarations) {
-          for (const id of bindingNames(declaration.name)) {
-            members.push({ name: id.text, declaration });
-          }
-        }
-      } else if (
-        (ts.isFunctionDeclaration(statement) ||
-          ts.isClassDeclaration(statement) ||
-          ts.isEnumDeclaration(statement) ||
-          ts.isModuleDeclaration(statement) ||
-          ts.isImportEqualsDeclaration(statement)) &&
-        statement.name !== undefined &&
-        ts.isIdentifier(statement.name)
-      ) {
-        members.push({ name: statement.name.text, declaration: statement });
-      }
-    }
-  }
+  const members = exportedNamespaceMembers(blocks);
   return {
     members,
     names: new Set(members.map((member) => member.name)),

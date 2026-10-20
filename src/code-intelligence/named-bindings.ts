@@ -6,6 +6,7 @@ import {
   isProvenCommonJsModuleScope,
   skipOuterExpressions,
 } from "./ambient-names.js";
+import { hasExportModifier } from "./namespace-members.js";
 
 /**
  * P1-B3 -- SCOPE-AWARE NAMED BINDING RESOLUTION.
@@ -67,7 +68,26 @@ export type NamedBindingUnresolvedCause =
   /** An alias chain returned to a name it had already visited (`a = b; b = a;`). Fails closed (P1-B3 § 10). */
   | "alias_cycle"
   /** The alias chain ran longer than {@link MAX_ALIAS_CHAIN_HOPS}. */
-  | "alias_chain_too_long";
+  | "alias_chain_too_long"
+  /**
+   * Task BL-099 (RWF-141): the name is a TypeScript namespace's exported
+   * member, so the use is a read of the namespace's object (`h(1)` compiles
+   * to `N.h(1)`), never of a binding: whatever the object answers -- an
+   * accessor a merged class owns or inherits, a value another block or
+   * module stored -- not the declaration's initializer, and from another
+   * block not an outer declaration spelled the same.
+   */
+  | "namespace_member"
+  /**
+   * Task BL-099's independent audit, round 4 (RWF-147): the name binds to a
+   * function declared in a nested block (`{ function h() {} }`, an `if` or
+   * `case` body), seen from outside that block. In strict code -- every
+   * module -- the declaration is scoped to its block and the name outside
+   * is an outer binding (in a namespace, `N.h`); in sloppy code Annex B
+   * also makes it visible there once the block has run. Which one the
+   * program gets is not decided here.
+   */
+  | "block_function";
 
 /** The name binds to a declaration holding exactly one authoritative value. */
 export interface NamedBindingValue {
@@ -316,7 +336,11 @@ function isFunctionScope(node: ts.Node): boolean {
     ts.isConstructorDeclaration(node) ||
     ts.isGetAccessorDeclaration(node) ||
     ts.isSetAccessorDeclaration(node) ||
-    ts.isModuleDeclaration(node)
+    ts.isModuleDeclaration(node) ||
+    // A class static block is a var scope of its own: its `var`s and
+    // functions do not hoist out of the class (task BL-099's independent
+    // audit, round 5, findings 1 and 2).
+    ts.isClassStaticBlockDeclaration(node)
   );
 }
 
@@ -455,6 +479,20 @@ function buildDeclarationIndex(scope: ts.Node): DeclarationIndex {
     enclosingFunctionScope(declaration) === scope;
   const ownsLexical = (declaration: ts.Node): boolean =>
     enclosingBlockScope(declaration) === scope;
+  // RWF-147 (the task BL-099 audit's round 5, finding 3): a function
+  // declared in a nested block binds in that block, strict or sloppy, so a
+  // use inside it finds the function before any declaration of the name
+  // between the block and the function scope the function also hoists to.
+  const ownsAsBlockFunction = (
+    declaration: ts.FunctionDeclaration,
+  ): boolean => {
+    const container = nestedBlockContainer(declaration);
+    return (
+      container !== undefined &&
+      container !== declaration &&
+      enclosingBlockScope(declaration) === scope
+    );
+  };
 
   /**
    * Every identifier a binding pattern BINDS, matched against `name`.
@@ -551,7 +589,7 @@ function buildDeclarationIndex(scope: ts.Node): DeclarationIndex {
     } else if (
       ts.isFunctionDeclaration(node) &&
       node.name &&
-      ownsHoisted(node)
+      (ownsHoisted(node) || ownsAsBlockFunction(node))
     ) {
       found.push({ kind: "function", node, boundName: node.name.text });
     } else if (ts.isClassDeclaration(node) && node.name && ownsLexical(node)) {
@@ -573,6 +611,23 @@ function buildDeclarationIndex(scope: ts.Node): DeclarationIndex {
       node.name &&
       ts.isIdentifier(node.name)
     ) {
+      found.push({ kind: "import", node, boundName: node.name.text });
+    } else if (
+      ts.isModuleBlock(scope) &&
+      ts.isImportEqualsDeclaration(node) &&
+      node.parent === scope &&
+      !ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      // Task BL-099 (RWF-145): a namespace's own `import X = A.b` is a
+      // binding of its block (`var X = A.b`) that shadows an outer `X` --
+      // unless `A.b` has no value, when TypeScript elides it and `X` stays
+      // the outer binding; refusing it then costs precision only (the
+      // task's independent audit, round 3, finding 3). Recorded only at
+      // file scope before, so the walk went past it. Its
+      // `import X = require("m")` form is an error there that TypeScript
+      // still emits as nothing, so `X` stays the outer binding: never
+      // recorded, or the provenance resolver would take it for a load
+      // (the task's independent audit, round 2, finding 1).
       found.push({ kind: "import", node, boundName: node.name.text });
     }
   }
@@ -810,6 +865,9 @@ function findBindingDeclaration(
   for (const scope of scopeChainOf(reference)) {
     const owned = declarationsOwnedBy(scope, name);
     if (owned.length === 0) {
+      if (leavesNamespace(scope)) {
+        return unresolved("namespace_member");
+      }
       continue;
     }
     if (owned.length > 1) {
@@ -819,9 +877,145 @@ function findBindingDeclaration(
     if (!declaration) {
       return unresolved("ambiguous_declarations");
     }
+    if (isNamespaceMemberDeclaration(declaration)) {
+      return unresolved("namespace_member");
+    }
+    if (isBlockFunctionSeenFromOutside(declaration, reference)) {
+      return unresolved("block_function");
+    }
     return { declaration, scope };
   }
   return unresolved("no_declaration");
+}
+
+/**
+ * Task BL-099 (RWF-141): whether `declaration`, found in a namespace's
+ * body, is one TypeScript compiles every use of to a read of the
+ * namespace's object -- an exported variable (`export let h = f; h(1)` →
+ * `N.h = f; N.h(1)`, each name a pattern binds included) or an `export
+ * import` alias (`N.h = I.f; N.h(1)`). An exported function or class keeps
+ * its local binding in its own block (`f()` stays `f()`), measured with
+ * the repository's TypeScript at ES5, ES2020 and ES2022.
+ */
+function isNamespaceMemberDeclaration(declaration: ScopeDeclaration): boolean {
+  let statement: ts.Node | undefined;
+  switch (declaration.kind) {
+    case "const":
+    case "let":
+    case "var":
+    case "destructuring": {
+      // Up through the patterns a binding element sits in, to its own
+      // declaration, then its own statement: never further.
+      let current: ts.Node = declaration.node;
+      while (
+        ts.isBindingElement(current) ||
+        ts.isObjectBindingPattern(current) ||
+        ts.isArrayBindingPattern(current)
+      ) {
+        current = current.parent;
+      }
+      if (
+        !ts.isVariableDeclaration(current) ||
+        !ts.isVariableDeclarationList(current.parent)
+      ) {
+        return false;
+      }
+      statement = current.parent.parent;
+      break;
+    }
+    case "import":
+      statement = declaration.node;
+      break;
+    default:
+      return false;
+  }
+  // Directly in the namespace's body, or (an error TypeScript reports and
+  // still emits as a member) in a nested block of it: the audit's round 5,
+  // finding 4.
+  return (
+    statement !== undefined &&
+    hasExportModifier(statement) &&
+    ts.isModuleDeclaration(enclosingFunctionScope(statement) ?? statement)
+  );
+}
+
+/**
+ * RWF-147: the block a function declaration is nested in -- its statement
+ * list is not a file's, a namespace's, a function body's or a class static
+ * block's (each a var scope the declaration hoists to) -- or `undefined`
+ * when it is not nested. A declaration that is a statement's whole body
+ * (`if (x) function f() {}`, `l: function f() {}`, sloppy only) is its own
+ * container: nothing outside it sees it as declared there (the task's
+ * independent audit, round 5, N1).
+ */
+function nestedBlockContainer(
+  node: ts.FunctionDeclaration,
+): ts.Node | undefined {
+  const container = node.parent;
+  if (
+    ts.isSourceFile(container) ||
+    ts.isModuleBlock(container) ||
+    (ts.isBlock(container) &&
+      (ts.isFunctionLike(container.parent) ||
+        ts.isClassStaticBlockDeclaration(container.parent)))
+  ) {
+    return undefined;
+  }
+  return ts.isBlock(container) ||
+    ts.isCaseClause(container) ||
+    ts.isDefaultClause(container)
+    ? container
+    : node;
+}
+
+/**
+ * RWF-147 (task BL-099's independent audit, round 4): whether `declaration`
+ * is a function declared in a nested block ({@link nestedBlockContainer})
+ * and `reference` is outside that block. {@link buildDeclarationIndex} hoists such a function to the
+ * enclosing function scope, which only sloppy code's Annex B does, and
+ * only once the block has run; in strict code the name outside the block
+ * is an outer binding, so the use must not be bound to it.
+ */
+function isBlockFunctionSeenFromOutside(
+  declaration: ScopeDeclaration,
+  reference: ts.Node,
+): boolean {
+  const node = declaration.node;
+  if (!ts.isFunctionDeclaration(node)) {
+    return false;
+  }
+  const container = nestedBlockContainer(node);
+  if (container === undefined) {
+    return false;
+  }
+  for (
+    let current: ts.Node | undefined = reference.parent;
+    current;
+    current = current.parent
+  ) {
+    if (current === container) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Task BL-099 (RWF-141): whether walking out of `scope` leaves a
+ * namespace, so the name must not be looked up any further out. Which names
+ * a use in a namespace's body reads off the namespace's object is decided
+ * by the namespace's merged symbol -- every block of it, in this file and
+ * others -- and TypeScript rewrites such a use (`h(1)` → `N.h(1)`) where
+ * the file's own syntax cannot show the member: another block's export, an
+ * ambient block's implicit one, a block a file that is not a module merges
+ * in, a module augmentation of the namespace reached through any alias
+ * (`export = N.P`, `export import X = N.P`), an `export { h }` TypeScript
+ * reports and still emits. The task's independent audit found each of
+ * these in turn (rounds 1 to 3), so no name is looked up past a namespace:
+ * a name the walk does not find inside one is refused, whatever it may be.
+ */
+function leavesNamespace(scope: ts.Node): boolean {
+  return ts.isModuleDeclaration(scope) && ts.isIdentifier(scope.name);
 }
 
 /**
@@ -866,6 +1060,14 @@ export function bindsToOtherDeclaration(
  *
  * A TypeScript overload set is one declaration: its signatures without a
  * body are erased, and the one implementation is what the name denotes.
+ *
+ * It does NOT read a TypeScript namespace's scope as
+ * {@link resolveNamedBinding} does since task BL-099 (RWF-141): a use the
+ * emit compiles to a read of the namespace's object still denotes the
+ * declaration, or an outer one. Refusing here with `undefined` is not
+ * fail-closed, because several consumers read `undefined` as "an undeclared
+ * global" (`isAmbientReference`) or as "holds no load, no global object"
+ * (BL-099's independent audit, round 1, finding 2); FINDINGS RWF-146.
  */
 export function lexicalDeclarationOf(
   reference: ts.Node,
