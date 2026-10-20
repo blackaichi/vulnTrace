@@ -1,5 +1,6 @@
 import ts from "typescript";
 import type { SourceLocation } from "../domain/graph.js";
+import { skipOuterExpressions } from "./ambient-names.js";
 import {
   commonJsExportPropertyName,
   commonJsModuleReExportOrigin,
@@ -2345,6 +2346,13 @@ interface ExportWriteSet {
   readonly propertyWrites: readonly ExportPropertyWrite[];
   /** Every `exports = …` rebinding at module time. */
   readonly rebindings: readonly ts.BinaryExpression[];
+  /**
+   * A `whole-module-write` anywhere (`module.exports = v`, at module time or
+   * later). The CommonJS walk orders these itself
+   * ({@link collectModuleExportsAssignments}); an ES module's own exports
+   * are replaced by any of them (task BL-105, {@link withdrawOverwrittenEsmExports}).
+   */
+  readonly wholeModuleWritten: boolean;
 }
 
 const NO_NAMES: ReadonlySet<string> = new Set();
@@ -2398,6 +2406,7 @@ function exportWriteSet(sourceFile: ts.SourceFile): ExportWriteSet {
     return cached;
   }
   let unenumerable = false;
+  let wholeModuleWritten = false;
   const withdrawn = new Set<string>();
   const propertyWrites: ExportPropertyWrite[] = [];
   const rebindings: ts.BinaryExpression[] = [];
@@ -2422,7 +2431,9 @@ function exportWriteSet(sourceFile: ts.SourceFile): ExportWriteSet {
     }
     switch (reference.kind) {
       case "read":
+        return;
       case "whole-module-write":
+        wholeModuleWritten = true;
         return;
       case "method-this-hand-off":
         handOffs.push(reference);
@@ -2658,6 +2669,7 @@ function exportWriteSet(sourceFile: ts.SourceFile): ExportWriteSet {
     withdrawn,
     propertyWrites,
     rebindings,
+    wholeModuleWritten,
   };
   exportWriteSetBySourceFile.set(sourceFile, set);
   return set;
@@ -5124,7 +5136,9 @@ function valueMayBeLoaded(
   expression: ts.Expression,
   seen: Set<ts.Node> = new Set(),
 ): boolean {
-  const value = unwrapParentheses(expression);
+  // Through TypeScript's wrappers too: `(o as any).run = v` writes `o.run`
+  // (task BL-105, RWF-150).
+  const value = skipOuterExpressions(expression);
   if (
     ts.isPropertyAccessExpression(value) ||
     ts.isElementAccessExpression(value)
@@ -5208,6 +5222,9 @@ function bindingSourcesMayBeLoaded(
   declaration: ts.Node,
   seen: Set<ts.Node>,
 ): boolean {
+  if (isValueImport(declaration)) {
+    return true;
+  }
   let holder: ts.Node = declaration;
   // `const { self } = require(x)`, `const [s] = …`: the pattern's source.
   while (
@@ -5237,6 +5254,88 @@ function bindingSourcesMayBeLoaded(
       );
     },
   );
+}
+
+/**
+ * Whether `declaration` is an import that binds a value (task BL-105,
+ * RWF-150): a namespace import or `import x = require(…)`, a load's
+ * result, or a default or named import, a member of one. TypeScript
+ * compiles each to `require(…)` under `module: commonjs`, so a module that
+ * imports itself (`import * as self from "./self"`) holds its own exports
+ * object. An `import x = N.y` alias and a type-only import load nothing.
+ */
+function isValueImport(declaration: ts.Node): boolean {
+  if (ts.isImportEqualsDeclaration(declaration)) {
+    return (
+      !declaration.isTypeOnly &&
+      ts.isExternalModuleReference(declaration.moduleReference)
+    );
+  }
+  if (ts.isImportSpecifier(declaration)) {
+    return !declaration.isTypeOnly && !declaration.parent.parent.isTypeOnly;
+  }
+  if (ts.isNamespaceImport(declaration)) {
+    return !declaration.parent.isTypeOnly;
+  }
+  return ts.isImportClause(declaration) && !declaration.isTypeOnly;
+}
+
+/**
+ * The property of the load's result a value import binding reads: a named
+ * import's imported name, a default import's `default`; `undefined` for any
+ * other declaration (a namespace import or `import x = require(…)` binds the
+ * result itself, a `const` TypeScript keeps).
+ */
+function importedNameOf(declaration: ts.Node): string | undefined {
+  if (ts.isImportSpecifier(declaration) && isValueImport(declaration)) {
+    return (declaration.propertyName ?? declaration.name).text;
+  }
+  if (ts.isImportClause(declaration) && isValueImport(declaration)) {
+    return "default";
+  }
+  return undefined;
+}
+
+/** An import declaration's literal specifier, or `undefined`. */
+function importSpecifierOf(
+  node: ts.ImportDeclaration | ts.ImportEqualsDeclaration,
+): string | undefined {
+  const literal = ts.isImportDeclaration(node)
+    ? node.moduleSpecifier
+    : ts.isExternalModuleReference(node.moduleReference)
+      ? node.moduleReference.expression
+      : undefined;
+  return literal !== undefined && ts.isStringLiteralLike(literal)
+    ? literal.text
+    : undefined;
+}
+
+/** The local names an import declaration binds to values ({@link isValueImport}). */
+function valueImportNames(
+  node: ts.ImportDeclaration | ts.ImportEqualsDeclaration,
+): ts.Identifier[] {
+  if (ts.isImportEqualsDeclaration(node)) {
+    return isValueImport(node) ? [node.name] : [];
+  }
+  const clause = node.importClause;
+  if (clause === undefined || clause.isTypeOnly) {
+    return [];
+  }
+  const names: ts.Identifier[] = [];
+  if (clause.name !== undefined) {
+    names.push(clause.name);
+  }
+  const bindings = clause.namedBindings;
+  if (bindings !== undefined && ts.isNamespaceImport(bindings)) {
+    names.push(bindings.name);
+  } else if (bindings !== undefined) {
+    for (const element of bindings.elements) {
+      if (!element.isTypeOnly) {
+        names.push(element.name);
+      }
+    }
+  }
+  return names;
 }
 
 /**
@@ -5760,6 +5859,26 @@ function loadResultEscapes(
         }
       }
     }
+    // Task BL-105: an import is a load too under TypeScript's `module:
+    // commonjs` ({@link isValueImport}), a self-import included -- no census
+    // follows an import's own flows, so it is confined or it escapes.
+    if (ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node)) {
+      const names = valueImportNames(node);
+      if (names.length > 0) {
+        const specifier = importSpecifierOf(node);
+        const mayYield =
+          specifier === undefined ||
+          reach === undefined ||
+          reach.mayReachBack(specifier);
+        if (
+          mayYield &&
+          !names.every((name) => bindingNameIsConfined(name, new Set()))
+        ) {
+          escapes = true;
+          return;
+        }
+      }
+    }
     ts.forEachChild(node, visit);
   };
   visit(sourceFile);
@@ -5824,6 +5943,16 @@ export function loadReachQuery(index: SourceIndex): LoadReachQuery {
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) {
       const specifier = plainLoadSpecifier(node);
+      if (specifier !== undefined) {
+        specifiers.add(specifier);
+      }
+    }
+    // Task BL-105: an import is a load {@link loadResultEscapes} asks about.
+    if (
+      (ts.isImportDeclaration(node) || ts.isImportEqualsDeclaration(node)) &&
+      valueImportNames(node).length > 0
+    ) {
+      const specifier = importSpecifierOf(node);
       if (specifier !== undefined) {
         specifiers.add(specifier);
       }
@@ -6802,6 +6931,27 @@ function skipOuterParentheses(node: ts.Node): ts.Node {
 }
 
 /**
+ * The outermost form of `node` through parentheses and TypeScript's
+ * wrappers that change no value (`as`, `<T>`, `!`, `satisfies`; the
+ * emitted JavaScript drops them): `(exports as any).dec = v` is
+ * `exports.dec = v` (task BL-105, RWF-150).
+ */
+function skipOuterValueWrappers(node: ts.Node): ts.Node {
+  let current = node;
+  while (
+    current.parent !== undefined &&
+    (ts.isParenthesizedExpression(current.parent) ||
+      ts.isAsExpression(current.parent) ||
+      ts.isTypeAssertionExpression(current.parent) ||
+      ts.isNonNullExpression(current.parent) ||
+      ts.isSatisfiesExpression(current.parent))
+  ) {
+    current = current.parent;
+  }
+  return current;
+}
+
+/**
  * {@link ExportWriteKind} for one node, or `undefined` when the node is no
  * censused reference. `object` is the reference denoting an export object
  * (`exports`, `module.exports`, module-scope `this`); its use decides.
@@ -6812,7 +6962,7 @@ function classifyObjectUse(
   deferred: boolean,
   statementIndex: number,
 ): ExportReference {
-  const outer = skipOuterParentheses(object);
+  const outer = skipOuterValueWrappers(object);
   const parent = outer.parent as ts.Node;
   const make: MakeReference = (kind, names = NO_NAMES, values, assignment) => ({
     kind,
@@ -6828,7 +6978,7 @@ function classifyObjectUse(
       ts.isElementAccessExpression(parent)) &&
     parent.expression === outer
   ) {
-    const access = skipOuterParentheses(parent);
+    const access = skipOuterValueWrappers(parent);
     const names = accessNames(parent);
     if (isPlainAssignmentTarget(access)) {
       const assignment = access.parent as ts.BinaryExpression;
@@ -7219,12 +7369,24 @@ function classifyExportReference(
   if (!ts.isIdentifier(node)) {
     return undefined;
   }
+  // Task BL-105 (its independent audit, finding 1): TypeScript compiles a
+  // write to a named or default import binding (`d2 = v`, `d2 ||= v`,
+  // `[d2] = [v]`) into a member write on the load's result
+  // (`decs_1.dec = v`), which a self-import makes this file's own exports.
+  if (isWriteTargetPosition(skipOuterValueWrappers(node))) {
+    const declaration = lexicalDeclarationOf(node, node.text);
+    const imported =
+      declaration === undefined ? undefined : importedNameOf(declaration);
+    if (imported !== undefined) {
+      return make("require-result-member-write", new Set([imported]));
+    }
+  }
   switch (node.text) {
     case "exports": {
       if (!isAmbientReference(node, "exports")) {
         return undefined;
       }
-      const outer = skipOuterParentheses(node);
+      const outer = skipOuterValueWrappers(node);
       if (isPlainAssignmentTarget(outer)) {
         return make(
           "exports-rebinding",
@@ -7252,7 +7414,7 @@ function classifyExportReference(
       if (!isAmbientReference(node, "module")) {
         return undefined;
       }
-      const outer = skipOuterParentheses(node);
+      const outer = skipOuterValueWrappers(node);
       const parent = outer.parent as ts.Node;
       if (
         ts.isPropertyAccessExpression(parent) &&
@@ -7273,11 +7435,19 @@ function classifyExportReference(
             ? make("read")
             : make("unenumerable");
         }
-        const access = skipOuterParentheses(parent);
+        const access = skipOuterValueWrappers(parent);
         if (isPlainAssignmentTarget(access)) {
-          return make("whole-module-write", NO_NAMES, [
-            [(access.parent as ts.BinaryExpression).right, "whole"],
-          ]);
+          // Only a spelling the whole-module relations order
+          // ({@link competingWriteSites}) is theirs; a cast one
+          // (`(module as any).exports = v`) is no write they see.
+          const assignment = access.parent as ts.BinaryExpression;
+          return isModuleExportsAssignmentTarget(
+            unwrapParentheses(assignment.left),
+          )
+            ? make("whole-module-write", NO_NAMES, [
+                [assignment.right, "whole"],
+              ])
+            : make("unenumerable");
         }
         if (isWriteTargetPosition(access)) {
           return make("unenumerable");
@@ -7401,8 +7571,112 @@ function classifyExportReference(
  * write, or {@link selectAuthoritativeWholeModuleExport}'s one): an
  * undecided one is BL-064's (RWF-100) withdrawal in
  * {@link buildExportBindings}.
+ *
+ * Then {@link withdrawOverwrittenEsmExports}: the same write set gates an
+ * ES module's own exports (task BL-105).
  */
 function applyExportWriteSet(
+  index: SourceIndex,
+  results: ExportBinding[],
+  authoritative: ModuleExportsAssignment | undefined,
+  wholeModuleWrites: number,
+  literalDefinitions: ReadonlySet<ExportBinding>,
+  reach: LoadReach | undefined,
+): ExportBinding[] {
+  return withdrawOverwrittenEsmExports(
+    index,
+    applyCommonJsExportWriteSet(
+      index,
+      results,
+      authoritative,
+      wholeModuleWrites,
+      literalDefinitions,
+      reach,
+    ),
+    reach,
+  );
+}
+
+/**
+ * Task BL-105 (RWF-150): an ES module compiled to CommonJS (TypeScript's
+ * `module: commonjs`) publishes each export as a property of the wrapper's
+ * `exports` object (`exports.dec = dec`), and an importer reads that
+ * property at each use (`(0, decs_1.dec)()`). A write the file itself
+ * makes onto its export objects -- `(exports as any).dec = v`, through an
+ * alias, `Object.defineProperty`, `module.exports = v` -- replaces what the
+ * importer reads, so the declaration is not the export's value.
+ *
+ * Withdrawn, toward an unresolved target, by E-1's census
+ * ({@link exportWriteSet}), whatever the order of the write and the
+ * declaration (TypeScript hoists a function's `exports.dec = dec` above
+ * every statement, and a variable's runs at its declaration):
+ *
+ * - every ES export, when the census meets a reference it cannot
+ *   enumerate, a rebinding of `exports`, any `module.exports` write, or a
+ *   load result that may be this file's exports handed where it cannot
+ *   follow;
+ * - otherwise each ES export whose name a write may set, and a CommonJS
+ *   binding of a name an ES export also publishes, whose order against
+ *   the emitted write is not this walk's.
+ *
+ * A file Node runs as a real ES module has no `exports` binding (a write
+ * through it throws, or reaches a global): the withdrawal is then a
+ * precision cost, never an invented binding.
+ */
+function withdrawOverwrittenEsmExports(
+  index: SourceIndex,
+  results: ExportBinding[],
+  reach: LoadReach | undefined,
+): ExportBinding[] {
+  if (!results.some((binding) => binding.syntax === "esm")) {
+    return results;
+  }
+  const sourceFile = index.sourceFile;
+  const set = exportWriteSet(sourceFile);
+  // `set.propertiesUnenumerable` (BL-084's routes) needs a whole-module
+  // value, which `wholeModuleWritten` already withdraws every name for.
+  const everyName =
+    set.unenumerable ||
+    set.wholeModuleWritten ||
+    set.rebindings.length > 0 ||
+    loadResultEscapes(sourceFile, reach);
+  const written = new Set(set.withdrawn);
+  for (const write of set.propertyWrites) written.add(write.name);
+  const nameOf = (binding: ExportBinding): string | undefined =>
+    binding.kind === "default" ? "default" : binding.exportedName;
+  const esmNames = new Set(
+    results
+      .filter((binding) => binding.syntax === "esm")
+      .map(nameOf)
+      .filter((name) => name !== undefined),
+  );
+  return results.map((binding) => {
+    if (binding.exportAttributionWithdrawn === true) {
+      return binding;
+    }
+    const name = nameOf(binding);
+    const overwritten =
+      binding.syntax === "esm"
+        ? everyName || (name !== undefined && written.has(name))
+        : name !== undefined && esmNames.has(name);
+    if (!overwritten) {
+      return binding;
+    }
+    // A re-export keeps its specifier (the module it loads); the hop
+    // refuses a withdrawn one (export-forwarding.ts).
+    return {
+      kind: binding.kind,
+      syntax: binding.syntax,
+      exportedName: binding.exportedName,
+      ...(binding.kind === "re-export" ? { specifier: binding.specifier } : {}),
+      exportAttributionWithdrawn: true,
+      location: binding.location,
+    };
+  });
+}
+
+/** {@link applyExportWriteSet}'s CommonJS half: task E-1's walk. */
+function applyCommonJsExportWriteSet(
   index: SourceIndex,
   results: ExportBinding[],
   authoritative: ModuleExportsAssignment | undefined,
@@ -14481,6 +14755,21 @@ export function entrypointRootCandidates(
   let withdrawn = false;
 
   for (const exp of model.exports) {
+    // Task BL-105: an ES export the file may overwrite publishes a value no
+    // write here enumerates ({@link withdrawOverwrittenEsmExports}). It is a
+    // root gap, reported: its declared callable is no root (the host may
+    // never call it), and the CommonJS widening below does not reach it.
+    if (
+      exp.syntax === "esm" &&
+      exp.kind !== "re-export" &&
+      exp.exportAttributionWithdrawn === true
+    ) {
+      incompleteness.push({
+        reason: "unresolved_entrypoint_root_candidate",
+        exportedName: canonicalExportName(exp),
+        location: exp.location,
+      });
+    }
     // P0-Z round 3: what this binding would have to materialize to.
     const requiredNames: string[] = [];
     const requiredLocations: SourceLocation[] = [];

@@ -54,7 +54,9 @@ export function esmExportForwardingHop(
       exp.exportedName === exportName &&
       exp.specifier !== undefined,
   );
-  if (!reExport?.specifier) {
+  // A re-export the export write set withdrew (task BL-105: the file may
+  // write the name, or replace the object) forwards nothing.
+  if (!reExport?.specifier || reExport.exportAttributionWithdrawn === true) {
     return undefined;
   }
   // `localName` is the name as written on the far side, which is what
