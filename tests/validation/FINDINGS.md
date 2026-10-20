@@ -324,7 +324,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-147 | `vuln-lib` (synthetic fixture); a gap in the scope-aware binding resolver, not tied to one package | The resolver owned a function declared in a nested block (`{ function h() {} }`, an `if` or `case` body) by the enclosing function scope, so a use outside the block bound to it; in strict code (every module) it is scoped to its block and the name outside is an outer binding -- in a namespace, the member read `N.h` | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-099) — see below |
 | RWF-148 | `vuln-lib` (synthetic fixture); a gap in the scope-aware binding resolver, not tied to one package | A function declaration with no body (`declare function L(…)` in a namespace or block, a lone overload signature) is taken as the name's binding, though the emit erases it and the call reads the outer binding or the global: a resolved callee with no body, so no edge | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-104`) |
 | RWF-149 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | A class decorator's result replaces the class (legacy `C = __decorate([dec], C)`, TC39 `__esDecorate`), but `new C()`, an implicit `super` into `C` and `Reflect.construct(C, …)` resolved to the declared constructor | fabricated edge: false AFFECTED and false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-100) — see below |
-| RWF-150 | `vuln-lib` (synthetic fixture); a gap in export attribution, not tied to one package | A TypeScript ES module compiled to CommonJS that overwrites its own export through a cast or an alias (`(exports as any).dec = …`, `const e: any = exports; e.dec = …`) is not counted as an export write: an importer binds the name to the declared function | false NOT_AFFECTED (family C) and false AFFECTED, pre-existing — see below | Open (backlog `BL-105`) |
+| RWF-150 | `vuln-lib` (synthetic fixture); a gap in export attribution, not tied to one package | A TypeScript ES module compiled to CommonJS that overwrites its own export through a cast or an alias (`(exports as any).dec = …`, `const e: any = exports; e.dec = …`) is not counted as an export write: an importer binds the name to the declared function | false NOT_AFFECTED (family C) and false AFFECTED, pre-existing — see below | **Fixed** (BL-105) — see below |
 
 ---
 
@@ -23875,7 +23875,7 @@ statements (8,000 constructions: 28.7 s against 6.4 s on the base).
 
 ## RWF-150 — A TypeScript ES module's own export overwritten through a cast or an alias
 
-**Status:** Open (backlog `BL-105`)
+**Status:** Fixed (BL-105) — see the status update below
 **Failure class:** false `NOT_AFFECTED`; false `AFFECTED` (a fabricated edge)
 **Defect class:** A (an import bound to a declaration whose export the
 module overwrites), C (the export's values collapsed to the declaration)
@@ -23918,3 +23918,74 @@ write census (task E-1) reads `exports` / `module.exports` through
 `skipOuterExpressions` (a cast, `as`, a non-null assertion, parentheses)
 and through aliases, as it does in a CommonJS file, or withdraws the name.
 Out of BL-100's scope (lane E); backlog `BL-105`.
+
+**Status update (task BL-105, 2026-10-20): Fixed.** Measured with the
+repository's TypeScript 5.9.3 and real Node v22.11.0
+(`tests/oracle/bl105-ts-esm-export-overwrite.test.ts`, twenty-eight cases),
+on the base `05996e1`:
+
+- the record's decorator reproduction and its alias form are live false
+  `NOT_AFFECTED`s, and its call form whose declared function calls the
+  target is a fabricated `AFFECTED`, as recorded;
+- **narrower than the record**: the call forms whose overwrite calls the
+  target are `UNKNOWN` on the base through the escape row's possible edge
+  to the stored function (`possible_invocation`), with the fabricated
+  resolved edge to the declared function still in the graph (`masked.*`);
+  and the plain `exports.dec = …` is `AFFECTED` on the base, sound for that
+  case: it makes a CommonJS binding beside the ES one, and which of the two
+  `mapExportsToFunctions` keeps is the model's order, not the program's;
+- **wider than the record**: a module that imports itself holds its own
+  exports object in the emit. A member write through `import * as self` or
+  `import self = require(…)`, an alias of it, the binding handed to a
+  function, and -- found by BL-105's independent audit -- a write to a
+  named import binding (`import { dec as d2 } from "./decs"; d2 = …`,
+  emitted `decs_1.dec = …`) each overwrite the export: six more live false
+  `NOT_AFFECTED`s.
+
+The cause: `applyExportWriteSet` returned at once unless the file had a
+CommonJS-syntax binding, so E-1's census never gated an ES export; the
+census read `exports` behind a cast as an un-enumerable reference (which
+only CommonJS bindings honour), did not read a load's member write behind
+a cast, and accounted loads only as `require(…)` calls.
+
+The fix (`module-model.ts`, `export-forwarding.ts`):
+
+- `withdrawOverwrittenEsmExports`: after the CommonJS walk, every ES export
+  is withdrawn when the census meets an un-enumerable reference, a
+  rebinding of `exports`, any `module.exports` write
+  (`ExportWriteSet.wholeModuleWritten`) or an escaping load; otherwise each
+  ES export whose name a write may set, and a CommonJS binding of a name an
+  ES export also publishes. A withdrawn ES re-export keeps its specifier;
+  `esmExportForwardingHop` refuses it;
+- an entrypoint's withdrawn ES export is a reported root gap
+  (`unresolved_entrypoint_root_candidate`), and its declared function no
+  root. Without it, a withdrawn export of an entrypoint lost its root while
+  the derivation stayed complete: BL-105's own corpus differential measured
+  eight adversarial cases moved into a false `NOT_AFFECTED` before this
+  rule (introduced by the change, fixed in it, never merged);
+- the census reads the export objects through TypeScript's
+  value-preserving wrappers (`skipOuterValueWrappers`: `as`, `<T>`, `!`,
+  `satisfies`), and a load's member chain through them
+  (`valueMayBeLoaded`); a cast `module.exports` replacement, which no
+  whole-module relation orders, stays un-enumerable;
+- a value import is a load (`isValueImport`): a member write through it,
+  or a write to a named or default import binding (`importedNameOf`), is a
+  write of its name; an import whose specifier may reach back is confined
+  or escapes (`loadResultEscapes`), as a `require` is, and the module-graph
+  query asks about import specifiers (`loadReachQuery`).
+
+Withdrawal, not a multi-valued attribution: the import of an overwritten
+export is an unresolved target, so its negative control is `UNKNOWN` too.
+The measured cost: the two plain forms (`cost.*`), sound on the base, are
+`UNKNOWN`; and, measured by the independent audit, a module that hands an
+imported value on (`[use].forEach(…)`, `register(plugin)`) loses every ES
+export's attribution when that import may reach back -- a cycle, or a
+dependency whose load closure is tainted -- four probes `AFFECTED` →
+`UNKNOWN` (backlog `BL-106`). A file Node runs as a real ES module has no
+`exports` binding; the census applies to it too, a precision cost and
+never an invented binding. The gain: in a CommonJS-syntax TypeScript file,
+a cast write of another name no longer withdraws every name (`gain.*`).
+The corpora's graph, proof and verdict differentials are zero (139 cases;
+no evidence about TypeScript ES modules, OPEN-DEBTS D-12). The independent
+audit ran two rounds: round 1 `BLOCKED` on the named-import write (in
+scope, fixed), round 2 `CERTIFIED`.
