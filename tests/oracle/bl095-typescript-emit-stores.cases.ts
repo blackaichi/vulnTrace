@@ -208,6 +208,15 @@ const OPAQUE_MEMBER =
 const NAMESPACE_MEMBER_READ =
   "a call in the namespace's body through a name the body does not declare (its exported variable, or an outer name such as `lib`) is an unknown callee since task BL-099 (RWF-141): no name is looked up past a namespace, so no negative control can be NOT_AFFECTED";
 
+/**
+ * Since task BL-100 (RWF-142), what a decorator returns is handed to
+ * TypeScript's decorator helpers at a non-admitted position: a builtin's
+ * own function returned (`util.inspect`) is opaque, an unknown edge from
+ * the owner that evaluates the class, in the negative control too.
+ */
+const DECORATOR_RESULT =
+  "the decorator returns a builtin's own function, which TypeScript's decorator helpers are handed at a non-admitted position since task BL-100 (RWF-142): an unknown edge, so no negative control can be NOT_AFFECTED";
+
 const sorted = (hook: string) =>
   `{ sorted: function (a: any, b: any) { lib.${hook}(a); return 0; } }`;
 const isBuffer = (hook: string) =>
@@ -631,6 +640,7 @@ export const BL095_CASES: readonly Bl095Case[] = [
       `${UTIL}const dec = (_c: any, _ctx: any): any => util.inspect;\n@dec class C { static defaultOptions: any = ${sorted(hook)}; }\n`,
     trigger: INSPECT,
     target: "es2020",
+    controlsInapplicable: DECORATOR_RESULT,
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",

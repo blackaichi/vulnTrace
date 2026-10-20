@@ -22,6 +22,7 @@ import {
   AMBIENT_GLOBAL_NAMES,
   ambientGlobalKeyOf,
   escapingValuesOf,
+  isAmbientRoot,
   isModuleScopeRoot,
   memberChainOf,
   skipOuterExpressions,
@@ -2547,63 +2548,95 @@ function importedCarriesOwnMembers(
   target: GraphNodeId,
   ctx: WalkContext,
 ): boolean {
-  const node = ctx.nodeOf(target);
-  const line = node?.location?.line;
-  const column = node?.location?.column;
-  const prepared = node ? ctx.ensurePrepared(node.module) : undefined;
-  if (!prepared || line === undefined || column === undefined) {
-    return true;
-  }
-  const sourceFile = prepared.index.sourceFile;
-  let position: number;
-  try {
-    position = sourceFile.getPositionOfLineAndCharacter(line - 1, column - 1);
-  } catch {
-    return true;
-  }
-  let definition: ts.Node | undefined;
-  const visit = (at: ts.Node): void => {
-    if (at.getStart(sourceFile) <= position && position < at.end) {
-      if (
-        at.getStart(sourceFile) === position &&
-        (ts.isFunctionLike(at) || ts.isClassLike(at)) &&
-        definition === undefined
-      ) {
-        definition = at;
-      }
-      ts.forEachChild(at, visit);
-    }
-  };
-  visit(sourceFile);
-  if (definition === undefined) {
-    // A class relying on its default constructor is indexed at its name.
-    const name = findTokenAt(sourceFile, position);
-    definition =
-      name !== undefined && ts.isClassLike(name.parent)
-        ? name.parent
-        : undefined;
-  }
+  let definition = definitionOfNode(target, ctx)?.definition;
   if (definition !== undefined && ts.isConstructorDeclaration(definition)) {
     definition = definition.parent;
   }
   return definition === undefined || mayCarryOwnMembers(definition);
 }
 
-function findTokenAt(
-  sourceFile: ts.SourceFile,
-  position: number,
-): ts.Node | undefined {
-  let found: ts.Node | undefined;
-  const visit = (at: ts.Node): void => {
-    if (at.getStart(sourceFile) <= position && position < at.end) {
-      if (at.getStart(sourceFile) === position && ts.isIdentifier(at)) {
-        found = at;
+/**
+ * The function-like or class definition a registered node stands for, in
+ * its own file, found at the node's location (task BL-081; task BL-100
+ * reads a decorator's and a constructed class's definition through it):
+ * the function, the explicit constructor, or -- for a class relying on its
+ * default constructor, indexed at its name -- the class. `undefined` when
+ * it cannot be found.
+ */
+function definitionOfNode(
+  target: GraphNodeId,
+  ctx: WalkContext,
+): { readonly definition: ts.Node; readonly file: FileGraphData } | undefined {
+  const node = ctx.nodeOf(target);
+  const line = node?.location?.line;
+  const column = node?.location?.column;
+  const prepared = node ? ctx.ensurePrepared(node.module) : undefined;
+  if (!prepared || line === undefined || column === undefined) {
+    return undefined;
+  }
+  const sourceFile = prepared.index.sourceFile;
+  let position: number;
+  try {
+    position = sourceFile.getPositionOfLineAndCharacter(line - 1, column - 1);
+  } catch {
+    return undefined;
+  }
+  const index = definitionIndexOf(sourceFile);
+  // A class relying on its default constructor is indexed at its name.
+  const definition = index.starting.get(position) ?? index.named.get(position);
+  return definition === undefined ? undefined : { definition, file: prepared };
+}
+
+/**
+ * Task BL-100 (its independent audit, finding 2): where each definition of
+ * a file starts, from ONE walk of the file -- the outermost function-like
+ * or class node starting at a position, and a class by its name's start.
+ * Before it, every lookup walked the file from its root, so a file with
+ * many constructions (a bundle) cost constructions × statements.
+ */
+interface DefinitionIndex {
+  readonly starting: ReadonlyMap<number, ts.Node>;
+  readonly named: ReadonlyMap<number, ts.ClassLikeDeclaration>;
+}
+
+const definitionIndexByFile = new WeakMap<ts.SourceFile, DefinitionIndex>();
+
+let definitionIndexBuilds = 0;
+
+/**
+ * How many times a file's definition index has been built. Exposed so a
+ * test can assert the cost is per FILE, not per lookup -- see
+ * {@link definitionOfNode}.
+ */
+export function definitionIndexBuildCount(): number {
+  return definitionIndexBuilds;
+}
+
+function definitionIndexOf(sourceFile: ts.SourceFile): DefinitionIndex {
+  let index = definitionIndexByFile.get(sourceFile);
+  if (!index) {
+    definitionIndexBuilds += 1;
+    const starting = new Map<number, ts.Node>();
+    const named = new Map<number, ts.ClassLikeDeclaration>();
+    const visit = (at: ts.Node): void => {
+      if (ts.isFunctionLike(at) || ts.isClassLike(at)) {
+        const start = at.getStart(sourceFile);
+        // Pre-order: an enclosing node starting at the same position is
+        // recorded first, as the root-down search found it.
+        if (!starting.has(start)) {
+          starting.set(start, at);
+        }
+        if (ts.isClassLike(at) && at.name) {
+          named.set(at.name.getStart(sourceFile), at);
+        }
       }
       ts.forEachChild(at, visit);
-    }
-  };
-  visit(sourceFile);
-  return found;
+    };
+    visit(sourceFile);
+    index = { starting, named };
+    definitionIndexByFile.set(sourceFile, index);
+  }
+  return index;
 }
 
 /** The arguments of a site, or `"forwarded"`: values the site cannot see (an implicit constructor's `...args`, a decorator's target). */
@@ -2721,10 +2754,21 @@ async function builtinAccount(
           edges.push(escapedValueEdge(from, argLocation));
         }
         const kind = ctx.nodeKindOf(target);
+        // Task BL-100 (RWF-149): a class a class decorator may have
+        // replaced is not the one constructed (`Reflect.construct(C, [])`
+        // constructs the decorator's result).
+        const replaced =
+          invoking?.as === "construct" && kind === "constructor"
+            ? await replacedClassEdges(target, from, argLocation, ctx)
+            : undefined;
+        if (replaced !== undefined) {
+          edges.push(...replaced);
+        }
         const guaranteed =
           invoking !== undefined &&
           value.kind !== "opaque" &&
           value.direct &&
+          replaced === undefined &&
           (invoking.as === "construct"
             ? kind === "constructor"
             : kind !== undefined && kind !== "constructor");
@@ -3480,16 +3524,38 @@ async function classifyConstructee(
   ctx: WalkContext,
   args: SiteArguments,
 ): Promise<InvocationAccount> {
+  // Task BL-100 (RWF-149): a class a class decorator may have replaced is
+  // not proven to be the one constructed -- the decorator's result is.
+  // The declared constructor gets a possible edge, and the result its
+  // account (`decoratorResultEdges`).
+  const constructing = async (
+    target: GraphNodeId,
+  ): Promise<readonly [CallEdge, ...CallEdge[]]> => {
+    const replaced = await replacedClassEdges(target, from, location, ctx);
+    return [
+      {
+        from,
+        type: "constructor",
+        resolution:
+          replaced === undefined
+            ? { kind: "resolved", target }
+            : { kind: "possible", target },
+        location,
+      },
+      ...(replaced ?? []),
+    ];
+  };
   // RWF-060: a resolved construction whose class's implicit-constructor
   // chain ends at a builtin (or an unattributable base) also hands the
   // site's arguments to it.
   const forwarded = async (
-    edge: CallEdge,
+    target: GraphNodeId,
     cls: ts.ClassLikeDeclaration | undefined,
     classFile: FileGraphData | undefined,
   ): Promise<InvocationAccount> => {
+    const construction = await constructing(target);
     if (args === "forwarded" || !classFile) {
-      return edgeAccount(edge);
+      return { kind: "edges", edges: construction };
     }
     const more = await forwardedArgumentEdges(
       cls,
@@ -3500,7 +3566,7 @@ async function classifyConstructee(
       prepared,
       ctx,
     );
-    return { kind: "edges", edges: [edge, ...more] };
+    return { kind: "edges", edges: [...construction, ...more] };
   };
 
   if (loaderReason) {
@@ -3533,12 +3599,7 @@ async function classifyConstructee(
 
       if (targetNodeId) {
         return forwarded(
-          {
-            from,
-            type: "constructor",
-            resolution: { kind: "resolved", target: targetNodeId },
-            location,
-          },
+          targetNodeId,
           targetFile
             ? exportedClassOf(targetFile, binding.target.exportedName)
             : undefined,
@@ -3558,12 +3619,7 @@ async function classifyConstructee(
           new Set(),
         );
         if (chased) {
-          return edgeAccount({
-            from,
-            type: "constructor",
-            resolution: { kind: "resolved", target: chased },
-            location,
-          });
+          return { kind: "edges", edges: await constructing(chased) };
         }
       }
 
@@ -3639,12 +3695,7 @@ async function classifyConstructee(
       ? resolveNamedBinding(unwrapped)
       : undefined;
     return forwarded(
-      {
-        from,
-        type: "constructor",
-        resolution: { kind: "resolved", target: localTarget },
-        location,
-      },
+      localTarget,
       local?.kind === "class" ? local.declaration : undefined,
       prepared,
     );
@@ -3792,9 +3843,263 @@ async function classifyDecorator(
   // Task A-3a: a decorator is handed the decorated class or member (and,
   // for a standard decorator, a context object) -- values this site does
   // not write, so `"forwarded"`.
-  return classifyCallee(node.expression, node, from, location, prepared, ctx, {
-    args: "forwarded",
-  });
+  const account = await classifyCallee(
+    node.expression,
+    node,
+    from,
+    location,
+    prepared,
+    ctx,
+    { args: "forwarded" },
+  );
+  // Task BL-100 (RWF-142): the helpers then run what the call returned. A
+  // parameter decorator's result is discarded (legacy `__param` wraps the
+  // call in a function returning nothing). A call accounted only by
+  // unknown edges already blocks every negative proof over the region:
+  // what its result may hold adds nothing it does not say.
+  if (
+    ts.isParameter(node.parent) ||
+    (account.kind === "edges" &&
+      account.edges.every((edge) => edge.resolution.kind === "unknown"))
+  ) {
+    return account;
+  }
+  const handed = await decoratorResultEdges(
+    await decoratorResultOf(node, prepared, ctx),
+    from,
+    location,
+    ctx,
+  );
+  const [first, ...rest] = [
+    ...(account.kind === "edges" ? account.edges : []),
+    ...handed,
+  ];
+  return first ? { kind: "edges", edges: [first, ...rest] } : account;
+}
+
+/**
+ * Task BL-100 (RWF-142). What a decorator's call may RETURN, which
+ * TypeScript's helpers then run (measured on the repository's own
+ * TypeScript, both decorator modes, against real Node):
+ *
+ * - legacy decorators (`experimentalDecorators`): `__decorate` installs a
+ *   field's, method's or accessor's result with `Object.defineProperty`
+ *   (a returned setter runs on a later store, the field's own assignment
+ *   included), and a class decorator's result replaces the class;
+ * - TC39 decorators: `__esDecorate` makes a field's result an initializer
+ *   that `__runInitializers` calls on the field's value, a method's result
+ *   the method, an accessor's result's `get` / `set` / `init` the
+ *   accessor's, and a class decorator's result the class.
+ *
+ * The decorator mode is not read (backlog BL-094), so both are assumed.
+ *
+ * - `nothing`: every function the decorator may denote completes with
+ *   `undefined` (no `return` of a value, or `return undefined` /
+ *   `return void …`): every helper leaves the member or class in place.
+ * - `values`: the expressions those functions may return, each in its own
+ *   file. A thrown completion returns nothing.
+ * - `unknown`: a function the decorator may denote is not read -- a call's
+ *   result (`@make()`), a class, an async or generator function (it
+ *   returns a promise or an iterator, not its `return`'s value), a value
+ *   not attributable, or one that may carry its own members.
+ *
+ * The function is found by the escape row's authority
+ * (`escapingValuesOf`, {@link escapeTargetOf}) and no other: a decorator
+ * is a value handed to the helper.
+ */
+type DecoratorResult =
+  | { readonly kind: "nothing" }
+  | { readonly kind: "unknown" }
+  | {
+      readonly kind: "values";
+      readonly returned: readonly {
+        readonly expression: ts.Expression;
+        readonly file: FileGraphData;
+      }[];
+    };
+
+async function decoratorResultOf(
+  decorator: ts.Decorator,
+  prepared: FileGraphData,
+  ctx: WalkContext,
+): Promise<DecoratorResult> {
+  const returned: { expression: ts.Expression; file: FileGraphData }[] = [];
+  for (const value of escapingValuesOf(decorator.expression)) {
+    let fn: ts.Node | undefined;
+    let file = prepared;
+    if (value.kind === "function") {
+      fn = value.node;
+    } else if (value.kind === "import") {
+      const target = await escapeTargetOf(value, prepared, ctx);
+      const found =
+        target === undefined || target === "builtin"
+          ? undefined
+          : definitionOfNode(target, ctx);
+      if (found) {
+        fn = found.definition;
+        file = found.file;
+      }
+    }
+    const expressions = fn === undefined ? undefined : returnedValuesOf(fn);
+    if (expressions === undefined) {
+      return { kind: "unknown" };
+    }
+    returned.push(...expressions.map((expression) => ({ expression, file })));
+  }
+  // No value at all: the decorator is primitive syntax, whose call throws.
+  return returned.length === 0
+    ? { kind: "nothing" }
+    : { kind: "values", returned };
+}
+
+/**
+ * The expressions `fn` may return a value of, `[]` when it only ever
+ * completes with `undefined`, or `undefined` when what it returns is not
+ * its `return`'s value or is not readable: anything but a function,
+ * function expression, arrow or method with a body, an async function or
+ * a generator. A `return` inside a nested function or class is that
+ * one's own.
+ */
+function returnedValuesOf(fn: ts.Node): readonly ts.Expression[] | undefined {
+  if (
+    !(
+      ts.isFunctionDeclaration(fn) ||
+      ts.isFunctionExpression(fn) ||
+      ts.isArrowFunction(fn) ||
+      ts.isMethodDeclaration(fn)
+    ) ||
+    fn.body === undefined ||
+    fn.asteriskToken !== undefined ||
+    (ts.getCombinedModifierFlags(fn) & ts.ModifierFlags.Async) !== 0
+  ) {
+    return undefined;
+  }
+  const body = fn.body;
+  if (!ts.isBlock(body)) {
+    return isUndefinedValue(body) ? [] : [body];
+  }
+  const out: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node) || ts.isClassLike(node)) {
+      return;
+    }
+    if (ts.isReturnStatement(node)) {
+      if (node.expression && !isUndefinedValue(node.expression)) {
+        out.push(node.expression);
+      }
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return out;
+}
+
+/** `void …`, or the ambient `undefined` no enclosing scope declares. */
+function isUndefinedValue(raw: ts.Expression): boolean {
+  const expr = skipOuterExpressions(raw);
+  return (
+    ts.isVoidExpression(expr) ||
+    (ts.isIdentifier(expr) && expr.text === "undefined" && isAmbientRoot(expr))
+  );
+}
+
+/**
+ * The account of a decorator's result handed to a helper, from `from`:
+ * ADR 0008 § 2's escape row at a non-admitted position, as
+ * {@link builtinAccount} gives an argument -- a POSSIBLE edge to each
+ * attributable function or class the returned values carry (a descriptor's
+ * `get` / `set` / `value`, an initializer, a method, a class), an UNKNOWN
+ * edge (`escaped_value`) for anything else, and for an imported value that
+ * may carry its own members. Never resolved: whether and when the helper
+ * runs it depends on the decorator mode and on the program's later stores.
+ */
+async function decoratorResultEdges(
+  result: DecoratorResult,
+  from: GraphNodeId,
+  location: ReturnType<typeof toSourceLocation>,
+  ctx: WalkContext,
+): Promise<readonly CallEdge[]> {
+  if (result.kind === "nothing") {
+    return [];
+  }
+  if (result.kind === "unknown") {
+    return [escapedValueEdge(from, location)];
+  }
+  let opaque = false;
+  const edges: CallEdge[] = [];
+  for (const { expression, file } of result.returned) {
+    for (const value of escapingValuesOf(expression)) {
+      const target =
+        value.kind === "opaque"
+          ? undefined
+          : await escapeTargetOf(value, file, ctx);
+      if (target === undefined || target === "builtin") {
+        opaque = true;
+        continue;
+      }
+      if (value.kind === "import" && importedCarriesOwnMembers(target, ctx)) {
+        opaque = true;
+      }
+      edges.push({
+        from,
+        type: "callback",
+        resolution: { kind: "possible", target },
+        location,
+      });
+    }
+  }
+  return opaque ? [escapedValueEdge(from, location), ...edges] : edges;
+}
+
+/**
+ * Task BL-100 (RWF-149). The account of a class decorator's result at a
+ * construction of `target`, a class's constructor node, or `undefined`
+ * when no class decorator may replace the class: it has none the compiled
+ * program calls ({@link invocationSiteOf}), or every one's result is
+ * `nothing` (both decorator modes then keep the class). Otherwise the
+ * class may be the decorator's result -- legacy `C = __decorate([dec], C)`
+ * makes it whatever `dec` returned, TC39 `__esDecorate` whatever function
+ * it returned -- so the construction constructs that, not provably the
+ * declared class: the caller gives the declared constructor a possible
+ * edge, never a resolved one, and adds these edges (empty when the result
+ * carries nothing a construction can run, such as a primitive, which
+ * makes the construction throw).
+ */
+async function replacedClassEdges(
+  target: GraphNodeId,
+  from: GraphNodeId,
+  location: ReturnType<typeof toSourceLocation>,
+  ctx: WalkContext,
+): Promise<readonly CallEdge[] | undefined> {
+  const found = definitionOfNode(target, ctx);
+  if (!found) {
+    // Not located: whether a class decorator replaced it is not known
+    // (the independent audit's observation; fail closed).
+    return [escapedValueEdge(from, location)];
+  }
+  const definition = ts.isConstructorDeclaration(found.definition)
+    ? found.definition.parent
+    : found.definition;
+  if (!ts.isClassLike(definition)) {
+    // A function constructed by `new`: no class decorator.
+    return undefined;
+  }
+  const decorators = (ts.getDecorators(definition) ?? []).filter(
+    (decorator) => invocationSiteOf(decorator)?.kind === "decorator",
+  );
+  const results: DecoratorResult[] = [];
+  for (const decorator of decorators) {
+    results.push(await decoratorResultOf(decorator, found.file, ctx));
+  }
+  if (results.every((result) => result.kind === "nothing")) {
+    return undefined;
+  }
+  const edges: CallEdge[] = [];
+  for (const result of results) {
+    edges.push(...(await decoratorResultEdges(result, from, location, ctx)));
+  }
+  return edges;
 }
 
 /**
