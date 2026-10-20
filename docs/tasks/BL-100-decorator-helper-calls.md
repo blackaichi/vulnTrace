@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-100
 - **Branch**: `bl-100-decorator-helper-calls`
 - **Base SHA**: `9b8ea34cec750cdc6e3726c66c479040becc7bdf` (BL-099's merge, PR #113)
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): BL-100 task file — what TypeScript's decorator helpers do with a decorator's result`
+  - `test(BL-100): what TypeScript's decorator helpers do with a decorator's result, against real Node — RWF-142, RWF-149`
+  - `fix(BL-100): a decorator's result is handed to the helpers; a class decorator may replace the class it constructs — RWF-142, RWF-149`
+  - (this commit) `docs(BL-100): records — RWF-142 and RWF-149 fixed, RWF-150 registered, the independent audit's two rounds, ADR 0008, debts, backlog (BL-105), progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -125,17 +129,18 @@ class).
 
 ## Acceptance criteria
 
-- [ ] Every case in `tests/oracle/bl100-decorator-helper-calls.cases.ts`
+- [x] Every case in `tests/oracle/bl100-decorator-helper-calls.cases.ts`
       answers its `expected` verdict with real Node's ground truth, and every
       case whose `base` differs from its `expected` failed on the base.
-- [ ] The `control.*` cases keep their verdicts.
-- [ ] Each rule is pinned by a named unit test, and each mutation of it is
+- [x] The `control.*` cases keep their verdicts.
+- [x] Each rule is pinned by a named unit test, and each mutation of it is
       caught by one.
-- [ ] The graph, proof and verdict differentials are reported separately; no
+- [x] The graph, proof and verdict differentials are reported separately; no
       corpus case moves away from its expected verdict.
-- [ ] RWF-142 and RWF-149 are recorded as fixed.
-- [ ] The independent audit certifies the change, or its findings are
-      handled per WORKFLOW § 1.5.
+- [x] RWF-142 and RWF-149 are recorded as fixed.
+- [x] The independent audit certifies the change, or its findings are
+      handled per WORKFLOW § 1.5. **Certified in round 2** (round 1
+      `BLOCKED`, both findings fixed; RWF-150 registered, see Corrections).
 
 ## Gates
 
@@ -147,3 +152,43 @@ JavaScript, with no decorator syntax: to be measured).
 ## Report
 
 In the format of `AGENTS.md` § J (`docs/WORKFLOW.md` § 5).
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW`; the sections above are as written at the
+start.
+
+- **The independent audit, round 1: `BLOCKED`** on two problems the change
+  introduced, both fixed:
+  - the definition lookup behind `replacedClassEdges` walked the file from
+    its root once per construction: quadratic in a file's statements
+    (measured: 8,000 constructions, 28.7 s against 6.4 s on the base).
+    Replaced by a per-file index built once (`definitionIndexOf`), pinned
+    by a structural count test (`definitionIndexBuildCount`, the same for 5
+    and 500 constructions) and mutation M17;
+  - a shadowed `undefined` (`const undefined = class {…}; return
+    undefined;`) was proven by `isAmbientRoot`, but no test caught its
+    removal (mutation M16), under which it is a live false `NOT_AFFECTED`:
+    a unit test (a local and a parameter default) and the oracle case
+    `audit.shadowed-undefined-is-a-value` added.
+- **A class not located fails closed** (the audit's observation): an
+  unknown edge, instead of keeping the resolved construction.
+- **Found by the audit, not fixed here** (outside the task's scope, lane
+  E): `RWF-150`, a TypeScript ES module's own export overwritten through a
+  cast or an alias is no export write, so the decorator (or a call) binds
+  to the declared function. Live, pre-existing; reproduced by this task
+  against real Node; backlog `BL-105` (P0). RWF-142's fix inherits that
+  export attribution.
+- **Masked cases**: three cases first written as live (`tc39-method-replacement`,
+  `explicit-super-into-a-replaced-base`, `re-exported-decorator`) were
+  measured `UNKNOWN` on the base through other accounts and are recorded
+  as `masked.*`.
+- **BL-095's `audit.tc39-decorated-class-static-field`** declares its
+  negative control inapplicable: its decorator returns `util.inspect`, a
+  builtin handed to the helper, now an unknown edge. Its expected verdict
+  (`UNKNOWN`) is unchanged.
+- **Precision, measured**: the corpora (139 cases) are compiled
+  JavaScript with no decorator syntax: graph, proof and verdict
+  differentials are all zero, which is no evidence about decorated
+  sources (OPEN-DEBTS D-12). The measured cost is `cost.legacy-method-decorator-returns-a-function`
+  (both modes assumed) and the BL-095 control above.

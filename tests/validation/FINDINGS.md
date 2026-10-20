@@ -316,13 +316,15 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-139 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A concise arrow called on the spot returns its body, which the value-flow walk does not follow through a call: `(() => module.paths)().shift()` and `(() => require("module"))()._resolveFilename = hook` change loader state unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (backlog `C-3`) |
 | RWF-140 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `process` is a resolution-only kind (global-object detection preambles), so `process.mainModule` is recognised only on a chain from `process` itself: passed to a function (`mm(process).require(p)`) or wrapped (`Object.create(process)`, `{ __proto__: process }`, `[process][0]`, each as a `with` head) it reaches the entry `Module` instance unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (decision, backlog `BL-098`) |
 | RWF-141 | `vuln-lib` (synthetic fixture); a gap in call resolution, not tied to one package | TypeScript compiles a use of a namespace's exported variable in its body to a member read of the namespace's object (`h(1)` → `N.h(1)`), but the call graph resolves the bare name to the variable's initializer; when the program's own static accessor on a class merged with the namespace answers the read, the call reaches what the getter returns, unseen | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-099) — see below |
-| RWF-142 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | TypeScript's decorator helpers make implicit calls the graph does not model: a legacy decorator's returned descriptor installed by `__decorate` (a setter a later field store or `this.x = …` runs), and a TC39 field decorator's returned initializer run by `__runInitializers` on the field's value | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-100`) |
+| RWF-142 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | TypeScript's decorator helpers make implicit calls the graph does not model: a legacy decorator's returned descriptor installed by `__decorate` (a setter a later field store or `this.x = …` runs), and a TC39 field decorator's returned initializer run by `__runInitializers` on the field's value | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-100) — see below |
 | RWF-143 | `vuln-lib` (synthetic fixture); a gap in BL-081's own rules, not tied to one package | At target ES5 TypeScript compiles a class's methods to assignments (`C.prototype.m = function …`, `C.m = …` for a static one); when `C.prototype` or `C` inherits from an object the program does not own (`X.prototype = globalThis; class C extends X { Buffer() {} }`), the assignment runs that object's setter, and the escape row reads a method as a definition | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-101`) |
 | RWF-144 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A caller's frame read through a key computed at run time (`g["call" + "er"]`, `Reflect.get(g, ["call", "er"].join(""))`, a template key, a call site's `getFunction` under a joined key) or reached by enumerating an object's properties (`Object.values(Object.getOwnPropertyDescriptors(g))[3].value`) spells no name, so the loader classifier does not see the wrapper's `require` / `module` it reaches | false NOT_AFFECTED (family B), pre-existing — see below | Open (backlog `BL-080`) |
 | RWF-145 | `vuln-lib` (synthetic fixture); a gap in call resolution, not tied to one package | The resolver records an `import X = A.b`, a namespace and an enum as declarations at file scope only (the last two nowhere), but each is a local binding of the namespace body or block that declares it (`var X = A.b`, `var M`, `let E`): a use there binds to an outer declaration spelled the same (`const g = f; namespace N { import g = I.h; g(1); }` calls `I.h`) | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** in part (BL-099: `import X =`); a namespace and an enum open, masked (backlog `BL-102`) — see below |
 | RWF-146 | `vuln-lib` (synthetic fixture); a gap in the export model's binding lookup, not tied to one package | `lexicalDeclarationOf` (`named-bindings.ts`), which the export model and its censuses read, does not read a TypeScript namespace's scope: a use the emit compiles to a read of the namespace's object (`h` → `N.h`) denotes the member's declaration, or an outer declaration spelled the same, or ("no declaration") a global | not measured live: masked in the one shape measured — see below | Open (backlog `BL-103`) |
 | RWF-147 | `vuln-lib` (synthetic fixture); a gap in the scope-aware binding resolver, not tied to one package | The resolver owned a function declared in a nested block (`{ function h() {} }`, an `if` or `case` body) by the enclosing function scope, so a use outside the block bound to it; in strict code (every module) it is scoped to its block and the name outside is an outer binding -- in a namespace, the member read `N.h` | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-099) — see below |
 | RWF-148 | `vuln-lib` (synthetic fixture); a gap in the scope-aware binding resolver, not tied to one package | A function declaration with no body (`declare function L(…)` in a namespace or block, a lone overload signature) is taken as the name's binding, though the emit erases it and the call reads the outer binding or the global: a resolved callee with no body, so no edge | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-104`) |
+| RWF-149 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | A class decorator's result replaces the class (legacy `C = __decorate([dec], C)`, TC39 `__esDecorate`), but `new C()`, an implicit `super` into `C` and `Reflect.construct(C, …)` resolved to the declared constructor | fabricated edge: false AFFECTED and false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-100) — see below |
+| RWF-150 | `vuln-lib` (synthetic fixture); a gap in export attribution, not tied to one package | A TypeScript ES module compiled to CommonJS that overwrites its own export through a cast or an alias (`(exports as any).dec = …`, `const e: any = exports; e.dec = …`) is not counted as an export write: an importer binds the name to the declared function | false NOT_AFFECTED (family C) and false AFFECTED, pre-existing — see below | Open (backlog `BL-105`) |
 
 ---
 
@@ -23517,7 +23519,7 @@ codebase pays more.
 
 ## RWF-142 — TypeScript's decorator helpers make implicit calls the graph does not model
 
-**Status:** Open (backlog `BL-100`)
+**Status:** Fixed (BL-100) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (the helpers' runtime behaviour is not modelled: a
 returned descriptor or initializer is taken to invoke nothing)
@@ -23548,6 +23550,42 @@ run an initializer on a value -- is not. The fix direction: a decorator's
 returned value is handed to a builtin at a non-admitted position (a
 descriptor, an initializer): what it may invoke gets a possible edge, or an
 unknown one when it is not attributable.
+
+**Status update (task BL-100, 2026-10-20): Fixed.** The class is wider than
+the record says. Measured with the repository's TypeScript 5.9.3 and real
+Node v22.11.0 (`tests/oracle/bl100-decorator-helper-calls.test.ts`), the
+helpers run a decorator's RESULT in every position but a parameter:
+legacy `__decorate` installs a field's, method's or accessor's result with
+`Object.defineProperty` (a returned setter runs on the field's own
+assignment at ES2020, or on a later store) and replaces the class with a
+class decorator's; TC39 `__esDecorate` makes a field's result an
+initializer, a method's the method, an accessor's `get` / `set` / `init`
+the accessor's, and a class decorator's the class. Legacy `__param`
+discards a parameter decorator's result. Seventeen live false
+`NOT_AFFECTED`s on the base `9b8ea34`, in both modes (one, a shadowed
+`undefined`, found by BL-100's independent audit), and the class
+replacement's fabricated construction edge, registered as `RWF-149`.
+
+The fix (`call-graph.ts`): at a decorator the compiled program calls, other
+than a parameter's, whose call is accounted by an edge that is not unknown,
+what the decorator returns is read from the function it denotes, by the
+escape row's own authority (`escapingValuesOf`, `escapeTargetOf`) --
+`decoratorResultOf`: its `return`s, `nothing` when every completion is
+`undefined` (no value, an ambient `undefined`, `void …`), `unknown` for a
+call's result, a class, an async or generator function, or a value not
+attributable. The returned values are handed to the helper at a
+non-admitted position (`decoratorResultEdges`): a POSSIBLE edge to each
+attributable function or class, an UNKNOWN edge (`escaped_value`) for
+anything else, from the owner that evaluates the class. The decorator mode
+is not read (backlog `BL-094`): both are assumed, which costs one measured
+`AFFECTED`-free case (`cost.legacy-method-decorator-returns-a-function`)
+and BL-095's `audit.tc39-decorated-class-static-field` its negative
+control (a returned builtin is opaque).
+
+Not fixed here: what the decorator denotes is only as right as the export
+attribution it inherits. A TypeScript ES module that overwrites its own
+export through a cast or an alias keeps the declared function as the
+import's target (`RWF-150`, live, pre-existing, backlog `BL-105`).
 
 ## RWF-143 — At target ES5 a class's methods are assignments
 
@@ -23785,3 +23823,98 @@ refuse it (an unknown callee), or look past it. `lexicalDeclarationOf`
 filters bodiless declarations already, and then answers `undefined` (a
 global) for a lone one: RWF-146's region. Out of BL-099's scope (it is not
 a namespace's scope rule); backlog `BL-104`.
+
+## RWF-149 — A class decorator's result replaces the class, but a construction resolved to the declared one
+
+**Status:** Fixed (BL-100)
+**Failure class:** fabricated edge; false `AFFECTED` and false `NOT_AFFECTED`
+**Defect class:** C (a class binding that may hold the decorator's result
+is collapsed to the declared class), on B (the helpers' runtime behaviour
+is not modelled)
+**Proof family affected:** C (and the `AFFECTED` path's authority)
+**Severity:** P0 / live, pre-existing
+**Fix lane:** A (ADR 0008 § 2's decorator row)
+
+**Discovered:** by task BL-100, measuring RWF-142's helpers against real
+Node v22.11.0 on the repository's TypeScript 5.9.3, both decorator modes;
+each on the base `9b8ea34` (`tests/oracle/bl100-decorator-helper-calls.cases.ts`):
+
+- legacy `C = __decorate([dec], C)` and TC39 `C = _classThis =
+  _classDescriptor.value` make the class binding the decorator's result,
+  yet `new C()` (a local class, and an exported class constructed by an
+  importer) and `Reflect.construct(C, [])` resolved to the declared
+  constructor: with `function dec(_c: any): any { return class {}; }` and
+  `@dec class C { constructor() { lib.parse(1); } }`, `AFFECTED` while
+  Node never calls `lib.parse` (`rwf142.legacy-replaced-class-constructor-not-run`,
+  `rwf142.tc39-replaced-class-constructor-not-run`,
+  `rwf142.reflect-construct-of-a-replaced-class`,
+  `rwf142.replaced-class-constructed-from-another-module`);
+- the same edge hid what the result runs: an implicit `super(...args)`
+  into a replaced base whose result calls `lib.parse` was `NOT_AFFECTED`
+  (`rwf142.implicit-super-into-a-replaced-base`), as were `new C()` of a
+  replaced class in both modes (RWF-142's class rows).
+
+Masked on the base: an explicit `super()` (`unsupported_construct`).
+Method lookups on a decorated class were already refused (`isPlainClass`,
+task A-5b).
+
+**Fix (BL-100):** a construction of a class with a class decorator the
+compiled program calls, whose result is not proven to be nothing
+(`replacedClassEdges`, `call-graph.ts`), gives the declared constructor a
+POSSIBLE edge, never a resolved one, and adds the result's account
+(`decoratorResultEdges`): at `new` (a local class, an import, a re-export
+chain), an implicit `super`, and a documented invoking builtin's construct
+position. A class decorator with no `return` of a value keeps the resolved
+edge (`control.class-decorator-returns-nothing`, `AFFECTED`). A constructed
+class whose definition cannot be located fails closed (an unknown edge);
+a function constructed by `new` has no class decorator and keeps its
+resolved edge. The definition is found through a per-file index built once
+(`definitionIndexOf`): BL-100's independent audit measured the first
+version's root-down lookup per construction as quadratic in a file's
+statements (8,000 constructions: 28.7 s against 6.4 s on the base).
+
+## RWF-150 — A TypeScript ES module's own export overwritten through a cast or an alias
+
+**Status:** Open (backlog `BL-105`)
+**Failure class:** false `NOT_AFFECTED`; false `AFFECTED` (a fabricated edge)
+**Defect class:** A (an import bound to a declaration whose export the
+module overwrites), C (the export's values collapsed to the declaration)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** E (the export write set, ADR 0009)
+
+**Discovered:** by task BL-100's independent audit, against real Node
+v22.11.0 on the repository's TypeScript 5.9.3 (legacy and TC39
+decorators, target ES2022), on the base `9b8ea34` and on BL-100's branch;
+reproduced by BL-100 (ground truth compiled and run directly):
+
+```ts
+// src/decs.ts
+import lib = require("vuln-lib");
+export function dec(_c?: any): any { return undefined; }
+(exports as any).dec = function (_c?: any): any {
+  return class { constructor() { lib.parse(1); } };
+};
+// src/impl.ts
+import { dec } from "./decs";
+@dec class C {}
+new C();
+```
+
+Node calls `lib.parse` (the import reads `decs_1.dec`, the overwritten
+value); the analyzer answers `NOT_AFFECTED` on both sides: the import binds
+to the declared `dec`, whose result is `nothing`. With no decorator,
+`export function dec() { lib.parse(1); } (exports as any).dec = function
+() { lib.safe(1); };` and `import { dec } from "./decs"; dec();` is
+`AFFECTED` on both sides while Node calls only `lib.safe`: a fabricated
+resolved edge. The alias form (`const e: any = exports; e.dec = …`) is the
+same on both sides; plain `exports.dec = …` (no cast) is `UNKNOWN` on
+BL-100's branch. The PRM-63 / E-1 status update's "`const e = exports;
+e.run =` is fixed" holds for a CommonJS-syntax file, not for a TypeScript
+ES module compiled to CommonJS.
+
+Fix direction: in a TypeScript ES module compiled to CommonJS, the export
+write census (task E-1) reads `exports` / `module.exports` through
+`skipOuterExpressions` (a cast, `as`, a non-null assertion, parentheses)
+and through aliases, as it does in a CommonJS file, or withdraws the name.
+Out of BL-100's scope (lane E); backlog `BL-105`.
