@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-099
 - **Branch**: `bl-099-namespace-export-member-read`
 - **Base SHA**: `692b3651f850e51391bf4ba842bff1000c89a995` (BL-097's merge, PR #112)
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): BL-099 task file — a use of a namespace's exported member is a read of the namespace's object`
+  - `test(BL-099): a namespace's exported member against real Node — RWF-141, RWF-145, RWF-147`
+  - `fix(BL-099): no name is looked up past a TypeScript namespace; an exported variable used in its own block is a member read — RWF-141, RWF-145, RWF-147`
+  - (this commit) `docs(BL-099): records — RWF-141 fixed, RWF-145 in part, RWF-147 fixed, RWF-146 and RWF-148 registered, the independent audit's five rounds, debts, backlog (BL-102..104), progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -130,18 +134,21 @@ initializer).
 
 ## Acceptance criteria
 
-- [ ] Every case in `tests/oracle/bl099-namespace-export-member-read.cases.ts`
+- [x] Every case in `tests/oracle/bl099-namespace-export-member-read.cases.ts`
       answers its `expected` verdict with real Node's ground truth, and every
       case whose `base` is `NOT_AFFECTED` while `called` is true failed on
       the base.
-- [ ] The `control.*` cases stay `NOT_AFFECTED`.
-- [ ] Each rule is pinned by a named unit test, and each mutation of it is
+- [x] The `control.*` cases stay `NOT_AFFECTED`.
+- [x] Each rule is pinned by a named unit test, and each mutation of it is
       caught by one.
-- [ ] The graph, proof and verdict differentials are reported separately; no
+- [x] The graph, proof and verdict differentials are reported separately; no
       corpus case moves away from its expected verdict.
-- [ ] RWF-141 and RWF-145 are recorded as fixed.
+- [x] RWF-141 and RWF-145 are recorded as fixed (RWF-145 in part: its
+      `import X =` form; its nested namespace and enum, masked, are BL-102).
 - [ ] The independent audit certifies the change, or its findings are
-      handled per WORKFLOW § 1.5.
+      handled per WORKFLOW § 1.5. **Not certified**: five rounds, each
+      `BLOCKED` on further live shapes (all pre-existing, all fixed); round
+      five's were fixed without a sixth round (see Corrections).
 
 ## Gates
 
@@ -152,3 +159,57 @@ D-09's six known failures; no change is expected.
 ## Report
 
 In the format of `AGENTS.md` § J (`docs/WORKFLOW.md` § 5).
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW`; the sections above are as written at the
+start.
+
+- **The rule became structural (rounds 1 to 3).** What to do, item 2,
+  enumerated which names a namespace's object answers (its blocks' exports).
+  Each audit round found more the file's syntax does not show: an ambient
+  block's implicit exports (round 1), a module augmentation of an exported
+  namespace (round 2), one reached through an alias (`export = N.P`,
+  `export import X = N.P`) and an `export { h }` TypeScript reports and still
+  emits (round 3). So no name is looked up past a namespace
+  (`leavesNamespace`): every name a use walks out of one for is refused. The
+  own-block rule (an exported variable or `export import`) stays, and also
+  covers an `export var` in a nested block (round 5).
+- **`lexicalDeclarationOf` is not changed** (deviation from item 2). Its
+  consumers in `module-model.ts` read `undefined` as "an undeclared global"
+  or "holds no load", so refusing there was not fail-closed (round 1,
+  finding 2). The export model's reading of a namespace's scope is
+  registered as RWF-146 (backlog `BL-103`).
+- **A regression of the first fix, caught before merge** (round 2): an
+  `import x = require("m")` in a namespace, which TypeScript emits as
+  nothing, was recorded as a binding and taken for a load -- a false
+  `NOT_AFFECTED`. Only the entity-name form is recorded now
+  (`audit2.import-require-in-a-namespace`).
+- **Scope widened to the resolver's block-function model** (rounds 4 and
+  5, RWF-147): a function declared in a nested block is refused for a use
+  outside the block (strict code scopes it to the block; sloppy code's
+  Annex B is not told apart, a cost), is found first for a use inside it,
+  and a class static block is a var scope. Required: each was a route to
+  the namespace member read `N.h` the task closes, and the same resolver
+  rule; the plain-function form is fixed with it.
+- **The escape row reads the new causes as "maybe the global"** in its two
+  over-approximating questions (`mayBeUndeclaredGlobal`; rounds 2 and 5),
+  and counts an ambient block's declarations as members.
+- **Precision cost, measured**: seven `AFFECTED`s given up among the
+  oracle cases (`cost.*`: a namespace with no accessor; an outer name, an
+  import or a global used in a namespace's body; a script's namespace; a
+  type-only import alias; two unexported nested namespaces grouped by name;
+  an Annex B block function); twenty-eight of BL-095's cases declare their
+  negative control inapplicable (their verdicts unchanged, BL-095's
+  `control.*` still `NOT_AFFECTED`); four of 1,184 clean graph nodes on the
+  TypeScript sources in `node_modules` (zod; few namespaces there). The
+  JavaScript cost of the block-function rule is in the report.
+- **The audit was not certified.** Five fresh-context rounds, each
+  `BLOCKED` on live false `NOT_AFFECTED`s, every one pre-existing on the
+  base except round 2's regression; all fixed. Round five's findings 1 to 4
+  were fixed after it without a sixth round, as BL-095's round five was.
+  Whether that is enough is the project owner's decision.
+- **Registered, not fixed**: RWF-145's nested namespace and enum (masked;
+  BL-102, with the enum member initializer note of round 4), RWF-146
+  (BL-103), RWF-148 (a bodiless function declaration taken as a binding,
+  live, BL-104).
