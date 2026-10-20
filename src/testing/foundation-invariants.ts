@@ -718,9 +718,18 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "publishes each name's last plain definition, withdrawn by an " +
       "accessor or a later spread or unresolved key; a computed key and an " +
       "export's local resolve by lexical identity, never by name; and an " +
-      "ES module local the file assigns anywhere is withdrawn.",
+      "ES module local the file assigns anywhere is withdrawn. The same " +
+      "write set gates an ES module's exports (task BL-105): a write that " +
+      "may set its name withdraws it, and an un-enumerable reference, a " +
+      "rebinding of exports, a module.exports write or an escaping load " +
+      "withdraws every one, each a reported gap of an entrypoint's roots; " +
+      "the census reads the export objects through TypeScript's value " +
+      "wrappers, and a value import is a load.",
     foundation: "ADR-0009",
-    owners: ["src/code-intelligence/module-model.export-write-set.test.ts"],
+    owners: [
+      "src/code-intelligence/module-model.export-write-set.test.ts",
+      "src/code-intelligence/module-model.esm-export-overwrite.test.ts",
+    ],
     note:
       "Task E-1 (PRM-26, 27, 28, 29, 30, 62, 63, 103). The unit test owns " +
       "each ExportWriteKind, the literal rule, lexical identity, the " +
@@ -729,7 +738,11 @@ export const FOUNDATION_INVARIANTS: readonly InvariantOwnership[] = [
       "tests/oracle/e1-export-write-set.test.ts, run in CI by `npm run " +
       "test:oracle` (it spawns real Node, so it is not a Foundation-gate " +
       "owner). The name-keyed-lookup census (VT-INV-V-corroboration's) " +
-      "fails on any name-keyed export lookup this task removed coming back.",
+      "fails on any name-keyed export lookup this task removed coming back. " +
+      "Task BL-105 (RWF-150): the ES gate, the TypeScript wrappers, imports " +
+      "as loads and the entrypoint root gap are owned by " +
+      "module-model.esm-export-overwrite.test.ts; ground truth " +
+      "tests/oracle/bl105-ts-esm-export-overwrite.test.ts.",
   },
 ];
 
