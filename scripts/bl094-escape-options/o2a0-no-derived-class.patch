@@ -1,0 +1,24 @@
+diff --git a/src/code-intelligence/escape-row.ts b/src/code-intelligence/escape-row.ts
+index 88ab8b8..8738e7d 100644
+--- a/src/code-intelligence/escape-row.ts
++++ b/src/code-intelligence/escape-row.ts
+@@ -49,6 +49,11 @@ export { assignedNames, skipOuterExpressions } from "./ambient-names.js";
+  * writes an export, which the export model owns; `exports.x()` calls one,
+  * AUD-02, task A-3b). None is ever treated as an ambient root here.
+  */
++/** BL-094 prototype switch: opaque to control-flow narrowing. */
++function bl094Option(): boolean {
++  return true;
++}
++
+ export const MODULE_SCOPE_ROOTS: ReadonlySet<string> = new Set([
+   "module",
+   "exports",
+@@ -2018,6 +2023,7 @@ function hasOwnStaticChain(
+   if (clause === undefined) {
+     return true;
+   }
++  if (bl094Option()) return false;
+   const base = clause.types[0]?.expression;
+   return base !== undefined && isFresh(base, hops + 1);
+ }
