@@ -848,3 +848,207 @@ owner's decision, backlog `BL-094`. The precision cost of BL-091's
 refinements, measured with `scripts/bl081-builtin-store-escape-corpus.mjs`
 against BL-081's merge: no clean `node_modules` graph node lost, and no
 corpus verdict moved.
+
+## Proposed decision — BL-094: the escape row's "unless proven" rule (PROPOSED — requires project-owner decision)
+
+Recorded by task [`BL-094`](../tasks/BL-094-escape-row-decision.md). This
+ADR's body and every earlier section are unchanged; this section is
+appended, and nothing in it is implemented. It answers the question the
+note above hands the project owner: keep point-fixing the rule, prove
+less, or read more of the build.
+
+### What was measured
+
+All on the base `842e808` (BL-105's merge), Node v22.11.0, TypeScript
+5.9.3. Every script is in `scripts/bl094-escape-options/`.
+
+**The inventory** (`inventory.mts`). Every oracle case of the five tasks
+that built and re-audited the rule (BL-081, BL-091, BL-095, BL-099,
+BL-100) whose `base` verdict was `NOT_AFFECTED` while real Node runs the
+replacement: 195 historical false `NOT_AFFECTED`s, classified by the
+clause they broke.
+
+| axis | BL-081 | BL-091 | BL-095 | BL-099 | BL-100 | all |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| the rule absent (a builtin reached without its name, before BL-081) | 15 | 0 | 0 | 0 | 0 | 15 |
+| a TypeScript emit (a store, read or call the source does not show) | 0 | 5 | 48 | 30 | 17 | 100 |
+| a store form the closed list missed | 19 | 0 | 0 | 0 | 0 | 19 |
+| a class (inheritance, its `this`, static side, `prototype`, members) | 5 | 21 | 0 | 0 | 0 | 26 |
+| a non-class object's [[Prototype]] | 6 | 0 | 0 | 0 | 0 | 6 |
+| a value or key route, or the proofs' bookkeeping | 29 | 0 | 0 | 0 | 0 | 29 |
+
+Two facts follow. Both are classifications of the cases' own `finding`
+and `mechanism` fields, not measurements of what a tier would have
+pre-empted: every prototype below carries every point fix already made.
+**Every one of the 121 historical false `NOT_AFFECTED`s registered after
+BL-081** (BL-091's 26, BL-095's 48, BL-099's 30, BL-100's 17) **is a class
+or a TypeScript emit**: BL-091's three re-audit rounds over the whole rule
+found none in the store forms, the routes or a non-class object's
+[[Prototype]]. (BL-081's own ten rounds are one suite; the inventory does
+not tell them apart.) And **of the 100 TypeScript-emit cases, 47 are not
+in `isProvenFreshObject` at all**: BL-099's 30 (RWF-141 23, RWF-147 6,
+RWF-145 1: a namespace member's scope in call resolution) and BL-100's 17
+(RWF-142 16, RWF-149 1: a decorator's result handed to TypeScript's
+helpers, an account BL-100 gave in the escape row, but through no proof
+clause). No change to the freshness proofs reaches them.
+
+**One exception, found by this task's independent audit: RWF-151**, a live
+false `NOT_AFFECTED` pre-existing on the base and present in every tier
+but O2d. An object whose chain reaches `Array.prototype.toString` gets an
+own `join`, stored (`const a = []; a.join = f`) or defined (`{ __proto__:
+[], join: f }`), and coercing it (`String(a)`, `"" + a`, a template,
+`Math.max(a)`) runs `f`. `join` is not a protocol member, so the
+protocol-member row gives it no edge. The definition form never reaches
+`isProvenFreshObject`: it is that row's gap (backlog `BL-109`), not the
+freshness proofs', though its stored form passes through a clause every
+tier keeps.
+
+**Option O3, read the build** (`o3-emit-probe.mjs`). One TypeScript source
+(RWF-126/RWF-127's shape: a static field on a class derived from
+`util.inspect`) under one tsconfig, turned into what Node runs by each
+tool the repository has, then run:
+
+| tsconfig | `tsc` | esbuild (tsx, vite-node) | `node --experimental-strip-types` |
+| --- | --- | --- | --- |
+| target ES2020 | the setter runs (assign) | the setter runs (assign) | nothing runs (define) |
+| target ES2022 | nothing runs (define) | nothing runs (define) | nothing runs (define) |
+| target ES2022, `useDefineForClassFields: false` | the setter runs | the setter runs | nothing runs |
+
+`tsc` and esbuild agree in every row; Node's own type stripping, which
+reads no tsconfig at all, runs a different program from theirs under the
+same tsconfig (target ES2020, or `useDefineForClassFields: false`). A
+tsconfig is a statement about the tools that read it, not about what
+runs: ADR 0010's C2 ruling for
+module resolution, measured here for the emit. Babel's and swc's loose
+class fields, which can assign where the tsconfig says define, are not
+installed and not measured. And the emit's stores that do not depend on
+the target at all -- a namespace's members, an enum's, a decorator's
+helpers -- are untouched by any build setting.
+
+**Options O2, prove less** (`*.patch`, each applicable to the base with
+`git apply`). Each tier refuses more of `isProvenFreshObject`'s proofs;
+refusing a proof only makes more stores escapes, so no tier can produce a
+`NOT_AFFECTED` the base does not:
+
+- **O2a0** — no derived class is proven (`extends` anything);
+- **O2a** — no class at all (value, `this`, `prototype`, field target);
+- **O2b** — O2a, and no object a TypeScript emit creates (a namespace's,
+  an enum's);
+- **O2c** — O2b, and no `this` and no `prototype`: literals, functions
+  and the CommonJS `module` / `exports` / `module.exports` only;
+- **O2d** — nothing is proven (the upper bound of the cost);
+- **O2e** — O2a0 everywhere, and O2b in a TypeScript source only (a
+  class, its `this` and `prototype`, a namespace's and an enum's objects
+  are never proven where the emit, not the source, decides them).
+
+Each measured separately: the real-Node oracle suite (1,304 tests; the
+base passes all), the differential over the 139 corpus cases
+(`scripts/differential.mjs`, base `842e808`), and the clean-node precision
+of `scripts/bl081-builtin-store-escape-corpus.mjs` (183 JavaScript and 12
+TypeScript `node_modules` packages, base 29,748 and 1,180 clean nodes).
+
+| option | oracle failures (all precision: control → `UNKNOWN`, negative control → `UNKNOWN`) | graph differential | proof differential | verdict differential | JavaScript clean nodes lost | TypeScript clean nodes lost |
+| --- | --- | --- | --- | --- | ---: | ---: |
+| O2a0 no derived class | 4 (4, 0) | 0 cases | 0 | 0 | 0 | 0 |
+| O2e hybrid | 22 (14, 8) | 0 cases | 0 | 0 | = O2a0 | 10 |
+| O2a no class | 23 (16, 7) | 2 cases, +56 sites | 0 | 0 | 206 | 10 |
+| O2b + no emit object | 26 (18, 8) | 2 cases, +56 sites | 0 | 0 | = O2a | 10 |
+| O2c literal core | 29 (21, 8) | 2 cases, +98 sites | 0 | 0 | 207 | 10 |
+| O2d no proof | 876 (90, 779; 6 open-defect records flip, 1 harness self-test) | 69 cases, +593 sites | 25 | 1 (`RWB-07` `NOT_AFFECTED` → `UNKNOWN`) | 677 | 25 |
+
+No tier produced a `NOT_AFFECTED` the base does not, in any suite. "=
+O2a" and "= O2a0" are equal by construction, not measured: O2b's and
+O2e's further cuts are reachable only from TypeScript syntax (a namespace,
+an enum) or are guarded by a TypeScript-source check, which no JavaScript
+file reaches. The two graph cases of O2a, O2b and O2c are `RWB-09a` and
+`RWB-09b` (a real package; their verdicts are D-09 known failures,
+unchanged).
+
+### Recommendation
+
+**Adopt O2e: the rule proves less exactly where its findings came from,
+and stops point-fixing there.** Concretely, `isProvenFreshObject` keeps
+its proofs for literals, functions, a function's `prototype` through its
+checked stores, a base class and its `this` and `prototype` in a
+JavaScript source, the CommonJS `module` / `exports` / `module.exports`,
+and a module's top-level `this`; and it refuses:
+
+1. **every derived class** (`extends` anything), in any source: its static
+   side, its `prototype` and its instances inherit from an object no
+   syntax-local proof can establish. This deletes the recursive `extends`
+   proof (`hasOwnStaticChain`'s second branch), the mechanism of RWF-124
+   and RWF-126 (21 of BL-091's 26 findings);
+2. **in a TypeScript source, every class** (its value, `this`, `prototype`
+   and a field's target), **every namespace's object and every enum's
+   object**: there the emit, not the source, decides what the object is
+   and which stores run, and the emit is not knowable from the project
+   (O3's probe). This deletes `classPrototypeIsStable`, the class branches
+   of `namespaceObjectIsOwn` and `legacyFieldTargetIsOwn`, and the
+   namespace and enum ownership proofs -- the clauses behind RWF-127,
+   RWF-128, RWF-131 and RWF-132.
+
+Why O2e over the others: it is the only tier that removes both axes and
+costs no JavaScript corpus precision (0 of 29,748 clean nodes; its cuts
+beyond O2a0 never run on a JavaScript file; in the oracle suites its
+JavaScript cost is two controls, RWF-126's classes derived from the
+program's own), its TypeScript cost is O2a's (10 of 1,180), and no corpus
+verdict, proof or graph moves. O2a, O2b and O2c also refuse a
+JavaScript base class, which costs 206--207 clean nodes and no finding of
+the inventory justifies: a JavaScript base class's chain is
+`Function.prototype` / `Object.prototype`, the same as a function's,
+whose proof has had no finding since BL-081. O2d is not usable (876
+oracle tests, `RWB-07`'s correct `NOT_AFFECTED` lost). O1 has no stated
+end condition: after BL-081, the inventory's 121 consecutive findings are
+all a class or a TypeScript emit, 74 of them classified in the proof
+clauses O2e removes (BL-091's 26, BL-095's 48); RWF-151, found after them,
+is another row's gap (above).
+
+**Not adopted: O3.** A tsconfig cannot establish the emit (the probe
+above); reading it would trade soundness for precision, which ADR 0010's
+C2 ruling refused for resolution. A later precision task may consult the
+build only as C2 does, as a cross-check that can refuse a proof, never
+grant one.
+
+**What O2e does not close, stated so it is not overclaimed:**
+
+- **The stores TypeScript's emit makes that the source does not show.**
+  O2e makes every such store an escape *when it is seen as a store*; it
+  does not make it seen. An ES5 class's methods (`C.prototype.m = …`,
+  RWF-143, backlog `BL-101`) are the known unseen one. Under O2e every
+  TypeScript class's `prototype` is unproven, so BL-101's fix direction
+  would make every method of every TypeScript class an escape: a cost not
+  measured here, which BL-101 must measure before it lands.
+- **The TypeScript emit outside the escape row**: 47 of the inventory's
+  cases (a namespace member's scope in call resolution, RWF-141 and
+  RWF-147; a decorator's result handed to TypeScript's helpers, RWF-142
+  and RWF-149), and the open RWF-145, RWF-146, RWF-148 and RWF-150's
+  family. They share one cause: the analyzer reads a TypeScript source
+  while Node runs an emit of it. That is a design question for its own
+  task (backlog `BL-108`), not for this rule.
+- **A member a builtin invokes implicitly** (RWF-151, backlog `BL-109`):
+  an own `join` on an object whose chain reaches `Array.prototype.toString`,
+  stored or defined; the protocol-member row's account.
+
+**Certification criterion.** The class is certified when one fresh-context
+audit round over the reduced proof list, attacked against real Node,
+finds no live false `NOT_AFFECTED` whose mechanism is a kept proof clause
+itself. The test is by mechanism: a finding is the clause's when it
+depends on the object being proven the program's own -- it no longer
+reproduces once the object is unproven (an unknown parameter, say) -- and
+does not reproduce with the member defined in the object's own literal
+instead of stored. Such a finding drops that clause, rather than starting
+another round of point fixes: a clause O2c also drops costs at most O2c's
+measured 207 clean nodes; dropping one O2c keeps (literals, functions, the
+CommonJS `module` / `exports`) is not measured, and lies between O2c's
+cost and O2d's 677. Any other finding is another row's gap and is fixed
+in that row, and the clause stays: RWF-151 reproduces in the definition
+form, which no freshness proof touches, so it is the protocol-member
+row's.
+
+**Implementing task**: backlog `BL-107`. The controls that lose precision
+(O2e's 22 oracle tests: 14 controls and 8 negative controls, all in a
+TypeScript source or a derived class, two of them JavaScript) become the
+decision's recorded cost, as BL-081's six were; none is pinned as a wrong
+verdict. The prototype's sentinels (`bl094Option()`, `parent !==
+undefined`, `false &&`) are measurement hacks: BL-107 deletes the refused
+proofs instead.

@@ -325,6 +325,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-148 | `vuln-lib` (synthetic fixture); a gap in the scope-aware binding resolver, not tied to one package | A function declaration with no body (`declare function L(…)` in a namespace or block, a lone overload signature) is taken as the name's binding, though the emit erases it and the call reads the outer binding or the global: a resolved callee with no body, so no edge | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-104`) |
 | RWF-149 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | A class decorator's result replaces the class (legacy `C = __decorate([dec], C)`, TC39 `__esDecorate`), but `new C()`, an implicit `super` into `C` and `Reflect.construct(C, …)` resolved to the declared constructor | fabricated edge: false AFFECTED and false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-100) — see below |
 | RWF-150 | `vuln-lib` (synthetic fixture); a gap in export attribution, not tied to one package | A TypeScript ES module compiled to CommonJS that overwrites its own export through a cast or an alias (`(exports as any).dec = …`, `const e: any = exports; e.dec = …`) is not counted as an export write: an importer binds the name to the declared function | false NOT_AFFECTED (family C) and false AFFECTED, pre-existing — see below | **Fixed** (BL-105) — see below |
+| RWF-151 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | An own `join` on an object whose [[Prototype]] chain reaches `Array.prototype.toString` -- stored (`const a = []; a.join = f`) or defined (`{ __proto__: [], join: f }`) -- is run whenever the object is coerced (`String(a)`, `"" + a`, a template, `Math.max(a)`), but `join` is not a protocol member, so neither the store nor the definition gets an edge: `f` gets none at all | false NOT_AFFECTED (family C), pre-existing — see below | Open — see below |
 
 ---
 
@@ -23989,3 +23990,74 @@ The corpora's graph, proof and verdict differentials are zero (139 cases;
 no evidence about TypeScript ES modules, OPEN-DEBTS D-12). The independent
 audit ran two rounds: round 1 `BLOCKED` on the named-import write (in
 scope, fixed), round 2 `CERTIFIED`.
+
+## RWF-151 — An own `join` on an object that inherits `Array.prototype.toString`, run on coercion
+
+**Status:** Open
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the analyzer assumes coercing an object that inherits
+`Array.prototype.toString` runs no program code; real Node calls the
+object's own `join`)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** A (ADR 0008 § 2's protocol-member row, task A-4's list)
+
+**Discovered:** by task BL-094's independent audit, against real Node
+v22.11.0 with the oracle harness (E-1's loud fixture `wrap`, which defines
+`dangerousOp`, calling the target `parse`, and exports `run = safeOp`), on
+the base `842e808` and on every BL-094 prototype but the one that proves
+nothing (`scripts/bl094-escape-options/o2d-no-proof.patch`); reproduced by
+BL-094 on the base (the analyzer answers `NOT_AFFECTED`, real Node prints
+`CALLED parse`):
+
+```js
+// wrap/index.js, after the fixture's prelude
+const a = [];
+a.join = function () { dangerousOp(1); return ""; };
+String(a);
+exports.run = safeOp;
+```
+
+The same on the base for `"" + a`, a template literal `` `${a}` `` and
+the function-`prototype` route (`function A() {} A.prototype = [];
+A.prototype.join = f; String(new A())`); the audit also measured
+`Number(a)`, `a == 1`, `a < 1`, `parseInt(a)`, `q[a]`, an ES module, an
+alias, `a["join"] = f`, a store inside a function and a stored function
+declaration on its O2e prototype. Caught (`UNKNOWN`) on the base: an
+explicit `a.toString()`, `[a].join()`, `"x".concat(a)`, `isNaN(a)`, a
+coercion in another file and `module.exports = []`.
+
+**The mechanism.** Coercing an array runs `Array.prototype.toString`,
+which reads `join` off its receiver and calls it (ECMA-262, `Array.prototype.toString`).
+In the stored form, the escape row proves `a` the program's own
+(`isProvenFreshObject`), so `a.join = f` replaces no builtin and is no
+escape; and `join` is not in
+`PROTOCOL_NAMES` (`src/code-intelligence/protocol-members.ts`), so the
+protocol-member row gives the store no possible edge either. The
+freshness argument ("a store onto one of its members cannot replace a
+builtin the call graph trusts") is not what fails: nothing is replaced. A
+member that a builtin invokes on its receiver is the protocol-member
+row's account, as an own `toString` on a fresh object already is.
+
+**Wider than the first reproduction** (BL-094's independent audit,
+round 2, measured on the base; confirmed by BL-094 for the first three):
+the definition form, with no store at all -- `const o = { __proto__: [],
+join: f }; String(o)`, a `join() {}` method, `__proto__:
+Array.prototype`, and `function A() {} A.prototype = { __proto__: [],
+join: f }; String(new A())` -- and more coercing sites on the stored
+form: `Math.max(a)`, `encodeURIComponent(a)`, `new Date(a)`, `-a`, `a in
+{}`, a computed key (`{ [a]: 1 }`, a class field's), and an outer array
+coerced (`const b = [a]; "" + b`). Sound (`UNKNOWN`) on the base: a class
+derived from `Array` with a `join` method or store, `Object.setPrototypeOf`,
+an object whose own `toString` (or `valueOf`, `Symbol.toPrimitive`) is
+`Array.prototype.toString`, and the analogous `Date.prototype.toJSON` →
+`toISOString` and `RegExp.prototype.test` → `exec` shapes. The definition
+form never reaches `isProvenFreshObject`: the gap is the protocol-member
+row's, whatever object holds the `join`, wherever the chain reaches
+`Array.prototype.toString` without a call the program shows.
+
+**Fix direction:** backlog `BL-109`: `join` is a protocol member, and the
+list is checked against the specification's implicit invocations reachable
+from a coercion or another operation with no call in the program. Adding
+a name to ADR 0008 § 2's list as amended may need the project owner's
+confirmation.
