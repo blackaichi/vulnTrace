@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW (report verdict `NEEDS_DECISION`: the project
+  owner decides ADR 0008's "Proposed decision — BL-094")
 - **Backlog ID**: BL-094
 - **Branch**: `bl-094-escape-row-decision`
 - **Base SHA**: `842e808b91f2c1bbfcc2688b0dd233c4c45974ae` (BL-105's merge, PR #115)
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): BL-094 task file — decide the escape row's "unless proven" rule`
+  - `chore(BL-094): the escape row's options as prototypes, measured — inventory, O2 tiers, O3 emit probe`
+  - (this commit) `docs(BL-094): ADR 0008 proposed decision (O2e) — RWF-151 registered, the independent audit's two rounds, debts, backlog (BL-107..109), progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -123,18 +127,19 @@ analyzer behaviour on its branch.
 
 ## Acceptance criteria
 
-- [ ] Every historical false `NOT_AFFECTED` of the class's oracle suites is
+- [x] Every historical false `NOT_AFFECTED` of the class's oracle suites is
       classified by the proof clause it broke, with counts per clause.
-- [ ] Each option (O1, every O2 tier) is prototyped as a patch committed
+- [x] Each option (O1, every O2 tier) is prototyped as a patch committed
       under `scripts/bl094-escape-options/`, applicable to the base.
-- [ ] Each prototype's JavaScript and TypeScript corpus precision, its
+- [x] Each prototype's JavaScript and TypeScript corpus precision, its
       graph, proof and verdict differentials, and its oracle-case result
-      are measured and reported separately.
-- [ ] O3 is assessed against what the tsconfig can establish about the
+      are measured and reported separately (two JavaScript corpus walks
+      equal by construction, not run to completion: see Outcome).
+- [x] O3 is assessed against what the tsconfig can establish about the
       emit that runs, with the evidence named.
-- [ ] ADR 0008 carries an appended PROPOSED section with a recommendation.
-- [ ] No file under `src/` changes on the branch.
-- [ ] The independent audit ran, and its verdict is in the pull request.
+- [x] ADR 0008 carries an appended PROPOSED section with a recommendation.
+- [x] No file under `src/` changes on the branch.
+- [x] The independent audit ran, and its verdict is in the pull request.
 
 ## Gates
 
@@ -147,3 +152,30 @@ are reported separately. Validation baseline: OPEN-DEBTS D-09.
 
 In the format of `AGENTS.md` section J. The verdict is expected to be
 `NEEDS_DECISION`, with the recommendation and the measurements behind it.
+
+## Outcome
+
+- **Recommendation**: option O2e (ADR 0008, "Proposed decision — BL-094"):
+  no derived class is proven the program's own, and in a TypeScript source
+  no class, namespace object or enum object is. O3 is rejected as a
+  soundness route. Implementation: backlog `BL-107`, if accepted.
+- **Deviations from this file** (AGENTS.md § D):
+  - two tiers were added that § "What to do" did not name, because the
+    measurements pointed to them: O2a0 (no derived class) and O2e (the
+    hybrid). The recommended one is O2e;
+  - O1 is the base itself, measured as every tier's base side, not as a
+    patch;
+  - the JavaScript corpus walks of O2b and O2e were stopped, not run to
+    completion: their cuts beyond O2a's and O2a0's are reachable only
+    from TypeScript syntax or guarded by a TypeScript-source check, so
+    their JavaScript results are those tiers' by construction (the
+    independent audit, round 1, confirmed it);
+  - a STOP condition fired: the independent audit found RWF-151, a live
+    false `NOT_AFFECTED` on the base not yet registered. It is registered
+    (FINDINGS, backlog `BL-109`, P0) and reported, not fixed: its fix is
+    the protocol-member row's, outside this task.
+- **Independent audit**: round 1 `BLOCKED` (RWF-151 in a clause every
+  tier keeps, and five non-blocking corrections to the proposal), all
+  addressed; round 2 `CERTIFIED` with five non-blocking findings (RWF-151
+  wider than its first record; a mechanism-based routing test for the
+  certification criterion; three wording fixes), all addressed.

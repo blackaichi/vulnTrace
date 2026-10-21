@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-20, by `BL-105`.
+**Last updated:** 2026-10-21, by `BL-094`.
 
 ## Objective
 
@@ -303,19 +303,25 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-105` — A TypeScript ES module's own export overwritten through its
-exports object ([task file](tasks/BL-105-ts-esm-export-overwrite.md)):
-`READY_FOR_REVIEW`; its independent audit ran two rounds: round 1
-`BLOCKED` on a write to a self-import's named binding (in scope, fixed),
-round 2 `CERTIFIED`. `BL-100` merged as PR #114.
+`BL-094` — Decide the escape row's "unless proven" rule
+([task file](tasks/BL-094-escape-row-decision.md)): `READY_FOR_REVIEW`,
+verdict `NEEDS_DECISION`. No analyzer change; it measured six "prove
+less" prototypes and a "read the build" probe, and proposes option O2e in
+ADR 0008 ("Proposed decision — BL-094", PROPOSED): no derived class is
+proven the program's own, and in a TypeScript source no class, namespace
+object or enum object is. `BL-105` merged as PR #115.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-105`:
-`BL-094` (the decision on the escape row's rule, P1), `BL-096`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-094`:
+`BL-109` (RWF-151, P0, a live false `NOT_AFFECTED`: `join` as a protocol
+member), `BL-107` (the decision's implementation, only if O2e is
+accepted), `BL-096`
 (the decision on `module.paths`'s read-only exemptions, RWF-136, P1),
-`BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-101`
-(RWF-143, P1, an ES5 class's methods), `BL-079` (RWF-108, P0, at E-4's
+`BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
+(design, P1: a TypeScript source analysed as the program its emit runs),
+`BL-101` (RWF-143, P1, an ES5 class's methods; after BL-107, whose O2e
+makes its cost one to measure first), `BL-079` (RWF-108, P0, at E-4's
 boundary), `E-3` (entrypoint roots), `E-4`, `E-5`. `BL-080` (RWF-109 and,
 since BL-097, RWF-144, a live false `NOT_AFFECTED`: raised to P0),
 `BL-078` (RWF-107), `BL-082` (RWF-111), `BL-083` (RWF-113), `BL-087`
@@ -332,6 +338,18 @@ for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
 withdrawals.
 
 ## Recently discovered
+
+From `BL-094`: `RWF-151`, found by its independent audit, a live false
+`NOT_AFFECTED` pre-existing on the base: an own `join` (stored or
+defined) on an object inheriting `Array.prototype.toString` runs on every
+coercion, and `join` is not a protocol member
+(backlog `BL-109`, **P0**). Two more backlog rows: `BL-107` (P1, implement
+the decision if accepted, with its certification round) and `BL-108`
+(P1, design: of the escape row's 195 historical false `NOT_AFFECTED`s,
+100 come from analysing a TypeScript source while Node runs its emit, 47
+of them outside the escape row's proofs). BL-101's fix direction would, under
+O2e, make every TypeScript class method an escape: a cost BL-094 did not
+measure.
 
 From `BL-105`: RWF-150 is wider than its record (a self-import holds the
 module's own exports object: four more live false `NOT_AFFECTED`s, and two

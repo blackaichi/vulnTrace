@@ -1588,6 +1588,34 @@ RWF-098's unit records, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108,
 RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136, RWF-139, RWF-140,
 RWF-143, RWF-144, RWF-145, RWF-146 and RWF-148 from this family.
 
+**Progress, added by task `BL-094` (2026-10-21).** Task BL-094
+(`docs/tasks/BL-094-escape-row-decision.md`) changed no analyzer code. It
+measured whether the escape row's "unless proven" rule (ADR 0008's BL-081
+decision record) should keep being point-fixed, prove less, or read more
+of the build, and proposes an answer for the project owner (ADR 0008,
+"Proposed decision — BL-094", PROPOSED). Its inventory classifies the
+rule's 195 historical false `NOT_AFFECTED`s by the clause each broke:
+all 121 registered after BL-081 are a class or a TypeScript emit, and 47
+of the emit cases are outside the escape row's proofs. Its probe shows a
+tsconfig cannot establish the emit Node runs (one tsconfig, three tools,
+two programs), so reading the build can never grant a proof. Of six
+"prove less" prototypes (`scripts/bl094-escape-options/`), it recommends
+**O2e**: no derived class is ever proven the program's own, and in a
+TypeScript source no class, namespace object or enum object is. Measured
+on the prototype: no `NOT_AFFECTED` the base does not give, in any suite;
+no corpus graph, proof or verdict change over 139 cases; 22 oracle tests
+lose precision; 0 of 29,748 JavaScript and 10 of 1,180 TypeScript clean
+`node_modules` graph nodes lost. If accepted, backlog `BL-107` implements
+it with a certification round; the TypeScript emit as the analysed
+program is a design question of its own (backlog `BL-108`). Its
+independent audit found `RWF-151`, registered, not fixed: an own `join`,
+stored or defined, on an object whose chain reaches
+`Array.prototype.toString` is run on every coercion, but `join` is not a
+protocol member (live, pre-existing, in every tier but the one that
+proves nothing; the protocol-member row's gap, backlog `BL-109`, P0). Nothing in this
+entry is fixed by BL-094: RWF-063, RWF-110 and RWF-120 stay "fixed in
+part", and the list above stands, with RWF-151.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
