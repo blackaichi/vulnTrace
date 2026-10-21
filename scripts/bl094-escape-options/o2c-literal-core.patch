@@ -1,0 +1,119 @@
+diff --git a/src/code-intelligence/escape-row.ts b/src/code-intelligence/escape-row.ts
+index 88ab8b8..1a5c616 100644
+--- a/src/code-intelligence/escape-row.ts
++++ b/src/code-intelligence/escape-row.ts
+@@ -49,6 +49,11 @@ export { assignedNames, skipOuterExpressions } from "./ambient-names.js";
+  * writes an export, which the export model owns; `exports.x()` calls one,
+  * AUD-02, task A-3b). None is ever treated as an ambient root here.
+  */
++/** BL-094 prototype switch: opaque to control-flow narrowing. */
++function bl094Option(): boolean {
++  return true;
++}
++
+ export const MODULE_SCOPE_ROOTS: ReadonlySet<string> = new Set([
+   "module",
+   "exports",
+@@ -1655,15 +1660,12 @@ function isFresh(raw: ts.Expression, hops: number): boolean {
+     ts.isArrayLiteralExpression(expr) ||
+     ts.isFunctionExpression(expr) ||
+     ts.isArrowFunction(expr) ||
+-    (ts.isClassExpression(expr) &&
+-      !isDecorated(expr) &&
+-      hasOwnStaticChain(expr, hops)) ||
+     ts.isRegularExpressionLiteral(expr)
+   ) {
+     return true;
+   }
+   if (expr.kind === ts.SyntaxKind.ThisKeyword) {
+-    return isFreshThis(expr);
++    return !bl094Option() && isFreshThis(expr);
+   }
+   if (
+     ts.isBinaryExpression(expr) &&
+@@ -1693,6 +1695,9 @@ function isFresh(raw: ts.Expression, hops: number): boolean {
+       everyMemberStoreIsFresh(member.object, "exports", hops)
+     );
+   }
++  if (member.key === "prototype") {
++    return false;
++  }
+   if (member.key === "prototype" && isFreshBinding(member.object, hops)) {
+     const binding = resolveNamedBinding(member.object);
+     const cls =
+@@ -1702,6 +1707,7 @@ function isFresh(raw: ts.Expression, hops: number): boolean {
+           ? skipOuterExpressions(binding.value)
+           : undefined;
+     if (cls !== undefined && ts.isClassLike(cls)) {
++      if (bl094Option()) return false;
+       // A class's `prototype` is non-writable and non-configurable (the
+       // binding is proven above, so it is the class, undecorated). A
+       // derived class's inherits from its base's `prototype`, which a store
+@@ -1891,6 +1897,7 @@ function isFreshThisPosition(node: ts.Node): boolean {
+       return false;
+     }
+     if (ts.isClassStaticBlockDeclaration(current)) {
++      if (bl094Option()) return false;
+       // The class itself -- unless a class decorator stands in for it
+       // (TC39 decorators run static code on the decorator's result), or a
+       // namespace merges with it (task BL-095's audit, round 4, finding 2).
+@@ -1902,6 +1909,7 @@ function isFreshThisPosition(node: ts.Node): boolean {
+       );
+     }
+     if (ts.isPropertyDeclaration(current) && ts.isClassLike(current.parent)) {
++      if (bl094Option()) return false;
+       // A field initializer: `this` is the class for a static field (the
+       // decorator's result for a decorated class), the new instance for an
+       // instance field.
+@@ -1916,6 +1924,7 @@ function isFreshThisPosition(node: ts.Node): boolean {
+       );
+     }
+     if (ts.isConstructorDeclaration(current)) {
++      if (bl094Option()) return false;
+       return (
+         ts.isClassLike(current.parent) &&
+         !isDerived(current.parent) &&
+@@ -2108,8 +2117,7 @@ function computeNamespaceObjectIsOwn(ns: ts.ModuleDeclaration): boolean {
+     return true;
+   }
+   const parent = ns.parent;
+-  if (!ts.isSourceFile(parent)) {
+-    // Nested in another namespace (or a `declare module`).
++  if (parent !== undefined) {
+     return false;
+   }
+   const name = ns.name.text;
+@@ -2131,7 +2139,7 @@ function computeNamespaceObjectIsOwn(ns: ts.ModuleDeclaration): boolean {
+       return true;
+     }
+     if (ts.isClassDeclaration(statement)) {
+-      return !isDecorated(statement) && hasOwnStaticChain(statement, 0);
++      return false;
+     }
+     // A function with a body binds itself; an overload alone binds
+     // nothing; an enum's members are stores of their own.
+@@ -2186,6 +2194,7 @@ function enumObjectIsOwn(declaration: ts.EnumDeclaration): boolean {
+   const sourceFile = declaration.getSourceFile();
+   const name = declaration.name.text;
+   return (
++    false &&
+     ts.isSourceFile(declaration.parent) &&
+     !MODULE_SCOPE_ROOTS.has(name) &&
+     !assignedNames(sourceFile).has(name) &&
+@@ -2551,7 +2560,7 @@ function legacyFieldTargetIsOwn(
+   cls: ts.ClassLikeDeclaration,
+   isStaticField: boolean,
+ ): boolean {
+-  if (prototypeMayBeChanged(undefined, cls.getSourceFile())) {
++  if (cls !== undefined) {
+     return false;
+   }
+   // A static field of a decorated class is assigned onto the decorator's
+@@ -2599,6 +2608,7 @@ function isFreshBinding(id: ts.Identifier, hops: number): boolean {
+     case "function":
+     case "function-expression":
+     case "class": {
++      if (binding.kind === "class" && bl094Option()) return false;
+       // A class decorator may hand back any value, which the name is then
+       // bound to (`@dec class C {}` compiles to `C = dec(C) || C`; the
+       // audit of task BL-081 measured `Object` from both decorator modes).
