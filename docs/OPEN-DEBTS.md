@@ -1636,6 +1636,59 @@ Measured cost over this repository's `node_modules`: 293 of 29,748 clean
 JavaScript and 32 of 1,180 clean TypeScript graph nodes lost (5 without the
 derived-class rule). The list above stands, without RWF-151.
 
+**Progress, added by task `BL-096` (2026-10-25).** Task BL-096
+(`docs/tasks/BL-096-module-paths-read-only-exemptions.md`) changed no
+analyzer code. It measured RWF-136, the loader classifier's read-only
+exemptions for a `Module` instance's lookup list, against real Node and
+proposes an answer for the project owner (ADR 0010, "Proposed decision —
+BL-096", PROPOSED). The class is wider than its record: every member read
+the list does not own, every conversion (a property key, `++`, an outer
+array converted), spread, `await` and both operands of `instanceof` are
+exempt too, and each hands the list to code a module may install. So
+do the routes the resolver answers `ambiguous` for
+(`require.cache[__filename].paths`, a chain past its depth budget). Of 49
+oracle cases in which real Node calls the target, 47 are a false
+`NOT_AFFECTED` on the base (family B, not A as recorded), each held as an
+open-soundness-defect record (`tests/oracle/bl096-module-paths-read-only.*`).
+
+Four findings are registered, all live and pre-existing:
+
+- `RWF-154`: `module.paths instanceof H`, with the program's own
+  `Symbol.hasInstance`.
+- `RWF-155`: the list in a shorthand property, `({ p }).p.shift()`.
+- `RWF-157`: a `const` that may hold `require` or the list is resolved to
+  the first.
+- `RWF-156`: a replaced builtin receives the lookup state from Node's own
+  loader (`Module._resolveLookupPaths`'s `unshift`, `Module.prototype.load`'s
+  `this.paths = …`), with no use of the list in the program. A store of
+  `Array.prototype.constructor` (its species) is one form, and an
+  `extensions` or `cache` setter, handed the loader's registries by
+  `makeRequireFunction`, is another.
+
+The last three were found by the task's independent audit, which ran
+four rounds; the fourth `CERTIFIED` the recommendation.
+The list in an array literal is PRM-105's.
+
+The options were prototyped and measured
+(`scripts/bl096-module-paths-options/`):
+
+- (a), the exemptions kept while no file of the closure may write a
+  builtin, misses builtin stores its precondition cannot see. A complete
+  precondition is the escape row's uncertified relation, and in practice
+  it fails for 314 of 450 packages.
+- (b) as worded misses inherited element reads.
+- (b1), a list of fail-closed uses, missed eight cases.
+- The recommendation, **(b2)**, is an allow-list over the use: the list's
+  syntactic parent decides, a closed list of parents is exempt, and every
+  other parent is an escape. It gives `UNKNOWN` in all 43 measured cases
+  that use the list. Its cost is synthetic controls only, since no file of
+  3,838 in `node_modules` spells one of the five instance forms.
+
+RWF-156 is open under every option: no per-use rule sees it, and backlog
+`BL-111` is the cross-lane design that would close it. If (b2) is
+accepted, backlog `BL-110` implements it. The list above stands, with
+RWF-154, RWF-155, RWF-156 and RWF-157.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

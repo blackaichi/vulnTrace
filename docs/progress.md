@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-25, by `BL-109`.
+**Last updated:** 2026-10-25, by `BL-096`.
 
 ## Objective
 
@@ -312,18 +312,20 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-109` — An own `join` run by `Array.prototype.toString` on coercion: a
-protocol member ([task file](tasks/BL-109-join-protocol-member.md)):
-`READY_FOR_REVIEW`. `BL-094` merged as PR #116; its proposed decision (O2e)
-is still awaiting the project owner, so `BL-107` waits.
+`BL-096` — Decide: the read-only exemptions for `module.paths` under a
+replaced `Array.prototype`
+([task file](tasks/BL-096-module-paths-read-only-exemptions.md)):
+`READY_FOR_REVIEW`, report verdict `NEEDS_DECISION`. The project owner
+decides ADR 0010's "Proposed decision — BL-096" (option b2). `BL-109`
+merged as PR #117. BL-094's proposed decision (O2e) is still awaiting the
+owner, so `BL-107` waits.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-109`:
-`BL-107` (the decision's implementation, only if O2e is
-accepted), `BL-096`
-(the decision on `module.paths`'s read-only exemptions, RWF-136, P1),
-`BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-096`:
+`BL-107` and `BL-110` (each implements a pending decision: O2e, and
+BL-096's b2), `BL-111` (design, P1: RWF-156, Node's loader through a
+replaced builtin), `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
 (design, P1: a TypeScript source analysed as the program its emit runs),
 `BL-101` (RWF-143, P1, an ES5 class's methods; after BL-107, whose O2e
 makes its cost one to measure first), `BL-079` (RWF-108, P0, at E-4's
@@ -343,6 +345,30 @@ for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
 withdrawals.
 
 ## Recently discovered
+
+From `BL-096`, all live and pre-existing:
+
+- `RWF-154`: `module.paths instanceof H` hands the lookup list to the
+  program's own `Symbol.hasInstance`, with no builtin replaced.
+- Found by its independent audit (four rounds; the fourth certified
+  the recommendation):
+  - `RWF-155`: the list in a shorthand property, used on the spot.
+  - `RWF-157`: a `const` that may hold `require` or the list is resolved
+    to the first.
+  - `RWF-156`: a replaced builtin receives the lookup state from Node's
+    own loader, with no use of the list. Open under every option: backlog
+    `BL-111` (P1, design across lanes A and C).
+
+The proposed decision closes the first three for the lookup list.
+
+RWF-136 is wider than its record: 29 of its own cases are live (every
+member read the list does not own, every conversion, spread, `await`,
+`instanceof`'s right operand, and the routes the resolver answers
+`ambiguous` for, such as `require.cache[__filename].paths`). Its proof family is B, not A. The backlog's
+option (b) as worded is unsound, because an element read past the list's
+end is an inherited lookup. A list of fail-closed uses misses whatever it
+does not name, so the recommendation is an allow-list (b2). Backlog
+`BL-110` (P1) implements the decision.
 
 From `BL-109`: `RWF-152` (a member a builtin calls on its receiver by
 name, defined in a `__proto__` literal: `toISOString`, `utf8Slice`, a Node

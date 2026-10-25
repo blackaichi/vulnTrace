@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW (report verdict `NEEDS_DECISION`: the project
+  owner decides ADR 0010's "Proposed decision — BL-096")
 - **Backlog ID**: BL-096
 - **Branch**: `bl-096-module-paths-exemptions`
 - **Base SHA**: `904d032268b4d1897361123ec71b9ad539a006a0` (BL-109's merge, PR #117)
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `docs(tasks): BL-096 task file — decide the read-only exemptions for module.paths under a replaced Array.prototype`
+  - `test(BL-096): module.paths's read-only uses against real Node, and the options as prototypes, measured — RWF-136 widened and corrected; RWF-154..RWF-157 registered`
+  - (this commit) `docs(BL-096): ADR 0010 proposed decision (b2) — the independent audit's four rounds, debts, backlog (BL-110, BL-111), progress`
 - **Superseded by**: —
 
 ## Project context
@@ -144,18 +148,18 @@ measure them.
 
 ## Acceptance criteria
 
-- [ ] Every route is reproduced against real Node, and each live false
+- [x] Every route is reproduced against real Node, and each live false
       `NOT_AFFECTED` on the base is an open-soundness-defect record with
       its measured observation.
-- [ ] The census reports the corpus's uses of the lookup list and the rate
+- [x] The census reports the corpus's uses of the lookup list and the rate
       at which option (a)'s precondition fails.
-- [ ] Each option is a patch under `scripts/bl096-module-paths-options/`,
+- [x] Each option is a patch under `scripts/bl096-module-paths-options/`,
       applicable to the base, and its oracle, unit and differential
       results are measured and reported separately.
-- [ ] ADR 0010 carries an appended PROPOSED section with a recommendation.
-- [ ] RWF-136's record is corrected by an append, and every new finding is
+- [x] ADR 0010 carries an appended PROPOSED section with a recommendation.
+- [x] RWF-136's record is corrected by an append, and every new finding is
       registered.
-- [ ] `src/` is unchanged on the branch.
+- [x] `src/` is unchanged on the branch.
 
 ## Gates
 
@@ -167,3 +171,57 @@ is OPEN-DEBTS D-09's six known failures, unchanged.
 
 In the format of `AGENTS.md` § J, verdict `NEEDS_DECISION`: the project
 owner decides ADR 0010's proposed decision.
+
+## Corrections
+
+**2026-10-25, after the independent audit's round 1 (`BLOCKED`).** "What
+to do" step 3 named three prototypes. (b1), "fail closed on every use
+except `length` and the operators real Node never converts the list
+with", was built as a list of the uses that fail closed. The audit found
+eight live cases it lets through (spread, `++` / `--` on a `const` alias,
+an outer array converted or used as a key, the list held in an array
+literal or a shorthand property, the last two with no tamper). The task
+therefore adds a fourth prototype, **(b2)**: the same exempt uses, built
+as an allow-list over the list's syntactic parent, with every other
+parent failing closed. (b2) is the recommendation; (b1) is kept, measured,
+as the rejected form. The audit's cases are oracle cases (`audit.*`). The task
+registers RWF-155 (the shorthand property) and records the array-literal
+forms under PRM-105. The acceptance criteria are unchanged.
+
+**2026-10-25, after the independent audit's round 2 (`BLOCKED`).** (b2)'s
+first form exempted any `const` initializer reached through a value
+selection, while the alias's own uses resolved to another capability
+(RWF-157, `const p = c ? require : module.paths`). The revised (b2) exempts
+an alias only when its declared name resolves to the list. The round also
+found RWF-156: Node's own loader hands its lookup arrays to replaced
+builtins, with no use of the list in the program. That is outside RWF-136's
+mechanism and open under every option, so by the STOP conditions it is
+registered and reported, not fixed (backlog `BL-111`, a design across
+lanes A and C). The audit's cases are oracle cases (`audit2.*`).
+
+**2026-10-26, after the independent audit's round 3 (`BLOCKED`).** (b2)
+read only a `module_paths` resolution. Routes on which the resolver answers
+`ambiguous` reach the list too: `require.cache[__filename].paths`, a
+computed key, and an alias chain past the depth budget. Each got the
+base's exemptions. The revised (b2) treats an `ambiguous` member named
+`paths`, or under a computed key into a `Module` instance or an
+`ambiguous` value, as the list. A first form that treated every
+`ambiguous` identifier as the list cost three cyclic-alias controls. It
+was redundant, because such a chain breaks at a declaration the alias rule
+refuses, so it was dropped. The round also found a plain data store of
+`Array.prototype.constructor` (species) in RWF-156's class, which widens
+that record and BL-111's predicate. The audit's cases are oracle cases
+(`audit3.*`).
+
+**2026-10-26, after the independent audit's round 4 (`CERTIFIED`).** No
+use of the list that the revised (b2) exempts hands it to user code in
+real Node. The round's findings are all about the records:
+- RWF-156 is wider than lookup arrays: `makeRequireFunction`'s plain
+  stores hand the loader's registries to an `extensions` or `cache` setter.
+  Both forms are oracle records (`audit4.*`), RWF-156 and BL-111 are
+  widened, and the record's status row now carries the species form.
+- Object spread of `module` is PRM-105's (noted there).
+- A deep TypeScript `import a = p.x.y` chain goes to BL-110.
+- The ADR's count of controls was stale.
+- The census wording claimed more than the census measures.
+
