@@ -325,3 +325,206 @@ alias is still a same-file `const` looked up by name.
 module that replaces `includes`, the array iterator or `join` runs with
 the list as `this` (RWF-136, live, pre-existing). Whether the exception
 survives that is a decision for the project owner (backlog `BL-096`).
+
+
+## Proposed decision — BL-096: the read-only uses of `module.paths` (PROPOSED — requires project-owner decision)
+
+Recorded by task
+[`BL-096`](../tasks/BL-096-module-paths-read-only-exemptions.md). This
+section is appended. It changes no earlier section, and nothing in it is
+implemented. The measurements are in
+`scripts/bl096-module-paths-options/results.md`. The prototypes are the
+patches next to it, against the base `904d032`, measured with real Node
+v22.11.0.
+
+### The question
+
+§ 4 keeps the "read-only uses of loader state" complete. BL-092 extended
+that to a reviewed list of `Array.prototype` methods
+(`MODULE_PATHS_READ_METHODS`) and to iteration. The classifier also lets
+every member read of the lookup list pass (`resolveLoaderCapability`
+answers nothing for a member of `module_paths`). It also lets pass every
+position that is neither a consumed position nor a call argument: an
+operand of an operator with a primitive result, a template, a spread, an
+array element, a shorthand property, `await`. Each of these assumes that
+Node's own builtins handle the list. RWF-136 shows that a module can
+replace them. The backlog named two options: **(a)** keep each exemption
+only while no loaded file writes a member of a builtin prototype; **(b)**
+fail closed on every use except an element read or `length`.
+
+### What was measured
+
+- **Which uses hand the list to user code.** The 16 read methods, `for…of`
+  and spread, every conversion (a template, arithmetic, `++` / `--`,
+  comparison, `==` with a primitive, a property key, the left of `in`, an
+  outer array converted or used as a key), a member read the list does not
+  own (a named member, an index past its end, a method read as a value),
+  `await`, and both operands of `instanceof`. A replaced method, an
+  accessor, `Symbol.toPrimitive`, a `then` getter, a species getter, or a
+  Proxy set as `Array.prototype`'s [[Prototype]] each receives the list.
+  Two uses need no builtin replaced at all:
+  - **the left of `instanceof`** (RWF-154): a class of the program's own
+    with `static [Symbol.hasInstance]` receives the list;
+  - **the list held in an array literal or a shorthand property** and used
+    on the spot (`[module.paths][0].shift()`, PRM-105's family;
+    `({ p }).p.shift()`, RWF-155).
+
+  Never, under any tamper the probe and the oracle cases tried: `length`,
+  an own index, `for…in`, `===`, `!==`, `typeof`, `void`, `!`, the right
+  of `in`, `==` / `!=` with `null`, a test, a `switch`, a value only
+  selected by `||` / `??` / a conditional into one of these.
+- **The base.** Of 49 oracle cases in which real Node calls the target, 47
+  are a false `NOT_AFFECTED` (family B). The other two are the spelled
+  method call, which the call graph already catches, and a property
+  assignment's value, a consumed position (`({ l: module.paths })`).
+  RWF-136's record named three of the 47. A `const` that may hold either
+  `require` or the list is resolved to the first (RWF-157, no builtin
+  replaced). The list is also reached through routes the resolver answers
+  `ambiguous` for: `require.cache[__filename].paths`, a computed key, and
+  an alias chain past its depth budget. Six of the 47 involve no use of the
+  list at all (RWF-156, below).
+- **Real code.** No file of 3,838 (this repository's `node_modules` and
+  npm's) spells one of the five instance forms (`module.paths`,
+  `require.main.paths`, `process.mainModule.paths`, `module.parent.paths`,
+  `module.children[i].paths`). A raw text search for `.paths` on those
+  receivers finds none either. The census does not count other routes: a
+  `new Module`'s `m.paths = …` exists (`require-from-string`), and it is a
+  write, which fails closed under every option. The precision of (b2)'s
+  `ambiguous` rule on real code is covered only by the zero corpus
+  differential.
+  Neither option's precision cost is measurable on real code: it is the
+  synthetic controls only. Option (a)'s precondition fails in 314 of 450
+  packages, which have at least one store the escape row counts as an
+  escape.
+
+| | base | (a) | (b0): (b) as worded | (b1): a fail-closed list | (b2): an allow-list |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| false `NOT_AFFECTED`, uses of the list (of 43 Node calls) | 41 | 24 | 24 | 22 | **0** |
+| false `NOT_AFFECTED`, no use of the list (RWF-156, of 6) | 6 | 6 | 6 | 6 | 6 |
+| controls keeping their proof (of 12 Node does not call) | 12 | 9 | 7 | 5 | 5 |
+| `npm test` failures (of 6,708) | — | 0 | — | 4 | 4 (the same precision controls) |
+| `test:oracle` failures outside BL-096 (of 1,356) | — | 0 | — | 1 | 1 (the same precision control) |
+| corpus differential, graph / proof / verdict (139 cases) | — | 0 / 0 / 0 | — | 0 / 0 / 0 | 0 / 0 / 0 |
+
+**Option (a) is not sound as built.** Its precondition must see every write
+of a builtin anywhere in the closure. The prototype read the escape row's
+stores and a list of storing builtins by name, and it missed `const d =
+Object.defineProperty; d(Array.prototype, …)` and `Reflect.apply(Object.
+defineProperty, …)`. A better detector would see the first through the
+call graph's builtin identity. Seeing every route by which a builtin is
+handed on and called is the escape row's whole relation (ADR 0008,
+BL-081's decision record), which is not certified: BL-094 counted 195
+historical misses, and its proposed decision is pending. (a) would make
+lane C's soundness depend on lane A's uncertified class. It still needs
+the uses (b2) closes for the no-tamper routes, and in practice it buys
+nothing, since its precondition fails for most real packages.
+
+**Option (b) as worded is not sound.** An element read is an inherited
+lookup when the index is not the list's own, and an own index is not known
+statically.
+
+**(b1), a list of the uses that fail closed, is not sound.** This task's
+independent audit (round 1) found eight live cases it lets through:
+spread, `++` / `--` on a `const` alias, an outer array converted or used as
+a key, and the list held in an array literal or a shorthand property. The
+cause is structural. A list of the uses that fail closed leaves every use
+it does not name exempt.
+
+**Node's own loader is a route no per-use rule sees (RWF-156).** The
+audit's rounds 2 and 3 found that a module receives the lookup state from
+Node's own writes (`Module._resolveLookupPaths`'s `unshift`,
+`Module.prototype.load`'s `this.paths = …`) when it does any of the
+following:
+- defines index setters or a `paths` setter on `Object.prototype`;
+- sets a Proxy as `Array.prototype`'s [[Prototype]];
+- stores `Array.prototype.constructor` (its species);
+- defines an `extensions` or `cache` setter on `Object.prototype`, which
+  `makeRequireFunction`'s plain stores hand the loader's registries to
+  (round 4).
+
+The program never uses the list, and every option above misses it. Closing
+it needs a closure-wide fact about such builtin-prototype stores, which is
+a design across lanes A and C (backlog `BL-111`), not a rule over the
+list's uses. It is not part of the decision proposed here.
+
+### Recommendation: (b2)
+
+The rule is an allow-list over the use. It applies to every expression
+that may be the lookup list along a route `resolveLoaderCapability`
+follows. That is any route it resolves to the list (`module.paths`, a `const` alias, `require.main.paths`, …),
+and any member named `paths`, or under a computed key into a `Module`
+instance, that it resolves to `ambiguous` (`require.cache[k].paths`, an
+alias chain past the depth budget; round 3). For each such expression, its
+syntactic parent decides:
+
+1. **Exempt:** a read of `length`; `for…in` over the list; the list as an
+   operand of `===`, `!==`, `typeof`, `void`, `!`, the right of `in`, or
+   `==` / `!=` against `null`; a test (`if`, `while`, `do`, `for`, a
+   conditional's condition, the left of `&&`); a `switch` or `case` value
+   (strict equality); a discarded value (an expression statement, the left
+   of a comma); and the initializer of a plain, unexported `const` (not
+   `using`) whose declared name itself resolves to the list. The alias's own
+   uses are then classified the same way. An alias that may hold another
+   capability (RWF-157), or a name another declaration shares (PRM-22), is
+   not exempt.
+2. **Passed up:** a parent that only selects the value (parentheses, a
+   type assertion, a conditional's branches, either side of `||` / `??`,
+   the right of `&&` or of a comma) is classified by its own parent.
+3. **Everything else** is a `loader_capability_escape`: every method call
+   (the mutating ones keep `loader_hook_mutation`), every other member
+   read, element reads included, `for…of`, spread, a template, every other
+   operator, a property key, an array element, an object property, an
+   argument, `await`, a `return`, a store.
+
+The exempt side is the closed list. A use the rule does not name fails
+closed by construction, as § 2's value-flow walk already does for value
+containers. The first form of the prototype exempted any `const`
+initializer, and round 2 found RWF-157 through it. It also read only a
+`module_paths` resolution, and round 3 found the `ambiguous` routes. The
+rule as stated here is the revised one. It is per file and depends on no
+other module and no other lane. Measured: it gives `UNKNOWN` in all 43
+cases that use the list,
+and closes RWF-136, RWF-154, RWF-155 and RWF-157 for the lookup list in the
+shapes measured (the shorthand, array and alias gaps for other
+capabilities are C-2's and C-3's, with PRM-22 and PRM-105). Its round-2
+form also catches RWF-139's `(() => module.paths)().shift()` (measured by
+the audit). The
+method calls that `classifyLoaderConstruct` shares with the call graph
+become the same `loader_capability_escape` unknown edge that the spelled
+`module.paths.slice()` already has (BL-092).
+
+**What (b2) does not cover.** RWF-156: Node's own loader writes reach a
+replaced builtin with no use of the list (backlog `BL-111`). The binding
+lookup is still by name. PRM-21's shadowed `module` (`function g() { const
+module = 1; } [module.paths][0].shift()`) is missed under every option.
+So is the route through another `Module` instance, `module.parent` /
+`module.children[i]` (BL-040's family). So is a route the resolver does
+not follow: an object spread of `module` read back on the spot,
+`({ ...module }).paths.shift()` (PRM-105's family, round 4). In
+TypeScript, a deep `import a = p.x.y` chain on an alias of the list is
+also missed. tsc rejects the shallow form, so this is theoretical, and
+`BL-110` covers it. (b2) does catch PRM-22's name collision for a
+`const` alias of the list. "Never
+hands the list on" is measured over the tampers tried (`results.md` § 1),
+not proven over the specification.
+
+**What (b2) costs**, all in synthetic controls, since no real-code use was
+found: ADR 0010 § 4's precision control 11 (`module.paths.slice()` /
+`includes()`); BL-092's read-only-method, element-read and iteration
+controls (four unit tests, one oracle case); and seven of the twelve
+BL-096 controls. The cost includes an own index (`module.paths[0]`): an
+index read is exempt only as `length`. A member of a module-cache entry
+other than `paths` keeps its proof (`require.cache[k].exports`). § 4's "non-mutating array methods on
+`module.paths`" bullet is withdrawn. `Module.builtinModules.includes(…)` is
+unaffected: that array is frozen (measured), and Node's loader does not
+depend on it.
+
+If (b2) is accepted, backlog `BL-110` implements it, then a fresh-context
+certification audit runs. It deletes
+`MODULE_PATHS_READ_METHODS` and `isIteratedLookupList`'s `for…of` half,
+adds the allow-list to the whole-file walk, flips the BL-096 oracle
+records, and records each lost control as the decision's cost (none
+pinned as a wrong verdict). If (a) is preferred instead, it first needs a
+"may write a builtin" relation that the escape row's certification would
+have to cover, and (b2)'s no-tamper routes besides. Either way RWF-156
+stays open until `BL-111` decides it.
