@@ -305,8 +305,8 @@ field and the vocabulary are documented next to the table.
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 223 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 57 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-32, PRM-60, PRM-67, PRM-105, PRM-106, PRM-109, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090, RWF-098, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136, RWF-139, RWF-140, RWF-143, RWF-144, RWF-146, RWF-148 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Findings recorded | 227 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 61 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-32, PRM-60, PRM-67, PRM-105, PRM-106, PRM-109, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090, RWF-098, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-136, RWF-139, RWF-140, RWF-143, RWF-144, RWF-146, RWF-148, RWF-154, RWF-155, RWF-156, RWF-157 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 10 — RWF-002, PRM-107, PRM-108, RWF-063, RWF-064, RWF-070, RWF-110, RWF-120, RWF-127, RWF-145 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
 | Recorded as fixed | 156 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
 
@@ -368,13 +368,17 @@ this table except the category.
 | RWF-113 | open | Open | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
 | RWF-118 | open | Open | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
 | RWF-121 | open | Open (backlog `BL-090`) | false AFFECTED, pre-existing (named in RWF-063's second audit append) — see below |
-| RWF-136 | open | Open (decision, backlog `BL-096`) | false NOT_AFFECTED (family A), pre-existing — see below |
+| RWF-136 | open | Open (decision, backlog `BL-096`; implementation `BL-110`) | false NOT_AFFECTED (family B, BL-096's correction), pre-existing — see below |
 | RWF-139 | open | Open (backlog `C-3`) | false NOT_AFFECTED (family A), pre-existing — see below |
 | RWF-140 | open | Open (decision, backlog `BL-098`) | false NOT_AFFECTED (family A), pre-existing — see below |
 | RWF-143 | open | Open (backlog `BL-101`) | false NOT_AFFECTED (family C), pre-existing — see below |
 | RWF-144 | open | Open (backlog `BL-080`) | false NOT_AFFECTED (family B), pre-existing — see below |
 | RWF-146 | open | Open (backlog `BL-103`) | not measured live: masked in the one shape measured — see below |
 | RWF-148 | open | Open (backlog `BL-104`) | false NOT_AFFECTED (family C), pre-existing — see below |
+| RWF-154 | open | Open (decision, backlog `BL-096`; implementation `BL-110`) | false NOT_AFFECTED (family B), pre-existing — see below |
+| RWF-155 | open | Open (decision, backlog `BL-096`; implementation `BL-110` for the lookup list; `C-3` for the rest) | false NOT_AFFECTED (family B), pre-existing — see below |
+| RWF-156 | open | Open (backlog `BL-111`) | false NOT_AFFECTED (family B), pre-existing — see below |
+| RWF-157 | open | Open (decision, backlog `BL-096`; implementation `BL-110` for the lookup list; `C-2` / `C-3` for the rest) | false NOT_AFFECTED (family B), pre-existing — see below |
 | RWF-002 | open in part | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model |
 | PRM-107 | open in part | Fixed in part (BL-092: the false NOT_AFFECTED, family B; the false AFFECTED is C-5's) | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below |
 | PRM-108 | open in part | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below | false NOT_AFFECTED — see below |
