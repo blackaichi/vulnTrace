@@ -40,6 +40,22 @@ import { resolveNamedBinding } from "./named-bindings.js";
  * object its `[Symbol.iterator]()` returns: `next`, `return` on early exit
  * (`break`, a throw), `throw` through `yield*` (RWF-068; the project
  * owner's decision of 2026-10-04, recorded in ADR 0008).
+ *
+ * And `join` (task BL-109, RWF-151): coercing an array runs
+ * `Array.prototype.toString`, which calls its receiver's `join` -- an
+ * array literal, an object whose chain reaches one, and every typed array
+ * (ECMA-262, `Array.prototype.toString`). An array the program creates is
+ * the program's own, so a store onto it is no escape; a `join` defined or
+ * stored on it is invoked by every coercion, with no call in the program.
+ * It is the one name the specification's coercion, iteration, `await` and
+ * `JSON.stringify` paths invoke on a receiver the program can create
+ * without a call that is neither a class nor an object literal (arrays,
+ * template objects; measured over every prototype Node exposes by
+ * `scripts/bl109-implicit-receiver-methods.mjs`, and over the call-free
+ * objects by task BL-109's independent audit); the others it finds are
+ * reached through a `__proto__` literal ({@link inheritsUnprovenPrototype})
+ * or a derived class's `prototype` ({@link isDerivedClass}), whose members
+ * are accounted whatever their names.
  */
 export const PROTOCOL_NAMES: ReadonlySet<string> = new Set([
   "toString",
@@ -49,6 +65,7 @@ export const PROTOCOL_NAMES: ReadonlySet<string> = new Set([
   "next",
   "return",
   "throw",
+  "join",
 ]);
 
 /** ADR 0008 § 2's well-known symbols, by their `Symbol` member name. */
@@ -134,6 +151,139 @@ export function protocolKeyOf(
   return "unread";
 }
 
+/**
+ * Task BL-109 (RWF-151, RWF-152): whether an object literal sets its own
+ * [[Prototype]] (`{ __proto__: p }`, `{ "__proto__": p }`) to a value not
+ * proven to be `null` or an object literal that does not itself inherit
+ * one.
+ *
+ * A builtin reached by an implicit invocation may call a member of its
+ * receiver BY NAME, a name no protocol list can close: coercing an object
+ * whose chain reaches `Array.prototype` calls its `join`;
+ * `JSON.stringify` of one reaching `Date.prototype` calls its
+ * `toISOString`; coercing one reaching Node's `Buffer.prototype` calls its
+ * `utf8Slice`; `for await` over one reaching a Node stream calls its
+ * `on`, `read`, `push`, `emit`, `destroy`, `_read` and `_destroy` --
+ * Node's own JavaScript, which a Node release may change (measured by
+ * `scripts/bl109-implicit-receiver-methods.mjs`). So every member a
+ * literal with such a prototype defines may be invoked implicitly. A
+ * literal with `null` there inherits nothing; one without `__proto__`, or
+ * with a plain literal there, inherits `Object.prototype`'s builtins, which
+ * call no member of their receiver but the listed protocol members. A store onto a literal that
+ * sets its prototype is already an escape (`escape-row.ts`'s
+ * `isProvenFreshObject`), and so is a prototype changed later
+ * (`Object.setPrototypeOf`, a `__proto__` store): this is the definition
+ * form, which no store account reaches. A derived class is the other
+ * definition form ({@link isDerivedClass}).
+ */
+export function inheritsUnprovenPrototype(
+  literal: ts.ObjectLiteralExpression,
+): boolean {
+  const cached = unprovenPrototypeCache.get(literal);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const prototype = ownPrototypeOf(literal);
+  const value =
+    prototype === undefined
+      ? undefined
+      : skipOuterExpressions(prototype.initializer);
+  const unproven =
+    value !== undefined &&
+    value.kind !== ts.SyntaxKind.NullKeyword &&
+    !(ts.isObjectLiteralExpression(value) && !inheritsUnprovenPrototype(value));
+  unprovenPrototypeCache.set(literal, unproven);
+  return unproven;
+}
+
+/**
+ * {@link inheritsUnprovenPrototype} per literal: it is asked once per
+ * member, and finding `__proto__` scans the literal's properties, so
+ * without it a literal of n members costs n scans (task BL-109's
+ * independent audit, round 2: 2,000 members took 4.4 s).
+ */
+const unprovenPrototypeCache = new WeakMap<
+  ts.ObjectLiteralExpression,
+  boolean
+>();
+
+let prototypeScans = 0;
+
+/**
+ * How many times a literal's properties have been scanned for its
+ * `__proto__`. Exposed so a test can assert the cost is per LITERAL, not
+ * per member -- see {@link inheritsUnprovenPrototype}.
+ */
+export function prototypeScanCount(): number {
+  return prototypeScans;
+}
+
+/** The literal's `__proto__: p` property, which sets its [[Prototype]] and defines no member. */
+function ownPrototypeOf(
+  literal: ts.ObjectLiteralExpression,
+): ts.PropertyAssignment | undefined {
+  prototypeScans += 1;
+  return literal.properties.find(
+    (property): property is ts.PropertyAssignment =>
+      ts.isPropertyAssignment(property) && isPrototypeSetter(property),
+  );
+}
+
+/**
+ * Whether a property assignment is a literal's `__proto__: p` -- an
+ * identifier or string key; a computed `["__proto__"]` key defines an own
+ * property instead (ECMA-262, `PropertyDefinitionEvaluation`).
+ */
+function isPrototypeSetter(property: ts.PropertyAssignment): boolean {
+  return (
+    (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+    property.name.text === "__proto__"
+  );
+}
+
+/**
+ * The key a member DEFINED in `container` is accounted under:
+ * {@link protocolKeyOf}, except that every member of an object literal
+ * that {@link inheritsUnprovenPrototype}, and of a class that
+ * {@link isDerivedClass}, may be invoked implicitly, so is `protocol`
+ * (task BL-109).
+ */
+export function definedMemberKeyOf(
+  name: ts.PropertyName,
+  container: ts.Node,
+): ProtocolKey {
+  const key = protocolKeyOf(name);
+  return key === "other" &&
+    ((ts.isObjectLiteralExpression(container) &&
+      inheritsUnprovenPrototype(container)) ||
+      (ts.isClassLike(container) && isDerivedClass(container)))
+    ? "protocol"
+    : key;
+}
+
+/**
+ * Task BL-109 (RWF-153, the project owner's decision of 2026-10-25):
+ * whether a class has an `extends` clause other than `extends null`. A
+ * derived class's `prototype` inherits its base's with no call in the
+ * program, and a builtin it inherits calls its members by name
+ * (`class D extends Date { toISOString() {} }` and
+ * `JSON.stringify(D.prototype)`; `class S extends Readable { on() {} }` and
+ * `for await` over `S.prototype`), so every member of one, static ones too
+ * (its static side inherits the base constructor), may be invoked
+ * implicitly. No base is exempt, a program class neither: what its own
+ * chain holds is not proven here (a precision cost the owner accepted).
+ */
+export function isDerivedClass(cls: ts.ClassLikeDeclaration): boolean {
+  const heritage = cls.heritageClauses?.find(
+    (clause) => clause.token === ts.SyntaxKind.ExtendsKeyword,
+  );
+  const base = heritage?.types[0]?.expression;
+  return (
+    base !== undefined &&
+    skipOuterExpressions(base).kind !== ts.SyntaxKind.NullKeyword
+  );
+}
+
 /** Whether a key may denote a protocol member at run time ({@link protocolKeyOf} is not `other`). */
 export function mayBeProtocolKey(
   key: ts.PropertyName | ts.Expression,
@@ -188,9 +338,14 @@ function isPropertyNamePosition(id: ts.Identifier): boolean {
  * audit). An exported function, variable or export specifier under a
  * protocol name is therefore a `method` or `value` definition too.
  *
+ * - a `value` is also a spread (`...o`) into an object literal whose
+ *   members may all be invoked implicitly ({@link inheritsUnprovenPrototype},
+ *   task BL-109).
+ *
  * `key` is `protocol` when the definition's key is a protocol key (for a
- * pattern, when one of its member targets' is), `unread` when it only may
- * be.
+ * pattern, when one of its member targets' is; for a member of a literal
+ * that {@link inheritsUnprovenPrototype}, whatever its key), `unread` when
+ * it only may be.
  */
 export type ProtocolDefinition =
   | {
@@ -205,7 +360,8 @@ export type ProtocolDefinition =
         | ts.ShorthandPropertyAssignment
         | ts.PropertyDeclaration
         | ts.VariableDeclaration
-        | ts.ExportSpecifier;
+        | ts.ExportSpecifier
+        | ts.SpreadAssignment;
       readonly value: ts.Expression;
       readonly key: ProtocolKey;
     }
@@ -242,18 +398,32 @@ export function protocolDefinitionOf(
     ) {
       return undefined;
     }
-    const key = protocolKeyOf(node.name);
+    const key = definedMemberKeyOf(node.name, node.parent);
     return key === "other" ? undefined : { form: "method", node, key };
   }
   if (ts.isPropertyAssignment(node) || ts.isShorthandPropertyAssignment(node)) {
     if (
       !ts.isObjectLiteralExpression(node.parent) ||
-      isAssignmentPattern(node.parent)
+      isAssignmentPattern(node.parent) ||
+      (ts.isPropertyAssignment(node) && isPrototypeSetter(node))
     ) {
       return undefined;
     }
     const value = ts.isPropertyAssignment(node) ? node.initializer : node.name;
     return valueDefinition(node, node.name, value);
+  }
+  if (ts.isSpreadAssignment(node)) {
+    // `{ __proto__: p, ...o }` copies `o`'s own values onto a literal whose
+    // members may be invoked implicitly (task BL-109).
+    if (
+      !ts.isObjectLiteralExpression(node.parent) ||
+      isAssignmentPattern(node.parent) ||
+      !inheritsUnprovenPrototype(node.parent) ||
+      escapingValuesOf(node.expression).length === 0
+    ) {
+      return undefined;
+    }
+    return { form: "value", node, value: node.expression, key: "protocol" };
   }
   const exported = moduleExportDefinitionOf(node);
   if (exported !== "none") {
@@ -459,7 +629,7 @@ function valueDefinition(
   name: ts.PropertyName,
   value: ts.Expression,
 ): ProtocolDefinition | undefined {
-  const key = protocolKeyOf(name);
+  const key = definedMemberKeyOf(name, node.parent);
   return key !== "other" && escapingValuesOf(value).length > 0
     ? { form: "value", node, value, key }
     : undefined;

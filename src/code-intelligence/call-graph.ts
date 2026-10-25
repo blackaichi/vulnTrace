@@ -46,7 +46,10 @@ import {
   type InvocationSiteKind,
   invocationSiteOf,
 } from "./invocation-sites.js";
-import { protocolKeyOf, type ProtocolDefinition } from "./protocol-members.js";
+import {
+  definedMemberKeyOf,
+  type ProtocolDefinition,
+} from "./protocol-members.js";
 import {
   isJsxSite,
   jsxHandedExpressions,
@@ -4587,7 +4590,10 @@ async function classifyProtocolMember(
  * Task A-4, ADR 0008 Amendment A-0 part B (PRM-118): "A getter or setter
  * becomes its own owner, reached from its defining owner by a *possible*
  * edge. It never gets no edge." A getter under a key that may be a
- * protocol key has one more account: the runtime INVOKES what it returns
+ * protocol key -- or any getter of an object literal or class whose
+ * members may all be invoked implicitly (task BL-109,
+ * `inheritsUnprovenPrototype`, `isDerivedClass`) -- has
+ * one more account: the runtime INVOKES what it returns
  * (`{ get then() { return f; } }` and `await`), so each value a `return`
  * of its body hands back is a protocol value, from the getter's own node.
  */
@@ -4612,7 +4618,7 @@ async function classifyAccessor(
   ];
   if (
     ts.isGetAccessorDeclaration(node) &&
-    protocolKeyOf(node.name) !== "other"
+    definedMemberKeyOf(node.name, node.parent) !== "other"
   ) {
     for (const returned of returnedExpressions(node.body)) {
       edges.push(
