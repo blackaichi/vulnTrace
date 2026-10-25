@@ -1052,3 +1052,78 @@ decision's recorded cost, as BL-081's six were; none is pinned as a wrong
 verdict. The prototype's sentinels (`bl094Option()`, `parent !==
 undefined`, `false &&`) are measurement hacks: BL-107 deletes the refused
 proofs instead.
+
+## Decision record — BL-109: a member a builtin calls on its receiver by name (project owner, 2026-10-25)
+
+Decided by the project owner on 2026-10-25, during task
+[`BL-109`](../tasks/BL-109-join-protocol-member.md), from the measurements
+below; recorded by that task. This ADR's body and every earlier section are
+unchanged; this section is appended. It amends § 2's protocol-member row
+and the allowlist admission ruling's condition (a).
+
+**The gap.** A coercion, `JSON.stringify` or `for await` may run an
+INHERITED builtin that calls a further member of its receiver by name, with
+no call in the program. § 2's row keyed only the names the operation itself
+invokes. RWF-151 (`join`, through `Array.prototype.toString`) is one; the
+task's inventory found the rest (`scripts/bl109-implicit-receiver-methods.mjs`,
+real Node v22.11.0, 795 prototypes and objects of Node's globals and builtin
+modules, the coercions, iterations, `await`, `JSON.stringify` and the
+admitted builtin positions): `toISOString` (`Date.prototype.toJSON`),
+`utf8Slice` (Node's `Buffer.prototype.toString`), and, under `for await`
+over an object inheriting a Node stream, `on`, `read`, `push`, `emit`,
+`destroy`, `_read` and `_destroy` -- Node's own JavaScript, which a release
+may change, so no list of names closes it (RWF-152).
+
+Which routes were live (oracle cases on the base `b256b6d`,
+`tests/oracle/bl109-implicit-receiver-methods.cases.ts`): an array the
+program creates is proven its own (`isProvenFreshObject`), so a `join`
+stored onto it, or onto `A.prototype = []`, got no edge; and a member
+DEFINED in an object literal that sets `__proto__` got none, whatever its
+name, since a definition never reaches the escape row. So did a member of
+a DERIVED class, whose `prototype` inherits its base's with no call
+(`class D extends Date { toISOString() {} }` and `JSON.stringify(D.prototype)`;
+RWF-153, found by the task's independent audit): a construction of one is
+an unknown edge, but its `prototype` needs none. Every other route to such a
+chain already failed closed through the escape row: a store onto a
+`__proto__` literal or a builtin's result, `Object.setPrototypeOf`, a
+`__proto__` store, a constructor's `this` under a replaced prototype.
+
+**Decision 1. Accepted.** § 2's row gains `join`, everywhere a protocol
+name applies (`PROTOCOL_NAMES`): an array's chain is
+`Array.prototype.toString`'s, with no call in the program.
+
+**Decision 2. Accepted.** Every member an object literal defines -- a
+method, a property, a shorthand, a spread's values, a getter's returned
+value -- is a protocol member, whatever its key, when the literal sets its
+[[Prototype]] (`__proto__: p` or `"__proto__": p`, not a computed or
+shorthand key) to a value not proven to be `null` or an object literal that
+does not itself set one (`inheritsUnprovenPrototype`,
+`src/code-intelligence/protocol-members.ts`). The `__proto__: p` property
+itself defines no member.
+
+**Decision 3. Accepted** (from the independent audit's finding, RWF-153).
+Every member a class with an `extends` clause other than `extends null`
+defines -- a method, a field's value, an accessor's returned value, static
+ones too -- is a protocol member, whatever its key (`isDerivedClass`). No
+base is exempt, the program's own class neither: proving a base's chain
+ordinary is a proof surface of its own (a base re-prototyped later), left
+for a precision task if its cost calls for one.
+
+**Decision 4, which follows.** The allowlist admission ruling's condition
+(a) accounts a fourth kind of hook: a member of such a literal or class.
+The builtin probe builds the inventory's receivers (`join`, `toISOString`,
+`utf8Slice`, `streamRead`); condition (b) has a case through a `__proto__`
+literal (`join`: a stored array) and one through a derived class's
+`prototype`; and every admitted position passes conditions (a) and (b) with
+them.
+
+Measured cost (`scripts/bl081-builtin-store-escape-corpus.mjs`, base
+against this change, over this repository's `node_modules`): decisions 1
+and 2 alone, 5 of 29,748 clean JavaScript graph nodes lost (183 packages,
+113,778 nodes), +22 unknown and +27 possible edges; with decision 3, 293 of
+29,748 lost, +629 unknown and +11,845 possible edges, and 32 of 1,180 clean
+TypeScript nodes (12 packages, `--typescript`). Over 2,525 JavaScript files:
+27 `join` definitions, 6 `__proto__` literals, 1,258 derived classes of
+2,231 (8,067 members). One oracle precision control moves to `UNKNOWN`
+(BL-091's static field of a class derived from the program's own). The
+corpora's differentials are in the task's report.

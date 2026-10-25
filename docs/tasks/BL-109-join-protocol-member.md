@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-109
 - **Branch**: `bl-109-join-protocol-member`
 - **Base SHA**: `b256b6d2d515d3a4e5de09bb7335204c8a8150cc` (BL-094's merge, PR #116)
-- **Commits**: —
+- **Commits**:
+  - `docs(tasks): BL-109 task file — an own join run by Array.prototype.toString on coercion, a protocol member`
+  - `test(BL-109): a member a builtin calls on its receiver by name, against real Node — the inventory, oracle cases, probe kinds, RWF-151, RWF-152, RWF-153`
+  - `fix(BL-109): join is a protocol name; every member of a __proto__ literal not proven ordinary, or of a derived class, is a protocol member — RWF-151, RWF-152, RWF-153`
+  - (this commit) `docs(BL-109): records — RWF-151 fixed, RWF-152 and RWF-153 registered and fixed, ADR 0008 decision record, the independent audit's two rounds, debts, backlog, progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -98,18 +102,18 @@ receiver's `join`.
 
 ## Acceptance criteria
 
-- [ ] Every case in `tests/oracle/bl109-implicit-receiver-methods.cases.ts`
+- [x] Every case in `tests/oracle/bl109-implicit-receiver-methods.cases.ts`
       answers its `expected` verdict with real Node's ground truth, and every
       case whose `base` differs from its `expected` failed on the base.
-- [ ] The inventory is a committed script, and its result is recorded.
-- [ ] Each rule is pinned by a named unit test, and each mutation of it is
+- [x] The inventory is a committed script, and its result is recorded.
+- [x] Each rule is pinned by a named unit test, and each mutation of it is
       caught by one.
-- [ ] The builtin probe builds every receiver hook the inventory confirms,
+- [x] The builtin probe builds every receiver hook the inventory confirms,
       and the admission test passes with them.
-- [ ] The graph, proof and verdict differentials are reported separately; no
+- [x] The graph, proof and verdict differentials are reported separately; no
       corpus case moves away from its expected verdict.
-- [ ] RWF-151 is recorded as fixed.
-- [ ] The independent audit certifies the change, or its findings are
+- [x] RWF-151 is recorded as fixed.
+- [x] The independent audit certifies the change, or its findings are
       handled per WORKFLOW § 1.5.
 
 ## Gates
@@ -121,3 +125,45 @@ D-09's six known failures.
 ## Report
 
 In the format of `AGENTS.md` § J (`docs/WORKFLOW.md` § 5).
+
+## Corrections
+
+Appended at `READY_FOR_REVIEW`; the sections above are as written at the
+start, except the status, the commit list and the acceptance boxes.
+
+- **The premises, measured** (oracle harness on the base `b256b6d`, real
+  Node v22.11.0): RWF-151's stored and defined forms, and the admitted
+  coercions (`Math.max`, `String`), are live false `NOT_AFFECTED`s
+  (`join.*`); `join` was not in `PROTOCOL_NAMES`. **Confirmed.**
+- **Wider than the record: RWF-152**, found by step 2's inventory
+  (`scripts/bl109-implicit-receiver-methods.mjs`): `toISOString`
+  (`Date.prototype.toJSON`), `utf8Slice` (Node's `Buffer.prototype.toString`)
+  and a Node stream's members (`on`, `read`, `push`, `emit`, `destroy`,
+  `_read`, `_destroy`, an open set) are called by name; a member DEFINED in
+  a `__proto__` literal was the live route. Folded in: the same defect as
+  RWF-151, and a list of names cannot close it.
+- **A STOP condition met, decided by the project owner** (2026-10-25,
+  ADR 0008, "Decision record — BL-109"): the fix needed a rule § 2 did not
+  have. Accepted: `join` as a protocol name (decision 1), every member of a
+  `__proto__` literal not proven ordinary (decision 2).
+- **The independent audit, round 1: `BLOCKED`** on RWF-153 (registered
+  here): a derived class's members are called by name by the builtin its
+  `prototype` inherits, with no call -- live, pre-existing, inside the
+  row's scope, and contradicting the records this task first wrote ("a
+  derived class fails closed"; corrected). The project owner decided:
+  every member of a class with an `extends` other than `null` is a protocol
+  member (decision 3), at a measured cost (293 of 29,748 clean JavaScript
+  nodes lost, against 5 without it; one oracle precision control of BL-091
+  moved to `cost.*`). Its non-blocking finding, the documentation
+  overclaims, fixed.
+- **Round 2: `CERTIFIED`**, about 150 attacks, no false `NOT_AFFECTED`. Its
+  non-blocking findings, fixed: a quadratic cost this change introduced
+  (`inheritsUnprovenPrototype` rescanned a literal's properties per member:
+  2,000 members, 4.4 s), now cached per literal and pinned by a scan count
+  (`protocol-members.performance.test.ts`); a stream's `read` is called
+  through a derived class's `prototype` too (condition (b) gains that
+  case); RWF-152's `toISOString` condition; two stale comments.
+- **Mechanical admission** (step 4): the probe's four kinds made no
+  admitted position fail; condition (a) gained the
+  `inherited_receiver_member` hook class.
+

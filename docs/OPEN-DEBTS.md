@@ -1616,6 +1616,26 @@ proves nothing; the protocol-member row's gap, backlog `BL-109`, P0). Nothing in
 entry is fixed by BL-094: RWF-063, RWF-110 and RWF-120 stay "fixed in
 part", and the list above stands, with RWF-151.
 
+**Progress, added by task `BL-109` (2026-10-25).** Task BL-109
+(`docs/tasks/BL-109-join-protocol-member.md`) fixed RWF-151, RWF-152 and
+RWF-153 (found by its independent audit), all live false `NOT_AFFECTED`s
+pre-existing on the base, by the project
+owner's decision of 2026-10-25 (ADR 0008, "Decision record — BL-109"): a
+coercion, `JSON.stringify` or `for await` may run an inherited builtin that
+calls a member of its receiver by name. `join` (an array's
+`Array.prototype.toString`) is now a protocol name; and every member of an
+object literal that sets `__proto__` to a value not proven `null` or a
+plain literal is a protocol member, whatever its key -- `toISOString`,
+`utf8Slice` and a Node stream's `on`, `read`, `destroy` and the rest, an
+open set of Node's own JavaScript (`scripts/bl109-implicit-receiver-methods.mjs`,
+measured over 795 prototypes and objects); and so is every member of a
+class with an `extends` other than `extends null`, whose `prototype`
+inherits such a builtin with no call. The builtin probe builds the four
+receivers, and every admitted position still passes mechanical admission.
+Measured cost over this repository's `node_modules`: 293 of 29,748 clean
+JavaScript and 32 of 1,180 clean TypeScript graph nodes lost (5 without the
+derived-class rule). The list above stands, without RWF-151.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
