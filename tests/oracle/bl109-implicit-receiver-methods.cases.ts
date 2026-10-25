@@ -153,6 +153,33 @@ export function oracleCase(kase: Bl109Case): OracleCase {
   };
 }
 
+/**
+ * Whether this Node's `Buffer.prototype.toString` calls its receiver's own
+ * `utf8Slice`. Node's own JavaScript, which a release changes: Node 20 and
+ * 22 call `this.utf8Slice(…)` (v22.11.0, measured); Node 26 calls an
+ * internal binding with the receiver instead, and never the receiver's
+ * member (v26.12.1, measured: the CI matrix's Node 26 job). Measured here,
+ * in the Node that runs the suite -- the one on `PATH` whose ground truth
+ * the cases read -- rather than pinned: the analyzer's `UNKNOWN` is sound
+ * either way, and the case's `called` is real Node's answer, not a guess.
+ */
+export const BUFFER_TO_STRING_CALLS_RECEIVER_UTF8SLICE: boolean = (() => {
+  let called = false;
+  try {
+    String({
+      __proto__: Buffer.prototype,
+      length: 0,
+      utf8Slice() {
+        called = true;
+        return "";
+      },
+    });
+  } catch {
+    // Node 26: the binding rejects a receiver that is not a buffer.
+  }
+  return called;
+})();
+
 /** A `join` that runs the hook; a stored or defined value of the case. */
 const JOIN_FN = `function () { CALL return ""; }`;
 
@@ -384,7 +411,7 @@ export const BL109_CASES: readonly Bl109Case[] = [
     mechanism:
       "`{ __proto__: Buffer.prototype, length: 0, utf8Slice() {} }`, coerced",
     source: `const b = { __proto__: Buffer.prototype, length: 0, utf8Slice() { CALL return ""; } };\nString(b);\n`,
-    called: true,
+    called: BUFFER_TO_STRING_CALLS_RECEIVER_UTF8SLICE,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
   },
@@ -609,7 +636,7 @@ export const BL109_CASES: readonly Bl109Case[] = [
     mechanism:
       "`class B extends Buffer { utf8Slice() {} }`, `{ __proto__: B.prototype, length: 0 }` coerced",
     source: `class B extends Buffer { utf8Slice() { CALL return ""; } }\nconst o = { __proto__: B.prototype, length: 0 };\nString(o);\n`,
-    called: true,
+    called: BUFFER_TO_STRING_CALLS_RECEIVER_UTF8SLICE,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
   },

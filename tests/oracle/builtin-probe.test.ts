@@ -8,6 +8,7 @@ import {
   probeRetention,
   type BuiltinCallShape,
 } from "../../src/testing/oracle/builtin-probe.js";
+import { BUFFER_TO_STRING_CALLS_RECEIVER_UTF8SLICE } from "./bl109-implicit-receiver-methods.cases.js";
 
 /**
  * Self-test for the builtin probe (task H-0 step 3): proves the tool
@@ -75,7 +76,6 @@ describe("probeBuiltinInvocation: detects every listed real-Node invocation surf
   it.each([
     ["String(__ARG__)", "join"],
     ["JSON.stringify(__ARG__)", "toISOString"],
-    ["String(__ARG__)", "utf8Slice"],
     ["(async () => { for await (const c of __ARG__) break; })()", "streamRead"],
   ] as const)(
     "%s invokes a member a builtin calls on its receiver by name: %s (task BL-109)",
@@ -84,6 +84,13 @@ describe("probeBuiltinInvocation: detects every listed real-Node invocation surf
       expect(result.fired).toContain(kind);
     },
   );
+
+  it("String(__ARG__) invokes the receiver's own utf8Slice exactly when this Node's Buffer.prototype.toString does (task BL-109; not on Node 26)", () => {
+    const result = probeBuiltinArgKind("String(__ARG__)", "utf8Slice");
+    expect(result.fired.includes("utf8Slice")).toBe(
+      BUFFER_TO_STRING_CALLS_RECEIVER_UTF8SLICE,
+    );
+  });
 
   it("Array.isArray(arg) runs no user code, for every argument kind", () => {
     const results = probeBuiltinInvocation(
