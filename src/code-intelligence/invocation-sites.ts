@@ -488,19 +488,22 @@ export const SYNTAX_KIND_CENSUS = {
     when: "an assignment (`=`, `||=`, `&&=`, `??=`) that stores a value which may carry the program's own code into an ambient global, a member of one, or a member of a builtin module's value (task A-3a, ADR 0008 § 2's escape row, PRM-114), a member of any object not proven to be one the program created, or a bare name in a `with` body (task BL-081, RWF-110, RWF-063, RWF-120); otherwise one storing into a member under a key that may be a protocol member's (task A-4). Its operators' coercions are use sites (see USE_SITE)",
   },
   MethodDeclaration: PROTOCOL_MEMBER(
-    "a method with a body, of a class or object literal, under a key that may be a protocol member's",
+    "a method with a body, of a class or object literal, under a key that may be a protocol member's, or of an object literal that sets its [[Prototype]] to a value not proven ordinary, or of a derived class (task BL-109)",
   ),
   PropertyAssignment: PROTOCOL_MEMBER(
-    "a property of an object literal (not a destructuring pattern) whose value may carry the program's code, under a key that may be a protocol member's",
+    "a property of an object literal (not a destructuring pattern, not its `__proto__: p`) whose value may carry the program's code, under a key that may be a protocol member's, or of an object literal that sets its [[Prototype]] to a value not proven ordinary (task BL-109)",
   ),
   ShorthandPropertyAssignment: PROTOCOL_MEMBER(
-    "a shorthand property of an object literal (not a destructuring pattern) named like a protocol member, whose value may carry the program's code",
+    "a shorthand property of an object literal (not a destructuring pattern) whose value may carry the program's code, named like a protocol member, or of an object literal that sets its [[Prototype]] to a value not proven ordinary (task BL-109)",
+  ),
+  SpreadAssignment: PROTOCOL_MEMBER(
+    "a spread into an object literal that sets its [[Prototype]] to a value not proven ordinary, whose value may carry the program's code (task BL-109); otherwise a use site (see USE_SITE)",
   ),
   PropertyDeclaration: {
     role: "site",
     site: "protocol_member",
     also: ["escaping_assignment"],
-    when: "a class field whose initializer may carry the program's code, under a key that may be a protocol member's (task A-4); first, an instance field of a derived class, defined onto whatever the base constructor returned (task BL-081), or, in a TypeScript file, a field assigned under the legacy class-field emit onto a class or instance not proven the program's own (tasks BL-091, BL-095)",
+    when: "a class field whose initializer may carry the program's code, under a key that may be a protocol member's (task A-4), or of a derived class (task BL-109); first, an instance field of a derived class, defined onto whatever the base constructor returned (task BL-081), or, in a TypeScript file, a field assigned under the legacy class-field emit onto a class or instance not proven the program's own (tasks BL-091, BL-095)",
   },
   ForOfStatement: {
     role: "site",
@@ -517,7 +520,6 @@ export const SYNTAX_KIND_CENSUS = {
   AwaitExpression: USE_SITE,
   YieldExpression: USE_SITE,
   SpreadElement: USE_SITE,
-  SpreadAssignment: USE_SITE,
   ArrayBindingPattern: USE_SITE,
   ObjectBindingPattern: USE_SITE,
   BindingElement: USE_SITE,
