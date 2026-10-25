@@ -122,6 +122,9 @@ describe("protocol keys (protocolKeyOf)", () => {
     ["const o = { next() {} };", "protocol"],
     ["const o = { return() {} };", "protocol"],
     ["const o = { throw() {} };", "protocol"],
+    // Array.prototype.toString calls its receiver's `join` (task BL-109,
+    // RWF-151).
+    ["const o = { join() {} };", "protocol"],
     [`const o = { "toString"() {} };`, "protocol"],
     [`const o = { ["then"]() {} };`, "protocol"],
     ["const o = { [Symbol.iterator]() {} };", "protocol"],
@@ -417,4 +420,142 @@ describe("an accessor is its own owner (Amendment A-0 part B, PRM-118)", () => {
       ),
     ).toBe(true);
   });
+});
+
+describe("a builtin that calls a member of its receiver by name (task BL-109)", () => {
+  it("a `join` stored onto an array the program created: a possible edge (RWF-151)", async () => {
+    const built = await build(
+      `const a = [];\na.join = function shown() { return ""; };\nString(a);\n`,
+    );
+    expect(describeEdges(built.graph, moduleNode(built))).toEqual([
+      `possible ${nodeNamed(built.graph, "shown")}`,
+    ]);
+  });
+
+  it.each([
+    ["a method", `const o = { __proto__: Date.prototype, m() {} };\n`, "m"],
+    [
+      "a property's function value",
+      `const o = { __proto__: Buffer.prototype, m: function shown() {} };\n`,
+      "shown",
+    ],
+    [
+      "a shorthand property",
+      `function shown() {}\nconst o = { __proto__: new Readable(), shown };\n`,
+      "shown",
+    ],
+    [
+      "a spread's function value",
+      `const o = { __proto__: [], ...{ m: function shown() {} } };\n`,
+      "shown",
+    ],
+    [
+      "a string-keyed prototype",
+      `const o = { "__proto__": p, m() {} };\n`,
+      "m",
+    ],
+    [
+      "a literal inheriting a literal that inherits an unproven prototype",
+      `const o = { __proto__: { __proto__: p }, m() {} };\n`,
+      "m",
+    ],
+  ])(
+    "every member of a literal whose `__proto__` is not proven ordinary is a protocol member (RWF-152): %s",
+    async (_name, source, target) => {
+      const built = await build(source);
+      expect(describeEdges(built.graph, moduleNode(built))).toContain(
+        `possible ${nodeNamed(built.graph, target)}`,
+      );
+    },
+  );
+
+  it("a getter of such a literal: what it returns is invoked (RWF-152)", async () => {
+    const built = await build(
+      `const o = { __proto__: p, get read() { return function handed() {}; } };\n`,
+    );
+    const getter = nodeNamed(built.graph, "get read", "accessor");
+    expect(describeEdges(built.graph, getter)).toEqual([
+      `possible ${nodeNamed(built.graph, "handed")}`,
+    ]);
+  });
+
+  it.each([
+    ["no `__proto__`", `const o = { m() {} };\n`],
+    ["`__proto__: null`", `const o = { __proto__: null, m() {} };\n`],
+    [
+      "a plain literal as the prototype",
+      `const o = { __proto__: { a: 1 }, m() {} };\n`,
+    ],
+    [
+      "a computed `__proto__` key, which defines an own property",
+      `const o = { ["__proto__"]: p, m() {} };\n`,
+    ],
+    [
+      "a shorthand `__proto__`, which defines an own property",
+      `const __proto__ = p;\nconst o = { __proto__, m() {} };\n`,
+    ],
+  ])(
+    "a prototype proven ordinary leaves a non-protocol member alone: %s",
+    async (_name, source) => {
+      const built = await build(source);
+      expect(edgesInto(built.graph, nodeNamed(built.graph, "m"))).toEqual([]);
+    },
+  );
+
+  it("the `__proto__: p` property itself defines no member", async () => {
+    const built = await build(
+      `const o = { __proto__: function proto() {} };\n`,
+    );
+    expect(edgesInto(built.graph, nodeNamed(built.graph, "proto"))).toEqual([]);
+  });
+});
+
+describe("every member of a derived class is a protocol member (task BL-109, RWF-153)", () => {
+  it.each([
+    [
+      "a method",
+      `class D extends Date { toISOString() { return ""; } }\n`,
+      "toISOString",
+    ],
+    ["a static method", `class D extends Date { static m() {} }\n`, "m"],
+    [
+      "a field's function value",
+      `class D extends Date { f = function shown() {}; }\n`,
+      "shown",
+    ],
+    ["a class expression", `const D = class extends Base { m() {} };\n`, "m"],
+    [
+      "a class derived from the program's own class",
+      `class B {}\nclass D extends B { m() {} }\n`,
+      "m",
+    ],
+  ])("%s", async (_name, source, target) => {
+    const built = await build(source);
+    expect(
+      edgesInto(built.graph, nodeNamed(built.graph, target)).map(
+        (e) => e.resolution.kind,
+      ),
+    ).toContain("possible");
+  });
+
+  it("a getter of a derived class: what it returns is invoked", async () => {
+    const built = await build(
+      `class S extends Readable { get read() { return function handed() {}; } }\n`,
+    );
+    const getter = nodeNamed(built.graph, "get read", "accessor");
+    expect(describeEdges(built.graph, getter)).toEqual([
+      `possible ${nodeNamed(built.graph, "handed")}`,
+    ]);
+  });
+
+  it.each([
+    ["a base class", `class C { m() {} }\n`],
+    ["`extends null`", `class N extends null { m() {} }\n`],
+  ])(
+    "a class that is not derived leaves a non-protocol member alone: %s",
+    async (_name, source) => {
+      const built = await build(source);
+      expect(edgesInto(built.graph, nodeNamed(built.graph, "m"))).toEqual([]);
+    },
+  );
 });
