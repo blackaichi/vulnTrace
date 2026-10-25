@@ -5,6 +5,7 @@ import {
 } from "../../src/code-intelligence/builtin-callables.js";
 import type { OracleCase } from "../../src/testing/oracle/case.js";
 import {
+  argumentSource,
   callExpressionAt,
   type BuiltinArgKind,
   type BuiltinCallShape,
@@ -29,7 +30,10 @@ import { syntheticProvider } from "../../src/testing/oracle/provider.js";
  *
  * (a) every hook the probe observes firing at the position is a member of
  *     § 2's protocol list, an accessor body, or a Proxy trap -- classified
- *     here by {@link classifyHook};
+ *     here by {@link classifyHook} -- or, since task BL-109, a member of an
+ *     object literal whose `__proto__` is not proven ordinary, or of a
+ *     derived class, which the protocol-member row accounts whatever its
+ *     name;
  * (b) for each such hook, an oracle case in which a vulnerable call inside
  *     the hook, reached through the builtin at the position, is never
  *     `NOT_AFFECTED` -- generated here by {@link admissionOracleCases}.
@@ -43,9 +47,29 @@ const PROTOCOL_HOOKS: ReadonlySet<string> = new Set([
   "toJSON",
   "then",
   "iterator",
+  // Task BL-109 (RWF-151): `Array.prototype.toString` calls `join`.
+  "join",
 ]);
 
-export type HookClass = "protocol" | "accessor" | "proxy_trap" | "other";
+/**
+ * Task BL-109 (RWF-152, RWF-153): the hooks a builtin calls by name on a
+ * receiver the probe builds as a `__proto__` literal, which the
+ * protocol-member row accounts as a member of a literal whose prototype is
+ * not proven ordinary, or of a derived class (`protocol-members.ts`'s
+ * `inheritsUnprovenPrototype`, `isDerivedClass`).
+ */
+const PROTOTYPE_LITERAL_HOOKS: ReadonlySet<string> = new Set([
+  "toISOString",
+  "utf8Slice",
+  "streamRead",
+]);
+
+export type HookClass =
+  | "protocol"
+  | "inherited_receiver_member"
+  | "accessor"
+  | "proxy_trap"
+  | "other";
 
 /**
  * Condition (a): how ADR 0008 accounts for a hook independently of the
@@ -56,6 +80,9 @@ export type HookClass = "protocol" | "accessor" | "proxy_trap" | "other";
 export function classifyHook(hook: string): HookClass {
   if (PROTOCOL_HOOKS.has(hook)) {
     return "protocol";
+  }
+  if (PROTOTYPE_LITERAL_HOOKS.has(hook)) {
+    return "inherited_receiver_member";
   }
   if (hook === "getter") {
     return "accessor";
@@ -207,6 +234,32 @@ function protocolObject(hook: string, call: string): string {
   }
 }
 
+/**
+ * Task BL-109 (RWF-153): the same receiver hook through a derived class's
+ * `prototype`, which inherits the builtin with no call, for every hook the
+ * probe builds.
+ */
+function derivedClassReceiver(
+  hook: string,
+): ((call: string) => string) | undefined {
+  switch (hook) {
+    case "join":
+      return (call) =>
+        `(class extends Array { join() { ${call} return ""; } }).prototype`;
+    case "toISOString":
+      return (call) =>
+        `(class extends Date { valueOf() { return 1; } toISOString() { ${call} return ""; } }).prototype`;
+    case "utf8Slice":
+      return (call) =>
+        `(class extends Buffer { get length() { return 0; } utf8Slice() { ${call} return ""; } }).prototype`;
+    case "streamRead":
+      return (call) =>
+        `(class extends require("stream").Readable { on() { return this; } read() { ${call} return null; } }).prototype`;
+    default:
+      return undefined;
+  }
+}
+
 function oracleCase(
   id: string,
   source: string,
@@ -282,6 +335,41 @@ export function admissionOracleCases(
       `${setup}const __arg = { get probe() { ${call} return 1; } };\n${invoke}`;
     return [
       oracleCase(`${id}.getter`, program(PARSE), { negative: program(SAFE) }),
+    ];
+  }
+  if (hookClass === "inherited_receiver_member") {
+    const program = (call: string) =>
+      `${setup}const __arg = ${argumentSource(hook as BuiltinArgKind, () => call)};\n${invoke}`;
+    const derived = derivedClassReceiver(hook);
+    const derivedProgram = (call: string) =>
+      `${setup}const __arg = ${derived!(call)};\n${invoke}`;
+    return [
+      oracleCase(`${id}.prototype-literal-member`, program(PARSE), {
+        negative: program(SAFE),
+      }),
+      ...(derived
+        ? [
+            oracleCase(`${id}.derived-class-member`, derivedProgram(PARSE), {
+              negative: derivedProgram(SAFE),
+            }),
+          ]
+        : []),
+    ];
+  }
+  if (hookClass === "protocol" && hook === "join") {
+    // An array the program creates, its `join` stored: the protocol name,
+    // not an escape, accounts for it; and a derived class's `prototype`.
+    const program = (call: string) =>
+      `${setup}const __arg = [];\n__arg.join = function () { ${call} return ""; };\n${invoke}`;
+    const derivedProgram = (call: string) =>
+      `${setup}const __arg = ${derivedClassReceiver("join")!(call)};\n${invoke}`;
+    return [
+      oracleCase(`${id}.protocol-member`, program(PARSE), {
+        negative: program(SAFE),
+      }),
+      oracleCase(`${id}.derived-class-member`, derivedProgram(PARSE), {
+        negative: derivedProgram(SAFE),
+      }),
     ];
   }
   if (hookClass === "protocol") {

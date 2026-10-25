@@ -488,16 +488,20 @@ export const BL091_TYPESCRIPT_CASES: readonly Bl091TypeScriptCase[] = [
     base: "NOT_AFFECTED",
     expected: "NOT_AFFECTED",
   },
+  // Task BL-109 (RWF-153, the project owner's decision of 2026-10-25):
+  // every member of a derived class is a protocol member, whatever its
+  // base, so this control is a measured precision cost since BL-109.
   {
-    id: "control.static-field-of-a-class-derived-from-the-programs-own",
+    id: "cost.static-field-of-a-class-derived-from-the-programs-own",
     finding: "RWF-127",
-    mechanism: "`class B {} class D extends B { static defaultOptions = … }`",
+    mechanism:
+      "`class B {} class D extends B { static defaultOptions = … }`: since BL-109 a derived class's members are protocol members",
     program: (hook) =>
       `import util = require("util");\nclass B {}\nclass D extends B { static defaultOptions = ${sorted(hook)}; }\nutil.inspect({ b: 1, a: 2 });\n`,
     target: "es2020",
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
   },
   {
     id: "cost.static-field-of-a-derived-class-under-define-semantics",

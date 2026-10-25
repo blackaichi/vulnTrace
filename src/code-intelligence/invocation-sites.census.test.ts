@@ -136,6 +136,10 @@ const SITE_EXAMPLES: Readonly<
     source: "const then = () => 1; const o = { then };",
     site: "protocol_member",
   },
+  SpreadAssignment: {
+    source: "const o = { __proto__: [], ...{ m: () => 1 } };",
+    site: "protocol_member",
+  },
   PropertyDeclaration: {
     source: "class C { valueOf = () => 1; }",
     site: "protocol_member",

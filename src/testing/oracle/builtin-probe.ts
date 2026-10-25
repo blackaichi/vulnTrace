@@ -29,7 +29,18 @@ import { promisify } from "node:util";
  *   never the `ownKeys` / `getOwnPropertyDescriptor` / `get` enumeration a
  *   plain-object Proxy triggers. A probe that exercised only one of the
  *   two would under-report exactly what an allowlist entry must be proven
- *   not to do.
+ *   not to do;
+ * - `join` / `toISOString` / `utf8Slice` / `streamRead` (task BL-109): an
+ *   object whose chain reaches a builtin that calls a member of its
+ *   receiver by name -- an array's `Array.prototype.toString` its `join`
+ *   on coercion, `Date.prototype.toJSON` its `toISOString` under
+ *   `JSON.stringify`, Node's `Buffer.prototype.toString` its `utf8Slice`
+ *   on coercion, a Node stream's `Symbol.asyncIterator` its `read` under
+ *   `for await` (the names `scripts/bl109-implicit-receiver-methods.mjs`
+ *   measures). Each but the array's is built as a `__proto__` literal,
+ *   one of the two forms that reach such a chain without a call (the
+ *   other, a derived class's `prototype`, is condition (b)'s second case
+ *   in `tests/oracle/builtin-admission.cases.ts`).
  *
  * WHAT A RESULT SAYS (task A-3a, ADR 0008's allowlist admission ruling).
  * `fired` holds the hooks that ran, and only hooks: a call that throws is
@@ -55,7 +66,11 @@ export type BuiltinArgKind =
   | "then"
   | "iterator"
   | "proxy"
-  | "proxyPlainObject";
+  | "proxyPlainObject"
+  | "join"
+  | "toISOString"
+  | "utf8Slice"
+  | "streamRead";
 
 export const ALL_BUILTIN_ARG_KINDS: readonly BuiltinArgKind[] = [
   "function",
@@ -69,6 +84,10 @@ export const ALL_BUILTIN_ARG_KINDS: readonly BuiltinArgKind[] = [
   "iterator",
   "proxy",
   "proxyPlainObject",
+  "join",
+  "toISOString",
+  "utf8Slice",
+  "streamRead",
 ];
 
 /** Every proxy trap (all 13 fundamental internal methods a Proxy handler can intercept). */
@@ -127,6 +146,14 @@ export function argumentSource(
       return `new Proxy(function probeTarget(){}, {\n    ${instrumentedHandlerBody(hookBody)}\n  })`;
     case "proxyPlainObject":
       return `new Proxy({ probe: 1 }, {\n    ${instrumentedHandlerBody(hookBody)}\n  })`;
+    case "join":
+      return `Object.assign([], { join(){ ${hookBody("join")} return "probe"; } })`;
+    case "toISOString":
+      return `({ __proto__: Date.prototype, valueOf(){ return 1; }, toISOString(){ ${hookBody("toISOString")} return "probe"; } })`;
+    case "utf8Slice":
+      return `({ __proto__: Buffer.prototype, length: 0, utf8Slice(){ ${hookBody("utf8Slice")} return "probe"; } })`;
+    case "streamRead":
+      return `({ __proto__: new (require("stream").Readable)({ read(){} }), read(){ ${hookBody("streamRead")} return null; } })`;
   }
 }
 

@@ -72,6 +72,19 @@ describe("probeBuiltinInvocation: detects every listed real-Node invocation surf
     expect(plain.fired).toContain("proxy:get");
   });
 
+  it.each([
+    ["String(__ARG__)", "join"],
+    ["JSON.stringify(__ARG__)", "toISOString"],
+    ["String(__ARG__)", "utf8Slice"],
+    ["(async () => { for await (const c of __ARG__) break; })()", "streamRead"],
+  ] as const)(
+    "%s invokes a member a builtin calls on its receiver by name: %s (task BL-109)",
+    (template, kind) => {
+      const result = probeBuiltinArgKind(template, kind);
+      expect(result.fired).toContain(kind);
+    },
+  );
+
   it("Array.isArray(arg) runs no user code, for every argument kind", () => {
     const results = probeBuiltinInvocation(
       "Array.isArray(__ARG__)",
