@@ -167,3 +167,15 @@ start, except the status, the commit list and the acceptance boxes.
   admitted position fail; condition (a) gained the
   `inherited_receiver_member` hook class.
 
+- **CI's Node 26 job failed after the pull request opened**, on the two
+  `utf8Slice` oracle cases and the probe's `utf8Slice` self-test: real
+  Node v26.12.1's `Buffer.prototype.toString` calls an internal binding
+  with the receiver (`utf8Slice(this, …)`), never the receiver's own
+  `utf8Slice`, so their recorded `called: true` held on Node 20 and 22
+  only. The analyzer's `UNKNOWN` was sound on both. Fixed: the cases
+  measure it in the Node that runs them
+  (`BUFFER_TO_STRING_CALLS_RECEIVER_UTF8SLICE`), and the records note what
+  the inventory finds on Node 26 (no `utf8Slice`; `off`, `removeListener`,
+  `values`, `listenerCount` under `for await`), all reached only through
+  the two rules' forms. A commit of its own, since the branch was already
+  pushed.

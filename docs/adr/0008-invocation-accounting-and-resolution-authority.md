@@ -1069,7 +1069,9 @@ task's inventory found the rest (`scripts/bl109-implicit-receiver-methods.mjs`,
 real Node v22.11.0, 795 prototypes and objects of Node's globals and builtin
 modules, the coercions, iterations, `await`, `JSON.stringify` and the
 admitted builtin positions): `toISOString` (`Date.prototype.toJSON`),
-`utf8Slice` (Node's `Buffer.prototype.toString`), and, under `for await`
+`utf8Slice` (Node's `Buffer.prototype.toString`, on Node 20 and 22; Node
+26 calls an internal binding instead, and adds `off`, `removeListener`,
+`values` and `listenerCount` under `for await`), and, under `for await`
 over an object inheriting a Node stream, `on`, `read`, `push`, `emit`,
 `destroy`, `_read` and `_destroy` -- Node's own JavaScript, which a release
 may change, so no list of names closes it (RWF-152).

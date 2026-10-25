@@ -24108,7 +24108,9 @@ arrays, typed arrays, array-valued properties), it confirms:
 - `toISOString`: `Date.prototype.toJSON`, under `JSON.stringify`, unless
   the object's `ToPrimitive` (number hint) gives a non-finite number;
 - `utf8Slice`: Node's `Buffer.prototype.toString`, on every coercion, once
-  the object has an own `length`;
+  the object has an own `length` -- on Node 20 and 22 only: Node 26
+  (v26.12.1) calls an internal binding with the receiver instead, never
+  the receiver's member;
 - `on`: a Node stream's `Symbol.asyncIterator` (`stream.Readable`,
   `Duplex`, `Transform`, `PassThrough`, `net.Socket`, `http.IncomingMessage`,
   `zlib`, `crypto` streams, 23 prototypes), under `for await`; over an
@@ -24131,6 +24133,14 @@ and `{ __proto__: Buffer.prototype, length: 0, utf8Slice() { … } }`
 coerced, `{ __proto__: stream.Readable.prototype, on() { … } }`,
 `{ __proto__: new Readable(), read() { … } }` and `const r = new
 Readable(); { __proto__: r, destroy() { … } }` under `for await`.
+
+**On Node 26** (v26.12.1, the CI matrix's other Node, measured with the
+same script): `utf8Slice` is gone, and `for await` over a stream's
+prototype also calls `off` and `removeListener`, over `zlib.ZipFile`'s
+`values`, and over a constructed stream `listenerCount`. The set is Node's
+own JavaScript and moves between releases, which is why the fix is a rule
+over definitions, not a list of names; the oracle cases measure `utf8Slice`
+in the Node that runs them (`BUFFER_TO_STRING_CALLS_RECEIVER_UTF8SLICE`).
 
 **The mechanism.** An object can inherit such a builtin without a call the
 analyzer distrusts in two ways: an array the program creates (RWF-151's

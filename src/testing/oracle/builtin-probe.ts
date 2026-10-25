@@ -35,7 +35,7 @@ import { promisify } from "node:util";
  *   receiver by name -- an array's `Array.prototype.toString` its `join`
  *   on coercion, `Date.prototype.toJSON` its `toISOString` under
  *   `JSON.stringify`, Node's `Buffer.prototype.toString` its `utf8Slice`
- *   on coercion, a Node stream's `Symbol.asyncIterator` its `read` under
+ *   on coercion (before Node 26, which calls an internal binding instead), a Node stream's `Symbol.asyncIterator` its `read` under
  *   `for await` (the names `scripts/bl109-implicit-receiver-methods.mjs`
  *   measures). Each but the array's is built as a `__proto__` literal,
  *   one of the two forms that reach such a chain without a call (the

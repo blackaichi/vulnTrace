@@ -162,9 +162,11 @@ export function protocolKeyOf(
  * whose chain reaches `Array.prototype` calls its `join`;
  * `JSON.stringify` of one reaching `Date.prototype` calls its
  * `toISOString`; coercing one reaching Node's `Buffer.prototype` calls its
- * `utf8Slice`; `for await` over one reaching a Node stream calls its
- * `on`, `read`, `push`, `emit`, `destroy`, `_read` and `_destroy` --
- * Node's own JavaScript, which a Node release may change (measured by
+ * `utf8Slice` on Node 20 and 22, not on Node 26; `for await` over one
+ * reaching a Node stream calls its `on`, `read`, `push`, `emit`,
+ * `destroy`, `_read` and `_destroy`, and on Node 26 its `off`,
+ * `removeListener` and `listenerCount` too -- Node's own JavaScript, which
+ * each release changes (measured by
  * `scripts/bl109-implicit-receiver-methods.mjs`). So every member a
  * literal with such a prototype defines may be invoked implicitly. A
  * literal with `null` there inherits nothing; one without `__proto__`, or
