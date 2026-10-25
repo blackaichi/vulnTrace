@@ -325,7 +325,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-148 | `vuln-lib` (synthetic fixture); a gap in the scope-aware binding resolver, not tied to one package | A function declaration with no body (`declare function L(…)` in a namespace or block, a lone overload signature) is taken as the name's binding, though the emit erases it and the call reads the outer binding or the global: a resolved callee with no body, so no edge | false NOT_AFFECTED (family C), pre-existing — see below | Open (backlog `BL-104`) |
 | RWF-149 | `vuln-lib` (synthetic fixture); a gap in decorator modelling, not tied to one package | A class decorator's result replaces the class (legacy `C = __decorate([dec], C)`, TC39 `__esDecorate`), but `new C()`, an implicit `super` into `C` and `Reflect.construct(C, …)` resolved to the declared constructor | fabricated edge: false AFFECTED and false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-100) — see below |
 | RWF-150 | `vuln-lib` (synthetic fixture); a gap in export attribution, not tied to one package | A TypeScript ES module compiled to CommonJS that overwrites its own export through a cast or an alias (`(exports as any).dec = …`, `const e: any = exports; e.dec = …`) is not counted as an export write: an importer binds the name to the declared function | false NOT_AFFECTED (family C) and false AFFECTED, pre-existing — see below | **Fixed** (BL-105) — see below |
-| RWF-151 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | An own `join` on an object whose [[Prototype]] chain reaches `Array.prototype.toString` -- stored (`const a = []; a.join = f`) or defined (`{ __proto__: [], join: f }`) -- is run whenever the object is coerced (`String(a)`, `"" + a`, a template, `Math.max(a)`), but `join` is not a protocol member, so neither the store nor the definition gets an edge: `f` gets none at all | false NOT_AFFECTED (family C), pre-existing — see below | Open — see below |
+| RWF-151 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | An own `join` on an object whose [[Prototype]] chain reaches `Array.prototype.toString` -- stored (`const a = []; a.join = f`) or defined (`{ __proto__: [], join: f }`) -- is run whenever the object is coerced (`String(a)`, `"" + a`, a template, `Math.max(a)`), but `join` is not a protocol member, so neither the store nor the definition gets an edge: `f` gets none at all | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-109) — see below |
+| RWF-152 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | A member defined in an object literal that sets `__proto__` to a builtin's prototype or object -- `toISOString` on `Date.prototype` under `JSON.stringify`, `utf8Slice` on Node's `Buffer.prototype` on coercion, `on` / `read` / `destroy` on a Node stream under `for await` -- is called by the inherited builtin, by name, but gets no edge: the definition form never reaches the escape row, and the names are not protocol members | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-109) — see below |
+| RWF-153 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | A member of a derived class -- `toISOString` in `class D extends Date`, `on` in `class S extends Readable`, `utf8Slice` in `class B extends Buffer` -- is called by name by the builtin the class's `prototype` inherits (`JSON.stringify(D.prototype)`, `for await` over `S.prototype`, `{ __proto__: B.prototype }` coerced), with no call and no `__proto__` literal, but gets no edge | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-109) — see below |
 
 ---
 
@@ -23993,7 +23995,7 @@ scope, fixed), round 2 `CERTIFIED`.
 
 ## RWF-151 — An own `join` on an object that inherits `Array.prototype.toString`, run on coercion
 
-**Status:** Open
+**Status:** Fixed (BL-109) — see the status update below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (the analyzer assumes coercing an object that inherits
 `Array.prototype.toString` runs no program code; real Node calls the
@@ -24061,3 +24063,156 @@ list is checked against the specification's implicit invocations reachable
 from a coercion or another operation with no call in the program. Adding
 a name to ADR 0008 § 2's list as amended may need the project owner's
 confirmation.
+
+**Status update (task BL-109, 2026-10-25): Fixed.** Measured on the base
+`b256b6d` with the oracle harness against real Node v22.11.0
+(`tests/oracle/bl109-implicit-receiver-methods.cases.ts`): every `join.*`
+case -- the stored form through `String`, `+`, a template, `Math.max`,
+`==`, a computed key, an outer array, `a["join"]`, a stored declaration, a
+store inside a function, `A.prototype = []` and an ES module; the defined
+form as a method, a value and a function's `prototype` -- was a live false
+`NOT_AFFECTED`, and is `UNKNOWN`. The record's "sound on the base" shapes
+hold, kept as guards (`guard.*`): a typed array's store, a derived class,
+a class prototype's `__proto__` changed, `Object.setPrototypeOf`, a
+constructor's `this`. The fix, by the project owner's decision of
+2026-10-25 (ADR 0008, "Decision record — BL-109"): `join` is in § 2's list
+(`PROTOCOL_NAMES`). Checking the list as the record asked found more of the
+class: RWF-152.
+
+The cost, measured: a `join` that real Node never runs implicitly -- a
+plain class's or object literal's -- is `UNKNOWN` where it was
+`NOT_AFFECTED` (`cost.*`); over this repository's `node_modules`, 27 `join`
+definitions in 2,525 JavaScript files, and with RWF-152's rule, 5 of 29,748
+clean call-graph nodes lost.
+
+## RWF-152 — A member a builtin calls on its receiver by name, defined in a `__proto__` literal
+
+**Status:** Fixed (BL-109) — see below
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the analyzer assumes a coercion, `JSON.stringify` or
+`for await` runs only the receiver's protocol members; an inherited builtin
+calls further members of the receiver by name)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** A (ADR 0008 § 2's protocol-member row)
+
+**Discovered:** by task BL-109, checking § 2's list as RWF-151 asked, with
+`scripts/bl109-implicit-receiver-methods.mjs` (real Node v22.11.0: every
+prototype and object Node's globals and builtin modules expose, one level
+deep, 795 in all; each coercion, iteration, `await`, `JSON.stringify` and
+admitted builtin position run on an object inheriting it, every key read
+through the chain shimmed until no new key is read, a key confirmed when an
+own function under it is called). Beyond `join` (RWF-151, 26 prototypes:
+arrays, typed arrays, array-valued properties), it confirms:
+
+- `toISOString`: `Date.prototype.toJSON`, under `JSON.stringify`, unless
+  the object's `ToPrimitive` (number hint) gives a non-finite number;
+- `utf8Slice`: Node's `Buffer.prototype.toString`, on every coercion, once
+  the object has an own `length`;
+- `on`: a Node stream's `Symbol.asyncIterator` (`stream.Readable`,
+  `Duplex`, `Transform`, `PassThrough`, `net.Socket`, `http.IncomingMessage`,
+  `zlib`, `crypto` streams, 23 prototypes), under `for await`; over an
+  object inheriting a CONSTRUCTED stream (the script's `--stream` pass),
+  `on`, `read`, `push`, `emit`, `destroy`, `_read` and `_destroy`. These
+  are Node's own JavaScript, which a release may change: no list of names
+  closes them.
+
+Reproduced on the base `b256b6d` as live false `NOT_AFFECTED`s
+(`toISOString.*`, `utf8Slice.*`, `on.*`):
+
+```js
+// src/index.js, after `const lib = require("vuln-lib");`
+const d = { __proto__: Date.prototype, valueOf() { return 1; },
+  toISOString() { lib.parse("x"); return ""; } };
+JSON.stringify(d);
+```
+
+and `{ __proto__: Buffer.prototype, length: 0, utf8Slice() { … } }`
+coerced, `{ __proto__: stream.Readable.prototype, on() { … } }`,
+`{ __proto__: new Readable(), read() { … } }` and `const r = new
+Readable(); { __proto__: r, destroy() { … } }` under `for await`.
+
+**The mechanism.** An object can inherit such a builtin without a call the
+analyzer distrusts in two ways: an array the program creates (RWF-151's
+`join`), and an object literal that sets `__proto__`. A store onto a
+`__proto__` literal is already an escape (`isProvenFreshObject` refuses
+it), and so is every other route measured -- `Object.setPrototypeOf`, a
+`__proto__` store, a builtin's result as `A.prototype`, a constructor's
+`this` under a replaced prototype, a derived class's construction
+(`guard.*`). A member DEFINED in the literal reaches only the
+protocol-member row, which keyed it by name. (A derived class's own
+members are the same gap through a class: RWF-153.)
+
+**Fixed** by task BL-109, by the project owner's decision of 2026-10-25
+(ADR 0008, "Decision record — BL-109", decisions 2 and 4): every member an
+object literal defines -- a method, a property, a shorthand, a spread's
+values, a getter's returned value -- is a protocol member, whatever its
+key, when the literal sets its [[Prototype]] to a value not proven `null`
+or a literal that does not itself set one
+(`inheritsUnprovenPrototype`, `protocol-members.ts`). The builtin probe
+builds the four receivers, so mechanical admission sees their hooks at
+every admitted position. Precision kept: `__proto__: null` and a plain
+literal (`control.*`). Precision given up: an ambient `Object.prototype`
+there (`cost.proto-ambient.method`).
+
+**Not established.** A member a builtin calls only once its receiver holds
+more internal state than the inventory builds, past a shim's `0`, or from a
+trigger the inventory does not run (Node's printing of an uncaught thrown
+object is one). The structural rule does not depend on the list: a literal
+inheriting any builtin is accounted whatever the name.
+
+## RWF-153 — A member of a derived class, called by name by the builtin its `prototype` inherits
+
+**Status:** Fixed (BL-109) — see below
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the analyzer assumes a derived class's own members
+run only when called; a builtin its `prototype` inherits calls them by
+name)
+**Proof family affected:** C
+**Severity:** P0 / a live false `NOT_AFFECTED`, pre-existing
+**Fix lane:** A (ADR 0008 § 2's protocol-member row)
+
+**Discovered:** by task BL-109's independent audit (round 1, `BLOCKED`),
+against real Node v22.11.0, on BL-109's change and on its base `b256b6d`
+alike; reproduced by BL-109 (`tests/oracle/bl109-implicit-receiver-methods.cases.ts`,
+`derived.*`, each `NOT_AFFECTED` on the base):
+
+```js
+// src/index.js, after `const lib = require("vuln-lib");`
+class D extends Date {
+  valueOf() { return 1; }
+  toISOString() { lib.parse("x"); return ""; }
+}
+JSON.stringify(D.prototype);
+```
+
+and `class S extends Readable { on() { … } }` with `for await` over
+`S.prototype`; `class B extends Buffer { utf8Slice() { … } }` with
+`{ __proto__: B.prototype, length: 0 }` coerced; the first form nested
+(`JSON.stringify({ when: D.prototype })`) in an ES module, and from the
+class's own static block (`JSON.stringify(this.prototype)`).
+
+**The mechanism.** A derived class's `prototype` inherits its base's with
+no call in the program. Constructing one is already an unknown edge (the
+base constructor, `guard.*.derived-class`), but its `prototype` is used
+without one, and its members are definitions, which the escape row never
+sees. RWF-152's literal rule covered object literals only, and the records
+BL-109 first wrote called the derived-class route closed: corrected before
+merge.
+
+**Fixed** by task BL-109, by the project owner's decision of 2026-10-25
+(ADR 0008, "Decision record — BL-109", decisions 3 and 4): every member of
+a class with an `extends` clause other than `extends null` -- a method, a
+field's value, an accessor's returned value, static ones too -- is a
+protocol member, whatever its key (`isDerivedClass`,
+`protocol-members.ts`). Condition (b) of mechanical admission has a case
+through a derived class's `prototype` for `join`, `toISOString` and
+`utf8Slice`. Precision kept: `extends null` (`control.extends-null.*`).
+Precision given up: a class derived from the program's own class
+(`cost.derived-from-program-class.method`, and BL-091's static-field
+control, now `cost.static-field-of-a-class-derived-from-the-programs-own`);
+over this repository's `node_modules`, 293 of 29,748 clean JavaScript and
+32 of 1,180 clean TypeScript call-graph nodes lost, with RWF-151's and
+RWF-152's rules (the latter two alone: 5); 1,258 of 2,231 JavaScript
+classes are derived.
+

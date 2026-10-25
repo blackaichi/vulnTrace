@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-21, by `BL-094`.
+**Last updated:** 2026-10-25, by `BL-109`.
 
 ## Objective
 
@@ -104,7 +104,16 @@ then does capability work (P1-B) resume (OPEN-DEBTS § 4).
   `import X = A.b` is a declaration of its block. Fixed RWF-141 and
   RWF-145's `import X =` form; and, from its audit, RWF-147: a function
   declared in a nested block is not seen outside it (strict code), and a
-  class static block is a var scope.
+  class static block is a var scope. `BL-109` added what an inherited
+  builtin calls on its receiver by name to the protocol-member row (ADR
+  0008, "Decision record — BL-109", the project owner's decision): `join`
+  (an array's `Array.prototype.toString`) is a protocol name, and every
+  member of an object literal whose `__proto__` is not proven `null` or a
+  plain literal, or of a class with an `extends` other than `null`, is a
+  protocol member, whatever its key (`toISOString`, `utf8Slice`, a Node
+  stream's `on` / `read` / `destroy` …, measured by
+  `scripts/bl109-implicit-receiver-methods.mjs`). Fixed RWF-151, RWF-152
+  (found by it) and RWF-153 (found by its audit).
 - Lane V has started. `V-1` (ADR 0011 predicates 2 and 3) deleted Site
   B's phantom target: a package with no node in the call graph is proved
   unreachable only by family A, and is otherwise `UNKNOWN` (PRM-101); Site
@@ -303,19 +312,15 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-094` — Decide the escape row's "unless proven" rule
-([task file](tasks/BL-094-escape-row-decision.md)): `READY_FOR_REVIEW`,
-verdict `NEEDS_DECISION`. No analyzer change; it measured six "prove
-less" prototypes and a "read the build" probe, and proposes option O2e in
-ADR 0008 ("Proposed decision — BL-094", PROPOSED): no derived class is
-proven the program's own, and in a TypeScript source no class, namespace
-object or enum object is. `BL-105` merged as PR #115.
+`BL-109` — An own `join` run by `Array.prototype.toString` on coercion: a
+protocol member ([task file](tasks/BL-109-join-protocol-member.md)):
+`READY_FOR_REVIEW`. `BL-094` merged as PR #116; its proposed decision (O2e)
+is still awaiting the project owner, so `BL-107` waits.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-094`:
-`BL-109` (RWF-151, P0, a live false `NOT_AFFECTED`: `join` as a protocol
-member), `BL-107` (the decision's implementation, only if O2e is
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-109`:
+`BL-107` (the decision's implementation, only if O2e is
 accepted), `BL-096`
 (the decision on `module.paths`'s read-only exemptions, RWF-136, P1),
 `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
@@ -338,6 +343,16 @@ for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
 withdrawals.
 
 ## Recently discovered
+
+From `BL-109`: `RWF-152` (a member a builtin calls on its receiver by
+name, defined in a `__proto__` literal: `toISOString`, `utf8Slice`, a Node
+stream's members; live, pre-existing, fixed in BL-109) and, by its
+independent audit, `RWF-153` (the same members in a derived class, whose
+`prototype` inherits the builtin with no call; live, pre-existing, fixed in
+BL-109 at a measured precision cost: 293 of 29,748 clean nodes). Its inventory's
+limits: a member called only once the receiver holds more internal state
+than it builds, and triggers it does not run (Node's printing of an
+uncaught thrown object).
 
 From `BL-094`: `RWF-151`, found by its independent audit, a live false
 `NOT_AFFECTED` pre-existing on the base: an own `join` (stored or
