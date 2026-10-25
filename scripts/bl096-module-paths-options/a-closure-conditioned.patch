@@ -1,0 +1,253 @@
+diff --git a/src/analysis/module-load-closure.ts b/src/analysis/module-load-closure.ts
+index 5dffd9c..517436a 100644
+--- a/src/analysis/module-load-closure.ts
++++ b/src/analysis/module-load-closure.ts
+@@ -1,5 +1,9 @@
+ import type { JsxSettings } from "../code-intelligence/jsx-runtime.js";
+-import { findClosureWideningConstructs } from "../code-intelligence/loader-constructs.js";
++import {
++  fileMayWriteBuiltin,
++  findBuiltinTrustingListUses,
++  findClosureWideningConstructs,
++} from "../code-intelligence/loader-constructs.js";
+ import { buildModuleModel } from "../code-intelligence/module-model.js";
+ import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
+ import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
+@@ -247,6 +251,8 @@ export async function buildModuleLoadClosure(
+   const loadedFiles = new Set<string>();
+   const incompleteness: ClosureIncompleteness[] = [];
+   const queue: string[] = [...rootFiles];
++  const builtinTrustingUses: ClosureIncompleteness[] = [];
++  let closureMayWriteBuiltin = false;
+ 
+   while (queue.length > 0) {
+     const filePath = queue.shift();
+@@ -298,17 +304,24 @@ export async function buildModuleLoadClosure(
+     // property of the source this closure actually read -- never of how
+     // far some other traversal happened to get. See
+     // `findClosureWideningConstructs`.
+-    for (const construct of findClosureWideningConstructs({
+-      index: sourceIndex,
+-      model,
+-      jsx: options.jsx,
+-    })) {
++    const classification = { index: sourceIndex, model, jsx: options.jsx };
++    for (const construct of findClosureWideningConstructs(classification)) {
+       incompleteness.push({
+         reason: construct.reason,
+         importer: filePath,
+         location: construct.location,
+       });
+     }
++    // BL-096 prototype (a): the lookup list's builtin-trusting uses, held
++    // until the whole closure is read.
++    for (const use of findBuiltinTrustingListUses(classification)) {
++      builtinTrustingUses.push({
++        reason: use.reason,
++        importer: filePath,
++        location: use.location,
++      });
++    }
++    closureMayWriteBuiltin ||= fileMayWriteBuiltin(classification);
+ 
+     // Every specifier this file statically, unconditionally loads at module
+     // scope -- both `import`/`require` bindings AND re-export declarations
+@@ -377,6 +390,12 @@ export async function buildModuleLoadClosure(
+     }
+   }
+ 
++  // BL-096 prototype (a): a file of the closure may write a builtin, so no
++  // use of the lookup list that trusts the builtins is exempt.
++  if (closureMayWriteBuiltin) {
++    incompleteness.push(...builtinTrustingUses);
++  }
++
+   const loadedPackageInstances = new Set<PackageInstanceId>();
+   for (const file of loadedFiles) {
+     const instance = identifyModule(
+diff --git a/src/code-intelligence/loader-constructs.ts b/src/code-intelligence/loader-constructs.ts
+index af3e8eb..b81b0c7 100644
+--- a/src/code-intelligence/loader-constructs.ts
++++ b/src/code-intelligence/loader-constructs.ts
+@@ -3547,6 +3547,15 @@ export function findClosureWideningConstructs(
+     if (implicitWrite !== undefined) {
+       record(implicitWrite, node);
+     }
++    // BL-096 prototype (a): RWF-154 -- the left of `instanceof` is handed to
++    // the right's `Symbol.hasInstance`, which may be the program's own.
++    if (
++      ts.isBinaryExpression(node) &&
++      node.operatorToken.kind === ts.SyntaxKind.InstanceOfKeyword &&
++      isModulePathsValue(node.left, context)
++    ) {
++      record("loader_capability_escape", node);
++    }
+     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+       // VT-307c-capability-floor/flow: reflection-API mutation calls and
+       // argument-position capability escapes (including a capability
+@@ -3683,3 +3692,165 @@ export function findClosureWideningConstructs(
+   visit(sourceFile);
+   return found;
+ }
++
++// ---------------------------------------------------------------------------
++// BL-096 prototype (a): the read-only exemptions, conditioned on the closure.
++// ---------------------------------------------------------------------------
++
++/** BL-096 prototype (a): whether `expr` is the lookup list itself. */
++function isModulePathsValue(
++  expr: ts.Expression,
++  context: LoaderClassificationContext,
++): boolean {
++  return (
++    resolveLoaderCapability(skipTransparentWrappers(expr), context)?.kind ===
++    "module_paths"
++  );
++}
++
++/** BL-096 prototype (a): whether a member access is a write target, which the write checks classify. */
++function isWriteTarget(node: ts.Expression): boolean {
++  const parent = node.parent;
++  return (
++    (ts.isBinaryExpression(parent) &&
++      parent.left === node &&
++      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
++      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
++    ((ts.isPrefixUnaryExpression(parent) ||
++      ts.isPostfixUnaryExpression(parent)) &&
++      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
++        parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
++    ts.isDeleteExpression(parent)
++  );
++}
++
++/**
++ * BL-096 prototype (a): whether `node` is a use of the lookup list that
++ * the classifier exempts only because Node's own builtins never hand the
++ * list on -- a method call, a `for…of`, a member read but `length`, a
++ * conversion, a property key, `await`, the right of `instanceof`. Exempt
++ * while no file of the closure may write a builtin.
++ */
++function isBuiltinTrustingListUse(
++  node: ts.Node,
++  context: LoaderClassificationContext,
++): boolean {
++  if (
++    (ts.isPropertyAccessExpression(node) ||
++      ts.isElementAccessExpression(node)) &&
++    isModulePathsValue(node.expression, context)
++  ) {
++    return memberAccessOf(node)?.name !== "length" && !isWriteTarget(node);
++  }
++  if (
++    (ts.isForOfStatement(node) &&
++      isModulePathsValue(node.expression, context)) ||
++    (ts.isElementAccessExpression(node) &&
++      isModulePathsValue(node.argumentExpression, context)) ||
++    (ts.isComputedPropertyName(node) &&
++      isModulePathsValue(node.expression, context)) ||
++    (ts.isTemplateSpan(node) && isModulePathsValue(node.expression, context)) ||
++    (ts.isAwaitExpression(node) &&
++      isModulePathsValue(node.expression, context))
++  ) {
++    return true;
++  }
++  if (
++    ts.isPrefixUnaryExpression(node) &&
++    (node.operator === ts.SyntaxKind.PlusToken ||
++      node.operator === ts.SyntaxKind.MinusToken ||
++      node.operator === ts.SyntaxKind.TildeToken) &&
++    isModulePathsValue(node.operand, context)
++  ) {
++    return true;
++  }
++  if (ts.isBinaryExpression(node)) {
++    const op = node.operatorToken.kind;
++    if (
++      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
++      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
++      !PRIMITIVE_RESULT_BINARY_OPERATORS.has(op)
++    ) {
++      return false;
++    }
++    if (
++      (op === ts.SyntaxKind.EqualsEqualsToken ||
++        op === ts.SyntaxKind.ExclamationEqualsToken) &&
++      (node.left.kind === ts.SyntaxKind.NullKeyword ||
++        node.right.kind === ts.SyntaxKind.NullKeyword)
++    ) {
++      return false;
++    }
++    // The left of `instanceof` is RWF-154's, unconditional (the walk above).
++    const converted =
++      op === ts.SyntaxKind.InKeyword
++        ? [node.left]
++        : op === ts.SyntaxKind.InstanceOfKeyword
++          ? [node.right]
++          : [node.left, node.right];
++    return converted.some((operand) => isModulePathsValue(operand, context));
++  }
++  return false;
++}
++
++/** BL-096 prototype (a): the file's uses of the lookup list that trust the builtins. */
++export function findBuiltinTrustingListUses(
++  context: LoaderClassificationContext,
++): LoaderConstruct[] {
++  const { sourceFile } = context.index;
++  const found: LoaderConstruct[] = [];
++  const visit = (node: ts.Node): void => {
++    if (isBuiltinTrustingListUse(node, context)) {
++      found.push({
++        reason: "loader_capability_escape",
++        location: toSourceLocation(sourceFile, node),
++      });
++    }
++    ts.forEachChild(node, visit);
++  };
++  visit(sourceFile);
++  return found;
++}
++
++/** BL-096 prototype (a): builtin members that store onto an object they are handed, by name. */
++const STORING_BUILTIN_MEMBER_NAMES: ReadonlySet<string> = new Set([
++  "defineProperty",
++  "defineProperties",
++  "setPrototypeOf",
++  "assign",
++  "set",
++  "__defineGetter__",
++  "__defineSetter__",
++]);
++
++/**
++ * BL-096 prototype (a): whether the file may write a member of a builtin
++ * object -- a store the escape row counts as an escape (ADR 0008, BL-081's
++ * decision record: onto an object not proven the program's own), a call
++ * of a storing builtin member by name, or a `with` statement.
++ */
++export function fileMayWriteBuiltin(
++  context: LoaderClassificationContext,
++): boolean {
++  let found = false;
++  const visit = (node: ts.Node): void => {
++    if (found) {
++      return;
++    }
++    const callee =
++      ts.isCallExpression(node) || ts.isNewExpression(node)
++        ? memberAccessOf(node.expression)?.name
++        : undefined;
++    if (
++      invocationSiteOf(node)?.kind === "escaping_assignment" ||
++      ts.isWithStatement(node) ||
++      (callee !== undefined && STORING_BUILTIN_MEMBER_NAMES.has(callee))
++    ) {
++      found = true;
++      return;
++    }
++    ts.forEachChild(node, visit);
++  };
++  visit(context.index.sourceFile);
++  return found;
++}

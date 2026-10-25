@@ -1,0 +1,266 @@
+diff --git a/src/code-intelligence/loader-constructs.ts b/src/code-intelligence/loader-constructs.ts
+index af3e8eb..697d99d 100644
+--- a/src/code-intelligence/loader-constructs.ts
++++ b/src/code-intelligence/loader-constructs.ts
+@@ -3011,12 +3011,232 @@ function modulePathsMethodReason(
+   if (name !== undefined && ARRAY_MUTATING_METHODS.has(name)) {
+     return "loader_hook_mutation";
+   }
+-  if (name !== undefined && MODULE_PATHS_READ_METHODS.has(name)) {
+-    return undefined;
+-  }
++  // BL-096 prototype (b): no method is read-only, since any may be replaced.
+   return "loader_capability_escape";
+ }
+ 
++/**
++ * BL-096 prototype (b2): whether identifier `id` is a reference to a value
++ * (not a declaration's or a property's name, a label, or a type).
++ */
++function isValueReference(id: ts.Identifier): boolean {
++  const parent = id.parent;
++  if (
++    (ts.isPropertyAccessExpression(parent) && parent.name === id) ||
++    // `import a = p.q` in TypeScript is `var a = p.q` (BL-096's audit,
++    // round 3); any other qualified name is a type or namespace path.
++    (ts.isQualifiedName(parent) &&
++      !ts.isImportEqualsDeclaration(parent.parent)) ||
++    ts.isTypeReferenceNode(parent) ||
++    ts.isLabeledStatement(parent) ||
++    ts.isBreakOrContinueStatement(parent) ||
++    ts.isImportSpecifier(parent) ||
++    ts.isImportClause(parent) ||
++    ts.isNamespaceImport(parent) ||
++    ts.isMetaProperty(parent) ||
++    (ts.isBindingElement(parent) && parent.propertyName === id)
++  ) {
++    return false;
++  }
++  const named = parent as ts.Node & { readonly name?: ts.Node };
++  return !(
++    named.name === id &&
++    (ts.isVariableDeclaration(parent) ||
++      ts.isParameter(parent) ||
++      ts.isBindingElement(parent) ||
++      ts.isPropertyAssignment(parent) ||
++      ts.isPropertyDeclaration(parent) ||
++      ts.isMethodDeclaration(parent) ||
++      ts.isGetAccessorDeclaration(parent) ||
++      ts.isSetAccessorDeclaration(parent) ||
++      ts.isFunctionDeclaration(parent) ||
++      ts.isFunctionExpression(parent) ||
++      ts.isClassDeclaration(parent) ||
++      ts.isClassExpression(parent) ||
++      ts.isEnumMember(parent) ||
++      ts.isEnumDeclaration(parent) ||
++      ts.isModuleDeclaration(parent) ||
++      ts.isPropertySignature(parent) ||
++      ts.isMethodSignature(parent) ||
++      ts.isJsxAttribute(parent))
++  );
++}
++
++/** BL-096 prototype (b2): whether `node` is an expression whose value is the lookup list itself. */
++function isListExpression(
++  node: ts.Node,
++  context: LoaderClassificationContext,
++): node is ts.Expression {
++  if (ts.isIdentifier(node)) {
++    if (!isValueReference(node)) {
++      return false;
++    }
++  } else if (
++    !ts.isPropertyAccessExpression(node) &&
++    !ts.isElementAccessExpression(node)
++  ) {
++    return false;
++  }
++  const capability = resolveLoaderCapability(node, context);
++  if (capability?.kind === "module_paths") {
++    return true;
++  }
++  if (capability?.kind !== "ambiguous") {
++    return false;
++  }
++  // A resolution that may be any capability may be the list when it is a
++  // member named `paths` or under a computed key into a `Module` instance
++  // or an `ambiguous` value -- `require.cache[__filename].paths`,
++  // `module["pa" + "ths"]`, `m45.paths` past the alias depth budget
++  // (BL-096's audit, rounds 2 and 3). A member under another name
++  // (`require.cache[k].exports`) and an entry of a registry
++  // (`require.cache[k]`, a `Module`) are not the list. An `ambiguous`
++  // identifier is an alias whose chain broke at a declaration that
++  // `isListAlias` already refuses, so that declaration fails closed.
++  const member = memberAccessOf(node);
++  if (member === undefined) {
++    return false;
++  }
++  if (member.name !== undefined) {
++    return member.name === "paths";
++  }
++  const receiver = resolveLoaderCapability(member.receiver, context)?.kind;
++  return receiver === "module_instance" || receiver === "ambiguous";
++}
++
++/**
++ * BL-096 prototype (b2): whether `declaration` is a plain, unexported
++ * `const` alias whose own name resolves to the lookup list -- so each of
++ * its uses is classified as the list's. A `const` that may hold another
++ * capability (`c ? require : module.paths`, resolved to the first) or a
++ * name shared with another declaration is not (BL-096's audit, round 2);
++ * nor is `using` / `await using`, which looks up a disposer on the value.
++ */
++function isListAlias(
++  declaration: ts.VariableDeclaration,
++  context: LoaderClassificationContext,
++): boolean {
++  const list = declaration.parent;
++  return (
++    ts.isIdentifier(declaration.name) &&
++    ts.isVariableDeclarationList(list) &&
++    (list.flags & (ts.NodeFlags.Const | ts.NodeFlags.Using)) ===
++      ts.NodeFlags.Const &&
++    (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export) ===
++      0 &&
++    resolveLoaderCapability(declaration.name, context)?.kind === "module_paths"
++  );
++}
++
++/** BL-096 prototype (b2): whether `expr` is the `null` literal, through parentheses. */
++function isNullLiteral(expr: ts.Expression): boolean {
++  return skipTransparentWrappers(expr).kind === ts.SyntaxKind.NullKeyword;
++}
++
++/**
++ * BL-096 prototype (b2): the reason for the position the lookup list
++ * `list` is used in -- `undefined` only on the closed list of positions
++ * real Node never hands the list on from, whatever the program's builtins
++ * hold (measured in BL-096): a read of `length`; `for…in`; an operand of
++ * `===`, `!==`, `typeof`, `void`, `!`, the right of `in`, `==` / `!=`
++ * against `null`; a test (`if`, `while`, `do`, `for`, a conditional's
++ * condition, the left of `&&`), a `switch` or `case` value (strict
++ * equality), a discarded value (an expression statement, the left of a
++ * comma); and a `const` alias, whose own uses are classified the same.
++ * A position that only selects the value (parentheses, a type assertion,
++ * the branches of a conditional, either side of `||` / `??`, the right of
++ * `&&` or of a comma) is classified by where the selected value goes.
++ * Every other position is `loader_capability_escape`.
++ */
++function listUseReason(
++  list: ts.Expression,
++  context: LoaderClassificationContext,
++): DynamicCallReason | undefined {
++  let child: ts.Node = list;
++  for (;;) {
++    const parent = child.parent;
++    if (
++      ts.isParenthesizedExpression(parent) ||
++      ts.isAsExpression(parent) ||
++      ts.isSatisfiesExpression(parent) ||
++      ts.isNonNullExpression(parent) ||
++      ts.isTypeAssertionExpression(parent)
++    ) {
++      child = parent;
++      continue;
++    }
++    if (ts.isConditionalExpression(parent)) {
++      if (parent.condition === child) {
++        return undefined;
++      }
++      child = parent;
++      continue;
++    }
++    if (ts.isBinaryExpression(parent)) {
++      const op = parent.operatorToken.kind;
++      const other = parent.left === child ? parent.right : parent.left;
++      if (
++        op === ts.SyntaxKind.BarBarToken ||
++        op === ts.SyntaxKind.QuestionQuestionToken ||
++        ((op === ts.SyntaxKind.AmpersandAmpersandToken ||
++          op === ts.SyntaxKind.CommaToken) &&
++          parent.right === child)
++      ) {
++        child = parent;
++        continue;
++      }
++      if (
++        ((op === ts.SyntaxKind.AmpersandAmpersandToken ||
++          op === ts.SyntaxKind.CommaToken) &&
++          parent.left === child) ||
++        op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
++        op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
++        (op === ts.SyntaxKind.InKeyword && parent.right === child) ||
++        ((op === ts.SyntaxKind.EqualsEqualsToken ||
++          op === ts.SyntaxKind.ExclamationEqualsToken) &&
++          isNullLiteral(other))
++      ) {
++        return undefined;
++      }
++      return "loader_capability_escape";
++    }
++    if (
++      ts.isTypeOfExpression(parent) ||
++      ts.isVoidExpression(parent) ||
++      (ts.isPrefixUnaryExpression(parent) &&
++        parent.operator === ts.SyntaxKind.ExclamationToken) ||
++      ts.isExpressionStatement(parent)
++    ) {
++      return undefined;
++    }
++    if (
++      (ts.isPropertyAccessExpression(parent) ||
++        ts.isElementAccessExpression(parent)) &&
++      parent.expression === child
++    ) {
++      return memberAccessOf(parent)?.name === "length"
++        ? undefined
++        : "loader_capability_escape";
++    }
++    if (
++      (ts.isForInStatement(parent) && parent.expression === child) ||
++      ((ts.isIfStatement(parent) ||
++        ts.isWhileStatement(parent) ||
++        ts.isDoStatement(parent) ||
++        ts.isSwitchStatement(parent) ||
++        ts.isCaseClause(parent)) &&
++        parent.expression === child) ||
++      (ts.isForStatement(parent) && parent.condition === child) ||
++      (ts.isVariableDeclaration(parent) &&
++        parent.initializer === child &&
++        isListAlias(parent, context))
++    ) {
++      return undefined;
++    }
++    return "loader_capability_escape";
++  }
++}
++
+ /**
+  * Whether `node` is an assignment that mutates Node's own module-loading/
+  * resolution machinery (VT-307c-fix-6 Part 11; VT-307c-fix-7 Part 4;
+@@ -3416,8 +3636,9 @@ function isIteratedLookupList(
+   consumed: ConsumedValuePosition,
+   context: LoaderClassificationContext,
+ ): boolean {
++  // BL-096 prototype (b1): `for…in` only; `for…of` runs the iterator.
+   return (
+-    (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
++    ts.isForInStatement(node) &&
+     resolveLoaderCapability(consumed.expression, context)?.kind ===
+       "module_paths"
+   );
+@@ -3547,6 +3768,14 @@ export function findClosureWideningConstructs(
+     if (implicitWrite !== undefined) {
+       record(implicitWrite, node);
+     }
++    // BL-096 prototype (b2): every use of the lookup list but the closed
++    // list of positions real Node never hands it on from.
++    if (isListExpression(node, context)) {
++      const listUse = listUseReason(node, context);
++      if (listUse !== undefined) {
++        record(listUse, node);
++      }
++    }
+     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+       // VT-307c-capability-floor/flow: reflection-API mutation calls and
+       // argument-position capability escapes (including a capability

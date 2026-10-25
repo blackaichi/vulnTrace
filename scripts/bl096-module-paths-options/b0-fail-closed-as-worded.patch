@@ -1,0 +1,152 @@
+diff --git a/src/code-intelligence/loader-constructs.ts b/src/code-intelligence/loader-constructs.ts
+index af3e8eb..34b6191 100644
+--- a/src/code-intelligence/loader-constructs.ts
++++ b/src/code-intelligence/loader-constructs.ts
+@@ -3011,12 +3011,121 @@ function modulePathsMethodReason(
+   if (name !== undefined && ARRAY_MUTATING_METHODS.has(name)) {
+     return "loader_hook_mutation";
+   }
+-  if (name !== undefined && MODULE_PATHS_READ_METHODS.has(name)) {
+-    return undefined;
+-  }
++  // BL-096 prototype (b): no method is read-only, since any may be replaced.
+   return "loader_capability_escape";
+ }
+ 
++/** BL-096 prototype (b): whether `expr` is the lookup list itself. */
++function isModulePathsValue(
++  expr: ts.Expression,
++  context: LoaderClassificationContext,
++): boolean {
++  return (
++    resolveLoaderCapability(skipTransparentWrappers(expr), context)?.kind ===
++    "module_paths"
++  );
++}
++
++/** BL-096 prototype (b): whether a member access is a callee or a write target, which other checks classify. */
++function isCalleeOrWriteTarget(node: ts.Expression): boolean {
++  const parent = node.parent;
++  return (
++    ((ts.isCallExpression(parent) || ts.isNewExpression(parent)) &&
++      parent.expression === node) ||
++    (ts.isTaggedTemplateExpression(parent) && parent.tag === node) ||
++    (ts.isBinaryExpression(parent) &&
++      parent.left === node &&
++      parent.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
++      parent.operatorToken.kind <= ts.SyntaxKind.LastAssignment) ||
++    ((ts.isPrefixUnaryExpression(parent) ||
++      ts.isPostfixUnaryExpression(parent)) &&
++      (parent.operator === ts.SyntaxKind.PlusPlusToken ||
++        parent.operator === ts.SyntaxKind.MinusMinusToken)) ||
++    ts.isDeleteExpression(parent)
++  );
++}
++
++/**
++ * BL-096 prototype (b1): a use of the lookup list that hands it to code a
++ * module may have replaced -- every use but `length`, and the operators
++ * real Node never converts it with (`===`, `!==`, `typeof`, `void`, `!`,
++ * the right of `in`, `== null`, a test, `??`; measured in BL-096).
++ */
++function modulePathsUseReason(
++  node: ts.Node,
++  context: LoaderClassificationContext,
++): DynamicCallReason | undefined {
++  if (
++    (ts.isPropertyAccessExpression(node) ||
++      ts.isElementAccessExpression(node)) &&
++    isModulePathsValue(node.expression, context)
++  ) {
++    // BL-096 prototype (b0): an element read stays exempt, as the backlog
++    // row worded option (b).
++    if (
++      memberAccessOf(node)?.name === "length" ||
++      ts.isElementAccessExpression(node)
++    ) {
++      return undefined;
++    }
++    return isCalleeOrWriteTarget(node) ? undefined : "loader_capability_escape";
++  }
++  if (
++    ts.isElementAccessExpression(node) &&
++    isModulePathsValue(node.argumentExpression, context)
++  ) {
++    return "loader_capability_escape";
++  }
++  if (
++    ts.isComputedPropertyName(node) &&
++    isModulePathsValue(node.expression, context)
++  ) {
++    return "loader_capability_escape";
++  }
++  if (ts.isBinaryExpression(node)) {
++    const op = node.operatorToken.kind;
++    if (
++      op === ts.SyntaxKind.EqualsEqualsEqualsToken ||
++      op === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
++      !PRIMITIVE_RESULT_BINARY_OPERATORS.has(op)
++    ) {
++      return undefined;
++    }
++    if (
++      (op === ts.SyntaxKind.EqualsEqualsToken ||
++        op === ts.SyntaxKind.ExclamationEqualsToken) &&
++      (node.left.kind === ts.SyntaxKind.NullKeyword ||
++        node.right.kind === ts.SyntaxKind.NullKeyword)
++    ) {
++      return undefined;
++    }
++    const converted =
++      op === ts.SyntaxKind.InKeyword ? [node.left] : [node.left, node.right];
++    return converted.some((operand) => isModulePathsValue(operand, context))
++      ? "loader_capability_escape"
++      : undefined;
++  }
++  if (ts.isTemplateSpan(node) && isModulePathsValue(node.expression, context)) {
++    return "loader_capability_escape";
++  }
++  if (
++    ts.isPrefixUnaryExpression(node) &&
++    (node.operator === ts.SyntaxKind.PlusToken ||
++      node.operator === ts.SyntaxKind.MinusToken ||
++      node.operator === ts.SyntaxKind.TildeToken) &&
++    isModulePathsValue(node.operand, context)
++  ) {
++    return "loader_capability_escape";
++  }
++  if (
++    ts.isAwaitExpression(node) &&
++    isModulePathsValue(node.expression, context)
++  ) {
++    return "loader_capability_escape";
++  }
++  return undefined;
++}
++
+ /**
+  * Whether `node` is an assignment that mutates Node's own module-loading/
+  * resolution machinery (VT-307c-fix-6 Part 11; VT-307c-fix-7 Part 4;
+@@ -3416,8 +3525,9 @@ function isIteratedLookupList(
+   consumed: ConsumedValuePosition,
+   context: LoaderClassificationContext,
+ ): boolean {
++  // BL-096 prototype (b1): `for…in` only; `for…of` runs the iterator.
+   return (
+-    (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
++    ts.isForInStatement(node) &&
+     resolveLoaderCapability(consumed.expression, context)?.kind ===
+       "module_paths"
+   );
+@@ -3547,6 +3657,11 @@ export function findClosureWideningConstructs(
+     if (implicitWrite !== undefined) {
+       record(implicitWrite, node);
+     }
++    // BL-096 prototype (b): a use of the lookup list a replaced builtin runs.
++    const listUse = modulePathsUseReason(node, context);
++    if (listUse !== undefined) {
++      record(listUse, node);
++    }
+     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
+       // VT-307c-capability-floor/flow: reflection-API mutation calls and
+       // argument-position capability escapes (including a capability
