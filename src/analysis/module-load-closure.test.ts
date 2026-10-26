@@ -2277,8 +2277,11 @@ describe("ModuleLoadClosure: Node module-loader/resolution mutation (VT-307c-fix
       "const obj = { _cache: {} };\nobj._cache['x'] = {};\nmodule.exports = {};\n",
     ],
     [
-      "11 read-only module.paths.slice()/includes() -- non-mutating array methods must never flag",
-      "const copy = module.paths.slice();\nconst has = module.paths.includes('x');\nmodule.exports = { copy, has };\n",
+      // Task BL-110: the method calls this control first held
+      // (`module.paths.slice()` / `includes()`) are the cost of BL-096's
+      // decision, asserted below; `length` and `for…in` stay complete.
+      "11 module.paths.length and for…in -- the uses of the lookup list BL-096's decision keeps",
+      "const n = module.paths.length;\nfor (const i in module.paths) { void i; }\nmodule.exports = { n };\n",
     ],
     [
       "12 read-only require.cache['literal'] access -- reading an entry is not mutation",
@@ -2296,6 +2299,25 @@ describe("ModuleLoadClosure: Node module-loader/resolution mutation (VT-307c-fix
       expect(closure.incompleteness).toEqual([]);
     },
   );
+
+  it("module.paths.slice()/includes() is no longer read-only: each call is a loader_capability_escape (task BL-110, the cost of BL-096's decision on ADR 0010 § 4's control 11)", async () => {
+    // A module may replace `Array.prototype.slice` / `includes`, and the
+    // replacement runs with the list as `this` (RWF-136; ADR 0010,
+    // "Decision record -- BL-096").
+    const root = tempProject();
+    const entry = write(
+      root,
+      "src/index.js",
+      "const copy = module.paths.slice();\nconst has = module.paths.includes('x');\nmodule.exports = { copy, has };\n",
+    );
+
+    const closure = await closureFor(root, [entry]);
+
+    expect(closure.complete).toBe(false);
+    expect(new Set(reasonsOf(closure))).toEqual(
+      new Set(["loader_capability_escape"]),
+    );
+  });
 
   it("(Part 13) a Module._resolveFilename mutation in a file reached ONLY through a re-export still makes the closure incomplete", async () => {
     const root = tempProject();

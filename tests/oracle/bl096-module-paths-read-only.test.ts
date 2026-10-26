@@ -19,11 +19,11 @@ import {
  * Task BL-096 (docs/tasks/BL-096-module-paths-read-only-exemptions.md):
  * the loader classifier's read-only exemptions for a `Module` instance's
  * lookup list, against real Node. See the cases file for what the base
- * measured. BL-096 is a decision task and changes no analyzer behaviour:
- * every case it leaves open (RWF-136, RWF-154) is an open-soundness-defect
- * record, never an expectation, and the task implementing the decision
- * deletes each record its fix flips. Every other case asserts its sound
- * verdict.
+ * measured. Task BL-110 implements BL-096's decision: each case that uses
+ * the list asserts its sound verdict, and a control the decision gives up
+ * states its cost. A case no rule over the list's uses can see (RWF-156,
+ * backlog `BL-111`) is an open-soundness-defect record, never an
+ * expectation.
  */
 
 // One macrotask turn before each case (backlog BL-033).
@@ -69,5 +69,10 @@ describe.each(ALL_CASES.map((c) => [c.id, c] as const))("%s", (_id, kase) => {
       result.variant.groundTruth.calledMarkers.has(TARGET_MARKER),
       "real Node's ground truth",
     ).toBe(kase.called);
+    if (kase.precisionCost !== undefined) {
+      // An UNKNOWN real Node does not reach is a cost, stated as one.
+      expect(kase.expected).toBe("UNKNOWN");
+      expect(kase.called).toBe(false);
+    }
   });
 });
