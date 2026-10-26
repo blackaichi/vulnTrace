@@ -330,7 +330,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-153 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | A member of a derived class -- `toISOString` in `class D extends Date`, `on` in `class S extends Readable`, `utf8Slice` in `class B extends Buffer` -- is called by name by the builtin the class's `prototype` inherits (`JSON.stringify(D.prototype)`, `for await` over `S.prototype`, `{ __proto__: B.prototype }` coerced), with no call and no `__proto__` literal, but gets no edge | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-109) — see below |
 | RWF-154 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `module.paths instanceof H` hands the lookup list to `H`'s own `static [Symbol.hasInstance]`, a class of the program's, with no builtin replaced; the classifier takes `instanceof` for a primitive-result operator that runs no code | false NOT_AFFECTED (family B), pre-existing — see below | **Fixed** (BL-110) — see below |
 | RWF-155 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A capability in a shorthand property, used on the spot, is no consumed position: `const p = module.paths; ({ p }).p.shift()` changes the lookup list unseen, while `({ l: module.paths }).l.shift()` is caught | false NOT_AFFECTED (family B), pre-existing — see below | **Fixed in part** (BL-110, for the lookup list; `C-3` for other capabilities) — see below |
-| RWF-156 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A module that installs index or `paths` setters on `Object.prototype`, or a Proxy as `Array.prototype`'s [[Prototype]], receives the lookup state from Node's own loader (`Module._resolveLookupPaths`'s `unshift`, `Module.prototype.load`'s `this.paths = …`) and changes it, with no use of `module.paths` in the program; so does a store of `Array.prototype.constructor` (its species), and an `extensions` or `cache` setter receives the loader's registries from `makeRequireFunction` | false NOT_AFFECTED (family B), pre-existing — see below | Open (backlog `BL-111`) |
+| RWF-156 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A module that installs index or `paths` setters on `Object.prototype`, or a Proxy as `Array.prototype`'s [[Prototype]], receives the lookup state from Node's own loader (`Module._resolveLookupPaths`'s `unshift`, `Module.prototype.load`'s `this.paths = …`) and changes it, with no use of `module.paths` in the program; so does a store of `Array.prototype.constructor` (its species), and an `extensions` or `cache` setter receives the loader's registries from `makeRequireFunction` | false NOT_AFFECTED (family B), pre-existing — see below | Open (decision, backlog `BL-111`; implementation `BL-113`) |
 | RWF-157 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `const` whose initializer may hold one of two capabilities (`c ? require : module.paths`, `(c && require) || module.paths`) is resolved to the first, so `p.shift()` on the lookup list is unseen | false NOT_AFFECTED (family B), pre-existing — see below | **Fixed in part** (BL-110, for the lookup list; `C-2` / `C-3` for other capabilities) — see below |
 
 ---
@@ -24443,7 +24443,7 @@ is read-only. Measured against real Node v22.11.0
 
 ## RWF-156 — A replaced builtin receives the lookup state from Node's own loader
 
-**Status:** Open (backlog `BL-111`)
+**Status:** Open (decision, backlog `BL-111`; implementation `BL-113`)
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (the analyzer takes Node's loader to touch its lookup
 arrays through Node's own builtins; a module may have replaced what those
@@ -24509,6 +24509,46 @@ an accessor on `Object.prototype` under any name, not only index or
 
 **Not decided here.** Whether such a store widens the module-load closure
 is a design question across lanes A and C: backlog `BL-111`.
+
+**Inventory and options (task BL-111, 2026-10-26).** Measured from Node
+v22.11.0's own loader source and against real Node
+(`scripts/bl111-loader-writes-options/inventory.md`). The class is the
+loader's own JavaScript acting, by inheritance, on what a loaded file
+changed:
+
+- **writes** onto every `Module` it creates and every `require` function;
+- **writes** into the arrays it builds;
+- arrays built through the receiver's **species**;
+- **reads** of data properties.
+
+Every write and species route is live (this record's six oracle cases).
+The reads add one more route: in real Node, a plain *primitive* store,
+`Object.prototype.source = <module text>`, replaces an ES module's source.
+With the analyzer it is `UNKNOWN`
+(`tests/oracle/bl111-loader-inherited-reads.*`), because on v22.11.0 an ES
+module loads after a store only through `import()`, which already widens
+the closure. Its status on releases with `require()` of an ES module is not
+measured (backlog `BL-114`).
+
+The stores that reach the loader are:
+- a define call (data or accessor);
+- a [[Prototype]] change;
+- a store of `constructor`;
+- a store under a computed key.
+
+The record's earlier statement that "an accessor on `Object.prototype` under
+any name" closes the class is too narrow: species is reached by a plain
+data store.
+
+The class is also wider in how the store is made. BL-111's independent
+audit found, by reading the prototype, that a rule which recognises storing
+builtins by name misses one reached indirectly (through an alias or an
+indirect call). A measurement confirmed it for three such forms: each is a
+live false `NOT_AFFECTED` on the base and under the prototype. BL-111 proposes a closure-wide rule over these stores, or a
+stated trust boundary (ADR 0010, "Proposed decision — BL-111"). Either way
+the decision is the project owner's. The sound rule costs 2 of the 4
+real-world validation `NOT_AFFECTED` proofs (`RWB-07`, `RWB-11b`). The
+status stays Open.
 
 ## RWF-157 — A `const` that may hold one of two capabilities is resolved to the first
 

@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-26, by `BL-110`.
+**Last updated:** 2026-10-26, by `BL-111`.
 
 ## Objective
 
@@ -312,20 +312,20 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-110` — Implement BL-096's decision on the read-only uses of
-`module.paths` ([task file](tasks/BL-110-module-paths-allow-list.md)):
-`READY_FOR_REVIEW`. It is an allow-list over the uses of a `Module`
-instance's lookup list, and fixes RWF-136 and RWF-154, and RWF-155 and
-RWF-157 for the lookup list. `BL-096` merged as PR #118, with option (b2)
-accepted. BL-094's proposed decision (O2e) is still awaiting the owner, so
-`BL-107` waits.
+`BL-111` — Design: Node's own loader writes its state through replaceable
+builtins ([task file](tasks/BL-111-loader-writes-builtins.md)):
+`READY_FOR_REVIEW`, report verdict `NEEDS_DECISION`. The project owner
+decides ADR 0010's "Proposed decision — BL-111": (B) the sound
+closure-wide rule, which costs 2 of 4 real-world proofs, or (C) a stated
+trust boundary. `BL-110` merged as PR #119. BL-094's O2e is still awaiting
+the owner, so `BL-107` waits.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-110`:
-`BL-107` (implements O2e,
-still awaiting the owner), `BL-111` (design, P1: RWF-156, Node's loader through a
-replaced builtin), `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-111`:
+`BL-113` (implements BL-111's decision), `BL-114` (the inventory on Node 20
+and 26), `BL-107` (implements O2e,
+still awaiting the owner), `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
 (design, P1: a TypeScript source analysed as the program its emit runs),
 `BL-101` (RWF-143, P1, an ES5 class's methods; after BL-107, whose O2e
 makes its cost one to measure first), `BL-079` (RWF-108, P0, at E-4's
@@ -345,6 +345,12 @@ for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
 withdrawals.
 
 ## Recently discovered
+
+From `BL-111`: Node v22.11.0's loader also reads data properties by
+inheritance. `Object.prototype.source`, a primitive store, replaces an ES
+module's source in real Node; it is `UNKNOWN` with the analyzer, since only
+`import()` reaches it there. Backlog `BL-114` (P2) repeats the inventory on
+Node 20 and 26, where `require()` of an ES module may make it live.
 
 From `BL-110`, found by its certification audit and the re-audits that
 followed:
