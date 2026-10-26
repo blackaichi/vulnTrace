@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-25, by `BL-096`.
+**Last updated:** 2026-10-26, by `BL-110`.
 
 ## Objective
 
@@ -312,19 +312,18 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-096` — Decide: the read-only exemptions for `module.paths` under a
-replaced `Array.prototype`
-([task file](tasks/BL-096-module-paths-read-only-exemptions.md)):
-`READY_FOR_REVIEW` (PR #118). The project owner accepted option (b2) on
-2026-10-26 (ADR 0010, "Decision record — BL-096"); backlog `BL-110`
-implements it. `BL-109`
-merged as PR #117. BL-094's proposed decision (O2e) is still awaiting the
-owner, so `BL-107` waits.
+`BL-110` — Implement BL-096's decision on the read-only uses of
+`module.paths` ([task file](tasks/BL-110-module-paths-allow-list.md)):
+`READY_FOR_REVIEW`. It is an allow-list over the uses of a `Module`
+instance's lookup list, and fixes RWF-136 and RWF-154, and RWF-155 and
+RWF-157 for the lookup list. `BL-096` merged as PR #118, with option (b2)
+accepted. BL-094's proposed decision (O2e) is still awaiting the owner, so
+`BL-107` waits.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-096`:
-`BL-110` (implements BL-096's accepted b2), `BL-107` (implements O2e,
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-110`:
+`BL-107` (implements O2e,
 still awaiting the owner), `BL-111` (design, P1: RWF-156, Node's loader through a
 replaced builtin), `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
 (design, P1: a TypeScript source analysed as the program its emit runs),
@@ -346,6 +345,18 @@ for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
 withdrawals.
 
 ## Recently discovered
+
+From `BL-110`, found by its certification audit and the re-audits that
+followed:
+- a first form of the use check was quadratic in selection nesting
+  (fixed before review);
+- a TypeScript type reference is no erased position under decorator
+  metadata (fixed before review: only a type query is exempt);
+- `BL-112` (P2, performance, pre-existing): the classifier's resolution is
+  exponential on a DAG of `const` aliases, and a deep syntax tree overflows
+  the stack.
+
+PRM-21's whole-file shadow of `module` is confirmed live on the lookup list.
 
 From `BL-096`, all live and pre-existing:
 

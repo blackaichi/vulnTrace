@@ -584,3 +584,47 @@ BL-040's routes) stay with their own rows.
 - runs a fresh-context certification audit of the allow-list against
   real Node.
 
+## Note — task BL-110: the decision on the uses of `module.paths`, implemented (2026-10-26)
+
+Recorded for the reader; no decision of this ADR changes. Task
+[`BL-110`](../tasks/BL-110-module-paths-allow-list.md) implemented
+"Decision record — BL-096" in `loader-constructs.ts`:
+
+- `isListExpression` finds every expression that may be the lookup list;
+- `listUseReason` is the allow-list over its syntactic parent;
+- `isListAlias` is the alias rule;
+- `modulePathsMethodReason` no longer exempts a method.
+
+`MODULE_PATHS_READ_METHODS` and `isIteratedLookupList`'s `for…of` half are
+deleted. The identifier test is call-graph.ts's `isValueReferenceName`,
+moved unchanged to `local-aliases.ts`. It also makes the head of a
+TypeScript `import a = p.x.y` chain a read. In TypeScript, a type query
+(`typeof p`) is the one type position that is no use of an alias of the
+list: every emit erases it. A type reference stays a use. Under
+`experimentalDecorators` and `emitDecoratorMetadata`, a decorated member's
+type is emitted as a runtime expression:
+- a qualified `p.T` is a read of `p.T`;
+- a bare `p` whose name an interface shares is the list itself, handed to
+  `__metadata`.
+
+The analyzer does not read the compiler options. Both forms were measured
+against real Node by the task's re-audits.
+
+§ 4's read-only bullet is amended by the decision record above, and its
+text is left as written (this ADR's sections are append-only). It now
+reads, for `module.paths`: `length` and `for…in` only.
+
+Measured:
+- 61 oracle cases against real Node: every case that uses the list is
+  `UNKNOWN`, and RWF-156's six stay open (`BL-111`);
+- the decided cost and no other;
+- no corpus graph, proof or verdict change over 139 cases;
+- resolution steps ×1.19 over 3,838 `node_modules` files, at most 31 per AST
+  node on the corpus (`scripts/bl110-resolution-steps-corpus.mjs`); the bound
+  per node is the alias depth budget, reached by a member chain
+  `module.paths.a.a…`;
+- each selection a use passes up through is classified once per file, since
+  its answer is remembered (the certification audit measured a quadratic
+  first form: a 4,000-term `||` chain took 6.5 s, and it now takes 188 ms);
+- `test:performance` unrelaxed.
+

@@ -1690,6 +1690,25 @@ RWF-156 is open under every option: no per-use rule sees it, and backlog
 accepted on 2026-10-26, and backlog `BL-110` implements it. The list
 above stands, with RWF-154, RWF-155, RWF-156 and RWF-157.
 
+**Progress, added by task `BL-110` (2026-10-26).** Task BL-110
+(`docs/tasks/BL-110-module-paths-allow-list.md`) implemented BL-096's
+decision (ADR 0010, "Decision record — BL-096"): an allow-list over the uses
+of a `Module` instance's lookup list. It fixes RWF-136 and RWF-154, and
+RWF-155 and RWF-157 for the lookup list.
+
+- Measured against real Node: every one of BL-096's 41 live cases that use
+  the list now gives `UNKNOWN`.
+- Its cost is the decided one: four unit controls, one BL-092 oracle
+  control and seven of BL-096's twelve, each stated as the decision's cost.
+- No corpus graph, proof or verdict changed (139 cases).
+- Resolution steps ×1.19 over 3,838 `node_modules` files. Each selection
+  a use passes up through is classified once, so the check is linear in the
+  file (a first form was quadratic in nesting, and the certification audit
+  measured it; fixed before review).
+
+The list above stands, without RWF-136 and RWF-154. RWF-155 and RWF-157
+remain for other capabilities, and RWF-156 remains (backlog `BL-111`).
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark
