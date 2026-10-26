@@ -2,15 +2,16 @@
 
 ## Status
 
-- **Status**: READY_FOR_REVIEW (report verdict `NEEDS_DECISION`: the project
-  owner decides ADR 0010's "Proposed decision — BL-096")
+- **Status**: READY_FOR_REVIEW (PR #118; the project owner accepted option
+  (b2) on 2026-10-26: ADR 0010, "Decision record — BL-096")
 - **Backlog ID**: BL-096
 - **Branch**: `bl-096-module-paths-exemptions`
 - **Base SHA**: `904d032268b4d1897361123ec71b9ad539a006a0` (BL-109's merge, PR #117)
 - **Commits**:
   - `docs(tasks): BL-096 task file — decide the read-only exemptions for module.paths under a replaced Array.prototype`
   - `test(BL-096): module.paths's read-only uses against real Node, and the options as prototypes, measured — RWF-136 widened and corrected; RWF-154..RWF-157 registered`
-  - (this commit) `docs(BL-096): ADR 0010 proposed decision (b2) — the independent audit's four rounds, debts, backlog (BL-110, BL-111), progress`
+  - `docs(BL-096): ADR 0010 proposed decision (b2) — the independent audit's four rounds, debts, backlog (BL-110, BL-111), progress`
+  - (this commit) `docs(BL-096): record the project owner's decision — option (b2) accepted (ADR 0010 decision record)`
 - **Superseded by**: —
 
 ## Project context
@@ -224,4 +225,11 @@ real Node. The round's findings are all about the records:
 - A deep TypeScript `import a = p.x.y` chain goes to BL-110.
 - The ADR's count of controls was stale.
 - The census wording claimed more than the census measures.
+
+**2026-10-26, the project owner's decision.** The owner accepted option
+(b2) on PR #118. It is recorded as ADR 0010's "Decision record — BL-096",
+which amends § 4. The records that waited on the decision now point to it:
+FINDINGS RWF-136, RWF-154, RWF-155 and RWF-157; backlog `BL-110`, which no
+longer depends on a pending decision; OPEN-DEBTS; progress. RWF-156 is not
+part of the decision (`BL-111`).
 

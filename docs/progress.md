@@ -315,16 +315,17 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 `BL-096` — Decide: the read-only exemptions for `module.paths` under a
 replaced `Array.prototype`
 ([task file](tasks/BL-096-module-paths-read-only-exemptions.md)):
-`READY_FOR_REVIEW`, report verdict `NEEDS_DECISION`. The project owner
-decides ADR 0010's "Proposed decision — BL-096" (option b2). `BL-109`
+`READY_FOR_REVIEW` (PR #118). The project owner accepted option (b2) on
+2026-10-26 (ADR 0010, "Decision record — BL-096"); backlog `BL-110`
+implements it. `BL-109`
 merged as PR #117. BL-094's proposed decision (O2e) is still awaiting the
 owner, so `BL-107` waits.
 
 ## Next
 
 The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-096`:
-`BL-107` and `BL-110` (each implements a pending decision: O2e, and
-BL-096's b2), `BL-111` (design, P1: RWF-156, Node's loader through a
+`BL-110` (implements BL-096's accepted b2), `BL-107` (implements O2e,
+still awaiting the owner), `BL-111` (design, P1: RWF-156, Node's loader through a
 replaced builtin), `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
 (design, P1: a TypeScript source analysed as the program its emit runs),
 `BL-101` (RWF-143, P1, an ES5 class's methods; after BL-107, whose O2e
