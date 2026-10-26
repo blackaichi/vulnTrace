@@ -368,17 +368,17 @@ this table except the category.
 | RWF-113 | open | Open | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
 | RWF-118 | open | Open | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
 | RWF-121 | open | Open (backlog `BL-090`) | false AFFECTED, pre-existing (named in RWF-063's second audit append) — see below |
-| RWF-136 | open | Open (decision, backlog `BL-096`; implementation `BL-110`) | false NOT_AFFECTED (family B, BL-096's correction), pre-existing — see below |
+| RWF-136 | open | Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110`) | false NOT_AFFECTED (family B, BL-096's correction), pre-existing — see below |
 | RWF-139 | open | Open (backlog `C-3`) | false NOT_AFFECTED (family A), pre-existing — see below |
 | RWF-140 | open | Open (decision, backlog `BL-098`) | false NOT_AFFECTED (family A), pre-existing — see below |
 | RWF-143 | open | Open (backlog `BL-101`) | false NOT_AFFECTED (family C), pre-existing — see below |
 | RWF-144 | open | Open (backlog `BL-080`) | false NOT_AFFECTED (family B), pre-existing — see below |
 | RWF-146 | open | Open (backlog `BL-103`) | not measured live: masked in the one shape measured — see below |
 | RWF-148 | open | Open (backlog `BL-104`) | false NOT_AFFECTED (family C), pre-existing — see below |
-| RWF-154 | open | Open (decision, backlog `BL-096`; implementation `BL-110`) | false NOT_AFFECTED (family B), pre-existing — see below |
-| RWF-155 | open | Open (decision, backlog `BL-096`; implementation `BL-110` for the lookup list; `C-3` for the rest) | false NOT_AFFECTED (family B), pre-existing — see below |
+| RWF-154 | open | Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110`) | false NOT_AFFECTED (family B), pre-existing — see below |
+| RWF-155 | open | Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110` for the lookup list; `C-3` for the rest) | false NOT_AFFECTED (family B), pre-existing — see below |
 | RWF-156 | open | Open (backlog `BL-111`) | false NOT_AFFECTED (family B), pre-existing — see below |
-| RWF-157 | open | Open (decision, backlog `BL-096`; implementation `BL-110` for the lookup list; `C-2` / `C-3` for the rest) | false NOT_AFFECTED (family B), pre-existing — see below |
+| RWF-157 | open | Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110` for the lookup list; `C-2` / `C-3` for the rest) | false NOT_AFFECTED (family B), pre-existing — see below |
 | RWF-002 | open in part | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model |
 | PRM-107 | open in part | Fixed in part (BL-092: the false NOT_AFFECTED, family B; the false AFFECTED is C-5's) | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below |
 | PRM-108 | open in part | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below | false NOT_AFFECTED — see below |

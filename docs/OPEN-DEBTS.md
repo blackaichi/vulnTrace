@@ -1640,8 +1640,9 @@ derived-class rule). The list above stands, without RWF-151.
 (`docs/tasks/BL-096-module-paths-read-only-exemptions.md`) changed no
 analyzer code. It measured RWF-136, the loader classifier's read-only
 exemptions for a `Module` instance's lookup list, against real Node and
-proposes an answer for the project owner (ADR 0010, "Proposed decision —
-BL-096", PROPOSED). The class is wider than its record: every member read
+proposes an answer, which the project owner accepted on 2026-10-26
+(ADR 0010, "Decision record — BL-096": option b2, implementation backlog
+`BL-110`). The class is wider than its record: every member read
 the list does not own, every conversion (a property key, `++`, an outer
 array converted), spread, `await` and both operands of `instanceof` are
 exempt too, and each hands the list to code a module may install. So
@@ -1685,9 +1686,9 @@ The options were prototyped and measured
   3,838 in `node_modules` spells one of the five instance forms.
 
 RWF-156 is open under every option: no per-use rule sees it, and backlog
-`BL-111` is the cross-lane design that would close it. If (b2) is
-accepted, backlog `BL-110` implements it. The list above stands, with
-RWF-154, RWF-155, RWF-156 and RWF-157.
+`BL-111` is the cross-lane design that would close it. (b2) was
+accepted on 2026-10-26, and backlog `BL-110` implements it. The list
+above stands, with RWF-154, RWF-155, RWF-156 and RWF-157.
 
 ## 2. Target intelligence is not analyzer uncertainty
 

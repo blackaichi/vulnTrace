@@ -528,3 +528,59 @@ pinned as a wrong verdict). If (a) is preferred instead, it first needs a
 "may write a builtin" relation that the escape row's certification would
 have to cover, and (b2)'s no-tamper routes besides. Either way RWF-156
 stays open until `BL-111` decides it.
+
+## Decision record — BL-096: the read-only uses of `module.paths` (project owner, 2026-10-26)
+
+Decided by the project owner on 2026-10-26, on task
+[`BL-096`](../tasks/BL-096-module-paths-read-only-exemptions.md)'s pull
+request (#118), from the measurements in "Proposed decision — BL-096"
+above; recorded by that task. This ADR's body and every earlier section are
+unchanged; this section is appended. It amends § 4's "read-only uses of
+loader state" bullet.
+
+**Decision: option (b2), as stated in the proposed decision's
+recommendation, is accepted.** The uses of a `Module` instance's lookup
+list follow an allow-list over the use. For every expression that may be the
+list along a route `resolveLoaderCapability` follows, its syntactic parent
+decides:
+
+- the closed list of exempt parents keeps the proof;
+- a parent that only selects the value passes the question to its own
+  parent;
+- every other parent is a `loader_capability_escape`.
+
+The exempt parents are `length`, `for…in`, `===`, `!==`, `typeof`, `void`,
+`!`, the right of `in`, `==` / `!=` against `null`, a test, a `switch` or
+`case` value, a discarded value, and a plain unexported `const` whose
+declared name resolves to the list.
+
+**§ 4 amended.** The "non-mutating array methods on `module.paths`
+(`slice`, `includes`, `indexOf`)" half of the read-only bullet is withdrawn.
+`Module.builtinModules.includes(…)` stays, because that array is frozen and
+Node's loader does not depend on it.
+
+**Costs accepted**, each recorded as this decision's cost and none pinned
+as a wrong verdict:
+
+- ADR 0010 § 4's precision control 11 (`module.paths.slice()` /
+  `includes()`, `module-load-closure.test.ts`);
+- BL-092's three unit controls (`loader-constructs.bl092.test.ts`: the
+  read-only methods; an element read and `length`; iteration) and its
+  oracle control `precision.read-only-uses`;
+- seven of the twelve BL-096 controls.
+
+**Not decided here.** RWF-156, the route through which Node's own loader
+writes reach a replaced builtin with no use of the list, stays open under
+this decision. It goes to backlog `BL-111`, a design across lanes A and C.
+The shapes (b2) does not cover (PRM-21, PRM-105 for other capabilities,
+BL-040's routes) stay with their own rows.
+
+**Implementation.** Backlog `BL-110` does three things:
+- implements the rule in `loader-constructs.ts`, measured against the
+  prototype `scripts/bl096-module-paths-options/b2-allow-list.patch`
+  (the prototype is not the implementation);
+- flips the 41 open-soundness-defect records of
+  `tests/oracle/bl096-module-paths-read-only.*` that use the list;
+- runs a fresh-context certification audit of the allow-list against
+  real Node.
+
