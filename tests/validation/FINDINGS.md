@@ -310,7 +310,7 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-133 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The loader-capability check read only a member-shaped left side of `=`, `\|\|=`, `&&=` and `??=`: a destructuring target (`[Module._resolveFilename] = [hook]`, `({ paths: module.paths } = o)`), a `for…in` / `for…of` head, `++` / `--` and a compound operator (`module.paths[0] += "/x"`) each replaced loader state unseen | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-134 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The CommonJS wrapper's own `arguments` holds `require` (`arguments[1]`) and `module` (`arguments[2]`); read at module scope in a file with no `require` call of its own, it loads or redirects unseen (`arguments[2].constructor._resolveFilename = hook`) | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-135 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `Module` instance's inherited loader methods resolved only in the spelled call `module.require(x)`: `const r = module.require; r(path)` loads unseen | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
-| RWF-136 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The read-only exemptions for `module.paths` (ADR 0010 § 4's `slice` / `includes` / `indexOf`, BL-092's iteration and the primitive-result operators) assume `Array.prototype` is Node's own: a module that replaces `includes`, the array iterator or `join` runs with the list as `this` and changes it; wider since BL-096 (every member read, a property key, `await`, `instanceof`'s right) | false NOT_AFFECTED (family B, BL-096's correction), pre-existing — see below | Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110`) |
+| RWF-136 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The read-only exemptions for `module.paths` (ADR 0010 § 4's `slice` / `includes` / `indexOf`, BL-092's iteration and the primitive-result operators) assume `Array.prototype` is Node's own: a module that replaces `includes`, the array iterator or `join` runs with the list as `this` and changes it; wider since BL-096 (every member read, a property key, `await`, `instanceof`'s right) | false NOT_AFFECTED (family B, BL-096's correction), pre-existing — see below | **Fixed** (BL-110) — see below |
 | RWF-137 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | The wrapper's `arguments` is reachable through a function's `caller` without spelling `arguments` at module scope (`function g() { return g.caller.arguments[2]; }`, called at module scope, returns `module`) | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-097) — see below |
 | RWF-138 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `with` head was no position the loader-capability check read: `with (module.paths) { shift(); }`, `with (module) { paths.shift(); }` and `with (process) { mainModule.require(p); }` redirect or load under bare names | false NOT_AFFECTED (family A), pre-existing — see below | **Fixed** (BL-092) — see below |
 | RWF-139 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A concise arrow called on the spot returns its body, which the value-flow walk does not follow through a call: `(() => module.paths)().shift()` and `(() => require("module"))()._resolveFilename = hook` change loader state unseen | false NOT_AFFECTED (family A), pre-existing — see below | Open (backlog `C-3`) |
@@ -328,10 +328,10 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-151 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | An own `join` on an object whose [[Prototype]] chain reaches `Array.prototype.toString` -- stored (`const a = []; a.join = f`) or defined (`{ __proto__: [], join: f }`) -- is run whenever the object is coerced (`String(a)`, `"" + a`, a template, `Math.max(a)`), but `join` is not a protocol member, so neither the store nor the definition gets an edge: `f` gets none at all | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-109) — see below |
 | RWF-152 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | A member defined in an object literal that sets `__proto__` to a builtin's prototype or object -- `toISOString` on `Date.prototype` under `JSON.stringify`, `utf8Slice` on Node's `Buffer.prototype` on coercion, `on` / `read` / `destroy` on a Node stream under `for await` -- is called by the inherited builtin, by name, but gets no edge: the definition form never reaches the escape row, and the names are not protocol members | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-109) — see below |
 | RWF-153 | `vuln-lib` (synthetic fixture); a gap in the protocol-member row, not tied to one package | A member of a derived class -- `toISOString` in `class D extends Date`, `on` in `class S extends Readable`, `utf8Slice` in `class B extends Buffer` -- is called by name by the builtin the class's `prototype` inherits (`JSON.stringify(D.prototype)`, `for await` over `S.prototype`, `{ __proto__: B.prototype }` coerced), with no call and no `__proto__` literal, but gets no edge | false NOT_AFFECTED (family C), pre-existing — see below | **Fixed** (BL-109) — see below |
-| RWF-154 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `module.paths instanceof H` hands the lookup list to `H`'s own `static [Symbol.hasInstance]`, a class of the program's, with no builtin replaced; the classifier takes `instanceof` for a primitive-result operator that runs no code | false NOT_AFFECTED (family B), pre-existing — see below | Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110`) |
-| RWF-155 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A capability in a shorthand property, used on the spot, is no consumed position: `const p = module.paths; ({ p }).p.shift()` changes the lookup list unseen, while `({ l: module.paths }).l.shift()` is caught | false NOT_AFFECTED (family B), pre-existing — see below | Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110` for the lookup list; `C-3` for the rest) |
+| RWF-154 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | `module.paths instanceof H` hands the lookup list to `H`'s own `static [Symbol.hasInstance]`, a class of the program's, with no builtin replaced; the classifier takes `instanceof` for a primitive-result operator that runs no code | false NOT_AFFECTED (family B), pre-existing — see below | **Fixed** (BL-110) — see below |
+| RWF-155 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A capability in a shorthand property, used on the spot, is no consumed position: `const p = module.paths; ({ p }).p.shift()` changes the lookup list unseen, while `({ l: module.paths }).l.shift()` is caught | false NOT_AFFECTED (family B), pre-existing — see below | **Fixed in part** (BL-110, for the lookup list; `C-3` for other capabilities) — see below |
 | RWF-156 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A module that installs index or `paths` setters on `Object.prototype`, or a Proxy as `Array.prototype`'s [[Prototype]], receives the lookup state from Node's own loader (`Module._resolveLookupPaths`'s `unshift`, `Module.prototype.load`'s `this.paths = …`) and changes it, with no use of `module.paths` in the program; so does a store of `Array.prototype.constructor` (its species), and an `extensions` or `cache` setter receives the loader's registries from `makeRequireFunction` | false NOT_AFFECTED (family B), pre-existing — see below | Open (backlog `BL-111`) |
-| RWF-157 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `const` whose initializer may hold one of two capabilities (`c ? require : module.paths`, `(c && require) || module.paths`) is resolved to the first, so `p.shift()` on the lookup list is unseen | false NOT_AFFECTED (family B), pre-existing — see below | Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110` for the lookup list; `C-2` / `C-3` for the rest) |
+| RWF-157 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `const` whose initializer may hold one of two capabilities (`c ? require : module.paths`, `(c && require) || module.paths`) is resolved to the first, so `p.shift()` on the lookup list is unseen | false NOT_AFFECTED (family B), pre-existing — see below | **Fixed in part** (BL-110, for the lookup list; `C-2` / `C-3` for other capabilities) — see below |
 
 ---
 
@@ -17172,6 +17172,11 @@ Full reproduction: `docs/audits/2026-09-premise-sweep-round-1.md § 3 (`PRM-22`)
 
 ---
 
+
+**Note (task BL-110, 2026-10-26).** For the lookup list, the forms of this
+record that BL-096 measured now give `UNKNOWN`: a `const` alias of the list whose name another declaration shares (`audit2.alias-name-collision`), because an alias is exempt only when its own name resolves to the list. The record stays
+Open for every other capability.
+
 ## PRM-23 — A truncated module-load closure (`traversal_truncated`) does not block families B/C, missing a closure-widening hook outside the truncated file set
 
 **Status:** Open
@@ -18219,6 +18224,11 @@ an object spread of a `Module` instance (`({ ...module }).paths.shift()`,
 found by BL-096's audit, round 4; the `const` form is `UNKNOWN`). BL-096's
 proposed option (b2) closes the first for the lookup list. The rest stays
 C-3's.
+
+
+**Note (task BL-110, 2026-10-26).** For the lookup list, the forms of this
+record that BL-096 measured now give `UNKNOWN`: the list held in an array literal and read back on the spot, and a computed key into a `Module` instance (`audit.array-*`, `audit2.computed-key-in-array`, `audit3.*-array-shift`). The record stays
+Open for every other capability.
 
 ## PRM-106 — `require.bind(...)` is deliberately excluded from the capability-receiver check
 
@@ -23283,7 +23293,7 @@ PRM-106's (C-3).
 
 ## RWF-136 — The read-only exemptions for `module.paths` assume Node's own `Array.prototype`
 
-**Status:** Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation backlog `BL-110`)
+**Status:** Fixed (BL-110) — see below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (the method is taken to be Node's; a replacement runs
 with the list as `this`)
@@ -23379,6 +23389,23 @@ program, is RWF-156 (round 2). The latter is open under every option.
 accepted option (b2) (ADR 0010, "Decision record — BL-096"). The record
 stays Open until backlog `BL-110` implements it and flips this record's
 open-soundness-defect cases.
+
+**Status update (task BL-110, 2026-10-26): Fixed.** Task BL-110
+(`docs/tasks/BL-110-module-paths-allow-list.md`) implemented BL-096's
+decision in `loader-constructs.ts` (`isListExpression`, `listUseReason`,
+`isListAlias`; ADR 0010, "Note -- task BL-110"). For every expression that
+may be a `Module` instance's lookup list, its syntactic parent decides: a
+closed list of parents is exempt, a selection passes the question up, and
+every other parent is a `loader_capability_escape`. No method of the list
+is read-only. Measured against real Node v22.11.0
+(`tests/oracle/bl096-module-paths-read-only.test.ts`): each of this record's 29 live cases now asserts `UNKNOWN`. The cost is the one the decision accepted: ADR 0010 § 4's control 11, BL-092's three unit controls and its oracle `precision.read-only-uses`, and seven of BL-096's twelve controls, each stated as a `precisionCost`.
+
+Three routes stay open, and none is a use of the list this rule reads:
+- RWF-156, which needs no use of the list (backlog `BL-111`);
+- PRM-21's whole-file shadow of the ambient `module`
+  (`function g() { const module = 1; } module.paths.shift()`, live, measured
+  by the certification audit);
+- the routes through another `Module` instance (BL-040).
 
 ## RWF-137 — The wrapper's `arguments` through a function's `caller`
 
@@ -24315,7 +24342,7 @@ classes are derived.
 
 ## RWF-154 — `module.paths instanceof H` hands the lookup list to the program's own `Symbol.hasInstance`
 
-**Status:** Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation backlog `BL-110`)
+**Status:** Fixed (BL-110) — see below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** B (the analyzer takes `instanceof` for an operator with a
 primitive result that runs no code; it runs the right operand's
@@ -24355,10 +24382,21 @@ on either side of `instanceof` is a `loader_capability_escape` (ADR 0010,
 for a plain class (`precision.instanceof-plain-class`). The decision is the
 project owner's; the implementation is backlog `BL-110`.
 
+
+**Status update (task BL-110, 2026-10-26): Fixed.** Task BL-110
+(`docs/tasks/BL-110-module-paths-allow-list.md`) implemented BL-096's
+decision in `loader-constructs.ts` (`isListExpression`, `listUseReason`,
+`isListAlias`; ADR 0010, "Note -- task BL-110"). For every expression that
+may be a `Module` instance's lookup list, its syntactic parent decides: a
+closed list of parents is exempt, a selection passes the question up, and
+every other parent is a `loader_capability_escape`. No method of the list
+is read-only. Measured against real Node v22.11.0
+(`tests/oracle/bl096-module-paths-read-only.test.ts`): `measured.instanceof-has-instance` now asserts `UNKNOWN`: the list on either side of `instanceof` is an escape. The cost is `precision.instanceof-plain-class`.
+
 ## RWF-155 — A capability in a shorthand property is no consumed position
 
-**Status:** Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110` for
-the lookup list, `C-3` for other capabilities)
+**Status:** Fixed in part (BL-110, for the lookup list; `C-3` for other
+capabilities) — see below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** C (a composite that holds the capability is not followed
 to where it goes)
@@ -24391,6 +24429,17 @@ record: it is PRM-105's (`[x][0]`, member access value-opaque).
 BL-096's proposed option (b2) closes it for the lookup list. A shorthand
 property is a parent outside its allow-list, so it fails closed. For other
 capabilities it belongs to C-3's total value-flow table, with PRM-105.
+
+
+**Status update (task BL-110, 2026-10-26): fixed in part.** Task BL-110
+(`docs/tasks/BL-110-module-paths-allow-list.md`) implemented BL-096's
+decision in `loader-constructs.ts` (`isListExpression`, `listUseReason`,
+`isListAlias`; ADR 0010, "Note -- task BL-110"). For every expression that
+may be a `Module` instance's lookup list, its syntactic parent decides: a
+closed list of parents is exempt, a selection passes the question up, and
+every other parent is a `loader_capability_escape`. No method of the list
+is read-only. Measured against real Node v22.11.0
+(`tests/oracle/bl096-module-paths-read-only.test.ts`): the shorthand forms (`audit.shorthand-property-shift`, `audit3.cache-entry-shorthand-shift`) now assert `UNKNOWN` for the lookup list. A shorthand property holding another capability is still no consumed position (C-3).
 
 ## RWF-156 — A replaced builtin receives the lookup state from Node's own loader
 
@@ -24463,8 +24512,8 @@ is a design question across lanes A and C: backlog `BL-111`.
 
 ## RWF-157 — A `const` that may hold one of two capabilities is resolved to the first
 
-**Status:** Open (decided 2026-10-26: option b2, ADR 0010's decision record; implementation `BL-110` for
-the lookup list, `C-2` / `C-3` for other capabilities)
+**Status:** Fixed in part (BL-110, for the lookup list; `C-2` / `C-3` for
+other capabilities) — see below
 **Failure class:** false `NOT_AFFECTED`
 **Defect class:** C (a binding that may hold several values is taken to
 hold one)
@@ -24496,3 +24545,12 @@ also covers PRM-22's name collision for this shape
 (`audit2.alias-name-collision`). For other capabilities this is the
 lexical provenance of C-2 and the value-flow table of C-3.
 
+**Status update (task BL-110, 2026-10-26): fixed in part.** Task BL-110
+(`docs/tasks/BL-110-module-paths-allow-list.md`) implemented BL-096's
+decision in `loader-constructs.ts` (`isListExpression`, `listUseReason`,
+`isListAlias`; ADR 0010, "Note -- task BL-110"). For every expression that
+may be a `Module` instance's lookup list, its syntactic parent decides: a
+closed list of parents is exempt, a selection passes the question up, and
+every other parent is a `loader_capability_escape`. No method of the list
+is read-only. Measured against real Node v22.11.0
+(`tests/oracle/bl096-module-paths-read-only.test.ts`): the three cases (`audit2.alias-*`) now assert `UNKNOWN`: an alias is exempt only when its own name resolves to the list (`isListAlias`). For other capabilities the resolution still answers the first operand (C-2 / C-3).
