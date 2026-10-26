@@ -93,3 +93,71 @@ export function resolveSingleAssignmentValue(
 ): ts.Expression | undefined {
   return constDeclarationsOf(sourceFile).get(name);
 }
+
+/**
+ * Whether `id` sits where it READS or WRITES a binding by its name -- a
+ * value position -- rather than where its text is a property name, a key,
+ * a label, an exported alias, or the name a declaration introduces.
+ *
+ * Exclusions only, each one a position the language never resolves as a
+ * binding: anything not listed counts. A shorthand property (`{ each }`)
+ * and an export specifier without an alias (`export { each }`) DO read the
+ * binding and are counted. Over-counting refuses a resolution; missing a
+ * reference would let an escaped function's other callers go unseen.
+ *
+ * Shared by call-graph.ts (escaped-function references) and, since task
+ * BL-110, loader-constructs.ts (the uses of a `Module` instance's lookup
+ * list), moved here unchanged so neither imports the other. The left of a
+ * qualified name counts: `import a = p.x.y` in TypeScript is `var a =
+ * p.x.y`, a read of `p`.
+ */
+export function isValueReferenceName(id: ts.Identifier): boolean {
+  const parent = id.parent;
+  if (
+    (ts.isPropertyAccessExpression(parent) && parent.name === id) ||
+    (ts.isQualifiedName(parent) && parent.right === id) ||
+    (ts.isMetaProperty(parent) && parent.name === id) ||
+    (ts.isBindingElement(parent) && parent.propertyName === id) ||
+    (ts.isImportSpecifier(parent) && parent.propertyName === id) ||
+    (ts.isExportSpecifier(parent) &&
+      parent.propertyName !== undefined &&
+      parent.name === id) ||
+    ((ts.isLabeledStatement(parent) ||
+      ts.isBreakStatement(parent) ||
+      ts.isContinueStatement(parent)) &&
+      parent.label === id)
+  ) {
+    return false;
+  }
+  if (
+    (ts.isPropertyAssignment(parent) ||
+      ts.isMethodDeclaration(parent) ||
+      ts.isMethodSignature(parent) ||
+      ts.isPropertyDeclaration(parent) ||
+      ts.isPropertySignature(parent) ||
+      ts.isGetAccessorDeclaration(parent) ||
+      ts.isSetAccessorDeclaration(parent) ||
+      ts.isEnumMember(parent) ||
+      ts.isJsxAttribute(parent) ||
+      ts.isFunctionDeclaration(parent) ||
+      ts.isFunctionExpression(parent) ||
+      ts.isClassDeclaration(parent) ||
+      ts.isClassExpression(parent) ||
+      ts.isVariableDeclaration(parent) ||
+      ts.isParameter(parent) ||
+      ts.isBindingElement(parent) ||
+      ts.isImportClause(parent) ||
+      ts.isImportSpecifier(parent) ||
+      ts.isNamespaceImport(parent) ||
+      ts.isImportEqualsDeclaration(parent) ||
+      ts.isEnumDeclaration(parent) ||
+      ts.isModuleDeclaration(parent) ||
+      ts.isTypeAliasDeclaration(parent) ||
+      ts.isInterfaceDeclaration(parent) ||
+      ts.isTypeParameterDeclaration(parent)) &&
+    parent.name === id
+  ) {
+    return false;
+  }
+  return true;
+}

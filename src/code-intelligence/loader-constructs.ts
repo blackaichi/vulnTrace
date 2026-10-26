@@ -6,6 +6,7 @@ import {
 } from "../domain/graph.js";
 import {
   isConstDeclaration,
+  isValueReferenceName,
   resolveSingleAssignmentValue,
 } from "./local-aliases.js";
 import { invocationSiteOf } from "./invocation-sites.js";
@@ -140,6 +141,18 @@ function wholeModuleBuiltinFor(
  * real stack-overflow risk.
  */
 const MAX_ALIAS_RESOLUTION_DEPTH = 40;
+
+let loaderCapabilityResolutions = 0;
+
+/**
+ * Steps {@link resolveLoaderCapability} has taken in this process, each
+ * recursive one included (task BL-110's structural performance test: the
+ * lookup list's use check resolves every identifier and member access of a
+ * file, so the steps must grow linearly with the file).
+ */
+export function loaderCapabilityResolutionCount(): number {
+  return loaderCapabilityResolutions;
+}
 
 /**
  * Resolves `expr` to the Node builtin module name it refers to as a WHOLE
@@ -763,6 +776,7 @@ function resolveLoaderCapability(
   context: LoaderClassificationContext,
   depth = 0,
 ): ResolvedLoaderCapability | undefined {
+  loaderCapabilityResolutions += 1;
   if (depth > MAX_ALIAS_RESOLUTION_DEPTH) {
     return { kind: "ambiguous" };
   }
@@ -945,7 +959,9 @@ function resolveLoaderCapability(
     // under any key, computed or not: the list holds strings, so no member
     // read through it is a capability. What is DONE through it is the
     // receiver side's question ({@link modulePathsMethodReason},
-    // {@link capabilityWriteTargetReason}).
+    // {@link capabilityWriteTargetReason}), and reading any member but
+    // `length` is itself a use that may run a module's code with the list
+    // as `this` ({@link listUseReason}, task BL-110).
     if (receiverKind?.kind === "module_paths") {
       return undefined;
     }
@@ -2942,11 +2958,8 @@ function isModuleConstructorMutablePrototypeMember(
  * remove an entry, which can likewise expose a farther, already-installed
  * instance that a nearer entry was previously shadowing; `copyWithin`/
  * `fill` are the two remaining ways to overwrite array contents in place.
- * The mutating half of {@link modulePathsMethodReason}'s split; its
- * read-only half is {@link MODULE_PATHS_READ_METHODS}, so a genuinely
- * read-only inspection (`module.paths.slice()`, `.includes(x)`,
- * `.indexOf(x)`) is never flagged (see this file's precision-control
- * tests), and a method on neither list fails closed.
+ * {@link modulePathsMethodReason} gives these `loader_hook_mutation`; every
+ * other method of the list is a `loader_capability_escape` (task BL-110).
  */
 const ARRAY_MUTATING_METHODS: ReadonlySet<string> = new Set([
   "push",
@@ -2961,57 +2974,292 @@ const ARRAY_MUTATING_METHODS: ReadonlySet<string> = new Set([
 ]);
 
 /**
- * `Array.prototype` methods that, AS NODE SHIPS THEM, leave a `Module`
- * instance's lookup list untouched and hand it to nothing (task BL-092):
- * each returns a new array, an element, an index, a boolean, a string or
- * an iterator, and none takes a callback that receives the array. That
- * premise fails when a module replaces the method: the replacement runs
- * with the list as `this` (`Array.prototype.includes = function () {
- * this.shift(); }`, then `p.includes(x)`, is a live false NOT_AFFECTED on
- * this commit and its base; RWF-136, backlog `BL-096`, a decision for the
- * project owner, since ADR 0010 § 4 admits `slice` / `includes` /
- * `indexOf` deliberately). A method that does --
- * `forEach`, `map`, `filter`, `some`, `every`, `find`, `findIndex`,
- * `findLast`, `findLastIndex`, `reduce`, `reduceRight`, `flatMap` -- passes
- * the list itself to its callback as the last argument
- * (`module.paths.forEach((p, i, a) => a.shift())` redirects a load), so it
- * is absent here and fails closed. `toSorted`'s comparator receives only
- * elements.
- */
-const MODULE_PATHS_READ_METHODS: ReadonlySet<string> = new Set([
-  "at",
-  "concat",
-  "entries",
-  "flat",
-  "includes",
-  "indexOf",
-  "join",
-  "keys",
-  "lastIndexOf",
-  "slice",
-  "toReversed",
-  "toSorted",
-  "toSpliced",
-  "toString",
-  "values",
-  "with",
-]);
-
-/**
  * The closure-widening reason for calling member `name` of a `Module`
  * instance's lookup list, reached by any route (task BL-092, RWF-129):
  * `loader_hook_mutation` for a mutating method (the reason
- * `module.paths.unshift(dir)` has had since VT-307c-fix-9), nothing for a
- * reviewed read-only one, and `loader_capability_escape` for a computed
- * key or any other method, whose effect on the list is not established.
+ * `module.paths.unshift(dir)` has had since VT-307c-fix-9), and
+ * `loader_capability_escape` for every other method and a computed key.
+ *
+ * No method is read-only (task BL-110; ADR 0010, "Decision record --
+ * BL-096"). BL-092 exempted a reviewed list (`slice`, `includes`,
+ * `indexOf`, ...) on the premise that Node's own `Array.prototype` runs
+ * them. A module may replace any of them, or define an accessor, a species
+ * getter or a Proxy on the list's prototype chain, and the replacement then
+ * runs with the list as `this` (RWF-136, measured against real Node in
+ * `tests/oracle/bl096-module-paths-read-only.cases.ts`).
  */
-function modulePathsMethodReason(
-  name: string | undefined,
-): DynamicCallReason | undefined {
-  if (name !== undefined && ARRAY_MUTATING_METHODS.has(name)) {
-    return "loader_hook_mutation";
+function modulePathsMethodReason(name: string | undefined): DynamicCallReason {
+  return name !== undefined && ARRAY_MUTATING_METHODS.has(name)
+    ? "loader_hook_mutation"
+    : "loader_capability_escape";
+}
+
+/**
+ * Whether `node` is an expression that may be a `Module` instance's lookup
+ * list, so that its use is classified by {@link listUseReason} (task
+ * BL-110): an identifier in a value position ({@link isValueReferenceName}),
+ * a member access or an element access, by any route
+ * {@link resolveLoaderCapability} resolves to `module_paths`.
+ *
+ * A route the relation answers `ambiguous` for may be the list too, when it
+ * is a member named `paths` or under a computed key into a `Module`
+ * instance or an `ambiguous` value: `require.cache[__filename].paths`,
+ * `module["pa" + "ths"]`, `m45.paths` past the alias depth budget (BL-096's
+ * audit, rounds 2 and 3). A member under another name
+ * (`require.cache[k].exports`) and an entry of a registry
+ * (`require.cache[k]`, a `Module`) are not the list. An `ambiguous`
+ * identifier is not taken for the list either: such an alias chain broke
+ * at a declaration that {@link isListAlias} refuses, and that declaration's
+ * initializer already fails closed (`audit3.deep-list-alias-spread`).
+ */
+function isListExpression(
+  node: ts.Node,
+  context: LoaderClassificationContext,
+): node is ts.Expression {
+  if (ts.isIdentifier(node)) {
+    if (!isValueReferenceName(node) || isInErasedTypePosition(node)) {
+      return false;
+    }
+  } else if (
+    !ts.isPropertyAccessExpression(node) &&
+    !ts.isElementAccessExpression(node)
+  ) {
+    return false;
   }
-  if (name !== undefined && MODULE_PATHS_READ_METHODS.has(name)) {
+  const capability = resolveLoaderCapability(node, context);
+  if (capability?.kind === "module_paths") {
+    return true;
+  }
+  if (capability?.kind !== "ambiguous") {
+    return false;
+  }
+  const member = memberAccessOf(node);
+  if (member === undefined) {
+    return false;
+  }
+  if (member.name !== undefined) {
+    return member.name === "paths";
+  }
+  const receiver = resolveLoaderCapability(member.receiver, context)?.kind;
+  return receiver === "module_instance" || receiver === "ambiguous";
+}
+
+/**
+ * Whether identifier `id` names a value only inside a TypeScript type query
+ * (`let x: typeof p`, `typeof p.T`, `keyof typeof p`), which every emit
+ * erases. Decorator metadata serializes a type query as `Object`, `Array`
+ * or another builtin, never the value (task BL-110's certification audit,
+ * finding 4, and its re-audits).
+ *
+ * A type reference is not erased, so it stays a use. With
+ * `experimentalDecorators` and `emitDecoratorMetadata`, a decorated
+ * member's, parameter's or return's type is emitted as a runtime
+ * expression:
+ * - a qualified reference (`p.T`) is a read of `p.T`, which a getter on
+ *   `Array.prototype` runs with the list as `this`;
+ * - a bare reference (`x: p`) hands the list itself to `__metadata` when an
+ *   interface of the same name merges with the alias (`design:type`, `p`),
+ *   and swc's and Babel's metadata plugins emit the bare name whatever the
+ *   type.
+ *
+ * Both were measured against real Node by BL-110's re-audits, and the
+ * analyzer does not read the compiler options. A qualified name under
+ * `import a = p.x` is not a type either: it compiles to a read of `p`.
+ */
+function isInErasedTypePosition(id: ts.Identifier): boolean {
+  let current: ts.Node = id;
+  while (ts.isQualifiedName(current.parent)) {
+    current = current.parent;
+  }
+  return ts.isTypeQueryNode(current.parent);
+}
+
+/**
+ * Whether `declaration` is a plain, unexported `const` alias whose own name
+ * resolves to the lookup list (task BL-110), so that each of its uses is
+ * classified as the list's by {@link isListExpression}. A `const` that may
+ * hold another capability (`c ? require : module.paths`, which the relation
+ * resolves to its first operand: RWF-157), a name another declaration
+ * shares (PRM-22), an exported binding (handed to importers) and `using` /
+ * `await using` (which look up a disposer on the value) are not.
+ */
+function isListAlias(
+  declaration: ts.VariableDeclaration,
+  context: LoaderClassificationContext,
+): boolean {
+  const list = declaration.parent;
+  return (
+    ts.isIdentifier(declaration.name) &&
+    ts.isVariableDeclarationList(list) &&
+    (list.flags & (ts.NodeFlags.Const | ts.NodeFlags.Using)) ===
+      ts.NodeFlags.Const &&
+    (ts.getCombinedModifierFlags(declaration) & ts.ModifierFlags.Export) ===
+      0 &&
+    resolveLoaderCapability(declaration.name, context)?.kind === "module_paths"
+  );
+}
+
+/**
+ * The closure-widening reason for the position the lookup list `list` is
+ * used in (task BL-110; ADR 0010, "Decision record -- BL-096"), an
+ * allow-list over the use, decided by `list`'s syntactic parent:
+ *
+ * - **exempt** (`undefined`): the positions real Node never hands the list
+ *   on from, whatever the program's builtins hold (measured against real
+ *   Node in BL-096) -- a read of `length`; `for…in` over it; an operand of
+ *   `===`, `!==`, `typeof`, `void`, `!`, the right of `in`, `==` / `!=`
+ *   against `null`; a test (`if`, `while`, `do`, `for`, a conditional's
+ *   condition, the left of `&&`); a `switch` or `case` value (strict
+ *   equality); a discarded value (an expression statement, the left of a
+ *   comma); and the initializer of an {@link isListAlias} alias, whose own
+ *   uses are classified the same way;
+ * - **passed up**: a parent that only selects the value -- parentheses, a
+ *   type assertion, a conditional's branches, either side of `||` / `??`,
+ *   the right of `&&` or of a comma -- is classified by its own parent;
+ * - **every other parent** is a `loader_capability_escape`: a method call
+ *   (also classified by {@link modulePathsMethodReason}), any other member
+ *   or element read, `for…of`, a spread, a template, any other operator, a
+ *   property key, an array element, an object property, an argument,
+ *   `await`, a `return`, a store.
+ *
+ * The exempt side is the closed list: a use this does not name fails
+ * closed by construction. BL-096 measured why a list of the uses that fail
+ * closed does not work: its independent audit found spread, `++` on a
+ * `const` alias, and the list inside an array literal or a shorthand
+ * property, each live, outside the list (RWF-136, RWF-155). A write the
+ * parent makes (`module.paths.length = 0`, `p.shift()`) is classified by
+ * the write and method checks as well.
+ */
+function listUseReason(
+  list: ts.Expression,
+  context: LoaderClassificationContext,
+): DynamicCallReason | undefined {
+  // Each selection the walk passes is remembered with the answer for its
+  // own position, so a chain of `n` selections is classified once, not
+  // once per operand (`module.paths || module.paths || ...`; task BL-110's
+  // certification audit, finding 1).
+  const passed: ts.Node[] = [];
+  let child: ts.Node = list;
+  let reason: DynamicCallReason | undefined;
+  for (;;) {
+    const remembered = listUseReasonsByPosition.get(child);
+    if (remembered !== undefined) {
+      reason = remembered === "exempt" ? undefined : remembered;
+      break;
+    }
+    const position = listPositionReason(child, context);
+    if (position === "passed_up") {
+      listUsePassUps += 1;
+      child = child.parent;
+      passed.push(child);
+      continue;
+    }
+    reason = position;
+    break;
+  }
+  for (const node of passed) {
+    listUseReasonsByPosition.set(node, reason ?? "exempt");
+  }
+  return reason;
+}
+
+/**
+ * {@link listUseReason}'s answer for the position of each selection it
+ * passed (`exempt` for `undefined`). The answer depends only on the node's
+ * place in its file, which never changes.
+ */
+const listUseReasonsByPosition = new WeakMap<
+  ts.Node,
+  DynamicCallReason | "exempt"
+>();
+
+let listUsePassUps = 0;
+
+/**
+ * Selections {@link listUseReason} has passed up through in this process
+ * (task BL-110's structural performance test: each selection is passed at
+ * most once per file).
+ */
+export function listUsePassUpCount(): number {
+  return listUsePassUps;
+}
+
+/**
+ * One step of {@link listUseReason}: the reason for `child`'s own position
+ * in its parent, or `passed_up` when the parent only selects `child`'s
+ * value and is classified by its own parent in turn.
+ */
+function listPositionReason(
+  child: ts.Node,
+  context: LoaderClassificationContext,
+): DynamicCallReason | "passed_up" | undefined {
+  const parent = child.parent;
+  if (
+    ts.isParenthesizedExpression(parent) ||
+    ts.isAsExpression(parent) ||
+    ts.isSatisfiesExpression(parent) ||
+    ts.isNonNullExpression(parent) ||
+    ts.isTypeAssertionExpression(parent)
+  ) {
+    return "passed_up";
+  }
+  if (ts.isConditionalExpression(parent)) {
+    return parent.condition === child ? undefined : "passed_up";
+  }
+  if (ts.isBinaryExpression(parent)) {
+    const operator = parent.operatorToken.kind;
+    const selectsRight =
+      operator === ts.SyntaxKind.AmpersandAmpersandToken ||
+      operator === ts.SyntaxKind.CommaToken;
+    if (
+      operator === ts.SyntaxKind.BarBarToken ||
+      operator === ts.SyntaxKind.QuestionQuestionToken ||
+      (selectsRight && parent.right === child)
+    ) {
+      return "passed_up";
+    }
+    const other = parent.left === child ? parent.right : parent.left;
+    return (selectsRight && parent.left === child) ||
+      operator === ts.SyntaxKind.EqualsEqualsEqualsToken ||
+      operator === ts.SyntaxKind.ExclamationEqualsEqualsToken ||
+      (operator === ts.SyntaxKind.InKeyword && parent.right === child) ||
+      ((operator === ts.SyntaxKind.EqualsEqualsToken ||
+        operator === ts.SyntaxKind.ExclamationEqualsToken) &&
+        skipTransparentWrappers(other).kind === ts.SyntaxKind.NullKeyword)
+      ? undefined
+      : "loader_capability_escape";
+  }
+  if (
+    ts.isTypeOfExpression(parent) ||
+    ts.isVoidExpression(parent) ||
+    (ts.isPrefixUnaryExpression(parent) &&
+      parent.operator === ts.SyntaxKind.ExclamationToken) ||
+    ts.isExpressionStatement(parent)
+  ) {
+    return undefined;
+  }
+  if (
+    (ts.isPropertyAccessExpression(parent) ||
+      ts.isElementAccessExpression(parent)) &&
+    parent.expression === child
+  ) {
+    return memberAccessOf(parent)?.name === "length"
+      ? undefined
+      : "loader_capability_escape";
+  }
+  if (
+    (ts.isForInStatement(parent) && parent.expression === child) ||
+    ((ts.isIfStatement(parent) ||
+      ts.isWhileStatement(parent) ||
+      ts.isDoStatement(parent) ||
+      ts.isSwitchStatement(parent) ||
+      ts.isCaseClause(parent)) &&
+      parent.expression === child) ||
+    (ts.isForStatement(parent) && parent.condition === child) ||
+    (ts.isVariableDeclaration(parent) &&
+      parent.initializer === child &&
+      isListAlias(parent, context))
+  ) {
     return undefined;
   }
   return "loader_capability_escape";
@@ -3402,14 +3650,13 @@ function isWithHeadReachingLoader(
 }
 
 /**
- * Whether `consumed` is a `for…in` / `for…of` iterating a `Module`
- * instance's lookup list itself (task BL-092): with Node's own array
- * iterator, iteration hands the loop its elements (strings) or its
- * indices, never the list, so it is a read like `module.paths[i]`, not an
- * escape. A replaced `Array.prototype[Symbol.iterator]` runs with the list
- * as `this`: the same open premise as {@link MODULE_PATHS_READ_METHODS}
- * (RWF-136, backlog `BL-096`). A list held in anything else
- * (`for (const p of [module.paths])`) still escapes.
+ * Whether `consumed` is a `for…in` enumerating a `Module` instance's lookup
+ * list itself (task BL-092): enumeration hands the loop the list's keys and
+ * calls no code with the list -- a Proxy on its prototype chain receives
+ * its target, never the list (measured against real Node in BL-096). A
+ * `for…of` is not exempt (task BL-110): it runs the list's
+ * `Symbol.iterator`, which a module may replace, with the list as `this`
+ * (RWF-136); {@link listUseReason} classifies it as an escape.
  */
 function isIteratedLookupList(
   node: ts.Node,
@@ -3417,7 +3664,7 @@ function isIteratedLookupList(
   context: LoaderClassificationContext,
 ): boolean {
   return (
-    (ts.isForOfStatement(node) || ts.isForInStatement(node)) &&
+    ts.isForInStatement(node) &&
     resolveLoaderCapability(consumed.expression, context)?.kind ===
       "module_paths"
   );
@@ -3546,6 +3793,14 @@ export function findClosureWideningConstructs(
     const implicitWrite = implicitWriteReason(node, context);
     if (implicitWrite !== undefined) {
       record(implicitWrite, node);
+    }
+    // Task BL-110: every use of a `Module` instance's lookup list but the
+    // closed list of positions real Node never hands it on from.
+    if (isListExpression(node, context)) {
+      const listUse = listUseReason(node, context);
+      if (listUse !== undefined) {
+        record(listUse, node);
+      }
     }
     if (ts.isCallExpression(node) || ts.isNewExpression(node)) {
       // VT-307c-capability-floor/flow: reflection-API mutation calls and
