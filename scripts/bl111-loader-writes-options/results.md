@@ -47,6 +47,19 @@ The `source` reads (`tests/oracle/bl111-loader-inherited-reads.*`) are
 `UNKNOWN` on the base and under every tier: an `import()` already widens the
 closure.
 
+## Not sound as prototyped
+
+(A)'s and (B)'s call clauses, and all of (B′), recognise a storing builtin
+by the name it is called under. BL-111's independent audit found that a
+storing builtin reached indirectly (through a local alias, `call`, `apply`
+or `Reflect.apply`) is missed, and so is a store that is not an assignment
+expression. A follow-up measurement confirmed three such forms as live
+false `NOT_AFFECTED`s on the base and under `B.patch`.
+
+So these patches measure the cost of each class of stores. The cost is a
+lower bound, because a sound detector fires at least as often. They are not
+sound detectors.
+
 ## Reproducing
 
 ```bash

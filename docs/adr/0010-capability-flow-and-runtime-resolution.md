@@ -628,3 +628,128 @@ Measured:
   first form: a 4,000-term `||` chain took 6.5 s, and it now takes 188 ms);
 - `test:performance` unrelaxed.
 
+
+## Proposed decision — BL-111: Node's own loader through a replaceable builtin (PROPOSED — requires project-owner decision)
+
+Recorded by task
+[`BL-111`](../tasks/BL-111-loader-writes-builtins.md). This section is
+appended. It changes no earlier section, and nothing in it is implemented.
+The inventory and the measurements are in
+`scripts/bl111-loader-writes-options/` (`inventory.md`, `results.md`, the
+patches). The base is `71c62e0`, measured with real Node v22.11.0.
+
+### The question
+
+RWF-156 is the case where Node's loader runs its own JavaScript over
+objects and arrays that a loaded file has changed: a setter, a Proxy or a
+species on a builtin prototype. A later `require` then loads what that file
+chose, and the program makes no use of any loader state. "Decision record —
+BL-096" closes the uses of the lookup list. It cannot close this, because
+there is no use to classify. Only a closure-wide fact can: a loaded file
+that may make such a store leaves the closure incomplete. The question is
+which stores count, and what that costs.
+
+### What was measured
+
+- **The inventory.** From Node v22.11.0's own loader source
+  (`process.binding("natives")`): 1,002 candidate names, 3,023 recording
+  accessors on `Object.prototype`, `Array.prototype` and
+  `Function.prototype`, a workload of eight load forms, and attacks against
+  real Node. The loader does the following by inheritance:
+  - it **writes** onto every `Module` it creates (`id`, `path`,
+    `filename`, `loaded`, `children`, `paths`) and every `require`
+    function (`resolve`, `paths`, `extensions`, `cache`);
+  - it **writes** into the arrays it builds (`unshift` in
+    `_resolveLookupPaths`);
+  - it builds arrays through the receiver's **species** (`ArrayPrototypeSlice`
+    of the lookup paths, `ArrayPrototypeFilter` of the extension lists);
+  - it **reads** data properties: an ES module load context's `source`,
+    `Symbol.toPrimitive` on URLs, fs `encoding` / `signal`, `then`.
+
+  Live end to end: every write and species route (RWF-156's six oracle
+  records). In real Node, `Object.prototype.source = <text>` replaces an
+  ES module's source, and a plain *primitive* store does it. With the
+  analyzer it is `UNKNOWN`, because on v22.11.0 an ES module loads after a
+  store only through `import()`, which already widens the closure. The
+  other reads only make the load throw.
+- **The stores that reach it.** The stores that reach it are a define call
+  (data or accessor, any name), a [[Prototype]] change, a store of
+  `constructor` (species), and a store under a computed key, which may be
+  either. An accessor-only rule misses species, which is a plain data store.
+
+| | (A) every escaping store | (B) the stores that reach the loader | (B′) (B), names spelled only | (C) trust boundary |
+| --- | ---: | ---: | ---: | ---: |
+| RWF-156's 6 live cases | `UNKNOWN` | `UNKNOWN` | `UNKNOWN` | open |
+| sound | **not as prototyped**: storing calls are recognised by name | **not as prototyped**: storing calls are recognised by name (see the independent audit) | **no**: `o[k] = C` with `k` `"constructor"`, `Object.assign(Array.prototype, { constructor: C })` | by declaration |
+| `node_modules` files flagged (of 3,838) | 61.8 % | 34.2 % | 12.9 % | 0 |
+| packages flagged (of 450) | 76.0 % | 65.3 % | 26.4 % | 0 |
+| corpus verdicts moved (of 139), into `NOT_AFFECTED` | 5, 0 | 4, 0 | 0 | 0 |
+| real-world validation `NOT_AFFECTED` proofs lost (of 4) | 2 (`RWB-07`, `RWB-11b`) | 2 (the same) | 0 | 0 |
+| BL-096 `sound.*` controls lost (of 4) | 4 | 4 | 0 | 0 |
+
+### The trade-off, for the owner
+
+The two rules meant to be sound, (A) and (B), cost half of the real-world
+`NOT_AFFECTED` proofs the validation corpus has. `ini` and `url-parse` each
+store under computed keys onto objects they did not create, which is what a
+parser that can write `__proto__` or `constructor` does. By the task's STOP
+condition, no option is forced. Each option's position:
+
+- **(B)** is the narrowest class of stores the inventory shows can reach
+  the loader. As prototyped it is **not sound**: it recognises a storing
+  builtin by the name it is called under. A storing builtin reached any
+  other way (through a local alias, an indirect call such as `call` /
+  `apply` / `Reflect.apply`) is not seen, and neither is a store that is
+  not an assignment expression. A sound (B) must identify storing builtins
+  by identity, through the escape row's account of builtin calls (ADR 0008,
+  BL-081's decision record), and must read every store form the escape row
+  reads. Its completeness then rests on three uncertified things:
+  - that account;
+  - the escape row's freshness proofs (BL-094's pending decision);
+  - the inventory, which is a property of one Node release (Node rewrites
+    its loader between releases).
+- **(A)** costs more than (B) and closes nothing (B) leaves open.
+- **(B′)** is cheap and keeps every proof, but is unsound by construction.
+  It is not offered as a fix.
+- **(C)** states in the soundness contract that a `NOT_AFFECTED` assumes
+  no loaded file changes Node's builtin prototypes (no prototype pollution
+  of the runtime). It records RWF-156 as the contract's stated limitation
+  rather than an open defect. It costs nothing and changes no verdict. It
+  also narrows what a proof claims, so it is a contract amendment
+  (SOUNDNESS-CONTRACT § 1).
+
+**Lean, if one is wanted: (B), implemented as above (by identity, not by
+spelling).** AGENTS.md § E puts soundness ahead of precision, and (B) is the
+narrowest class measured. Its measured cost is a lower bound, because a
+sound detector fires at least as often as the prototype. If the owner takes
+(C), the contract text and a disclosure in the result (lane D) carry it,
+and BL-111's records move RWF-156 to a documented limitation.
+
+### The independent audit
+
+One fresh-context round returned `BLOCKED`, on a partial review: its run
+was cut short before it ran any reproductions.
+- **Finding 1:** (B)'s detector recognises storing builtins by spelling. A
+  follow-up measurement confirmed it: for three such indirect forms, real
+  Node calls the target and the analyzer answers `NOT_AFFECTED`, both on the
+  base and under `B.patch`. They are RWF-156's class.
+- **Finding 2:** this section overclaimed (B)'s soundness; corrected above.
+- **Finding 3:** the freshness proofs (B) relies on should be attacked when
+  it is implemented.
+
+`src/` was confirmed unchanged. The census, the corpus moves and the
+control counts were not re-checked by the audit.
+
+### What any option leaves open
+
+- **Other Node releases.** The inventory is v22.11.0's. `require()` of an
+  ES module (unflagged from v22.12, and in CI's Node 26) may load an ES
+  module after a store without `import()`, and that would make the `source`
+  read live. Backlog `BL-114` repeats the inventory on Node 20 and 26.
+- **Loads the workload did not reach:** ESM hooks (`module.register`),
+  workers, `--import` preloads, `import.meta.resolve`.
+
+If (B) is accepted, backlog `BL-113` implements it by identity, not by
+spelling (`B.patch` is a measured prototype of the class, not a sound
+detector). An oracle sweep over every store form and every route to a
+storing builtin, and a certification audit, follow.

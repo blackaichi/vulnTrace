@@ -1709,6 +1709,36 @@ RWF-155 and RWF-157 for the lookup list.
 The list above stands, without RWF-136 and RWF-154. RWF-155 and RWF-157
 remain for other capabilities, and RWF-156 remains (backlog `BL-111`).
 
+**Progress, added by task `BL-111` (2026-10-26).** Task BL-111
+(`docs/tasks/BL-111-loader-writes-builtins.md`) changed no analyzer code. It
+inventoried, from Node v22.11.0's own loader source and against real Node,
+what the loader reads and writes by inheritance on the builtin prototypes
+(`scripts/bl111-loader-writes-options/inventory.md`). It then measured
+closure-wide rules for RWF-156 and proposes them to the project owner
+(ADR 0010, "Proposed decision — BL-111", PROPOSED).
+
+What the inventory found:
+- **writes** onto every `Module` and `require` function the loader creates,
+  **writes** into its arrays, and **species**: all live;
+- **reads**, of which one more is real: `Object.prototype.source` replaces
+  an ES module's source. It is `UNKNOWN` with the analyzer, because only
+  `import()` reaches it on v22.11.0.
+
+Rule (B) counts a define call, a [[Prototype]] change, a `constructor` or
+computed-key store, or `assign` / `set`, onto an object not proven the
+program's own. Its prototype is not sound: the task's independent audit
+found, and a measurement confirmed, that it recognises storing builtins by
+spelling, so an indirectly reached one is missed. A sound (B) must use the
+escape row's account of builtin calls. The prototype's cost, a lower bound:
+- 2 of the 4 real-world validation `NOT_AFFECTED` proofs (`RWB-07`,
+  `RWB-11b`);
+- 4 corpus verdicts in all, and 65.3 % of 450 packages.
+
+The cheap literal-name rule is unsound. A stated trust boundary (C) costs
+nothing but narrows the contract. The decision is the owner's; it is
+implemented by backlog `BL-113` and checked on other Node releases by
+`BL-114`. The list above stands.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

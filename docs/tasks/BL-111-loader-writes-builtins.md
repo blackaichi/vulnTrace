@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW (report verdict `NEEDS_DECISION`: the project
+  owner decides ADR 0010's "Proposed decision — BL-111")
 - **Backlog ID**: BL-111
 - **Branch**: `bl-111-loader-writes-builtins`
 - **Base SHA**: `71c62e00cace54d72f04b9891e0e14b91cfa81a5` (BL-110's merge, PR #119)
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `docs(tasks): BL-111 task file — design: Node's own loader writes its state through replaceable builtins (RWF-156)`
+  - `test(BL-111): the loader's inherited reads and writes, inventoried from Node's own source and against real Node; three closure-wide rules as patches, measured`
+  - (this commit) `docs(BL-111): ADR 0010 proposed decision — (B) a closure-wide rule or (C) a trust boundary; RWF-156 widened, the independent audit, debts, backlog (BL-113, BL-114), progress, scorecard`
 - **Superseded by**: —
 
 ## Project context
@@ -129,15 +133,15 @@ analyzer behaviour in `src/`.
 
 ## Acceptance criteria
 
-- [ ] The inventory lists, for Node v22.11.0, every loader operation of
+- [x] The inventory lists, for Node v22.11.0, every loader operation of
       the classes above with its source location, and each class has a
       real-Node oracle case.
-- [ ] Each option is a patch applicable to the base, measured as above
+- [x] Each option is a patch applicable to the base, measured as above
       and reported separately.
-- [ ] ADR 0010 carries an appended PROPOSED section.
-- [ ] RWF-156 is updated by an append, and every new finding is
+- [x] ADR 0010 carries an appended PROPOSED section.
+- [x] RWF-156 is updated by an append, and every new finding is
       registered.
-- [ ] `src/` is unchanged on the branch.
+- [x] `src/` is unchanged on the branch.
 
 ## Gates
 
@@ -148,3 +152,30 @@ baseline is D-09's six.
 ## Report
 
 In the format of `AGENTS.md` § J, verdict `NEEDS_DECISION`.
+
+## Corrections
+
+**2026-10-26.**
+- **The row's premise that only accessors, [[Prototype]] changes and
+  `constructor` stores matter is measured false.** The loader also reads
+  data properties by inheritance, and `Object.prototype.source`, a plain
+  primitive store, replaces an ES module's source in real Node. It is not
+  live with the analyzer on v22.11.0, and the inventory records it.
+- **"Further tiers as the measurements suggest"** became (B′), the
+  literal-name rule. It was measured only to price what the computed-key
+  clause costs, and it is unsound.
+- **The trust boundary (C)** is added as an option because the sound rules
+  cost half of the real-world proofs (STOP condition 3: no recommendation
+  is forced).
+- **The independent audit (one round, `BLOCKED`, partial).** The auditor's
+  run stopped before it ran any reproductions. Its main finding, from
+  reading the code, is that the prototype rules recognise storing builtins
+  by name, so an indirectly reached one is missed. A follow-up measurement
+  confirmed three such forms as live false `NOT_AFFECTED`s on the base and
+  under `B.patch`. At the project owner's direction the task is finished as
+  a write-up:
+  - the ADR, FINDINGS, OPEN-DEBTS, `results.md` and BL-113 state that the
+    prototypes are not sound detectors;
+  - they state that a sound (B) identifies storing builtins by identity;
+  - the measured forms are described, not committed as fixtures.
+
