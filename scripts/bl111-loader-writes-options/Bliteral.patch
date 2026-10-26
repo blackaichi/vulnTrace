@@ -1,0 +1,150 @@
+diff --git a/src/analysis/module-load-closure.ts b/src/analysis/module-load-closure.ts
+index 5dffd9c..f42afe3 100644
+--- a/src/analysis/module-load-closure.ts
++++ b/src/analysis/module-load-closure.ts
+@@ -1,5 +1,8 @@
+ import type { JsxSettings } from "../code-intelligence/jsx-runtime.js";
+-import { findClosureWideningConstructs } from "../code-intelligence/loader-constructs.js";
++import {
++  fileMayRedirectLoader,
++  findClosureWideningConstructs,
++} from "../code-intelligence/loader-constructs.js";
+ import { buildModuleModel } from "../code-intelligence/module-model.js";
+ import type { ModuleResolver } from "../code-intelligence/module-resolver.js";
+ import { indexSourceFileFromDisk } from "../code-intelligence/source-index.js";
+@@ -298,6 +301,16 @@ export async function buildModuleLoadClosure(
+     // property of the source this closure actually read -- never of how
+     // far some other traversal happened to get. See
+     // `findClosureWideningConstructs`.
++    // BL-111 prototype: a store that may change what Node's loader reads or
++    // writes on the builtin objects widens the closure.
++    if (
++      fileMayRedirectLoader({ index: sourceIndex, model, jsx: options.jsx })
++    ) {
++      incompleteness.push({
++        reason: "loader_hook_mutation",
++        importer: filePath,
++      });
++    }
+     for (const construct of findClosureWideningConstructs({
+       index: sourceIndex,
+       model,
+diff --git a/src/code-intelligence/loader-constructs.ts b/src/code-intelligence/loader-constructs.ts
+index 167a189..8784883 100644
+--- a/src/code-intelligence/loader-constructs.ts
++++ b/src/code-intelligence/loader-constructs.ts
+@@ -10,6 +10,7 @@ import {
+   resolveSingleAssignmentValue,
+ } from "./local-aliases.js";
+ import { invocationSiteOf } from "./invocation-sites.js";
++import { isProvenFreshObject } from "./escape-row.js";
+ import {
+   isJsxSite,
+   jsxHandedExpressions,
+@@ -3938,3 +3939,106 @@ export function findClosureWideningConstructs(
+   visit(sourceFile);
+   return found;
+ }
++
++// ---------------------------------------------------------------------------
++// BL-111 prototype (Bliteral): a store that may change what Node's own loader
++// reads or writes on the builtin objects widens the whole closure.
++// ---------------------------------------------------------------------------
++
++const BL111_TIER: "A" | "B" | "Bliteral" = "Bliteral";
++
++/** Builtin members that define, set or re-parent a property of the object they are handed. */
++const BL111_STORING_CALLS: ReadonlySet<string> = new Set([
++  "defineProperty",
++  "defineProperties",
++  "setPrototypeOf",
++  "__defineGetter__",
++  "__defineSetter__",
++]);
++/** Builtin members that SET (run setters, store data) on the object they are handed. */
++const BL111_SETTING_CALLS: ReadonlySet<string> = new Set(["assign", "set"]);
++/** Names whose store re-parents an object or replaces its species. */
++const BL111_LOADER_NAMES: ReadonlySet<string> = new Set([
++  "__proto__",
++  "constructor",
++]);
++
++/** The object a call of a storing member writes onto: the first argument, or the receiver of `x.__defineGetter__`. */
++function bl111StoreTarget(
++  call: ts.CallExpression,
++  name: string,
++): ts.Expression | undefined {
++  if (name === "__defineGetter__" || name === "__defineSetter__") {
++    return ts.isPropertyAccessExpression(call.expression)
++      ? call.expression.expression
++      : undefined;
++  }
++  return call.arguments[0];
++}
++
++/**
++ * BL-111 prototype: whether the file may store, on an object not proven the
++ * program's own, something Node's loader reads or writes by inheritance.
++ */
++export function fileMayRedirectLoader(
++  context: LoaderClassificationContext,
++): boolean {
++  let found = false;
++  const visit = (node: ts.Node): void => {
++    if (found) {
++      return;
++    }
++    if (ts.isWithStatement(node)) {
++      found = true;
++      return;
++    }
++    if (BL111_TIER === "A") {
++      const callee =
++        ts.isCallExpression(node) || ts.isNewExpression(node)
++          ? memberAccessOf(node.expression)?.name
++          : undefined;
++      if (
++        invocationSiteOf(node)?.kind === "escaping_assignment" ||
++        (callee !== undefined &&
++          (BL111_STORING_CALLS.has(callee) || BL111_SETTING_CALLS.has(callee)))
++      ) {
++        found = true;
++        return;
++      }
++    } else {
++      if (ts.isCallExpression(node)) {
++        const name = memberAccessOf(node.expression)?.name;
++        const calls =
++          name !== undefined &&
++          (BL111_STORING_CALLS.has(name) ||
++            (BL111_TIER === "B" && BL111_SETTING_CALLS.has(name)));
++        const target = calls ? bl111StoreTarget(node, name!) : undefined;
++        if (target !== undefined && !isProvenFreshObject(target)) {
++          found = true;
++          return;
++        }
++      }
++      if (
++        ts.isBinaryExpression(node) &&
++        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
++        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment
++      ) {
++        const target = skipTransparentWrappers(node.left);
++        const member = memberAccessOf(target);
++        if (
++          member !== undefined &&
++          (member.name === undefined
++            ? BL111_TIER === "B"
++            : BL111_LOADER_NAMES.has(member.name)) &&
++          !isProvenFreshObject(member.receiver)
++        ) {
++          found = true;
++          return;
++        }
++      }
++    }
++    ts.forEachChild(node, visit);
++  };
++  visit(context.index.sourceFile);
++  return found;
++}
