@@ -74,22 +74,22 @@ describe("a Module instance's lookup list, through any route (RWF-129)", () => {
     ["a method under a computed key", "module.paths[m]();\n"],
     ["an unknown method", "module.paths.frobnicate();\n"],
     ["a delete of an element", "delete module.paths[0];\n"],
+    // Task BL-110: the cost of BL-096's decision (ADR 0010, "Decision
+    // record -- BL-096"). These were this file's precision controls: a
+    // module may replace any method, the iterator or an inherited element.
+    ["a read-only method (slice)", "const s = module.paths.slice();\n"],
+    ["a read-only method (includes)", "module.paths.includes(d);\n"],
+    ["a read-only method (join)", "const j = module.paths.join(':');\n"],
+    ["an element read", "const first = module.paths[0];\n"],
+    ["a for…of", "for (const dir of module.paths) { use(dir); }\n"],
   ])("%s is loader_capability_escape", (_label, source) => {
     expect(reasons(source)).toContain("loader_capability_escape");
   });
 
   it.each([
     [
-      "the read-only methods",
-      "const s = module.paths.slice();\nconst h = module.paths.includes(d) || module.paths.indexOf(d) >= 0;\nconst j = module.paths.join(':');\n",
-    ],
-    [
-      "an element read and length",
-      "const n = module.paths.length;\nconst first = module.paths[0];\nconst last = module.paths[n - 1];\n",
-    ],
-    [
-      "iteration",
-      "for (const dir of module.paths) { use(dir); }\nfor (const i in module.paths) { use(i); }\n",
+      "length and for…in (what BL-096's decision keeps; task BL-110)",
+      "const n = module.paths.length;\nfor (const i in module.paths) { use(i); }\n",
     ],
     [
       "a const alias that is only read",

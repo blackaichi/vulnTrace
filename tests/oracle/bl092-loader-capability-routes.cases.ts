@@ -560,6 +560,20 @@ export const ALL_CASES: readonly Bl092Case[] = [
       `for (const dir of module.paths) { if (dir === first || dir === last) break; }\n`,
     called: false,
     base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "the cost of BL-096's decision (ADR 0010's decision record -- BL-096; task BL-110): an index read is exempt only as `length`, and `for…of` runs the list's `Symbol.iterator`, which a module may replace",
+  },
+  {
+    id: "precision.length-and-for-in",
+    finding: "RWF-129",
+    mechanism:
+      "`module.paths.length` and `for…in` over the list change no lookup and run no code with the list (task BL-110: what BL-096's decision keeps)",
+    redirect:
+      `const n = module.paths.length;\n` +
+      `for (const i in module.paths) { if (Number(i) === n) break; }\n`,
+    called: false,
+    base: "NOT_AFFECTED",
     expected: "NOT_AFFECTED",
   },
 ];

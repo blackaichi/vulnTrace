@@ -23,9 +23,13 @@ import {
  * and calls `parse`.
  *
  * Measured on the base (`904d032`, BL-109's merge) with real Node
- * v22.11.0: see each case's `base`. Each case asserts the sound verdict;
- * a case this decision task leaves open is an open-soundness-defect record
- * (`openDefect`), never an expectation.
+ * v22.11.0: see each case's `base`. Each case asserts the sound verdict.
+ * Task BL-110 (docs/tasks/BL-110-module-paths-allow-list.md) implements
+ * the decision (ADR 0010, "Decision record -- BL-096"): every case that
+ * uses the list now asserts `UNKNOWN`, and a control the decision gives up
+ * states its cost (`precisionCost`). The cases no rule over the list's
+ * uses can see (RWF-156, backlog `BL-111`) stay open-soundness-defect
+ * records (`openDefect`), never an expectation.
  */
 
 export {
@@ -37,7 +41,7 @@ export interface Bl096Case extends Bl092Case {
   /** The entry's source, when the case's tamper runs there. */
   readonly entry?: string;
   /**
-   * A case BL-096 leaves open: the wrong result the analyzer gives today,
+   * A case left open (RWF-156): the wrong result the analyzer gives today,
    * held as an open-soundness-defect record, never as an expectation.
    */
   readonly openDefect?: {
@@ -124,7 +128,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "rwf136.iterator-replaced",
@@ -139,7 +142,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "rwf136.join-replaced-template",
@@ -150,7 +152,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   // ---------------------------------------------------------------------
   // The same exemptions, reached by routes RWF-136's record does not name.
@@ -175,7 +176,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "measured.tamper-in-entry",
@@ -187,7 +187,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "measured.tamper-unspelled-prototype",
@@ -201,7 +200,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "measured.method-accessor",
@@ -217,7 +215,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "measured.slice-constructor-getter",
@@ -232,7 +229,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "measured.named-member-getter",
@@ -246,7 +242,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "measured.non-own-index-getter",
@@ -260,7 +255,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "measured.proxy-parent-index",
@@ -274,7 +268,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(8) },
   },
   {
     id: "measured.to-primitive-plus",
@@ -288,7 +281,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "measured.in-left-to-string",
@@ -299,7 +291,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "measured.property-key-to-string",
@@ -310,7 +301,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "measured.await-then-getter",
@@ -324,7 +314,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "measured.instanceof-right-has-instance-getter",
@@ -338,7 +327,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(5) },
   },
   // Builtin stores no assignment spells: option (a) must see each one to
   // keep its exemptions sound.
@@ -357,7 +345,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(5) },
   },
   {
     id: "measured.reflect-apply-define-property",
@@ -373,7 +360,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(6) },
   },
   {
     id: "measured.instanceof-has-instance",
@@ -387,7 +373,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-154", observed: familyB(2) },
   },
   // ---------------------------------------------------------------------
   // Found by BL-096's independent audit (round 1): uses the first (b1)
@@ -406,7 +391,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "audit.spread-conditional-branch",
@@ -421,7 +405,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "audit.increment-const-alias",
@@ -433,7 +416,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "audit.array-literal-converted",
@@ -444,7 +426,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "audit.array-literal-key",
@@ -455,7 +436,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "audit.array-element-shift",
@@ -466,7 +446,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "PRM-105", observed: familyB(1) },
   },
   {
     id: "audit.array-for-each-shift",
@@ -477,7 +456,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "PRM-105", observed: familyB(1) },
   },
   {
     id: "audit.shorthand-property-shift",
@@ -488,7 +466,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-155", observed: familyB(1) },
   },
   {
     id: "audit.property-assignment-shift",
@@ -512,7 +489,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-157", observed: familyB(1) },
   },
   {
     id: "audit2.alias-logical-other-capability",
@@ -523,7 +499,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-157", observed: familyB(1) },
   },
   {
     id: "audit2.alias-conditional-spread",
@@ -539,7 +514,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-157", observed: familyB(4) },
   },
   {
     id: "audit2.alias-name-collision",
@@ -550,7 +524,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "PRM-22", observed: familyB(1) },
   },
   {
     id: "audit2.computed-key-in-array",
@@ -561,7 +534,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "PRM-105", observed: familyB(1) },
   },
   // No use of the list at all: a tampered builtin receives the lookup
   // state from Node's own loader. No per-use rule sees these (RWF-156).
@@ -620,7 +592,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "audit3.cache-entry-spread",
@@ -635,7 +606,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "audit3.cache-entry-alias-literal-key",
@@ -649,7 +619,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "audit3.constructor-cache-template",
@@ -662,7 +631,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "audit3.deep-alias-chain-template",
@@ -674,7 +642,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(3) },
   },
   {
     id: "audit3.deep-list-alias-spread",
@@ -693,7 +660,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-136", observed: familyB(4) },
   },
   {
     id: "audit3.cache-entry-array-shift",
@@ -703,7 +669,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "PRM-105", observed: familyB(1) },
   },
   {
     id: "audit3.deep-alias-array-shift",
@@ -714,7 +679,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "PRM-105", observed: familyB(1) },
   },
   {
     id: "audit3.cache-entry-shorthand-shift",
@@ -727,7 +691,6 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-155", observed: familyB(1) },
   },
   {
     id: "audit3.species-constructor-store",
@@ -812,7 +775,9 @@ export const ALL_CASES: readonly Bl096Case[] = [
       `module.paths[0];\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "the cost of BL-096's decision (ADR 0010's decision record -- BL-096): an index read is exempt only as `length`; whether `module.paths[0]` is an own index is not known statically",
   },
   {
     id: "sound.strict-equality-typeof-not",
@@ -870,7 +835,8 @@ export const ALL_CASES: readonly Bl096Case[] = [
   },
   // ---------------------------------------------------------------------
   // Precision: the read-only uses with no tamper anywhere. Real Node loads
-  // the decoy; each option of the decision prices these.
+  // the decoy. A control BL-096's decision gives up states its cost
+  // (`precisionCost`, task BL-110): an UNKNOWN real Node does not reach.
   // ---------------------------------------------------------------------
   {
     id: "precision.alias-read-methods",
@@ -885,7 +851,9 @@ export const ALL_CASES: readonly Bl096Case[] = [
       `p.join(":");\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "the cost of BL-096's decision (ADR 0010's decision record -- BL-096): no method of the lookup list is read-only, since a module may replace any of them",
   },
   {
     id: "precision.for-of",
@@ -894,7 +862,9 @@ export const ALL_CASES: readonly Bl096Case[] = [
     redirect: `for (const d of module.paths) {}\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "the cost of BL-096's decision (ADR 0010's decision record -- BL-096): `for…of` runs the list's `Symbol.iterator`, which a module may replace",
   },
   {
     id: "precision.template",
@@ -903,7 +873,9 @@ export const ALL_CASES: readonly Bl096Case[] = [
     redirect: "`${module.paths}`;\n" + `module.paths + "";\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "the cost of BL-096's decision (ADR 0010's decision record -- BL-096): a conversion runs the list's `toString` / `join` / `Symbol.toPrimitive`, which a module may replace",
   },
   {
     id: "precision.instanceof-plain-class",
@@ -913,7 +885,9 @@ export const ALL_CASES: readonly Bl096Case[] = [
     redirect: `class F {}\nmodule.paths instanceof F;\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "the cost of BL-096's decision (ADR 0010's decision record -- BL-096): the list on the left of `instanceof` is handed to the right operand's `Symbol.hasInstance` (RWF-154); which one that is, is not established",
   },
   {
     id: "precision.computed-element",
@@ -923,7 +897,9 @@ export const ALL_CASES: readonly Bl096Case[] = [
     redirect: `const k = module.paths.length - 1;\nmodule.paths[k];\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "the cost of BL-096's decision (ADR 0010's decision record -- BL-096): an index read is exempt only as `length`; a computed index may be one the list does not own",
   },
   {
     id: "precision.cache-entry-exports-read",
@@ -947,6 +923,8 @@ export const ALL_CASES: readonly Bl096Case[] = [
       `p.includes("x");\n`,
     called: false,
     base: "NOT_AFFECTED",
-    expected: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    precisionCost:
+      "the cost of BL-096's decision (ADR 0010's decision record -- BL-096): no method of the lookup list is read-only, whatever else the file stores",
   },
 ];
