@@ -20,6 +20,12 @@ jobs:
       fail-fast: false
       matrix:
         node-version: [20, 26]
+    env:
+      # Task BL-117: the oracle harness's on-disk cache of real-Node answers
+      # (src/testing/oracle/real-node-cache.ts) is local only. CI runs every
+      # real-Node process, by the project owner's decision of 2026-10-27.
+      # The harness also turns it off when `CI` is set; this says so here.
+      VT_ORACLE_NODE_CACHE: "off"
     steps:
       - name: Checkout
         uses: actions/checkout@v4

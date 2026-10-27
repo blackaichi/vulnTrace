@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { childEnvironment, runRealNodeSync } from "./real-node-cache.js";
 import { parseCalledMarkers } from "./hit.js";
 
 /**
@@ -52,31 +52,25 @@ export function runGroundTruth(
     );
   }
   const [exe, ...args] = command;
-  try {
-    const stdout = execFileSync(exe, args, {
-      cwd: projectDir,
-      encoding: "utf-8",
-      timeout: options?.timeoutMs ?? 15_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return {
-      command,
-      calledMarkers: parseCalledMarkers(stdout),
-      stdout,
-      stderr: "",
-      threw: false,
-    };
-  } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string };
-    const stdout = failure.stdout ?? "";
-    return {
-      command,
-      calledMarkers: parseCalledMarkers(stdout),
-      stdout,
-      stderr: failure.stderr ?? "",
-      threw: true,
-    };
-  }
+  // BL-117: through the real-Node cache (`real-node-cache.ts`). A
+  // non-zero exit, a timeout and a spawn failure are all `threw: true`,
+  // as they were with `execFileSync`; only an exit status is ever stored.
+  const run = runRealNodeSync({
+    file: exe,
+    args,
+    cwd: projectDir,
+    env: childEnvironment(),
+    timeoutMs: options?.timeoutMs ?? 15_000,
+    stdin: "ignore",
+  });
+  const threw = run.status !== 0 || run.error !== undefined;
+  return {
+    command,
+    calledMarkers: parseCalledMarkers(run.stdout),
+    stdout: run.stdout,
+    stderr: threw ? run.stderr : "",
+    threw,
+  };
 }
 
 /** The default ground-truth command for a string entrypoint: `node <entryFile>`. */
