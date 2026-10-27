@@ -265,6 +265,7 @@ node scripts/check-docs.mjs
 ```bash
 node scripts/gates.mjs                       # the whole set, then the differential
 node scripts/gates.mjs --only lint,test:oracle   # a PARTIAL run (§ 1.5)
+node scripts/gates.mjs --tier dev                # PARTIAL: the code gates, while implementing
 ```
 
 It runs the same gates with the same commands, in three phases, and
@@ -290,6 +291,17 @@ every option):
 
 Run the commands one by one only to investigate one gate; quote the
 runner's summary in the report.
+
+**Real Node's answers are cached locally** (task `BL-117`, authorized by
+the project owner on 2026-10-27). The oracle harness keeps the result of
+every real-Node process it runs on disk: the loud-fixture check, the
+ground truth and the builtin probes. A later run whose inputs are
+identical is served that result. The analyzer's scans are never cached.
+CI runs uncached. `VT_ORACLE_NODE_CACHE=off` turns the cache off and
+`verify` checks it against fresh runs. The key, and what makes a run
+uncacheable, are documented in
+`src/testing/oracle/real-node-cache.ts`'s header. The runner's summary
+states the mode a run used.
 
 - `npm run test:validation` is fully offline since task `D-03` (it
   replays a recorded snapshot of real OSV answers, OPEN-DEBTS D-03,
