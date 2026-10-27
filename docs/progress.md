@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-27, by `BL-116`.
+**Last updated:** 2026-10-28, by `BL-117`.
 
 ## Objective
 
@@ -318,16 +318,18 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-116` — Record the project owner's decisions of 2026-10-27 and amend
-the workflow ([task file](tasks/BL-116-owner-decisions-workflow.md)):
-`READY_FOR_REVIEW`. Documentation only; no analyzer change. BL-114 is
-merged (PR #121). BL-094's O2e is still awaiting the owner, so `BL-107`
-waits.
+`BL-117` — Oracle speed ([task file](tasks/BL-117-oracle-speed.md)):
+`READY_FOR_REVIEW`. Test tooling only; no analyzer change. The oracle
+harness caches real Node's answers on disk, locally
+(`src/testing/oracle/real-node-cache.ts`; CI uncached). The ambient
+builtins' admission tests run in four files, and `gates.mjs` has
+`--tier dev`. BL-116 is merged (PR #122). BL-094's O2e is still awaiting
+the owner, so `BL-107` waits.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-116`,
-the improvement tasks, in order: `BL-117` (oracle speed), `BL-118` (CI in
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-117`,
+the improvement tasks, in order: `BL-118` (CI in
 parallel), `BL-119` (records restructure), `BL-120` (agent tooling) and
 `BL-121` (split `module-model.ts`). Then
 `BL-113` (implements BL-111's decision, option (C), with RWF-158 and RWF-160), `BL-115` (which
@@ -352,6 +354,13 @@ for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
 withdrawals.
 
 ## Recently discovered
+
+From `BL-117`: nothing in the analyzer. Its two key-review rounds found
+five holes in the new cache's key, all fixed before the pull request
+(task file, "Account").
+With the cache off, the oracle suite is CPU-bound on four cores, so
+moving builtin-admission off the critical path alone barely shortens it;
+CI's speed is `BL-118`'s.
 
 From `BL-114`:
 - `RWF-158` (live, pre-existing, P1): on v20.19+, v22.12+ and v24.0.0 to
