@@ -164,6 +164,10 @@ closing.
 - One conceptual task per branch. Make logical commits. If the task has a
   task file, it is the first commit (see
   [`docs/tasks/README.md`](docs/tasks/README.md)).
+- A commit subject is at most 72 characters: `<type>(<task ID>): <summary>`.
+  The detail goes in the body, and the finding IDs a commit touches go
+  there too, not in the subject. (Task `BL-116`. Earlier history is not
+  rewritten.)
 - The only allowed attribution trailer is:
 
   ```text
