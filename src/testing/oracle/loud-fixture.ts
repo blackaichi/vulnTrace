@@ -1,4 +1,4 @@
-import { execFileSync } from "node:child_process";
+import { childEnvironment, runRealNodeSync } from "./real-node-cache.js";
 
 /**
  * THE LOUD-FIXTURE GUARANTEE (AGENTS.md § G, "Loud fixtures").
@@ -86,20 +86,22 @@ export function assertLoudFixture(
       `console.log(JSON.stringify({ miss, names: Object.keys(m).sort() })); ` +
       `} catch (e) { console.log(JSON.stringify({ error: String(e && e.message || e) })); }`;
 
-  let raw: string;
-  try {
-    raw = execFileSync("node", ["-e", probe], {
-      cwd: projectDir,
-      encoding: "utf-8",
-      env: { ...process.env, VT_SILENT: "1" },
-      timeout: 15_000,
-    }).trim();
-  } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string };
+  // BL-117: through the real-Node cache, which serves a stored result
+  // only for the same probe, project bytes, Node and environment.
+  const run = runRealNodeSync({
+    file: "node",
+    args: ["-e", probe],
+    cwd: projectDir,
+    env: childEnvironment({ VT_SILENT: "1" }),
+    timeoutMs: 15_000,
+    stdin: "pipe",
+  });
+  if (run.status !== 0 || run.error !== undefined) {
     throw new LoudFixtureViolation(check.specifier, [
-      `<process failure: ${failure.stderr?.trim() ?? failure.stdout?.trim() ?? String(error)}>`,
+      `<process failure: ${run.stderr.trim() || run.stdout.trim() || (run.error ?? `signal ${String(run.signal)}`)}>`,
     ]);
   }
+  const raw = run.stdout.trim();
 
   const lastLine = raw.split("\n").at(-1) ?? raw;
   const parsed = JSON.parse(lastLine) as {
