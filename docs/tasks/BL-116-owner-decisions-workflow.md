@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-116
 - **Branch**: `bl-116-owner-decisions-workflow`
 - **Base SHA**: `5c8bcc3c3a94616ab7a8190b60ea5722cc85677d` (BL-114's merge, PR #121)
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): BL-116 task file — the owner's decisions of 2026-10-27`
+  - `docs(BL-116): ADR 0010 decision record — BL-111, option (C) accepted`
+  - `docs(BL-116): workflow — two audit rounds, say it once, short template`
+  - (this commit) `docs(BL-116): backlog — BL-117 to BL-121 first, BL-113 under (C)`
 - **Superseded by**: —
 
 ## Project context
@@ -140,23 +144,23 @@ class it was closing.
 
 ## Acceptance criteria
 
-- [ ] ADR 0010 ends with "Decision record — BL-111", appended. It states
+- [x] ADR 0010 ends with "Decision record — BL-111", appended. It states
   (C) as accepted, its scope, what it leaves undecided, and BL-113's
   implementation. No earlier section changed.
-- [ ] WORKFLOW § 1.5 states the two-round limit, the spill-over rule, the
+- [x] WORKFLOW § 1.5 states the two-round limit, the spill-over rule, the
   never-spilled rule, round 0, and findings as reproductions.
-- [ ] WORKFLOW § 1.2 says where each fact is written.
-- [ ] AGENTS.md § H states the 72-character subject rule, and this task's
+- [x] WORKFLOW § 1.2 says where each fact is written.
+- [x] AGENTS.md § H states the 72-character subject rule, and this task's
   own commits meet it.
-- [ ] `docs/tasks/TEMPLATE-SHORT.md` exists, and `docs/tasks/README.md`
+- [x] `docs/tasks/TEMPLATE-SHORT.md` exists, and `docs/tasks/README.md`
   and WORKFLOW § 1.1 refer to it.
-- [ ] The pull request template's audit section asks for the rounds run
+- [x] The pull request template's audit section asks for the rounds run
   and the spilled findings.
-- [ ] BACKLOG.md: BL-114 is `MERGED`; BL-116 to BL-121 come first in § 1
+- [x] BACKLOG.md: BL-114 is `MERGED`; BL-116 to BL-121 come first in § 1
   in the decided order; BL-113 follows them and depends on BL-116.
-- [ ] No file under `src/`, `tests/`, `scripts/`, `fixtures/` or
+- [x] No file under `src/`, `tests/`, `scripts/`, `fixtures/` or
   `.github/workflows/` changed.
-- [ ] The full gate set passes. `test:validation` fails on exactly the
+- [x] The full gate set passes. `test:validation` fails on exactly the
   documented known failures.
 
 ## Gates
@@ -173,3 +177,45 @@ Audit: not required (documentation only, BACKLOG.md's Audit column).
 ## Report
 
 In the format of AGENTS.md § J.
+
+## Outcome
+
+- **Premises re-verified.**
+  - ADR 0010's "Proposed decision — BL-111" and "Note — task BL-114" exist
+    with the wording the decision record relies on: the boundary's text,
+    (A)'s 76.0 % of packages and 2 of 4 validation proofs, and RWF-158 and
+    RWF-160 covered under (C).
+  - RWF-085 is the record the BL-114 note cites for "the analyzer does not
+    know the deployed release".
+  - Both oracle record families the decision record names exist
+    (`tests/oracle/bl111-loader-inherited-reads.*`,
+    `tests/oracle/bl114-require-esm-inherited-source.*`).
+  - `SUPPORTED_MODEL_EXCLUSIONS` is in `src/domain/evidence.ts`.
+  - No gate parses the edited parts: `gates-lib.test.ts` reads only
+    AGENTS.md § I, and `check-docs.mjs` does not review WORKFLOW.md, so its
+    new references were checked by hand.
+- **Worktrees removed at the start** (owner's authorization, decision 4).
+  Each was checked first:
+  - `b-6-rule-package-mismatch-reason` (PR #96),
+    `bl-114-loader-inventory-node-releases` (#121) and
+    `e-2-forwarding-write-set` (#103): no unmerged commit, clean.
+  - `rwf-046-require-binding-authority` (#61): three commits not
+    patch-equivalent, each on `main` under the same subject (the branch
+    was rebased before merge).
+  - Eight detached worktrees in two other jobs' temporary folders (one of
+    them at `07a61e8`, seven at `842e808`). Their uncommitted files were
+    E-1's oracle cases, merged in #102, plus scratch `*.tmp.test.ts`, and
+    BL-094's option edits, committed as
+    `scripts/bl094-escape-options/*.patch`.
+
+  The four local branches were deleted.
+- **Deviations.**
+  - The worktree tool created the branch as
+    `worktree-bl-116-owner-decisions-workflow`; it was renamed to
+    WORKFLOW § 1.1's `<task-id>-<slug>` before the first commit.
+  - BL-113's backlog row was moved and its notes restated under the
+    decision, not appended to. BACKLOG.md has no append-only rule; the
+    earlier notes are in the two ADR 0010 sections the new note cites.
+- **Not established here.** Whether the two-round limit and round 0 make
+  tasks shorter will only show over the next audited tasks. Each of their
+  task files records its rounds.

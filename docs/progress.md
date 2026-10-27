@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-27, by `BL-114`.
+**Last updated:** 2026-10-27, by `BL-116`.
 
 ## Objective
 
@@ -309,27 +309,28 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
   decision records appended to ADR 0008.
 - One task at a time; the agent opens the pull request and never merges
   (AGENTS.md § H, [`WORKFLOW.md`](WORKFLOW.md)).
+- The owner's decisions of 2026-10-27, recorded by `BL-116`:
+  - BL-111: option (C), the trust boundary (ADR 0010, "Decision record —
+    BL-111"). It is not implemented until `BL-113`.
+  - At most two independent-audit rounds per task, with a registered
+    spill-over (WORKFLOW § 1.5).
+  - The improvement tasks `BL-116` to `BL-121` come first.
 
 ## Current task
 
-`BL-114` — Repeat BL-111's loader inventory on Node 20 and 26
-([task file](tasks/BL-114-loader-inventory-node-releases.md)):
-`READY_FOR_REVIEW`. No analyzer change. The inventory, bounded by release
-(`scripts/bl114-loader-inventory-releases/releases.md`), found two live
-false `NOT_AFFECTED`s:
-- RWF-158, on CI's Node 20, which no option of BL-111's proposal sees;
-- RWF-160, on CI's Node 26, found by the independent audit; only (A)
-  sees its plain form.
-
-It also fixed RWF-159, BL-111's records that made CI fail on Node 26. `BL-111` merged as PR #120 with its Node 26 check failing. The
-owner's decision on ADR 0010's "Proposed decision — BL-111" is still
-pending; read its "Note — task BL-114" with it. BL-094's O2e is also still
-awaiting the owner, so `BL-107` waits.
+`BL-116` — Record the project owner's decisions of 2026-10-27 and amend
+the workflow ([task file](tasks/BL-116-owner-decisions-workflow.md)):
+`READY_FOR_REVIEW`. Documentation only; no analyzer change. BL-114 is
+merged (PR #121). BL-094's O2e is still awaiting the owner, so `BL-107`
+waits.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-114`:
-`BL-113` (implements BL-111's decision, now with RWF-158 and RWF-160), `BL-115` (which
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-116`,
+the improvement tasks, in order: `BL-117` (oracle speed), `BL-118` (CI in
+parallel), `BL-119` (records restructure), `BL-120` (agent tooling) and
+`BL-121` (split `module-model.ts`). Then
+`BL-113` (implements BL-111's decision, option (C), with RWF-158 and RWF-160), `BL-115` (which
 Node releases the contract and CI cover; a decision), `BL-107` (implements O2e,
 still awaiting the owner), `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
 (design, P1: a TypeScript source analysed as the program its emit runs),
