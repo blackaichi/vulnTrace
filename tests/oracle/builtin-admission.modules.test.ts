@@ -11,4 +11,4 @@ import {
  * vitest file short (backlog BL-033).
  */
 yieldBeforeEachTest();
-registerAdmittedPositionTests(POSITION_GROUPS.modules);
+registerAdmittedPositionTests(POSITION_GROUPS["modules"]);
