@@ -1,4 +1,7 @@
 import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_BEHAVIOUR,
@@ -46,22 +49,60 @@ import {
  *
  * A position cannot be admitted by editing the table alone: the
  * per-position tests fail until the probe, the oracle and the retention
- * check agree. They are registered by `builtin-admission.globals.test.ts`
+ * check agree. They are registered by `builtin-admission.globals-<n>.test.ts`
  * and `builtin-admission.modules.test.ts`
  * (`builtin-admission.positions.ts`), split from this file only to keep
- * each vitest file short (backlog BL-033); this file holds the table
- * checks and the named outcomes, and checks that the two cover every
- * admitted position.
+ * each vitest file short (backlog BL-033) and, for the ambient builtins,
+ * to run on several workers (task BL-117); this file holds the table
+ * checks and the named outcomes, and checks that those files cover every
+ * admitted position exactly once.
  */
 
 yieldBeforeEachTest();
 
 describe("the builtin table", () => {
-  it("the per-position admission tests cover every admitted position (globals + modules files)", () => {
-    const uncovered = admittedPositions().filter(
-      (at) => !POSITION_GROUPS.globals(at) && !POSITION_GROUPS.modules(at),
+  it("the per-position admission tests cover every admitted position exactly once (one group each)", () => {
+    const groups = Object.entries(POSITION_GROUPS);
+    const notOnce = admittedPositions()
+      .map((at) => ({
+        at: `${at.behaviourKey} #${String(at.position)}`,
+        in: groups.filter(([, include]) => include(at)).map(([name]) => name),
+      }))
+      .filter((entry) => entry.in.length !== 1);
+    expect(notOnce).toEqual([]);
+  });
+
+  it("every position group is registered by exactly one test file (task BL-117)", () => {
+    const here = path.dirname(fileURLToPath(import.meta.url));
+    const registrations = readdirSync(here)
+      .filter((name) => name.endsWith(".test.ts"))
+      .flatMap((name) =>
+        [
+          ...readFileSync(path.join(here, name), "utf-8").matchAll(
+            /registerAdmittedPositionTests\(\s*POSITION_GROUPS\["([^"]+)"\]\s*\)/g,
+          ),
+        ].map((m) => [m[1]!, name] as const),
+      );
+    const byGroup = Object.keys(POSITION_GROUPS).map(
+      (group) =>
+        [
+          group,
+          registrations.filter(([g]) => g === group).map(([, file]) => file),
+        ] as const,
     );
-    expect(uncovered).toEqual([]);
+    expect(byGroup.filter(([, files]) => files.length !== 1)).toEqual([]);
+    expect(
+      registrations.filter(([group]) => !(group in POSITION_GROUPS)),
+    ).toEqual([]);
+    expect(
+      readdirSync(here).filter(
+        (name) =>
+          name.endsWith(".test.ts") &&
+          /^registerAdmittedPositionTests\(/m.test(
+            readFileSync(path.join(here, name), "utf-8"),
+          ),
+      ).length,
+    ).toBe(registrations.length);
   });
 
   it("no key that carries authority is version-dependent", () => {

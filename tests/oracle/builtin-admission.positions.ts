@@ -19,10 +19,14 @@ import {
 /**
  * Task A-3a: the per-position half of the MECHANICAL ADMISSION test (see
  * `builtin-admission.test.ts` for the rule). Registered by more than one
- * test file -- `builtin-admission.globals.test.ts` and
- * `builtin-admission.modules.test.ts` -- so that no single vitest file
- * runs long enough to hit backlog BL-033's worker RPC timeout; the
- * table test checks that the two together cover every admitted position.
+ * test file -- `builtin-admission.globals-<n>.test.ts` and
+ * `builtin-admission.modules.test.ts`, one per {@link POSITION_GROUPS}
+ * entry -- so that no single vitest file runs long enough to hit backlog
+ * BL-033's worker RPC timeout, and (task BL-117) so that the ambient
+ * builtins' positions, which ran for most of the oracle suite's wall time
+ * in one file, run on several workers at once. The table test checks that
+ * the groups cover every admitted position exactly once, and that each
+ * group is registered by exactly one file.
  */
 
 /**
@@ -98,11 +102,39 @@ async function runSurvey(
   return fired;
 }
 
-/** The two halves the per-position tests are split into, by key scope. */
+/** How many files the ambient builtins' positions are spread over (task BL-117). */
+const GLOBAL_SHARDS = 4;
+
+let globalOrder: ReadonlyMap<string, number> | undefined;
+
+/** An ambient builtin's position's index among them, in the table's order. */
+function globalIndex(at: AdmittedPosition): number {
+  globalOrder ??= new Map(
+    admittedPositions()
+      .filter((p) => p.key.startsWith("global:"))
+      .map((p, index) => [`${p.behaviourKey}#${String(p.position)}`, index]),
+  );
+  return globalOrder.get(`${at.behaviourKey}#${String(at.position)}`) ?? -1;
+}
+
+function globalShard(shard: number): (at: AdmittedPosition) => boolean {
+  return (at) =>
+    at.key.startsWith("global:") && globalIndex(at) % GLOBAL_SHARDS === shard;
+}
+
+/**
+ * The groups the per-position tests are split into: the ambient builtins
+ * (`global:` keys) over {@link GLOBAL_SHARDS} files, every other position
+ * of the table in turn, and the builtin modules' members (`module:` keys)
+ * in one.
+ */
 export const POSITION_GROUPS = {
-  globals: (at: AdmittedPosition) => at.key.startsWith("global:"),
+  "globals-1": globalShard(0),
+  "globals-2": globalShard(1),
+  "globals-3": globalShard(2),
+  "globals-4": globalShard(3),
   modules: (at: AdmittedPosition) => at.key.startsWith("module:"),
-} as const;
+} as const satisfies Record<string, (at: AdmittedPosition) => boolean>;
 
 /** One macrotask turn before each test (backlog BL-033). */
 export function yieldBeforeEachTest(): void {
