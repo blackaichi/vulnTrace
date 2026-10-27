@@ -22,8 +22,10 @@ case with OPEN-DEBTS D-09's table of known failures (six since BL-075).
 
 ## Independent audit
 
-<!-- The fresh-context audit's verdict (CERTIFIED / BLOCKED) and findings,
-or "not required: <reason>" (the backlog row's Audit column). -->
+<!-- The rounds run (round 0 and at most two, docs/WORKFLOW.md § 1.5); the
+last round's verdict (CERTIFIED / BLOCKED) and its findings; each finding
+spilled after the second round, with its backlog row. Or "not required:
+<reason>" (the backlog row's Audit column). -->
 
 ## Known limitations
 

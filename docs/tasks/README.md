@@ -17,7 +17,9 @@ identifier. For example: `RWF-047-fix.md`.
 Use the RWF, VT or phase identifier the task is tracked under, plus a short
 suffix when one identifier has several tasks.
 
-Start from [`TEMPLATE.md`](TEMPLATE.md).
+Start from [`TEMPLATE.md`](TEMPLATE.md), or from
+[`TEMPLATE-SHORT.md`](TEMPLATE-SHORT.md) when the specification already
+lives in a plan row, an ADR section or a decision record (task `BL-116`).
 
 ## Workflow
 

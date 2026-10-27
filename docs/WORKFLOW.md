@@ -42,7 +42,10 @@ skipped tests; fail closed to `UNKNOWN`.
 6. Create the branch `<task-id-lowercase>-<short-slug>` from merged
    `main`.
 7. **First commit (bookkeeping and specification):** the task file (from
-   [`docs/tasks/TEMPLATE.md`](tasks/TEMPLATE.md), status `IN_PROGRESS`),
+   [`docs/tasks/TEMPLATE.md`](tasks/TEMPLATE.md), or from
+   [`docs/tasks/TEMPLATE-SHORT.md`](tasks/TEMPLATE-SHORT.md) when the
+   specification already lives in a plan row, an ADR section or a decision
+   record; status `IN_PROGRESS`),
    the task's backlog row set to `IN_PROGRESS`, and the previous task's
    row set to `MERGED`. `main` changes only through pull requests, so the
    previous task's merge is recorded here.
@@ -62,6 +65,21 @@ skipped tests; fail closed to `UNKNOWN`.
   (append, never rewrite), `docs/OPEN-DEBTS.md`, ADR decision records;
   regenerate the scorecard with `node scripts/generate-scorecard.mjs`
   (never hand-edit it).
+
+#### Where each fact is written (task `BL-116`)
+
+Say a fact once, in the record that owns it. Anywhere else that needs it
+links to that record instead of restating it. A task writes:
+
+| Record | Gets, from a task | Does not get |
+| --- | --- | --- |
+| the task file | the task's own account: premises verified, measurements, the audit rounds and their findings, deviations, the commits | a copy of a finding's text |
+| `tests/validation/FINDINGS.md` | a new record for a defect found; an appended status or correction note on an existing record | the task's measurements beyond what the record itself needs |
+| an ADR | a proposed decision, a decision record, or a note when a decided section's premise or scope changes | a note saying only that a task implemented a decision (the backlog row and the task file say it) |
+| `docs/OPEN-DEBTS.md` | a change in a debt's status (opened, narrowed, closed), in that debt's entry | a per-task log line |
+| `docs/tasks/BACKLOG.md` | the row's status, and new rows for discovered work | the task's results |
+| `docs/progress.md` | the "Current task", "Next" and "Recently discovered" sections; a "State" line only when the phase's state changes | a per-task paragraph |
+| the pull request body | § 4's sections, linking the task file for detail | — |
 
 ### 1.3 Validate
 
@@ -88,13 +106,75 @@ diff. Instruct it to try to break the change, not to rerun the tests:
 - the differentials, the mutations, the performance structure;
 - whether the documentation overclaims.
 
+**Findings come as reproductions** (task `BL-116`). The brief also asks
+for this: a finding that claims a wrong verdict, a fabricated edge or a
+silently dropped finding comes with a reproduction. The implementer must
+be able to turn it into an oracle case without re-deriving it. It gives:
+
+- the project's files;
+- the ground-truth command;
+- the marker real Node calls or does not call;
+- the analyzer's answer on the branch, and on the base when the auditor
+  ran it.
+
+A finding without a reproduction is reported as unconfirmed, and the
+implementer reproduces it before acting on it.
+
 It returns `CERTIFIED` or `BLOCKED` with findings.
 
 - `BLOCKED` on a soundness issue inside the task's scope: fix it,
-  re-validate, re-audit.
+  re-validate, re-audit, within the limit below.
 - `BLOCKED` on something out of scope or needing a decision: set the task
   `BLOCKED`, report, and stop.
 - The audit verdict and its findings go into the pull request body.
+
+**Round 0: the case list, before the fix** (task `BL-116`). This applies
+to a task with `Audit: required` that fixes a reproduced defect or adds a
+rule. Once its failing-first cases and their controls are written and
+fail on the base, and before the fix:
+
+- give a fresh-context auditor the task file, the findings the task
+  closes and the case list;
+- ask only one question: which forms, routes or values of the same class
+  do these cases miss?
+
+It answers with reproductions (above). Those inside the task's scope
+become cases before the fix; the others are registered as § 2 says.
+Round 0 does not count toward the limit.
+
+**At most two rounds** (project owner, 2026-10-27; task `BL-116`). A
+round is one fresh-context audit of the branch and the fixes it asks for.
+A round that ends without a verdict (cut short) is run again and does not
+count. After the second round's fixes there is no third round, unless the
+project owner asks for one. Every finding still open is then handled by
+one of two rules:
+
+- **Spilled: a defect that predates the change.** It is reproduced on the
+  base commit as well as on the branch. It is registered as § 2 says:
+  - a FINDINGS record;
+  - an open-soundness-defect record (`src/testing/open-soundness-defect.ts`)
+    when it is a live false `NOT_AFFECTED` or a silently dropped finding;
+  - a backlog row, `P0` for those two (§ 2, item 5).
+
+  The pull request's audit section lists each spilled finding with its
+  row, and states the last round's verdict as it was (`BLOCKED`, with
+  those findings). The task can then be `READY_FOR_REVIEW`.
+- **Never spilled: a defect the change introduces.** It is reproduced on
+  the branch and not on the base. Examples: a verdict wrongly moved into
+  `NOT_AFFECTED`, a fabricated edge, a dropped finding, a weakened gate.
+  It is fixed in the task, or the change that introduced it is
+  withdrawn. If neither fits the task's scope, the task is `BLOCKED`
+  (§ 7). A remediation can introduce the class it was closing
+  (OPEN-DEBTS D-15).
+
+The second round's fixes are not audited again. Each one comes with its
+own failing-first case, and the pull request names them under "Needs
+human review", so the owner can read them specifically.
+
+Both rounds may find instances of one class: the same rule missing
+another syntactic form, route or builtin. Then the spilled row says so,
+and recommends a class-level design (a closed allow-list with a
+fail-closed default, as in BL-110) instead of another instance fix.
 
 **Re-validating between audit rounds** (task `BL-089`). After a fix
 between rounds, re-run only the suites the fix can affect, and the fast
@@ -262,8 +342,9 @@ Title: `<task ID>: <concise summary>`. Body sections, in order:
 2. **Why** — the reason; the findings or debts closed.
 3. **Validation** — every gate run and its result; the differentials; the
    validation baseline.
-4. **Independent audit** — the verdict and findings, or "not required:
-   `<reason>`".
+4. **Independent audit** — the rounds run (round 0 and at most two,
+   § 1.5), the last verdict and its findings, and each spilled finding
+   with its backlog row; or "not required: `<reason>`".
 5. **Known limitations**.
 6. **Needs human review** — anything the project owner should look at
    specifically, including "consider an external review" for the riskiest
