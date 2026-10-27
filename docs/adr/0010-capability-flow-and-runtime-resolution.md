@@ -822,3 +822,67 @@ The analyzer does not know the deployed Node release (as RWF-085), and
 `package.json` admits `node >=20`. So a rule, or a boundary, is judged
 over every admitted release, not CI's two. Which releases the soundness
 contract covers is itself undecided (backlog `BL-115`).
+
+## Decision record — BL-111: Node's own loader through a replaceable builtin (project owner, 2026-10-27)
+
+Decided by the project owner on 2026-10-27, from "Proposed decision —
+BL-111" and "Note — task BL-114" above. BL-111's pull request (#120) and
+BL-114's (#121) had both merged by then. Recorded by task
+[`BL-116`](../tasks/BL-116-owner-decisions-workflow.md). This section is
+appended. Every earlier section, including the proposed decision it
+answers, is unchanged.
+
+**Decision: option (C), the trust boundary, is accepted.** A
+`NOT_AFFECTED` assumes that no loaded file changes Node's builtin
+prototypes (no prototype pollution of the runtime). RWF-156, RWF-158 and
+RWF-160 become this boundary's documented limitation instead of open
+defects. Options (A), (B) and (B′) are not implemented.
+
+**Why, from the measurements above:**
+
+- A sound (B) does not stay narrow. Across Node releases it widens to
+  (A)'s store class extended to primitive values ("Note — task BL-114").
+- (A) costs 2 of the 4 real-world validation `NOT_AFFECTED` proofs and
+  flags 76.0 % of the packages measured.
+- The names a release's loader reads by inheritance change from release
+  to release. The analyzer does not know the deployed release (RWF-085),
+  and `package.json` admits every release from 20.
+
+**What it changes, and who does it.** Backlog `BL-113`, restated by this
+decision, does the following:
+
+- amends SOUNDNESS-CONTRACT § 1 with the boundary's text (a contract
+  amendment that narrows what a `NOT_AFFECTED` claims);
+- discloses the boundary in the result, through the scope disclosure the
+  result already carries (`SUPPORTED_MODEL_EXCLUSIONS`,
+  `src/domain/evidence.ts`, which lane D's `D-1` also edits). If carrying
+  it needs more than a text entry, that is an output-schema question for
+  the project owner (WORKFLOW § 7);
+- appends status notes to FINDINGS.md moving RWF-156, RWF-158 and
+  RWF-160 to the documented limitation;
+- decides how their open-soundness-defect records
+  (`tests/oracle/bl111-loader-inherited-reads.*`,
+  `tests/oracle/bl114-require-esm-inherited-source.*`) are kept: as the
+  boundary's documented cases, never as a pinned expected verdict
+  (AGENTS.md § G);
+- re-examines `BL-082`, `BL-083`, `BL-090` and `BL-115` against the
+  boundary. A row whose only premise is a changed builtin prototype is
+  re-scoped or cancelled, with its reason.
+
+**Not decided here.**
+
+- **The boundary's reach beyond builtin prototypes.** As worded, it covers
+  changes to Node's builtin prototypes. Today the escape row treats a
+  store onto other builtin objects as an escape (BL-081's and BL-091's
+  rules). Those objects are:
+  - a global such as `JSON` or `Math`;
+  - a builtin module's exports object such as `fs`'s;
+  - a builtin constructor's own properties.
+
+  Whether the boundary also covers them is not decided. If the
+  contract text BL-113 proposes reaches beyond prototypes, BL-113 brings
+  it to the project owner before amending (`NEEDS_DECISION`).
+- **Which Node releases the contract covers.** Backlog `BL-115`.
+- **Earlier rules.** No rule implemented by BL-075, BL-081, BL-091 or
+  BL-110 is withdrawn by this record. Whether any becomes redundant under
+  the boundary is for BL-113 to measure, not to assume.
