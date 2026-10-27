@@ -96,6 +96,12 @@ attempt("bare-exports", () => r("with-exports").name);
 attempt("bare-exports-subpath", () => r("with-exports/feature").name);
 attempt("json", () => r("./data.json").v);
 attempt("resolve-paths", () => r.resolve("with-main", { paths: [projectDir] }));
+// BL-114: require() of an ES module (unflagged from v20.19 and v22.12), with
+// and without a static dependency. Opt-in, so the default workload is BL-111's.
+if (process.argv[4] === "--require-esm") {
+  attempt("require-esm-dep", () => r("./req-esm.mjs").default);
+  attempt("require-esm-leaf", () => r("./req-leaf.mjs").default);
+}
 const done = () => {
   for (const [proto, key] of installed) delete proto[key];
   const out = [...hits.entries()].sort().map(([k, n]) => `${n}\t${k}`);

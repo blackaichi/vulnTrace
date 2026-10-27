@@ -5,6 +5,8 @@
 #               JSON and ES module loads)
 #   names.json  the candidate property names drawn from natives/
 # Then: node probe-inherited.cjs <out-dir>/proj <out-dir>/names.json
+#   (BL-114: add --require-esm to also require() src/req-esm.mjs, which has
+#   a static dependency, and src/req-leaf.mjs, which has none)
 # Usage: bash setup.sh <out-dir>
 set -eu
 D=${1:?usage: setup.sh <out-dir>}
@@ -31,6 +33,9 @@ echo 'exports.name = "with-exports";' > "$P/node_modules/with-exports/lib/main.j
 echo 'exports.name = "with-exports/feature";' > "$P/node_modules/with-exports/lib/feature.js"
 echo '{"name":"esm-pkg","type":"module","exports":"./index.js"}' > "$P/node_modules/esm-pkg/package.json"
 echo 'export default "esm-pkg";' > "$P/node_modules/esm-pkg/index.js"
+echo 'export { default } from "./req-dep.mjs";' > "$P/src/req-esm.mjs"
+echo 'export default "req-dep";' > "$P/src/req-dep.mjs"
+echo 'export default "req-leaf";' > "$P/src/req-leaf.mjs"
 node -e '
 const fs = require("fs");
 const dir = process.argv[1];
