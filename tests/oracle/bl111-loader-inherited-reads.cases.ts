@@ -2,6 +2,7 @@ import {
   type Bl096Case,
   oracleCase,
 } from "./bl096-module-paths-read-only.cases.js";
+import { routeLive } from "./node-release-routes.js";
 
 /**
  * Task BL-111 (docs/tasks/BL-111-loader-writes-builtins.md): what Node's
@@ -14,7 +15,9 @@ import {
  * `wrap/node_modules/vuln-lib@99.0.0`, the affected top-level
  * `vuln-lib@1.0.0`, and `wrap/index.js` loading the decoy. Each case adds
  * statements before that load. Measured on the base (`71c62e0`, BL-110's
- * merge) with real Node v22.11.0: see each case's `base`.
+ * merge) with real Node v22.11.0: see each case's `base`. Real Node's
+ * ground truth depends on the release (task BL-114): see each case's
+ * `called`.
  */
 
 export {
@@ -24,7 +27,22 @@ export {
 
 export { oracleCase };
 
-export type Bl111Case = Bl096Case;
+/**
+ * Real Node's ground truth depends on the release (task BL-114, RWF-159):
+ * `called` reads the release running the suite from
+ * `node-release-routes.ts`.
+ */
+export interface Bl111Case extends Omit<Bl096Case, "called"> {
+  readonly called: () => boolean;
+}
+
+/**
+ * Why `UNKNOWN` is the sound answer on a release where real Node does not
+ * call the target (task BL-114): v24.12.0 and later, and v26, give the
+ * load context a null prototype, so the stored `source` is not read.
+ */
+const IMPORT_WIDENS =
+  "on a release where the stored `source` is not read (v24.12.0 and later, v26): a dynamic `import()` is a closure-widening construct, so the closure is incomplete with or without the store, and the analyzer does not know the deployed release";
 
 /** A benign ES module of `wrap`'s, which the case imports. */
 const ESM_FILE = { "node_modules/wrap/esm.mjs": "export default 1;\n" };
@@ -46,9 +64,10 @@ export const ALL_CASES: readonly Bl111Case[] = [
       `Object.prototype.source = ${JSON.stringify(SUBSTITUTE)};\n` +
       `import("./esm.mjs");\n`,
     files: ESM_FILE,
-    called: true,
+    called: () => routeLive("import-source"),
     base: "UNKNOWN",
     expected: "UNKNOWN",
+    precisionCost: IMPORT_WIDENS,
   },
   {
     id: "inherited-read.source-unspelled-prototype",
@@ -59,9 +78,10 @@ export const ALL_CASES: readonly Bl111Case[] = [
       `({}).__proto__.source = ${JSON.stringify(SUBSTITUTE)};\n` +
       `import("./esm.mjs");\n`,
     files: ESM_FILE,
-    called: true,
+    called: () => routeLive("import-source"),
     base: "UNKNOWN",
     expected: "UNKNOWN",
+    precisionCost: IMPORT_WIDENS,
   },
   {
     id: "control.esm-import-no-store",
@@ -69,7 +89,7 @@ export const ALL_CASES: readonly Bl111Case[] = [
     mechanism: '`import("./esm.mjs")` with no store: Node evaluates the file',
     redirect: `import("./esm.mjs");\n`,
     files: ESM_FILE,
-    called: false,
+    called: () => false,
     base: "UNKNOWN",
     expected: "UNKNOWN",
     precisionCost:

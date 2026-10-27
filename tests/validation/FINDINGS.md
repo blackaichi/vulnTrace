@@ -332,6 +332,9 @@ A mismatch either way fails the generator, naming the ID.
 | RWF-155 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A capability in a shorthand property, used on the spot, is no consumed position: `const p = module.paths; ({ p }).p.shift()` changes the lookup list unseen, while `({ l: module.paths }).l.shift()` is caught | false NOT_AFFECTED (family B), pre-existing — see below | **Fixed in part** (BL-110, for the lookup list; `C-3` for other capabilities) — see below |
 | RWF-156 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A module that installs index or `paths` setters on `Object.prototype`, or a Proxy as `Array.prototype`'s [[Prototype]], receives the lookup state from Node's own loader (`Module._resolveLookupPaths`'s `unshift`, `Module.prototype.load`'s `this.paths = …`) and changes it, with no use of `module.paths` in the program; so does a store of `Array.prototype.constructor` (its species), and an `extensions` or `cache` setter receives the loader's registries from `makeRequireFunction` | false NOT_AFFECTED (family B), pre-existing — see below | Open (decision, backlog `BL-111`; implementation `BL-113`) |
 | RWF-157 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A `const` whose initializer may hold one of two capabilities (`c ? require : module.paths`, `(c && require) || module.paths`) is resolved to the first, so `p.shift()` on the lookup list is unseen | false NOT_AFFECTED (family B), pre-existing — see below | **Fixed in part** (BL-110, for the lookup list; `C-2` / `C-3` for other capabilities) — see below |
+| RWF-158 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A plain primitive store `Object.prototype.source = <module text>` (or through any route to `Object.prototype`), then a `require()` of an ES module: on Node v20.19+, v22.12+ and v24.0.0 to v24.11.1 the ES module loader loads the required module's static dependencies through a load context that inherits `source`, and evaluates the stored text instead of the file. No `import()` is needed, so the closure is called complete | false NOT_AFFECTED (family B) on the releases that take the route, pre-existing — see below | Open (decision, ADR 0010's "Proposed decision — BL-111"; implementation `BL-113`) |
+| RWF-159 | the oracle suite (`tests/oracle/bl111-loader-inherited-reads.*`); not an analyzer defect | BL-111's two `inherited-read.source-*` records asserted that real Node calls the target on every release, a claim measured only on v22.11.0. v24.12.0 and later, and v26, do not read the stored `source`, so CI's Node 26 job failed, and `main` was merged with it failing (PR #120) | a false test record: no verdict moves; CI red on Node 26 | **Fixed** (BL-114) — see below |
+| RWF-160 | `vuln-lib` (synthetic fixture); a gap in the loader-capability model, not tied to one package | A plain data store `Object.prototype.paths = [<dir>]` (or through any route to `Object.prototype`, or by a define call): from Node v22.15.0, and on v24 and v26, `Module.prototype.load` does `this.paths ??= …`, so every module loaded after the store keeps the inherited list as its lookup list and resolves bare specifiers there, with no use of `module.paths` and no setter | false NOT_AFFECTED (family B) on the releases that take the route, pre-existing — see below | Open (decision, ADR 0010's "Proposed decision — BL-111"; implementation `BL-113`) |
 
 ---
 
@@ -24550,6 +24553,29 @@ the decision is the project owner's. The sound rule costs 2 of the 4
 real-world validation `NOT_AFFECTED` proofs (`RWB-07`, `RWB-11b`). The
 status stays Open.
 
+**Other Node releases (task BL-114, 2026-10-27).** BL-111's inventory,
+repeated on Node v20.20.2, v22.23.4, v24.22.1 and v26.12.1 and bounded by
+release (`scripts/bl114-loader-inventory-releases/releases.md`), adds one
+route of this record's class, live only on v20:
+
+- **`trySelf`** (v20's CommonJS loader) destructures `{ data, path }` from
+  `readPackageScope`, which is `false` for a module with no package.json
+  between it and its `node_modules`. Getters for `data` and `path` on
+  `Object.prototype` (a define call) make a bare `require` in such a module
+  a self-reference resolved in any directory. Live on v20.19.0 and v20.20.2,
+  `NOT_AFFECTED` with the analyzer (`tests/oracle/bl114-require-esm-inherited-source.*`,
+  `try-self.scope-getters`, an open-soundness-defect record). A plain data
+  store of the two names makes unrelated loads throw.
+- **`conditions`**: on v22.23.4, v24 and v26, `require.resolve(x, { paths })`
+  reads its options' `conditions` by inheritance, so
+  `Object.prototype.conditions = new Set([...])` selects another `exports`
+  target. The analyzer already answers `UNKNOWN` for a load through
+  `require.resolve` with options, so it is not live with the analyzer.
+
+The `source` read BL-111 found `UNKNOWN` is a live false `NOT_AFFECTED` on
+releases where `require()` loads an ES module: RWF-158. The status stays
+Open.
+
 ## RWF-157 — A `const` that may hold one of two capabilities is resolved to the first
 
 **Status:** Fixed in part (BL-110, for the lookup list; `C-2` / `C-3` for
@@ -24594,3 +24620,175 @@ closed list of parents is exempt, a selection passes the question up, and
 every other parent is a `loader_capability_escape`. No method of the list
 is read-only. Measured against real Node v22.11.0
 (`tests/oracle/bl096-module-paths-read-only.test.ts`): the three cases (`audit2.alias-*`) now assert `UNKNOWN`: an alias is exempt only when its own name resolves to the list (`isListAlias`). For other capabilities the resolution still answers the first operand (C-2 / C-3).
+
+## RWF-158 — A stored `source` replaces a `require()`d ES module's dependency, with no `import()`
+
+**Status:** Open (decision, ADR 0010's "Proposed decision — BL-111";
+implementation `BL-113`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the analyzer takes Node's loader to read only what it
+creates; a load context inherits a property a module stored on
+`Object.prototype`)
+**Proof family affected:** B (BL-092's setup)
+**Severity:** P1 / a live false `NOT_AFFECTED` on CI's Node 20, on the
+current v22 line, and on v24.0.0 to v24.11.1; pre-existing
+**Fix lane:** C, with lane A's builtin-store facts (a closure-wide fact, as
+RWF-156)
+
+**Discovered:** by task BL-114, repeating BL-111's loader inventory on CI's
+Node releases, on the base `3cfe09d`. The analyzer answers `NOT_AFFECTED`
+(family B) on every release; real Node v20.20.2 and v22.23.4 call the
+target (`tests/oracle/bl114-require-esm-inherited-source.cases.ts`,
+`require-esm.source-string`, `require-esm.source-unspelled-prototype`,
+open-soundness-defect records):
+
+```js
+// wrap/index.js, before `require("vuln-lib/index.js")`;
+// wrap/esm.mjs is `export { default } from "./dep.mjs";`
+Object.prototype.source = 'delete Object.prototype.source; import("../vuln-lib/index.js").then((l) => l.default.parse("x")); export default 1;';
+require("./esm.mjs");
+```
+
+**The mechanism.** `require()` of an ES module (unflagged from v20.19.0 and
+v22.12.0) reads the required file itself, but loads its static
+dependencies through the ES module loader, which hands `defaultLoadSync` a
+load context built as a plain literal `{ format, importAttributes }`:
+`getModuleJobForRequire` on v20.20.2 (`esm/loader.js:439`), v22.23.4
+(`:498`) and v24.11.1 (`:480`). (`#createModuleJob`, v20.20.2 `:560` and
+v22.23.4 `:633`, builds the same literal on the `import()` path.)
+`defaultLoadSync`
+destructures `source` from that context, so a `source` on
+`Object.prototype` is taken as the dependency's text. v24.12.0 and v26
+build the context in `#getOrCreateModuleJobAfterResolve` with
+`__proto__: null`. A CommonJS dependency is replaced as well. A required
+module with no dependency, or only a builtin one, is not.
+
+**By release** (`scripts/bl114-loader-inventory-releases/releases.md`;
+bisected on v24):
+
+| release | real Node calls the target |
+| --- | --- |
+| v20.19.0, v20.20.2 | yes |
+| v22.11.0 | no: `require()` of an ES module throws `ERR_REQUIRE_ESM` |
+| v22.12.0, v22.23.4 | yes |
+| v24.0.0 to v24.11.1 | yes |
+| v24.12.0, v24.22.1 | no |
+| v26.0.0, v26.12.1 | no |
+
+The analyzer does not know the deployed release (as RWF-085), and
+`package.json` declares `engines: node >=20`, so the sound verdict is
+`UNKNOWN` on every release.
+
+**Not seen by any option BL-111 prototyped.** The stored value is a
+primitive under a spelled name. (A) counts no primitive store
+(`isPrimitiveSyntax`), and (B) and (B′) count define calls, [[Prototype]]
+changes, `constructor` and computed-key stores. A rule that closes this
+must count a store of any value onto a builtin prototype under `source`,
+or under any name, or the trust boundary (C) must name it. That is the
+project owner's decision, BL-111's, and BL-113 implements it. Measured
+under BL-111's patches: see `releases.md`.
+
+## RWF-159 — BL-111's inherited-read records assert v22.11.0's ground truth on every release
+
+**Status:** **Fixed** (BL-114) — see below
+**Failure class:** a false test record (no verdict moves)
+**Defect class:** — (a record, not the analyzer)
+**Proof family affected:** —
+**Severity:** P1 / blocking: CI fails on Node 26, so every pull request
+is red
+**Fix lane:** —
+
+**Discovered:** by task BL-114, from PR #120's checks. Its Node 26 job
+failed on `inherited-read.source-string` and
+`inherited-read.source-unspelled-prototype`
+(`tests/oracle/bl111-loader-inherited-reads.test.ts`): "real Node's ground
+truth: expected false to be true". The pull request was merged with that
+check failing, so `main` has been red on Node 26 since `3cfe09d`. The
+Node 20 job passed.
+
+**The cause.** Both records assert `called: true`, a measurement of
+v22.11.0, the only release installed where BL-111 ran. v24.12.0 and later,
+and v26, give the ES module loader's load contexts a null prototype, so
+`import()` never reads the stored `source`. BL-111's own inventory said
+the inventory was v22.11.0's; the records did not.
+
+**Fixed (task BL-114).** The records read the running release's ground
+truth from the measured table (`tests/oracle/node-release-routes.ts`,
+route `import-source`). Where real Node does not call the target, the
+expected `UNKNOWN` states its precision cost: `import()` widens the
+closure, and the analyzer does not know the deployed release. The expected
+verdict is unchanged. `npm run test:oracle` passes under v20.20.2,
+v22.11.0 and v26.12.1.
+
+## RWF-160 — A `paths` stored on `Object.prototype` becomes every later module's lookup list
+
+**Status:** Open (decision, ADR 0010's "Proposed decision — BL-111";
+implementation `BL-113`)
+**Failure class:** false `NOT_AFFECTED`
+**Defect class:** B (the analyzer takes each module's lookup list to be the
+one Node computes from its directory; from v22.15.0 Node keeps a list the
+module inherits)
+**Proof family affected:** B (BL-092's setup)
+**Severity:** P1 / a live false `NOT_AFFECTED` on CI's Node 26, on v24 and
+on v22.15.0 and later; pre-existing
+**Fix lane:** C, with lane A's builtin-store facts (a closure-wide fact, as
+RWF-156)
+
+**Discovered:** by task BL-114's independent audit, from an access BL-114's
+repeated inventory recorded (`get Object.prototype paths @ Module.load`, on
+v22.23.4, v24.22.1 and v26.12.1) and wrongly took for RWF-156's setter
+route. On the base `3cfe09d` the analyzer answers `NOT_AFFECTED` (family B)
+on every release; real Node calls the target from v22.15.0
+(`tests/oracle/bl114-require-esm-inherited-source.cases.ts`,
+`inherited-paths.data-store`, `inherited-paths.unspelled-prototype`,
+`inherited-paths.define`, open-soundness-defect records):
+
+```js
+// wrap/index.js, before `require("vuln-lib/index.js")`;
+// wrap/helper.js is `module.exports = require("vuln-lib/index.js");`
+Object.prototype.paths = [require("path").join(__dirname, "..")];
+require("./helper.js").parse("x");
+```
+
+**The mechanism.** `Module.prototype.load` sets a module's lookup list
+with `this.paths = Module._nodeModulePaths(…)` up to v22.14.0
+(`cjs/loader.js:1279`), and with `this.paths ??= …` from v22.15.0 (`:1455`;
+v24.11.1 `:1477`, v26.12.1 `:1680`). A new `Module` owns no `paths`, so
+`??=` reads the inherited one, finds it set, and assigns nothing, so
+the module reads the inherited list: `helper.js`
+resolves `vuln-lib/index.js` in the stored directory, the application's
+`node_modules`, and loads the affected top-level instance instead of
+`wrap`'s decoy. The program never uses `module.paths`, and no setter, Proxy
+or species is involved: a plain store of an array under a spelled name.
+
+**By release** (`scripts/bl114-loader-inventory-releases/releases.md`,
+gadget G3; bisected on v22):
+
+| release | real Node calls the target |
+| --- | --- |
+| v20.19.0, v20.20.2 | no |
+| v22.11.0 to v22.14.0 | no |
+| v22.15.0 to v22.23.4 | yes |
+| v24.0.0 to v24.22.1 | yes |
+| v26.0.0, v26.12.1 | yes |
+
+The analyzer does not know the deployed release (as RWF-085), so the
+sound verdict is `UNKNOWN` on every release.
+
+The three records are a sample of store forms, not the full set. BL-114's
+independent audit measured three more on v26.12.1 (real Node calls the
+target; the analyzer answers `NOT_AFFECTED`, family B):
+- `Object.assign(Object.prototype, { paths: [...] })`;
+- `Object.getPrototypeOf(module.exports)["pa" + "ths"] = [...]`;
+- the store made in another module of `wrap`'s before `helper.js` loads.
+
+BL-113's oracle sweep over every store form covers them.
+
+**Under BL-111's prototype rules** (measured on the three records): (A)
+gives `UNKNOWN` for all three forms. (B) and (B′) give `UNKNOWN` only for
+the define form, and leave the plain and the unspelled store
+`NOT_AFFECTED`: a store of `paths` is neither a define call nor a
+[[Prototype]], `constructor` or computed-key store. Like RWF-158, it shows
+that the stores reaching the loader are not a fixed set of names or forms
+across releases. The decision is the project owner's (BL-111), and BL-113
+implements it.
