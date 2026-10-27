@@ -1739,6 +1739,41 @@ nothing but narrows the contract. The decision is the owner's; it is
 implemented by backlog `BL-113` and checked on other Node releases by
 `BL-114`. The list above stands.
 
+**Progress, added by task `BL-114` (2026-10-27).** Task BL-114
+(`docs/tasks/BL-114-loader-inventory-node-releases.md`) changed no analyzer
+code. It repeated BL-111's inventory on CI's Node releases (v20.20.2,
+v26.12.1) and on v22.23.4 and v24.22.1, and bounded each live route by
+release (`scripts/bl114-loader-inventory-releases/releases.md`; v24 and
+v22 bisected). Three findings are registered:
+
+- **`RWF-158`**, a live false `NOT_AFFECTED`, pre-existing. On v20.19+,
+  v22.12+ and v24.0.0 to v24.11.1, `require()` of an ES module loads its
+  static dependencies through a load context that inherits `source`.
+  `Object.prototype.source = <text>` therefore replaces them with no
+  `import()`, and the analyzer answers `NOT_AFFECTED` (family B). It is
+  live on CI's Node 20. No option BL-111 prototyped sees it, because the
+  store is a primitive under a spelled name. The owner's BL-111 decision
+  must cover it.
+- **`RWF-160`**, a live false `NOT_AFFECTED`, pre-existing, found by the
+  task's independent audit. From v22.15.0, and on v24 and CI's Node 26,
+  `Module.prototype.load` does `this.paths ??= …`. So a plain
+  `Object.prototype.paths = [<dir>]` becomes the lookup list of every
+  module loaded after it, and the analyzer answers `NOT_AFFECTED`
+  (family B). BL-111's (A) sees it; (B) and (B′) see only its define form.
+- **`RWF-159`**, a false test record, fixed. BL-111's two
+  `inherited-read.source-*` records asserted v22.11.0's ground truth on
+  every release. v24.12.0 and later, and v26, give the load context a null
+  prototype, so CI failed on Node 26 and PR #120 was merged with that check
+  failing. The records now read the running release's ground truth from
+  `tests/oracle/node-release-routes.ts`.
+
+RWF-156 gains a route live only on v20, an open-soundness-defect record:
+v20's `trySelf` reads `data` and `path` by inheritance for a module with
+no package scope. Every option BL-111 prototyped closes it. The analyzer
+does not know the deployed release (as RWF-085), so the sound verdict is
+the same on every release `engines` admits (`node >=20`). The list above
+stands, with RWF-158 and RWF-160.
+
 ## 2. Target intelligence is not analyzer uncertainty
 
 This distinction is the easiest way to produce a misleading benchmark

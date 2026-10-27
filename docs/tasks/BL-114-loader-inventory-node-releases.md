@@ -2,11 +2,14 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-114
 - **Branch**: `bl-114-loader-inventory-node-releases`
 - **Base SHA**: `3cfe09d1f7541c14ac8f0ac67b062bc94dc587d7` (BL-111's merge, PR #120)
-- **Commits**: (filled in by the last commit)
+- **Commits**:
+  - `docs(tasks): BL-114 task file — repeat BL-111's loader inventory on CI's Node releases; require(esm) makes the inherited source read live (RWF-158)`
+  - `test(BL-114): BL-111's loader inventory by Node release; open records for RWF-158 and RWF-160 and a v20 trySelf route of RWF-156; BL-111's records read the running release's ground truth (RWF-159)`
+  - (this commit) `docs(BL-114): ADR 0010 note on BL-111's proposed decision, debts, backlog (BL-113 scope, BL-115), progress`
 - **Superseded by**: —
 
 ## Project context
@@ -163,3 +166,70 @@ confirms it). The validation baseline is D-09's six.
 
 In the format of `AGENTS.md` § J. Add the release table and RWF-158
 prominently, as a live false `NOT_AFFECTED` on CI's Node 20.
+
+## Corrections
+
+**2026-10-27.**
+- **More routes than the row asked about.** The repeated inventory found
+  two inherited reads besides `source`, and both were measured:
+  - v20's `trySelf` reads `data` / `path`: live with getters, and
+    `NOT_AFFECTED` with the analyzer. It is RWF-156's class, so it was
+    appended there with an open-soundness-defect record, not given a new ID.
+  - `conditions` (v22.23.4 and later): live in real Node, but not with the
+    analyzer, which already answers `UNKNOWN` for a load through
+    `require.resolve` with options. It has no record.
+- **BL-111's scripts were extended, not only reused.**
+  `probe-inherited.cjs` takes an opt-in `--require-esm`, and `setup.sh`
+  writes the two ES modules it needs. Without the flag the workload is
+  BL-111's, unchanged.
+- **More releases than the four named.** The release table also measured
+  the first releases with `require()` of an ES module unflagged (v20.19.0,
+  v22.12.0), each line's first release (v24.0.0, v26.0.0), and the v24
+  edge (v24.11.1 / v24.12.0, bisected).
+- **`tests/oracle/node-release-routes.test.ts`** was added. It pins the
+  table's version comparison, because a wrong comparison would assert a
+  ground truth real Node never gave.
+- **"BL-111's records pass on v20, v22 and v26"** is answered for
+  v20.20.2, v22.11.0, v22.23.4, v24.22.1 and v26.12.1.
+- **The independent audit, round 1: `BLOCKED`.** It found that BL-114 had
+  mislabelled one inventory access.
+  - **The access:** `get Object.prototype paths @ Module.load`, on
+    v22.23.4, v24 and v26. BL-114 had described it as "the property
+    RWF-156's setter already reaches".
+  - **What it is:** `this.paths ??= …` keeps an inherited lookup list, so
+    a plain data store redirects every later load. That is a live false
+    `NOT_AFFECTED` on CI's Node 26.
+  - **Registered as RWF-160** (the route is a plain data read, not a
+    setter, so it gets its own ID), with three open-soundness-defect records
+    and a control, and a `RELEASE_ROUTES` entry. Gadget G3 measures it, and
+    v22 was bisected (opens at v22.15.0).
+  - **Patches:** measured under BL-111's three patches.
+  - **Records:** the ADR 0010 note, OPEN-DEBTS, BL-113's scope and the
+    backlog.
+
+  The audit's documentation finding was fixed as well: v20's `require()`
+  route goes through `getModuleJobForRequire` (`esm/loader.js:439`), not
+  `#createModuleJob`. Its other findings confirmed RWF-158's release
+  table, the patch results, `routeLive`'s design and that `src/` is
+  unchanged.
+- **RWF-160's define record** defines `paths` as writable. With a
+  non-writable inherited `paths`, `makeRequireFunction`'s assignment of
+  `resolve.paths` throws ("Cannot assign to read only property 'paths'",
+  `helpers:360` on v26.12.1). The load then fails, and real Node does not
+  call the target (measured). Its recorded observation was measured: `unknownEdges` 4, one
+  more than the plain store's 3, for the `defineProperty` call.
+- **The independent audit, round 2: `CERTIFIED`** (HEAD `15ca8c6`).
+  - **Verified:** RWF-160's records on base `src/` under v22.14.0,
+    v22.15.0, v26.12.1 and v20.20.2. Also the bisected edge against real
+    Node, the patch results, `routeLive`, and that `src/` is unchanged.
+  - **One should-fix, applied:** `inherited-paths.data-store`'s
+    description said `helper.js` "keeps the inherited list as its own".
+    It reads the inherited list: `??=` assigns nothing.
+  - **Notes:** `esm/translators`' `module.paths ??=` does not widen
+    RWF-160 in what the audit measured. No other inherited read on CI's
+    releases redirects a load in what it re-checked.
+  - **Three more store forms of RWF-160** were measured live on v26.12.1:
+    `Object.assign` onto `Object.prototype`, a computed key reached
+    through `Object.getPrototypeOf(module.exports)`, and the store made in
+    another module. RWF-160's section now says its records are a sample,
+    and BL-113's sweep covers them.

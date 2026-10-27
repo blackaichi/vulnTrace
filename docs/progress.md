@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-26, by `BL-111`.
+**Last updated:** 2026-10-27, by `BL-114`.
 
 ## Objective
 
@@ -312,19 +312,25 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-111` — Design: Node's own loader writes its state through replaceable
-builtins ([task file](tasks/BL-111-loader-writes-builtins.md)):
-`READY_FOR_REVIEW`, report verdict `NEEDS_DECISION`. The project owner
-decides ADR 0010's "Proposed decision — BL-111": (B) the sound
-closure-wide rule, which costs 2 of 4 real-world proofs, or (C) a stated
-trust boundary. `BL-110` merged as PR #119. BL-094's O2e is still awaiting
-the owner, so `BL-107` waits.
+`BL-114` — Repeat BL-111's loader inventory on Node 20 and 26
+([task file](tasks/BL-114-loader-inventory-node-releases.md)):
+`READY_FOR_REVIEW`. No analyzer change. The inventory, bounded by release
+(`scripts/bl114-loader-inventory-releases/releases.md`), found two live
+false `NOT_AFFECTED`s:
+- RWF-158, on CI's Node 20, which no option of BL-111's proposal sees;
+- RWF-160, on CI's Node 26, found by the independent audit; only (A)
+  sees its plain form.
+
+It also fixed RWF-159, BL-111's records that made CI fail on Node 26. `BL-111` merged as PR #120 with its Node 26 check failing. The
+owner's decision on ADR 0010's "Proposed decision — BL-111" is still
+pending; read its "Note — task BL-114" with it. BL-094's O2e is also still
+awaiting the owner, so `BL-107` waits.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-111`:
-`BL-113` (implements BL-111's decision), `BL-114` (the inventory on Node 20
-and 26), `BL-107` (implements O2e,
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-114`:
+`BL-113` (implements BL-111's decision, now with RWF-158 and RWF-160), `BL-115` (which
+Node releases the contract and CI cover; a decision), `BL-107` (implements O2e,
 still awaiting the owner), `BL-098` (the decision on `process` handed on, RWF-140, P1), `BL-108`
 (design, P1: a TypeScript source analysed as the program its emit runs),
 `BL-101` (RWF-143, P1, an ES5 class's methods; after BL-107, whose O2e
@@ -345,6 +351,23 @@ for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
 withdrawals.
 
 ## Recently discovered
+
+From `BL-114`:
+- `RWF-158` (live, pre-existing, P1): on v20.19+, v22.12+ and v24.0.0 to
+  v24.11.1, `Object.prototype.source = <text>` replaces a `require()`d ES
+  module's dependencies. The store is a primitive under a spelled name,
+  and none of BL-111's options (A), (B) or (B′) sees it. It is in
+  `BL-113`'s scope.
+- `RWF-159` (fixed): BL-111's `inherited-read.source-*` records asserted
+  v22.11.0's ground truth on every release, so CI failed on Node 26.
+  Release-dependent ground truth now reads `tests/oracle/node-release-routes.ts`.
+- `RWF-160` (live, pre-existing, P1, found by the independent audit): from
+  v22.15.0, and on v24 and v26, `Object.prototype.paths = [<dir>]` becomes
+  every later module's lookup list (`this.paths ??= …`). It is in
+  `BL-113`'s scope.
+- A v20-only RWF-156 route through `trySelf`'s inherited `data` / `path`
+  reads; every option closes it.
+- `BL-115` (P2, decision): which Node releases the contract and CI cover.
 
 From `BL-111`: Node v22.11.0's loader also reads data properties by
 inheritance. `Object.prototype.source`, a primitive store, replaces an ES

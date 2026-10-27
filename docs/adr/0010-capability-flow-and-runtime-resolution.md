@@ -753,3 +753,72 @@ If (B) is accepted, backlog `BL-113` implements it by identity, not by
 spelling (`B.patch` is a measured prototype of the class, not a sound
 detector). An oracle sweep over every store form and every route to a
 storing builtin, and a certification audit, follow.
+
+## Note — task BL-114: BL-111's inventory on other Node releases (2026-10-27)
+
+Recorded for the reader and for the owner's pending decision. It changes
+no decision of this ADR, and it does not edit "Proposed decision —
+BL-111". Task BL-114
+(`docs/tasks/BL-114-loader-inventory-node-releases.md`) answered that
+section's first open item, "Other Node releases". It repeated the
+inventory on v20.20.2 and v26.12.1 (CI's), v22.23.4 and v24.22.1, and
+bounded each live route by release
+(`scripts/bl114-loader-inventory-releases/releases.md`).
+
+What changes the decision's inputs:
+
+- **The `source` read is live with no `import()`: RWF-158.** On v20.19+,
+  v22.12+ and v24.0.0 to v24.11.1, `require()` of an ES module loads that
+  module's static dependencies through a load context built as a plain
+  literal. `Object.prototype.source = <text>` therefore replaces them, and
+  the analyzer answers `NOT_AFFECTED`. That includes CI's Node 20.
+  - The store is a primitive under a spelled name. Measured under
+    `A.patch`, `B.patch` and `Bliteral.patch`, all three still answer
+    `NOT_AFFECTED`.
+  - So the section's class of stores that reach the loader ("a define
+    call, a [[Prototype]] change, a store of `constructor`, a store under a
+    computed key") is incomplete across releases. A sound (B) must also
+    count a store of any value, primitive or not, under a name some
+    release's loader reads by inheritance. That set of names differs by
+    release, and the analyzer does not know the deployed one. A builtin
+    prototype is also reached without its name (`({}).__proto__`). So a
+    sound (B) must count a store of any value under **any** name onto an
+    object not proven the program's own. That is (A)'s store class widened
+    to primitives, and (A)'s measured cost is a lower bound for it. This
+    is an inference from the measurements; no such rule was prototyped
+    here.
+  - Under (C), the trust boundary as worded ("no loaded file changes
+    Node's builtin prototypes") already covers RWF-158.
+- **A plain store of `paths` redirects every later load: RWF-160.** Found
+  by BL-114's independent audit. From v22.15.0, and on v24 and CI's v26,
+  `Module.prototype.load` sets a module's lookup list with
+  `this.paths ??= …`, so `Object.prototype.paths = [<dir>]` becomes the
+  list of every module loaded after it. The analyzer answers
+  `NOT_AFFECTED`.
+  - Measured under the patches: (A) gives `UNKNOWN` (the stored array is
+    not a primitive). (B) and (B′) give `UNKNOWN` only when the store is a
+    define call, and leave a plain or unspelled store `NOT_AFFECTED`.
+  - So (B)'s class misses a non-primitive store under a spelled name as
+    well. That supports the inference above. Under (C), the trust boundary
+    as worded covers it.
+- **The class is release-dependent in both directions.**
+  - v24.12.0 and later, and v26, close the `source` read (null-prototype
+    load contexts).
+  - v20 alone reads `data` and `path` by inheritance in `trySelf` (an
+    RWF-156 route; every option closes it).
+  - v22.23.4 and later read `conditions`. With the analyzer that read is
+    not live: a load through `require.resolve` with options is already
+    `UNKNOWN`.
+  - v22.15.0 and later keep an inherited `paths` (RWF-160), which v20 and
+    v22.14.0 overwrite.
+
+  No inventory of one release bounds another.
+- **The section's prototype records were v22.11.0-only.** BL-111's two
+  `inherited-read.source-*` records failed on CI's Node 26 (RWF-159,
+  fixed). Oracle ground truth for a release-dependent route now reads the
+  running release from `tests/oracle/node-release-routes.ts`.
+
+The analyzer does not know the deployed Node release (as RWF-085), and
+`package.json` admits `node >=20`. So a rule, or a boundary, is judged
+over every admitted release, not CI's two. Which releases the soundness
+contract covers is itself undecided (backlog `BL-115`).
