@@ -20,6 +20,7 @@ export const FAST_GATES: readonly FastGate[];
 export const SUITES: readonly Suite[];
 export const DIFFERENTIAL: "differential";
 export const ALL_GATE_NAMES: readonly string[];
+export const DEV_TIER: readonly string[];
 
 export function vitestArgs(
   scripts: Readonly<Record<string, string>>,

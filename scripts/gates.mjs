@@ -4,8 +4,8 @@
  *
  * Usage (from the repository root, after `npm ci`):
  *
- *   node scripts/gates.mjs [--only <names>] [--serial] [--out <dir>]
- *        [--base <ref>] [--no-cache] [--verbose]
+ *   node scripts/gates.mjs [--only <names> | --tier dev] [--serial]
+ *        [--out <dir>] [--base <ref>] [--no-cache] [--verbose]
  *
  * 1. THE FAST GATES (typecheck, lint, format, scorecard check,
  *    check-docs, build, validate:history, validate:metadata), each with
@@ -50,6 +50,15 @@
  * final HEAD before the pull request. When `test` is selected without
  * `test:foundation`, it runs whole.
  *
+ * `--tier dev` (task BL-117) is a named `--only`: the gates that check
+ * the code (`DEV_TIER` in gates-lib.mjs, which says what it leaves out and
+ * why), for the loop while a task is implemented. It is PARTIAL too.
+ *
+ * The oracle suite's real-Node answers come from the on-disk cache of
+ * `src/testing/oracle/real-node-cache.ts` unless `VT_ORACLE_NODE_CACHE`
+ * says otherwise (`off`, or `verify`); the summary states the mode the
+ * run used. The analyzer's scans are never cached.
+ *
  * Each gate's full output goes to `<out>/<gate>.log` (`--out` defaults to
  * a fresh directory under the OS temp root); `--verbose` also streams it.
  * The environment is passed through unchanged.
@@ -72,6 +81,7 @@ import { fileURLToPath } from "node:url";
 import {
   ALL_GATE_NAMES,
   compareValidation,
+  DEV_TIER,
   DIFFERENTIAL,
   exactlyOnceProblems,
   FAST_GATES,
@@ -116,6 +126,14 @@ function parseArgs(argv) {
         options.only = names;
         break;
       }
+      case "--tier": {
+        const tier = value();
+        if (tier !== "dev") {
+          throw new UsageError(`unknown tier: ${tier} (known: dev)`);
+        }
+        options.tier = tier;
+        break;
+      }
       case "--serial":
         options.serial = true;
         break;
@@ -139,7 +157,21 @@ function parseArgs(argv) {
         throw new UsageError(`unknown argument: ${arg}`);
     }
   }
+  if (options.tier !== undefined) {
+    if (options.only !== undefined) {
+      throw new UsageError("--tier and --only cannot be combined");
+    }
+    options.only = [...DEV_TIER];
+  }
   return options;
+}
+
+/** The real-Node cache mode the oracle suite will use (real-node-cache.ts's rule, restated for the summary). */
+function oracleCacheMode() {
+  const value = process.env.VT_ORACLE_NODE_CACHE;
+  if (value !== undefined && value !== "") return value;
+  const ci = process.env.CI;
+  return ci !== undefined && ci !== "" && ci !== "false" ? "off (CI)" : "on (default)";
 }
 
 const strip = (text) => text.replace(/\x1b\[[0-9;]*[A-Za-z]/g, "");
@@ -394,9 +426,12 @@ async function main() {
     const partial =
       options.only === undefined
         ? ""
-        : `\nPARTIAL RUN (--only ${options.only.join(",")}): not the AGENTS.md § I gate set. Run every gate once on the final HEAD before the pull request (docs/WORKFLOW.md § 1.5).\n`;
+        : `\nPARTIAL RUN (${options.tier === undefined ? "--only" : `--tier ${options.tier}:`} ${options.only.join(",")}): not the AGENTS.md § I gate set. Run every gate once on the final HEAD before the pull request (docs/WORKFLOW.md § 1.5).\n`;
+    const cache = wanted("test:oracle")
+      ? `\nReal-Node answers (test:oracle): VT_ORACLE_NODE_CACHE ${oracleCacheMode()}.\n`
+      : "";
     process.stdout.write(
-      `\n## Gates\n\n${table(header, rows)}\n\nTotal ${seconds(Date.now() - started)}s; logs in ${options.out}\n${partial}`,
+      `\n## Gates\n\n${table(header, rows)}\n\nTotal ${seconds(Date.now() - started)}s; logs in ${options.out}\n${cache}${partial}`,
     );
     return code;
   };

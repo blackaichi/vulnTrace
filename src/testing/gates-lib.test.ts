@@ -5,7 +5,9 @@ import { describe, expect, it } from "vitest";
 // Plain ESM (run by `scripts/gates.mjs` under bare `node`); its types live
 // in the matching `.d.mts` file.
 import {
+  ALL_GATE_NAMES,
   compareValidation,
+  DEV_TIER,
   exactlyOnceProblems,
   FAST_GATES,
   readVitestReport,
@@ -59,6 +61,23 @@ describe("the gate list", () => {
       );
     }
     expect(vitestArgs(scripts, "test")).toEqual(["run"]);
+  });
+
+  it("the development tier (BL-117) names known gates, in the runner's order, and leaves out exactly the record, wall-clock and differential gates", () => {
+    expect(DEV_TIER.filter((name) => !ALL_GATE_NAMES.includes(name))).toEqual(
+      [],
+    );
+    expect([...DEV_TIER]).toEqual(
+      ALL_GATE_NAMES.filter((name) => DEV_TIER.includes(name)),
+    );
+    expect(ALL_GATE_NAMES.filter((name) => !DEV_TIER.includes(name))).toEqual([
+      "scorecard",
+      "check-docs",
+      "validate:history",
+      "validate:metadata",
+      "test:performance",
+      "differential",
+    ]);
   });
 
   it("refuses a script that is not a plain `vitest run`", () => {

@@ -52,6 +52,33 @@ export const ALL_GATE_NAMES = [
 ];
 
 /**
+ * BL-117 — the development tier, `node scripts/gates.mjs --tier dev`: the
+ * gates that check the code, for the loop while a task is being
+ * implemented. It is a named `--only`, labelled PARTIAL the same way, and
+ * never the gate set: the full set runs once on the final HEAD before the
+ * pull request (docs/WORKFLOW.md § 1.5). Left out, each for its reason:
+ *
+ * - `scorecard`, `check-docs`, `validate:history`, `validate:metadata`:
+ *   they check the records and the commits, which a task completes last,
+ *   so mid-task they fail by design and would stop the run;
+ * - `test:performance`: it measures wall clock and wants its own quiet
+ *   run;
+ * - `differential`: its head side scans every corpus case again.
+ */
+export const DEV_TIER = [
+  "typecheck",
+  "lint",
+  "format",
+  "build",
+  "test:foundation",
+  "test",
+  "test:adversarial",
+  "test:binding-grammar",
+  "test:oracle",
+  "test:validation",
+];
+
+/**
  * The vitest arguments of a `package.json` script, which must be a plain
  * `vitest run …` with no shell syntax — anything else is refused rather
  * than approximated, so the runner never runs a suite differently from
