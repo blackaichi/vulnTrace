@@ -80,6 +80,24 @@ export async function withTempProject<T>(
   }
 }
 
+/**
+ * {@link withTempProject}, synchronously (task BL-117: a builtin probe is
+ * run in its own empty project, so that what it can load is named by the
+ * real-Node cache's key, `real-node-cache.ts`).
+ */
+export function withTempProjectSync<T>(
+  spec: ProjectSpec,
+  fn: (dir: string) => T,
+): T {
+  const dir = mkdtempSync(path.join(os.tmpdir(), "vulntrace-oracle-"));
+  try {
+    writeProject(dir, spec);
+    return fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 /** Merges several file maps left-to-right (a later map's keys win), for composing shared fragments. */
 export function mergeFiles(
   ...parts: ReadonlyArray<Readonly<Record<string, string>>>

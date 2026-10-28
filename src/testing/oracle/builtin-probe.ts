@@ -1,5 +1,10 @@
-import { execFile, execFileSync } from "node:child_process";
-import { promisify } from "node:util";
+import { withTempProject, withTempProjectSync } from "./project.js";
+import {
+  childEnvironment,
+  runRealNode,
+  runRealNodeSync,
+  type RealNodeResult,
+} from "./real-node-cache.js";
 
 /**
  * THE BUILTIN PROBE (task H-0 step 3; extended by task A-3a).
@@ -232,6 +237,33 @@ function toResult(argKind: BuiltinArgKind, raw: string): BuiltinProbeResult {
   };
 }
 
+/**
+ * One probe script's real-Node run (task BL-117): in its own empty
+ * project, so that it can load nothing but builtins and the real-Node
+ * cache (`real-node-cache.ts`) can name everything it reads. Before
+ * BL-117 a probe ran in this process's working directory.
+ */
+function probeRun(script: string, dir: string) {
+  return {
+    file: "node",
+    args: ["-e", script],
+    cwd: dir,
+    env: childEnvironment(),
+    timeoutMs: 10_000,
+    stdin: "pipe",
+  } as const;
+}
+
+/** A probe's stdout; a probe process that did not exit 0 is an error, as with `execFile`. */
+function probeOutput(result: RealNodeResult): string {
+  if (result.status !== 0 || result.error !== undefined) {
+    throw new Error(
+      `builtin probe: the probe process failed (status ${String(result.status)}, signal ${String(result.signal)}${result.error === undefined ? "" : `, ${result.error}`}): ${result.stderr || result.stdout}`,
+    );
+  }
+  return result.stdout;
+}
+
 function substitute(callTemplate: string): string {
   if (!callTemplate.includes(ARG_PLACEHOLDER)) {
     throw new Error(
@@ -262,10 +294,9 @@ export function probeBuiltinArgKind(
     argKind,
     `const util = require("util");`,
   );
-  const raw = execFileSync("node", ["-e", script], {
-    encoding: "utf-8",
-    timeout: 10_000,
-  });
+  const raw = withTempProjectSync({ files: {} }, (dir) =>
+    probeOutput(runRealNodeSync(probeRun(script, dir))),
+  );
   return toResult(argKind, raw);
 }
 
@@ -322,14 +353,10 @@ export function callExpressionAt(
   return `${shape.form === "construct" ? "new " : ""}${shape.callee}(${args.join(", ")})`;
 }
 
-const execFileAsync = promisify(execFile);
-
 async function runScript(script: string): Promise<string> {
-  const { stdout } = await execFileAsync("node", ["-e", script], {
-    encoding: "utf-8",
-    timeout: 10_000,
-  });
-  return stdout;
+  return withTempProject({ files: {} }, async (dir) =>
+    probeOutput(await runRealNode(probeRun(script, dir))),
+  );
 }
 
 /** One probe of `shape` with an `argKind` value at `position` and `filler` elsewhere. */
