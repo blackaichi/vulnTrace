@@ -4,7 +4,7 @@ The state of the work, for a fresh session: one screen, at most 60 lines
 (`src/testing/records-limits.test.ts`; [`WORKFLOW.md`](WORKFLOW.md) § 6),
 updated by every task's last commit. A task's own account is its task file.
 
-**Last updated:** 2026-11-01, by `BL-121`.
+**Last updated:** 2026-11-01, by `BL-113`.
 
 ## Objective
 
@@ -30,6 +30,7 @@ one task at a time. Then capability work (P1-B) resumes (OPEN-DEBTS § 4).
 **Until the remediation closes, treat every `NOT_AFFECTED` as `UNKNOWN`.**
 OPEN-DEBTS § 3 criterion 3 is false on `main` (D-16, D-17); the README says
 so. `npm run test:validation` is local only: D-09's cases fail by design.
+Every `NOT_AFFECTED` assumes no change to the built-in prototypes (§ 1).
 
 ## Key decisions
 
@@ -43,17 +44,17 @@ so. `npm run test:validation` is local only: D-09's cases fail by design.
 
 ## Current task
 
-`BL-121` — `module-model.ts` split by concern ([task file](tasks/BL-121-module-model-split.md)): `READY_FOR_REVIEW`; a pure move, no behaviour change. `module-model.ts`'s header maps each concern to its `module-model.<concern>.ts` file.
+`BL-113` — the trust boundary over the runtime's built-in prototypes ([task file](tasks/BL-113-loader-trust-boundary.md)): `READY_FOR_REVIEW`; SOUNDNESS-CONTRACT § 1 amended, no analyzer change. RWF-156/158/160 are its documented limitation.
 
 ## Next
 
-BACKLOG § 1 is the order: `BL-113`, then the rest.
+BACKLOG § 1 is the order: `BL-122` (the owner: the boundary's reach, RWF-161), then the rest.
 `BL-107` awaits the owner's decision on O2e; `BL-078`, `BL-080` (P0),
-`BL-082`, `BL-083`, `BL-087` and `BL-090` need decisions. The P1 gaps
+`BL-082`, `BL-087` and `BL-090` need decisions. The P1 gaps
 `BL-057` and `BL-058` (small, from C-1), `BL-048`, `BL-050`, and `BL-040`,
 `BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
 candidates to reorder ahead of the rest of lane E.
 
 ## Recently discovered
 
-From `BL-121`: nothing in the analyzer (its task file, "Account").
+From `BL-113`: RWF-161 (`BL-122`), `BL-123`, `BL-124`, `BL-125` (its task file, "Account").

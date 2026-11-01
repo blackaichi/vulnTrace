@@ -354,10 +354,10 @@ generator writes nothing in this table except the category.
 | RWF-107 | open | Open | fabricated attribution at the model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
 | RWF-108 | open | Open | false NOT_AFFECTED (family C), pre-existing on the base — see below |
 | RWF-109 | open | Open | wrong reach answer at the graph, masked end to end by the call graph for the frame spelling (no false `NOT_AFFECTED` measured) — see below |
-| RWF-111 | open | Open | wrong attribution at the export model, masked end to end by the call graph's escape row (no false `NOT_AFFECTED` measured) — see below |
-| RWF-113 | open | Open | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
+| RWF-111 | open | Open (backlog `BL-082`; re-examined by task `BL-113` against the trust boundary) | wrong attribution at the export model, masked end to end by the call graph's escape row (no false `NOT_AFFECTED` measured) — see below |
+| RWF-113 | open | Open (backlog `BL-083`; re-examined by task `BL-113` against the trust boundary) | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
 | RWF-118 | open | Open | wrong attribution at the export model, masked end to end by the call graph (no false `NOT_AFFECTED` measured) — see below |
-| RWF-121 | open | Open (backlog `BL-090`) | false AFFECTED, pre-existing (named in RWF-063's second audit append) — see below |
+| RWF-121 | open | Open (backlog `BL-090`; re-examined by task `BL-113`: not affected by the trust boundary) | false AFFECTED, pre-existing (named in RWF-063's second audit append) — see below |
 | RWF-139 | open | Open (backlog `C-3`) | false NOT_AFFECTED (family A), pre-existing — see below |
 | RWF-140 | open | Open (decision, backlog `BL-098`) | false NOT_AFFECTED (family A), pre-existing — see below |
 | RWF-143 | open | Open (backlog `BL-101`) | false NOT_AFFECTED (family C), pre-existing — see below |

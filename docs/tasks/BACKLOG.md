@@ -63,6 +63,7 @@ unless the project owner reorders.
 | BL-120 | Agent tooling: project skills to start a task, finish it and launch an audit; a reusable options-measurement script; a check on commit subjects | MERGED | P2 | BL-119 | no | project owner, 2026-10-27 (BL-116); [task file](BL-120-agent-tooling.md) | [note](BL-120-agent-tooling.md#backlog-note) |
 | BL-121 | Split `module-model.ts` by concern, as a pure move | MERGED | P2 | — | required | project owner, 2026-10-27 (BL-116); [task file](BL-121-module-model-split.md) | [note](BL-121-module-model-split.md#backlog-note) |
 | BL-113 | Implement BL-111's decision on Node's own loader through a replaceable builtin (RWF-156, RWF-158, RWF-160) | IN_PROGRESS | P1 | BL-116 | required | discovered in BL-111; [task file](BL-113-loader-trust-boundary.md) | [note](BL-113-loader-trust-boundary.md#backlog-note) |
+| BL-122 | Decide the trust boundary's reach beyond built-in prototypes, and beyond `NOT_AFFECTED` (RWF-161) | TODO | P1 | BL-113 | required | discovered in BL-113 | [note](BL-122.md#backlog-note) |
 | BL-089 | Speed up the local gate run without weakening any gate | MERGED | P2 | — | no | project owner, 2026-10-15 | [note](BL-089-gate-speedup.md#backlog-note) |
 | TASK-0            | Bootstrap the task-by-task workflow                                                                                         | MERGED | P1       | —                        | no       | project owner's workflow prompt                                      | [task file](task-0-workflow-bootstrap.md). PR #73, merged 2026-09-27                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
 | BL-001            | Correct the false "no README notice" record (narrowed from the original row)                             | MERGED        | P1       | TASK-0                   | no       | discovered in TASK-0; corrected by BL-001 itself                                                 | [note](BL-001-readme-notice-record-correction.md#backlog-note) |
@@ -127,6 +128,9 @@ unless the project owner reorders.
 | BL-111 | Design: Node's own loader writes its lookup arrays through replaceable builtins (RWF-156) | MERGED | P1 | — | required | discovered in BL-096 (independent audit, round 2); [task file](BL-111-loader-writes-builtins.md) | [note](BL-111-loader-writes-builtins.md#backlog-note) |
 | BL-114 | Repeat BL-111's loader inventory on Node 20 and 26 (CI's releases) | MERGED | P2 | — | required | discovered in BL-111; [task file](BL-114-loader-inventory-node-releases.md) | [note](BL-114-loader-inventory-node-releases.md#backlog-note) |
 | BL-115 | Decide which Node releases the soundness contract and CI cover | TODO | P2 | — | no | discovered in BL-114 | [note](BL-115.md#backlog-note) |
+| BL-123 | Apply the owner's BL-122 decision to the other open findings whose forms change a built-in prototype (RWF-102, RWF-110, RWF-111, RWF-113, RWF-120) | TODO | P2 | BL-122 | no | discovered in BL-113 | [note](BL-123.md#backlog-note) |
+| BL-124 | Precision under the trust boundary: the rule parts that exist only for a changed built-in prototype | TODO | P4 | BL-113 | required | discovered in BL-113 | [note](BL-124.md#backlog-note) |
+| BL-125 | `next-id` hands out an id in the synthetic test range: a markdown mention of `RWF-900` counts as a reservation | TODO | P6 | — | no | discovered in BL-113 | On `03449a1`, `node scripts/next-id.mjs RWF` printed RWF-901, past BL-119's task file mentions of the synthetic `RWF-900` and of example ids; BL-113 took RWF-161 and BL-122. Exclude the synthetic range and example mentions |
 | BL-112 | The loader classifier's resolution is exponential on a DAG of `const` aliases, and a deep syntax tree overflows the stack (performance) | TODO | P2 | — | required | discovered in BL-110 (certification audit) | [note](BL-112.md#backlog-note) |
 | BL-098 | Decide: `process` handed on or wrapped, which reaches `process.mainModule` (RWF-140) | TODO | P1 | — | required | discovered in BL-092 (independent audit, round 3) | [note](BL-098.md#backlog-note) |
 | BL-099 | A call through a namespace's exported variable reads the namespace's object (RWF-141) | MERGED | P0 | — | required | discovered in BL-095 (independent audit, round 3) | [note](BL-099-namespace-export-member-read.md#backlog-note) |
@@ -305,7 +309,7 @@ registers it.
 | RWF-099 | BL-069 (found by BL-066's audit) |
 | RWF-100 | BL-064 (found by BL-064's audit; fixed by BL-064) |
 | RWF-101 | BL-071 (found by E-1) |
-| RWF-102 | BL-073 (found by E-1's audit) |
+| RWF-102 | BL-073 (found by E-1's audit); BL-123 (its forms change a built-in prototype: the trust boundary, after BL-122) |
 | RWF-103 | BL-074 (found by E-1's audit) |
 | RWF-104 | BL-075 (found by E-1's audit; fixed by BL-075) |
 | RWF-105 | E-2 (found and fixed by E-2) |
@@ -314,9 +318,9 @@ registers it.
 | RWF-108 | BL-079 (found by BL-074's audit; row added by BL-075) |
 | RWF-109 | BL-080 (found by BL-074's audit; row added by BL-075) |
 | RWF-110 | BL-081 (found by BL-075; fixed in part by BL-081); BL-091 (re-audit: not certified); BL-094 (decision, proposed: O2e); BL-107 (its implementation and certification round) |
-| RWF-111 | BL-082 (found by BL-075) |
+| RWF-111 | BL-082 (found by BL-075; re-examined by BL-113) |
 | RWF-112 | BL-075 (found by BL-075's audit; fixed by BL-075) |
-| RWF-113 | BL-083 (found by BL-075's audit) |
+| RWF-113 | BL-083 (found by BL-075's audit; re-examined by BL-113, a realm premise added) |
 | RWF-114 | BL-084 (found by BL-075's audit; fixed by BL-084) |
 | RWF-115 | BL-084 (found by BL-075's audit; BL-086 folded into BL-084, which fixes it) |
 | RWF-116 | BL-084 (found and fixed by BL-084) |
@@ -348,11 +352,12 @@ registers it.
 | RWF-153 | BL-109 (found by BL-109's audit; fixed by BL-109) |
 | RWF-154 | BL-096 (found by BL-096; decided b2) then BL-110 (fixed by BL-110) |
 | RWF-155 | BL-096 (found by BL-096's audit; decided b2) then BL-110 (fixed for the lookup list by BL-110); other capabilities C-3 |
-| RWF-156 | BL-111 (found by BL-096's audit, round 2; design, proposed B or C) then BL-113 (implementation); BL-114 (other Node releases: a v20-only `trySelf` route added, every option closes it) |
+| RWF-156 | BL-111 (found by BL-096's audit, round 2; design, proposed B or C) then BL-113 (implementation); BL-114 (other Node releases: a v20-only `trySelf` route added, every option closes it); documented limitation of the trust boundary (BL-113) |
 | RWF-157 | BL-096 (found by BL-096's audit, round 2; decided b2) then BL-110 (fixed for the lookup list by BL-110); other capabilities C-2 / C-3 |
-| RWF-158 | BL-114 (found by BL-114) then BL-113 (implementation of BL-111's decision) |
+| RWF-158 | BL-114 (found by BL-114) then BL-113 (implementation of BL-111's decision); documented limitation of the trust boundary (BL-113) |
 | RWF-159 | BL-114 (found and fixed by BL-114) |
-| RWF-160 | BL-114 (found by BL-114's independent audit) then BL-113 (implementation of BL-111's decision) |
+| RWF-160 | BL-114 (found by BL-114's independent audit) then BL-113 (implementation of BL-111's decision); documented limitation of the trust boundary (BL-113) |
+| RWF-161 | BL-122 (found by BL-113; the trust boundary's reach) |
 | RWF-052                                           | BL-018                                                     |
 | RWF-055                                           | BL-031                                                     |
 | D-01, D-02, D-04, D-05, D-08, D-10, D-12          | the row with the same ID                                   |

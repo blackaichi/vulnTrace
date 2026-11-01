@@ -886,3 +886,34 @@ decision, does the following:
 - **Earlier rules.** No rule implemented by BL-075, BL-081, BL-091 or
   BL-110 is withdrawn by this record. Whether any becomes redundant under
   the boundary is for BL-113 to measure, not to assume.
+
+## Note — task BL-113: the decision implemented, and two premises measured (2026-11-01)
+
+Recorded for the reader and for the project owner's open question on the
+boundary's reach. It changes no decision of this ADR. Task
+[`BL-113`](../tasks/BL-113-loader-trust-boundary.md) implemented
+"Decision record — BL-111": SOUNDNESS-CONTRACT § 1, "The trust boundary:
+the runtime's built-in prototypes", worded over the ECMAScript intrinsic
+prototypes only, and its disclosure, `BUILTIN_PROTOTYPE_TRUST_BOUNDARY`.
+Two of the record's premises measured otherwise:
+
+- **The boundary does not cover RWF-156's whole class.** A species
+  defined on the `Array` constructor, `Object.defineProperty(Array,
+  Symbol.species, …)`, changes a builtin constructor's own property, not
+  a prototype, and Node's loader honours it: real Node v22.11.0 calls the
+  target and the analyzer answers `NOT_AFFECTED` (RWF-161). It is in the
+  reach this record left undecided, so it is an open defect, and backlog
+  `BL-122` brings the reach to the owner with it.
+- **Node's own loader objects need no boundary.** The same `paths` setter
+  on `Module.prototype` (by `require("module").prototype`,
+  `Object.getPrototypeOf(module)` or `module.constructor.prototype`) is
+  already `UNKNOWN` with the analyzer
+  (`tests/oracle/bl113-trust-boundary.cases.ts`). Worded over the
+  intrinsic prototypes, the boundary leaves them modeled.
+
+Two smaller corrections, for the record's "What it changes" list: the
+open-soundness-defect records were in `bl096-module-paths-read-only` and
+`bl114-require-esm-inherited-source` (none in
+`bl111-loader-inherited-reads`); and the scope disclosure is carried by
+the HTML report only, as every other exclusion is (the JSON result carries
+none: lane D's `D-1`).
