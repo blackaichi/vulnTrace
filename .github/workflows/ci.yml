@@ -12,33 +12,39 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
+# Task BL-118: the gates run as parallel jobs, not as one sequential job
+# per Node release. The fast gates run once; each test suite runs as its
+# own job on every Node release of the matrix. Every gate of AGENTS.md
+# section I that CI runs keeps its command, and no job depends on another,
+# so one gate's failure never hides another's result.
+env:
+  # Task BL-117: the oracle harness's on-disk cache of real-Node answers
+  # (src/testing/oracle/real-node-cache.ts) is local only. CI runs every
+  # real-Node process, by the project owner's decision of 2026-10-27.
+  # The harness also turns it off when `CI` is set; this says so here.
+  VT_ORACLE_NODE_CACHE: "off"
+
 jobs:
-  test:
-    name: Build, lint, and test (Node ${{ matrix.node-version }})
+  # The gates whose result does not depend on the Node release: they
+  # compile, lint and format the source and read files and git history
+  # (task BL-118 checked their scripts), so they run once, on the oldest
+  # release the matrix below covers.
+  fast-gates:
+    name: Build, typecheck, lint, format, records (Node 20)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node-version: [20, 26]
-    env:
-      # Task BL-117: the oracle harness's on-disk cache of real-Node answers
-      # (src/testing/oracle/real-node-cache.ts) is local only. CI runs every
-      # real-Node process, by the project owner's decision of 2026-10-27.
-      # The harness also turns it off when `CI` is set; this says so here.
-      VT_ORACLE_NODE_CACHE: "off"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           # Full history: the commit metadata gate validates the range
           # F6_BASE_SHA..HEAD and needs the base commit present to compute
-          # it. The fixture-integrity check also shells out to git.
+          # it.
           fetch-depth: 0
 
-      - name: Set up Node.js ${{ matrix.node-version }}
+      - name: Set up Node.js 20
         uses: actions/setup-node@v4
         with:
-          node-version: ${{ matrix.node-version }}
+          node-version: 20
           cache: npm
 
       - name: Install dependencies
@@ -54,38 +60,7 @@ jobs:
         run: npm run lint
 
       - name: Check formatting
-        run: npx prettier --check .
-
-      # The fast deterministic Foundation gate, run FIRST and on its own so
-      # that "a Foundation invariant broke" is reported in ~45s rather than
-      # after the ~3.5-minute full suite. Every file it runs is also in
-      # `npm test` below, so this costs one extra short run and can never
-      # disagree with the full one. See vitest.foundation.config.ts.
-      - name: Foundation invariant gate
-        run: npm run test:foundation
-
-      - name: Test
-        run: npm test
-
-      - name: Performance regression guards
-        run: npm run test:performance
-
-      - name: Adversarial validation suites
-        run: npm run test:adversarial
-
-      # The binding-form grammar sweep (tests/binding-grammar/) and the
-      # real-Node oracle harness's own self-tests (tests/oracle/). Neither
-      # ran in CI before RWF-051-typecheck. Both are hermetic: real local
-      # `node` subprocesses and vendored fixtures on disk, no network --
-      # confirmed by running each alone and by correcting
-      # scripts/scorecard-sources.mjs's classifier, which had wrongly
-      # marked test:oracle as reaching the live OSV API (see docs/SCORECARD.md
-      # § 9 and tests/validation/FINDINGS.md's RWF-051 entry).
-      - name: Binding-form grammar sweep
-        run: npm run test:binding-grammar
-
-      - name: Real-Node oracle harness suite
-        run: npm run test:oracle
+        run: npm run format
 
       # Never ran in CI before F6, which is part of why three commits
       # carrying forbidden metadata reached main: the archive check existed
@@ -109,3 +84,61 @@ jobs:
 
       - name: Documentation references
         run: node scripts/check-docs.mjs
+
+  # One job per test suite and Node release. None of them needs the build
+  # output: no test reads the repository's own `dist/`.
+  suite:
+    name: ${{ matrix.suite.name }} (Node ${{ matrix.node-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version: [20, 26]
+        suite:
+          # The fast deterministic Foundation gate, on its own so that "a
+          # Foundation invariant broke" is reported in its own job. Every
+          # file it runs is also in `npm test`, so this costs one extra
+          # short run and can never disagree with the full one. See
+          # vitest.foundation.config.ts.
+          - name: Foundation invariant gate
+            command: npm run test:foundation
+          - name: Test
+            command: npm test
+          # On a runner of its own: the guards measure wall clock, and no
+          # other suite competes with them for the runner's cores.
+          - name: Performance regression guards
+            command: npm run test:performance
+          - name: Adversarial validation suites
+            command: npm run test:adversarial
+          # The binding-form grammar sweep (tests/binding-grammar/) and the
+          # real-Node oracle harness's own self-tests (tests/oracle/). Neither
+          # ran in CI before RWF-051-typecheck. Both are hermetic: real local
+          # `node` subprocesses and vendored fixtures on disk, no network --
+          # confirmed by running each alone and by correcting
+          # scripts/scorecard-sources.mjs's classifier, which had wrongly
+          # marked test:oracle as reaching the live OSV API (see
+          # docs/SCORECARD.md § 9 and tests/validation/FINDINGS.md's RWF-051
+          # entry).
+          - name: Binding-form grammar sweep
+            command: npm run test:binding-grammar
+          - name: Real-Node oracle harness suite
+            command: npm run test:oracle
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # Full history, as before BL-118: the fixture-integrity and
+          # commit-metadata tests shell out to git.
+          fetch-depth: 0
+
+      - name: Set up Node.js ${{ matrix.node-version }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node-version }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: ${{ matrix.suite.name }}
+        run: ${{ matrix.suite.command }}
