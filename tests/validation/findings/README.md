@@ -92,6 +92,13 @@ hyphen counting as a space:
   `Bypassed for unloaded packages` (RWF-002's value),
   `Fixed for variable bindings` (RWF-013's value)
 - **fixed**: `Fixed`
+- **documented limitation**: `Documented limitation` (task `BL-113`).
+  The program is outside what the soundness contract claims, by a trust
+  boundary the project owner decided; the cell must cite the contract's
+  section (`SOUNDNESS-CONTRACT § <n>`), or the row is refused. It is
+  counted on its own, never as open and never as fixed. A reproduction
+  of it is a trust-boundary case (`src/testing/trust-boundary-case.ts`),
+  not an open-soundness-defect record.
 
 "Open in part" is open: a finding that is only partly fixed is not fixed.
 Any other value makes the scorecard generator **fail**, naming the row

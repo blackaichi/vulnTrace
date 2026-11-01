@@ -114,6 +114,10 @@ function escapeRegExp(text: string): string {
  * contradicted `Fixed`, a missing row or section -- fails the record too,
  * which is the direction this check must fail in: a record that outlives
  * its defect is deleted, never kept green by a permissive match.
+ *
+ * A DOCUMENTED LIMITATION is not open (task BL-113): a finding moved to a
+ * trust boundary the soundness contract states fails this check, and its
+ * reproductions become trust-boundary cases (`trust-boundary-case.ts`).
  */
 export function rwfReferenceProblems(
   rwf: string,

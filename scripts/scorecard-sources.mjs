@@ -271,6 +271,16 @@ export const FINDINGS_STATUS_HEADER = Object.freeze([
  *   every purpose that asks "is anything left?" -- a finding only partly
  *   fixed is not fixed.
  * - `fixed`: wholly discharged.
+ * - `limitation`: a documented limitation (task BL-113). The analyzer's
+ *   answer can still differ from real Node's, but the program is outside
+ *   what the soundness contract claims, by a trust boundary the project
+ *   owner decided and docs/SOUNDNESS-CONTRACT.md states. It is neither
+ *   open (nothing in the contract is left to do) nor fixed (nothing was
+ *   fixed), and it is counted on its own. Its cell must cite a contract
+ *   section that states a boundary (`SOUNDNESS-CONTRACT § <n>`, one of
+ *   `TRUST_BOUNDARY_SECTIONS`), and must not say that any of it is still
+ *   open (the same `INCOMPLETE_FIX` words a `fixed` cell may not use), or
+ *   the row is refused: the value is not a way to set a defect aside.
  *
  * The two scoped entries (`bypassed for unloaded packages`, `fixed for
  * variable bindings`) are existing rows' qualified values (RWF-002,
@@ -287,7 +297,27 @@ export const FINDINGS_STATUS_VOCABULARY = new Map([
   ["bypassed for unloaded packages", "partlyOpen"],
   ["fixed for variable bindings", "partlyOpen"],
   ["fixed", "fixed"],
+  ["documented limitation", "limitation"],
 ]);
+
+/**
+ * The soundness contract's sections that state a trust boundary, each with
+ * the heading it holds the boundary under: a closed list, like the
+ * vocabulary. A documented limitation must cite one of them.
+ * `src/testing/findings-status.test.ts` checks every entry against
+ * docs/SOUNDNESS-CONTRACT.md, so a section that is renumbered or loses its
+ * boundary fails there.
+ */
+export const TRUST_BOUNDARY_SECTIONS = new Map([
+  ["1", "### The trust boundary: the runtime's built-in prototypes"],
+]);
+
+/** Every `SOUNDNESS-CONTRACT § <n>` a cell cites, as section numbers. */
+function contractCitations(cell) {
+  return [...cell.matchAll(/SOUNDNESS-CONTRACT\s+§\s*(\d+)/g)].map(
+    (match) => match[1],
+  );
+}
 
 /** Commentary that contradicts a `fixed` value. Used only to refuse. */
 const INCOMPLETE_FIX =
@@ -430,6 +460,31 @@ export function classifyFindingsRegister(text) {
       );
       continue;
     }
+    const cited = contractCitations(status);
+    if (
+      category === "limitation" &&
+      (cited.length === 0 ||
+        cited.some((section) => !TRUST_BOUNDARY_SECTIONS.has(section)))
+    ) {
+      problems.push(
+        `${id}: status value "documented limitation" must cite a ` +
+          "soundness contract section that states a trust boundary " +
+          `(${[...TRUST_BOUNDARY_SECTIONS.keys()].map((n) => `"SOUNDNESS-CONTRACT § ${n}"`).join(", ")}), ` +
+          `and only such sections (cell: ${JSON.stringify(status)})`,
+      );
+      continue;
+    }
+    if (
+      category === "limitation" &&
+      INCOMPLETE_FIX.test(status.replace(/[*_]/g, ""))
+    ) {
+      problems.push(
+        `${id}: status value "documented limitation" is contradicted by its ` +
+          "own cell, which says part of it is still open -- use an open or " +
+          `open-in-part value (cell: ${JSON.stringify(status)})`,
+      );
+      continue;
+    }
     rows.push({ id, status, value, category, impact: cells[3] });
   }
   problems.push(...sectionRowProblems(lines, rows));
@@ -453,11 +508,13 @@ export function classifyFindingsRegister(text) {
   const open = rows.filter((row) => row.category === "open");
   const partlyOpen = rows.filter((row) => row.category === "partlyOpen");
   const fixed = rows.filter((row) => row.category === "fixed");
+  const limitation = rows.filter((row) => row.category === "limitation");
 
-  // The partition invariant, asserted rather than assumed. If the three
+  // The partition invariant, asserted rather than assumed. If the four
   // buckets ever stop summing to the parsed row count, the scorecard is
   // under-reporting the register and must not be generated at all.
-  const classified = open.length + partlyOpen.length + fixed.length;
+  const classified =
+    open.length + partlyOpen.length + fixed.length + limitation.length;
   if (classified !== rows.length) {
     throw new Error(
       `FINDINGS.md: ${classified} classified rows != ${rows.length} parsed ` +
@@ -465,7 +522,7 @@ export function classifyFindingsRegister(text) {
     );
   }
 
-  return { rows, open, partlyOpen, fixed };
+  return { rows, open, partlyOpen, fixed, limitation };
 }
 
 /**

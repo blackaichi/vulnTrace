@@ -22,13 +22,20 @@ export interface FindingsRegisterRow {
 }
 
 /** The three categories. `partlyOpen` is open: a partial fix is not a fix. */
-export type FindingsStatusCategory = "open" | "partlyOpen" | "fixed";
+export type FindingsStatusCategory =
+  | "open"
+  | "partlyOpen"
+  | "fixed"
+  | "limitation";
 
 /** Every accepted status value, and the one category it maps to. */
 export const FINDINGS_STATUS_VOCABULARY: ReadonlyMap<
   string,
   FindingsStatusCategory
 >;
+
+/** The contract's sections that state a trust boundary, and their headings. */
+export const TRUST_BOUNDARY_SECTIONS: ReadonlyMap<string, string>;
 
 /** The exact header the status table must carry, in order. */
 export const FINDINGS_STATUS_HEADER: readonly string[];
@@ -42,6 +49,8 @@ export interface FindingsRegister {
   readonly open: readonly FindingsRegisterRow[];
   readonly partlyOpen: readonly FindingsRegisterRow[];
   readonly fixed: readonly FindingsRegisterRow[];
+  /** Documented limitations (task BL-113): never open, never fixed. */
+  readonly limitation: readonly FindingsRegisterRow[];
 }
 
 /**
