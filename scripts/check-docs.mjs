@@ -58,6 +58,9 @@ const REVIEWED = [
   "docs/SOUNDNESS-CONTRACT.md",
   "docs/SCORECARD.md",
   "docs/OPEN-DEBTS.md",
+  // D-17's full record, moved out of OPEN-DEBTS.md by task BL-119: still
+  // part of it, so still reviewed.
+  "docs/open-debts/D-17.md",
 ];
 
 /**
