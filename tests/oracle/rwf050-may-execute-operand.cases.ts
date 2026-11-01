@@ -18,7 +18,7 @@ import { syntheticProvider } from "../../src/testing/oracle/provider.js";
  *
  * THE MECHANISM. Every CommonJS export-provenance fact reads a
  * last-write-wins map gated on `isDefinitelyReachedModuleScopeStatement`
- * (`module-model.ts`), whose cutoff is the first top-level statement
+ * (`module-model.export-provenance.ts`), whose cutoff is the first top-level statement
  * `mayEndModuleEvaluation` says can end module evaluation. That walk
  * descends into statement containers, so `if (FLAG) bail();` is a cutoff
  * (MAY, like an `if` body); it reaches a `bail()` in an expression only in

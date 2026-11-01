@@ -11,7 +11,8 @@ import {
  * audit; fixed by task BL-066, with BL-067 folded in,
  * docs/tasks/BL-066-callee-summary-required-positions.md).
  *
- * The callee summary (`callableAlwaysThrows` in `module-model.ts`) proves
+ * The callee summary (`callableAlwaysThrows` in
+ * `module-model.abruptness.ts`) proves
  * that invoking a local callable cannot complete normally. It missed
  * callables that can only throw, so a module-time invocation of one was not
  * a cutoff and the later write of `exports.run` stayed authoritative, though

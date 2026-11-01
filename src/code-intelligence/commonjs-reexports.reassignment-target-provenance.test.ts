@@ -25,7 +25,7 @@ import { indexSourceFile } from "./source-index.js";
  * - `"refused"` — it IS.
  *
  * Every row declares `alias` identically; only the statement under test
- * differs. The twin of this matrix, for module-model.ts's own
+ * differs. The twin of this matrix, for module-model.local-callables.ts's own
  * reach-restricted relation, is RWF-025's
  * module-model.destructuring-assignment-target-reassignment.test.ts —
  * see the twin-comparison block at the end.
@@ -273,7 +273,8 @@ describe("RWF-025b: downstream CommonJS re-export attribution", () => {
   });
 
   it("19. twin comparison: the same source yields the same verdict from RWF-025's relation", () => {
-    // RWF-025 (module-model.ts) and RWF-025b (this file) answer the same
+    // RWF-025 (module-model.local-callables.ts) and RWF-025b (this file)
+    // answer the same
     // WHAT-does-this-target-rebind question for two different relations.
     // The shapes below are the ones both must agree on; module-model's own
     // matrix asserts its side, and this row asserts they do not diverge on

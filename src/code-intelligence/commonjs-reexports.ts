@@ -414,7 +414,7 @@ function collectFacts(sourceFile: ts.SourceFile): CommonJsFacts {
    * layer reports as UNKNOWN — never as a Family C proof.
    *
    * This is the exact twin of RWF-025's `markLocallyReassigned` in
-   * module-model.ts, which answers the same question for a different
+   * module-model.local-callables.ts, which answers the same question for a different
    * relation (reassignment within module-evaluation reach) over a
    * different reach model. The two are deliberately kept semantically
    * identical about WHAT a target rebinds; they are not shared because
@@ -549,7 +549,7 @@ function collectFacts(sourceFile: ts.SourceFile): CommonJsFacts {
    * side is re-entered only to find further nested assignments
    * (`a = (b = other)` records `a` and `b`).
    *
-   * Unlike RWF-025's twin in module-model.ts this walk does NOT stop at
+   * Unlike RWF-025's twin in module-model.local-callables.ts this walk does NOT stop at
    * a function boundary, because {@link CommonJsFacts} is a WHOLE-FILE
    * model with no reach restriction: a write inside a callback is a
    * write this model already counts, wherever {@link visit} finds it.
@@ -693,9 +693,9 @@ function factsOf(sourceFile: ts.SourceFile): CommonJsFacts {
 
 /**
  * Strips redundant parentheses (`module.exports = (function () {})`) so
- * every relation in this file — and module-model.ts's RWF-003 function
- * binding, which shares it — sees the same value expression whether or not
- * the author wrapped it.
+ * every relation in this file — and the module model's RWF-003 function
+ * binding (module-model.export-provenance.ts), which shares it — sees the
+ * same value expression whether or not the author wrapped it.
  */
 export function unwrapParentheses(expr: ts.Expression): ts.Expression {
   let current = expr;
@@ -707,8 +707,9 @@ export function unwrapParentheses(expr: ts.Expression): ts.Expression {
 
 /**
  * Strips redundant parentheses AND chained plain-assignment expressions
- * from a value expression, so every relation in this file — and
- * module-model.ts's RWF-003 function binding, which shares it — sees the
+ * from a value expression, so every relation in this file — and the
+ * module model's RWF-003 function binding (module-model.export-provenance.ts,
+ * module-model.export-bindings.ts), which shares it — sees the
  * VALUE the expression evaluates to rather than the syntax the author
  * happened to wrap it in.
  *
@@ -733,7 +734,7 @@ export function unwrapParentheses(expr: ts.Expression): ts.Expression {
  *
  * Unwrapping an assignment is safe here without any control-flow test of
  * its own because every caller is already gated on
- * {@link module-model.ts}'s `isDefinitelyReachedExportAssignment` (or
+ * module-model.export-provenance.ts's `isDefinitelyReachedExportAssignment` (or
  * `ModuleExportsAssignment.isModuleScope`), which climbs out through
  * exactly these chained assignment links before asking whether the whole
  * statement is an unconditional module-scope one. A branch-local
@@ -865,8 +866,9 @@ export function classifyLocalBinding(
  * {@link classifyLocalBinding} followed along a CHAIN of local aliases
  * rather than stopping after one hop — RWF-012's core relation, and the
  * one place the multi-hop walk over {@link CommonJsFacts.localBindings}
- * lives for the function-identity consumers (module-model.ts's
- * RWF-003/RWF-011 attribution). The re-export consumers get the same walk
+ * lives for the function-identity consumers (the module model's
+ * RWF-003/RWF-011 attribution: module-model.export-bindings.ts,
+ * module-model.export-provenance.ts, module-model.entrypoint-roots.ts). The re-export consumers get the same walk
  * from {@link resolveOrigin}, which has to thread a
  * `specifier`/`importedName` pair through the same hops and so cannot
  * share this signature.
@@ -1066,7 +1068,8 @@ export function refusesLocalIdentifierProvenance(
  * `module.exports.<exportedName> = ...` assignment, or `undefined` when it
  * has none.
  *
- * Exposed so module-model.ts can ask {@link refusesLocalIdentifierProvenance}
+ * Exposed so module-model.export-bindings.ts can ask
+ * {@link refusesLocalIdentifierProvenance}
  * about the property form too: `exports.parse = parse` binds an export to
  * an identifier exactly as `module.exports = parse` does, and is the shape
  * the RWF-013 reproducer actually hits (see

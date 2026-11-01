@@ -26,7 +26,7 @@ import { indexSourceFileFromDisk, type SourceIndex } from "./source-index.js";
  * without a static load (the loader registry) -- or, when F's whole-module
  * write installs another module S's object (`module.exports =
  * require("./safe")`), S's object: M is S, or M reaches S. The census
- * (`module-model.ts`, `loadResultEscapes`) treats a load the answer may be
+ * (`module-model.load-result-escape.ts`, `loadResultEscapes`) treats a load the answer may be
  * yes for as an alias of the export object wherever its value flows.
  *
  * THE ANSWER. A literal specifier may reach back when it:
