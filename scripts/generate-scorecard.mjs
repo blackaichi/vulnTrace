@@ -1,8 +1,15 @@
 /**
- * FOUNDATION F7 — generates `docs/SCORECARD.md`.
+ * FOUNDATION F7 — generates `docs/SCORECARD.md`, and (task BL-119) the
+ * findings register's index, `tests/validation/FINDINGS.md`.
  *
- *   node scripts/generate-scorecard.mjs           # write the scorecard
- *   node scripts/generate-scorecard.mjs --check   # fail if it is stale
+ *   node scripts/generate-scorecard.mjs           # write both
+ *   node scripts/generate-scorecard.mjs --check   # fail if either is stale
+ *
+ * The findings index is generated here, rather than by a script of its
+ * own, so that the gate that already keeps the scorecard current (AGENTS.md
+ * § I, "scorecard freshness") keeps the index current too, and one command
+ * regenerates every record derived from the register. Its source and its
+ * layout are `scripts/findings-register.mjs`'s.
  *
  * WHY A GENERATOR AND NOT A HAND-WRITTEN TABLE. A hand-written scorecard
  * is a claim about the project made at one moment and never checked again;
@@ -33,8 +40,14 @@ import {
   readUncertaintyTaxonomy,
   readValidationCases,
 } from "./scorecard-sources.mjs";
+import {
+  FINDINGS_INDEX,
+  readFindingRecords,
+  renderFindingsIndex,
+} from "./findings-register.mjs";
 
 const OUTPUT = path.join(ROOT, "docs/SCORECARD.md");
+const FINDINGS_OUTPUT = path.join(ROOT, FINDINGS_INDEX);
 
 const cell = (value) => String(value).replace(/\|/g, "\\|");
 const row = (cells) => `| ${cells.map(cell).join(" | ")} |`;
@@ -682,18 +695,20 @@ async function build() {
   push(
     "## 8. Known defect register (RWF)",
     "",
-    "Every value below is derived from the status table in",
-    "`tests/validation/FINDINGS.md`. A row's status is read from that",
-    "table's Status column only, through a closed vocabulary; an",
+    "Every value below is derived from the findings register's status",
+    "table: one row per record file under `tests/validation/findings/`,",
+    "tabled in the generated `tests/validation/FINDINGS.md`. A row's status",
+    "is read from its Status column only, through a closed vocabulary; an",
     "unrecognised status fails generation rather than being defaulted. The",
-    "field and the vocabulary are documented next to the table.",
+    "field and the vocabulary are documented in",
+    "`tests/validation/findings/README.md`.",
     "",
     row(["Metric", "Current", "Source", "Interpretation", "Limitation"]),
     row(["---", "---", "---", "---", "---"]),
     row([
       "Findings recorded",
       register.rows.length,
-      "structural — the status table in `tests/validation/FINDINGS.md`",
+      "structural — the status rows of `tests/validation/findings/`",
       "One row per finding section: generation fails if a section has no row or a row has no section.",
       "Counts rows in the register, not distinct defects in the analyzer.",
     ]),
@@ -773,20 +788,37 @@ async function build() {
 }
 
 const generated = await build();
+const findingsIndex = renderFindingsIndex(readFindingRecords(ROOT));
+
+/** Each generated file, and the text its sources produce now. */
+const outputs = [
+  [OUTPUT, generated],
+  [FINDINGS_OUTPUT, findingsIndex],
+];
 
 if (process.argv.includes("--check")) {
-  const committed = fs.existsSync(OUTPUT)
-    ? fs.readFileSync(OUTPUT, "utf-8")
-    : "";
-  if (committed !== generated) {
+  const stale = outputs.filter(
+    ([file, text]) =>
+      (fs.existsSync(file) ? fs.readFileSync(file, "utf-8") : "") !== text,
+  );
+  if (stale.length > 0) {
     process.stderr.write(
-      "docs/SCORECARD.md is stale: it no longer matches its sources.\n" +
-        "Regenerate it with `node scripts/generate-scorecard.mjs`.\n",
+      stale
+        .map(
+          ([file]) =>
+            `${path.relative(ROOT, file)} is stale: it no longer matches its sources.\n`,
+        )
+        .join("") +
+        "Regenerate with `node scripts/generate-scorecard.mjs`.\n",
     );
     process.exit(1);
   }
-  process.stdout.write("docs/SCORECARD.md is current.\n");
+  process.stdout.write(
+    `${outputs.map(([file]) => path.relative(ROOT, file)).join(" and ")} are current.\n`,
+  );
 } else {
-  fs.writeFileSync(OUTPUT, generated);
-  process.stdout.write(`wrote ${path.relative(ROOT, OUTPUT)}\n`);
+  for (const [file, text] of outputs) {
+    fs.writeFileSync(file, text);
+    process.stdout.write(`wrote ${path.relative(ROOT, file)}\n`);
+  }
 }

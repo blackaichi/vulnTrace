@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -28,6 +28,7 @@ import {
   type DisagreementGroup,
   type KnownDisagreement,
 } from "./disagreements.js";
+import { readFindingsRegisterText } from "../../scripts/findings-register.mjs";
 import { classifyCellOutcome } from "./guard.js";
 
 /**
@@ -430,10 +431,9 @@ describe("the sweep's own invariants", () => {
   it("every FINDINGS reference resolves to a real heading", () => {
     // A dangling reference is worse than none: it reads as though the
     // write-up exists.
-    const findings = readFileSync(
-      path.join(REPO_ROOT, "tests", "validation", "FINDINGS.md"),
-      "utf-8",
-    );
+    // The register, assembled from its one-file-per-record layout
+    // (task BL-119).
+    const findings = readFindingsRegisterText(REPO_ROOT);
     for (const group of DISAGREEMENT_GROUPS) {
       const id = group.findings.split(" ")[0] ?? "";
       expect(

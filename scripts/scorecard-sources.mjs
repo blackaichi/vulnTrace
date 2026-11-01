@@ -26,6 +26,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import ts from "typescript";
+import { SECTION_ID, readFindingsRegisterText } from "./findings-register.mjs";
 
 export const ROOT = path.resolve(fileURLToPath(new URL("../", import.meta.url)));
 
@@ -203,8 +204,11 @@ export function readScripts() {
 }
 
 /**
- * The findings register's own status table (`tests/validation/FINDINGS.md`,
- * `## Status`).
+ * The findings register's own status table: every record file's status
+ * row under `tests/validation/findings/` (task BL-119), assembled with the
+ * records' sections by `readFindingsRegisterText`
+ * (`scripts/findings-register.mjs`) into the text this classifier has
+ * always read -- a `## Status` table, then the `##` sections.
  *
  * THE DESIGNATED FIELD. A row's status is read from exactly one place: the
  * `Status` column (the fifth cell) of that table, whose header must be
@@ -247,9 +251,7 @@ export function readScripts() {
  * rewording; a closed vocabulary over one field is not.
  */
 export function readFindingsRegister() {
-  return classifyFindingsRegister(
-    fs.readFileSync(path.join(ROOT, "tests/validation/FINDINGS.md"), "utf-8"),
-  );
+  return classifyFindingsRegister(readFindingsRegisterText(ROOT));
 }
 
 /** The exact header the status table must carry, in order. */
@@ -336,8 +338,11 @@ export function findingsStatusValue(cell) {
 }
 
 /**
- * The classification itself, over the text of `FINDINGS.md`, so it can be
- * exercised without the committed file (`src/testing/findings-status.test.ts`).
+ * The classification itself, over the register's assembled text (a
+ * `## Status` table, then the sections: `assembleFindingsRegister`), so it
+ * can be exercised without the committed records
+ * (`src/testing/findings-status.test.ts`). Its error messages still say
+ * `FINDINGS.md`, the register's name.
  */
 export function classifyFindingsRegister(text) {
   const lines = text.split("\n");
@@ -462,9 +467,6 @@ export function classifyFindingsRegister(text) {
 
   return { rows, open, partlyOpen, fixed };
 }
-
-/** A finding section's heading: `## RWF-049 — …`, `## AUD-01 — …`. */
-const SECTION_ID = /^## ([A-Z]+-\d+[a-z]?)\b/;
 
 /**
  * Every finding id with a `##` section and every id with a status row must

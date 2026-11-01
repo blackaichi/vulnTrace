@@ -61,10 +61,12 @@ skipped tests; fail closed to `UNKNOWN`.
   (`src/testing/open-soundness-defect.ts`), the fix must flip that record,
   and the task deletes it as the record demands and asserts the correct
   result instead.
-- Update the records as AGENTS.md requires: `tests/validation/FINDINGS.md`
-  (append, never rewrite), `docs/OPEN-DEBTS.md`, ADR decision records;
-  regenerate the scorecard with `node scripts/generate-scorecard.mjs`
-  (never hand-edit it).
+- Update the records as AGENTS.md requires: the findings register,
+  `tests/validation/findings/<ID>.md` (append, never rewrite; only a
+  record's status row is edited in place), `docs/OPEN-DEBTS.md`, ADR
+  decision records; regenerate the scorecard and the register's index,
+  `tests/validation/FINDINGS.md`, with `node scripts/generate-scorecard.mjs`
+  (never hand-edit either).
 
 #### Where each fact is written (task `BL-116`)
 
@@ -74,7 +76,7 @@ links to that record instead of restating it. A task writes:
 | Record | Gets, from a task | Does not get |
 | --- | --- | --- |
 | the task file | the task's own account: premises verified, measurements, the audit rounds and their findings, deviations, the commits | a copy of a finding's text |
-| `tests/validation/FINDINGS.md` | a new record for a defect found; an appended status or correction note on an existing record | the task's measurements beyond what the record itself needs |
+| `tests/validation/findings/<ID>.md` | a new record for a defect found; an appended status or correction note on an existing record, and its status row updated | the task's measurements beyond what the record itself needs |
 | an ADR | a proposed decision, a decision record, or a note when a decided section's premise or scope changes | a note saying only that a task implemented a decision (the backlog row and the task file say it) |
 | `docs/OPEN-DEBTS.md` | a change in a debt's status (opened, narrowed, closed), in that debt's entry | a per-task log line |
 | `docs/tasks/BACKLOG.md` | the row's status, and new rows for discovered work | the task's results |
@@ -225,11 +227,14 @@ a needed refactor, a dependency or a prerequisite):
    `<task ID>`". If it changes the order of existing tasks, update their
    dependencies.
 4. If it is a **defect** (the analyzer is wrong, a record is false, a
-   guarantee is not enforced), also register it in
-   `tests/validation/FINDINGS.md`: a status-table row and a `##` section,
-   with the next free ID of the fitting series and the existing field
-   format. A finding records what is wrong; a backlog row records the work
-   to fix it.
+   guarantee is not enforced), also register it in the findings register:
+   a new file, `tests/validation/findings/<ID>.md`, holding its status row
+   and its `##` section, with the next free ID of the fitting series
+   (`node scripts/next-id.mjs <series>`) and the existing field format;
+   then regenerate the index with `node scripts/generate-scorecard.mjs`
+   (`tests/validation/findings/README.md`). A finding records what is
+   wrong; a backlog row records the work to fix it. A new backlog row's ID
+   comes from `node scripts/next-id.mjs BL`.
 5. A defect that could produce a false `NOT_AFFECTED` or a silently
    dropped finding is at least `P1`, and is stated prominently in the
    report.

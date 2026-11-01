@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { isDeepStrictEqual } from "node:util";
 
+import { readFindingsRegisterText } from "../../scripts/findings-register.mjs";
 import {
   classifyFindingsRegister,
   type FindingsRegister,
@@ -72,6 +73,11 @@ export interface OpenSoundnessDefect<Pattern, Outcome> {
 
 /** The two documents a record's references must resolve against. */
 export interface DefectRegisters {
+  /**
+   * The findings register, assembled from `tests/validation/findings/`
+   * (`readFindingsRegisterText`, task BL-119): a `## Status` table, then
+   * every record's sections.
+   */
   readonly findings: string;
   readonly openDebts: string;
 }
@@ -82,10 +88,7 @@ const repoRoot = path.resolve(
 
 export function loadDefectRegisters(): DefectRegisters {
   return {
-    findings: readFileSync(
-      path.join(repoRoot, "tests", "validation", "FINDINGS.md"),
-      "utf-8",
-    ),
+    findings: readFindingsRegisterText(repoRoot),
     openDebts: readFileSync(
       path.join(repoRoot, "docs", "OPEN-DEBTS.md"),
       "utf-8",
