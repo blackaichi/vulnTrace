@@ -22634,6 +22634,13 @@ regenerated `REPORT.md` is committed. `cases.json` is not touched:
 marking `RWB-09a` `knownFailure` is the decision D-09 leaves to the
 project owner.
 
+**Appended by task BL-118 (2026-11-01).** A fourth record still
+restated the count: `LIVE_SIGNALS`'s `live-osv-validation` entry in
+`src/testing/foundation-invariants.ts` said "five cases are deliberately
+kept failing (OPEN-DEBTS D-09)". It now names D-09's cases without a count,
+as the other three records do since BL-089. Found while correcting
+`vitest.foundation.config.ts`'s header, which points to it.
+
 ## RWF-120 — A `for…of` head and a `with` body store into a builtin unseen, even by name
 
 **Status:** Fixed in part (BL-081; BL-091's re-audit, three rounds, did not certify the class: RWF-124, RWF-126, RWF-127, RWF-128 fixed in BL-091; decision backlog `BL-094`)

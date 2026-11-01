@@ -768,8 +768,8 @@ export const LIVE_SIGNALS: readonly {
     why:
       "Real npm packages against real advisories, replayed from a recorded " +
       "OSV snapshot since D-03 (was live, unconditionally, over the " +
-      "network). Not excluded for network reasons any more: five cases " +
-      "are deliberately kept failing (OPEN-DEBTS D-09) and the suite " +
+      "network). Not excluded for network reasons any more: the cases " +
+      "OPEN-DEBTS D-09 lists are deliberately kept failing, and the suite " +
       "asserts the expected verdict unconditionally, so it is not meant " +
       "to be all-green. Integration evidence that the analyzer works " +
       "against advisories nobody wrote for it, and a provider-movement " +
