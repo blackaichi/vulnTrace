@@ -919,7 +919,7 @@ function renderScope(): string {
     `<ul class="exclusions">${SUPPORTED_MODEL_EXCLUSIONS.map(
       (exclusion) => `<li>${text(exclusion)}</li>`,
     ).join("")}</ul>` +
-    `<p class="note">In-source loader and runtime capabilities are <em>not</em> in that list: those are modelled, and encountering one withdraws a negative proof entirely rather than weakening it.</p>` +
+    `<p class="note">In-source loader and runtime capabilities are <em>not</em> in that list: those are modelled, and encountering one withdraws a negative proof entirely rather than weakening it. The one exception is the trust boundary over the runtime's built-in prototypes: such a change is modelled only in part, and code the scan analyzes can make it.</p>` +
     `</section>`
   );
 }
