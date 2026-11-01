@@ -52,6 +52,7 @@ export type {
 export {
   SUPPORTED_MODEL_EXCLUSIONS,
   SUPPORTED_MODEL_STATEMENT,
+  BUILTIN_PROTOTYPE_TRUST_BOUNDARY,
 } from "./evidence.js";
 export type {
   KnownPackageRoots,

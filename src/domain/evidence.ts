@@ -101,7 +101,11 @@ declare const confirmedUnreachableTargetBrand: unique symbol;
  * out of agreement with it. In-source loader/runtime capabilities ARE
  * modeled -- they
  * widen the closure and make it incomplete, which withdraws this evidence
- * entirely rather than weakening it.
+ * entirely rather than weakening it. A change to the runtime's built-in
+ * prototypes is modeled only in part (a form the analyzer sees still
+ * withdraws the proof); beyond what it sees, the contract's trust boundary
+ * ({@link BUILTIN_PROTOTYPE_TRUST_BOUNDARY}) places the program outside
+ * the claim.
  *
  * It proves PACKAGE-LOAD absence only. It says nothing about which symbols
  * inside a package that IS loaded are reachable, so it can never justify a
@@ -304,6 +308,37 @@ export interface Evidence {
 }
 
 /**
+ * THE TRUST BOUNDARY over the runtime's built-in prototypes
+ * (docs/SOUNDNESS-CONTRACT.md § 1, "The trust boundary"; the project
+ * owner's decision of 2026-10-27, ADR 0010 "Decision record -- BL-111";
+ * task BL-113).
+ *
+ * Every NOT_AFFECTED assumes the program makes no change to the ECMAScript
+ * intrinsic prototype objects (Object.prototype, Array.prototype, ...),
+ * whatever its purpose: a polyfill, a shim or a freeze is a change too. It
+ * narrows what a NOT_AFFECTED claims and nothing else: edges, attributions
+ * and AFFECTED paths are held to their own rules.
+ * Unlike the other exclusions, the change is made by code the scan DOES
+ * analyze: Node's own loader runs JavaScript over objects that inherit from
+ * those prototypes, so a change to them can redirect a later load with no
+ * loader use in the program, on routes that differ by Node release
+ * (RWF-156, RWF-158, RWF-160, the boundary's documented cases).
+ *
+ * It covers the intrinsic prototypes ONLY. Node's own loader objects
+ * (`Module.prototype`, `require.cache`, ...), Node's other builtin
+ * prototypes (`URL.prototype`, `Buffer.prototype`, ...) and builtin
+ * objects that are not intrinsic prototypes (globals, a builtin module's
+ * exports, a builtin constructor's own properties such as
+ * `Array[Symbol.species]`) stay inside the model: whether the boundary
+ * reaches them is not decided.
+ *
+ * The contract quotes this text verbatim, and
+ * `evidence.trust-boundary.test.ts` holds the two together.
+ */
+export const BUILTIN_PROTOTYPE_TRUST_BOUNDARY =
+  "any change to the runtime's built-in prototype objects (Object.prototype, Array.prototype and the other ECMAScript intrinsic prototypes) made by any code the program runs, whether prototype pollution, a polyfill, a shim or a freeze";
+
+/**
  * VulnTrace's DECLARED SUPPORTED MODULE-LOADING MODEL: the enumerated
  * constructs every negative proof in this file is explicitly relative to,
  * and therefore claims nothing about.
@@ -321,7 +356,10 @@ export interface Evidence {
  * object, no completeness flag, and no verdict can retire one. In-source
  * loader/runtime capabilities are deliberately NOT in this list -- those
  * ARE modeled, and they withdraw a proof entirely (by making the closure
- * incomplete) rather than sitting outside it.
+ * incomplete) rather than sitting outside it -- with ONE exception, the
+ * trust boundary {@link BUILTIN_PROTOTYPE_TRUST_BOUNDARY}: a change to the
+ * built-in prototypes is modeled only in part, and the boundary covers the
+ * rest.
  */
 export const SUPPORTED_MODEL_EXCLUSIONS: readonly string[] = [
   "NODE_OPTIONS",
@@ -330,6 +368,7 @@ export const SUPPORTED_MODEL_EXCLUSIONS: readonly string[] = [
   "native addon behavior",
   "loader monkey-patching originating in code this scan never analyzed",
   "execution that begins somewhere other than the configured entrypoints",
+  BUILTIN_PROTOTYPE_TRUST_BOUNDARY,
 ];
 
 /**
