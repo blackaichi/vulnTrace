@@ -9,6 +9,7 @@ import {
   type Verdict,
   type VerdictObservation,
 } from "../../src/testing/open-soundness-defect.js";
+import { trustBoundaryCaseProblems } from "../../src/testing/trust-boundary-case.js";
 import {
   ALL_CASES,
   TARGET_MARKER,
@@ -22,7 +23,9 @@ import {
  * open-soundness-defect record, never an expectation: the analyzer does not
  * know the deployed release (as RWF-085), so the sound verdict is the same
  * on every release, and only real Node's ground truth differs
- * (`node-release-routes.ts`).
+ * (`node-release-routes.ts`). Task BL-113: RWF-156, RWF-158 and RWF-160
+ * are the trust boundary's documented limitation (SOUNDNESS-CONTRACT § 1),
+ * and their cases are trust-boundary cases, never an expectation.
  */
 
 // One macrotask turn before each case (backlog BL-033).
@@ -31,9 +34,37 @@ beforeEach(async () => {
 });
 
 describe.each(ALL_CASES.map((c) => [c.id, c] as const))("%s", (_id, kase) => {
-  it(`${kase.mechanism} -- ${kase.expected}`, async () => {
+  it(`${kase.mechanism} -- ${kase.boundaryCase ? `trust boundary; sound without it: ${kase.expected}` : kase.expected}`, async () => {
     const called = kase.called();
     const bl096Case = { ...kase, called };
+    if (kase.boundaryCase) {
+      // A documented case of the trust boundary (SOUNDNESS-CONTRACT § 1,
+      // task BL-113): fails when the analyzer starts answering soundly
+      // without the boundary (delete the record), when the result drifts
+      // (re-measure), and when the finding is no longer a documented
+      // limitation.
+      const result = await runOracleCase(oracleCase(bl096Case));
+      expect(
+        result.variant.groundTruth.calledMarkers.has(TARGET_MARKER),
+        `real Node v${process.versions.node}'s ground truth`,
+      ).toBe(called);
+      const coverage = result.variant.scan.output?.coverage;
+      expect(coverage).toBeDefined();
+      expect(
+        trustBoundaryCaseProblems(
+          {
+            caseId: kase.id,
+            rwf: kase.boundaryCase.rwf,
+            soundWithoutBoundary: [kase.expected],
+            observed: kase.boundaryCase.observed,
+          },
+          VERDICT_DOMAIN,
+          toVerdictObservation(result.variant.scan.findings[0], coverage!),
+          loadDefectRegisters().findings,
+        ),
+      ).toEqual([]);
+      return;
+    }
     if (kase.openDefect) {
       // Fails when the defect is fixed (delete the record) and when it
       // drifts (re-measure).

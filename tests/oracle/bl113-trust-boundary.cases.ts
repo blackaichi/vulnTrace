@@ -1,0 +1,113 @@
+import type { VerdictObservation } from "../../src/testing/open-soundness-defect.js";
+import {
+  type Bl096Case,
+  oracleCase,
+} from "./bl096-module-paths-read-only.cases.js";
+
+/**
+ * Task BL-113 (docs/tasks/BL-113-loader-trust-boundary.md): the edges of
+ * the trust boundary over the runtime's built-in prototypes
+ * (SOUNDNESS-CONTRACT § 1), against real Node.
+ *
+ * The boundary covers the ECMAScript intrinsic prototypes only; the
+ * project owner left its reach beyond them undecided (ADR 0010, "Decision
+ * record -- BL-111"). These cases measure the two sides of that edge with
+ * RWF-156's mechanism, a change Node's own loader acts on by inheritance:
+ *
+ * - `outside.*`: a change to a builtin object that is NOT an intrinsic
+ *   prototype, which the analyzer misses (RWF-161, an open defect: an
+ *   open-soundness-defect record, never an expectation);
+ * - `modeled.*`: the same change onto Node's own `Module.prototype`, which
+ *   the analyzer already answers `UNKNOWN` for, so the boundary need not
+ *   reach it.
+ *
+ * THE SETUP is BL-092's and BL-096's (see their cases files): the decoy
+ * `wrap/node_modules/vuln-lib@99.0.0`, the affected top-level
+ * `vuln-lib@1.0.0`, and `wrap/index.js` loading the decoy. Measured on the
+ * base (`03449a1`, BL-121's merge) with real Node v22.11.0.
+ */
+
+export {
+  ADVISORY_ID,
+  TARGET_MARKER,
+} from "./bl092-loader-capability-routes.cases.js";
+
+export { oracleCase };
+
+/** Drops `wrap`'s own `node_modules` from a lookup list handed to it. */
+const DROP =
+  `function __drop(a) {\n` +
+  `  if (Array.isArray(a) && typeof a[0] === "string" && a[0].endsWith("/wrap/node_modules")) a.shift();\n` +
+  `}\n`;
+
+/**
+ * A `paths` setter installed on `route` by the entry before it loads
+ * `wrap`: `Module.prototype.load`'s store of `wrap`'s new lookup list runs
+ * it, and it drops `wrap`'s own `node_modules` (as RWF-156's
+ * `audit2.paths-setter-in-entry`, on `Object.prototype`).
+ */
+function pathsSetterInEntry(route: string): string {
+  return (
+    DROP +
+    `Object.defineProperty(${route}, "paths", { configurable: true, set(v) { __drop(v); Object.defineProperty(this, "paths", { value: v, writable: true, enumerable: true, configurable: true }); } });\n` +
+    `require("wrap");\n`
+  );
+}
+
+/** The family-B proof the analyzer gives on the base for a case it misses. */
+function familyB(unknownEdges: number): VerdictObservation {
+  return {
+    verdict: "NOT_AFFECTED",
+    proofFamily: "B",
+    target: "vuln-lib#parse",
+    reachableSubgraphComplete: false,
+    unknownEdges,
+  };
+}
+
+export const ALL_CASES: readonly Bl096Case[] = [
+  {
+    id: "outside.array-species-own",
+    finding: "RWF-161",
+    mechanism:
+      "`Array[Symbol.species]` redefined on the constructor, no prototype changed: the loader's `ArrayPrototypeSlice` of the lookup paths builds the getter's Proxy, and its `unshift` writes `wrap`'s directories into it",
+    redirect: `Object.defineProperty(Array, Symbol.species, { configurable: true, get() { return function () { return new Proxy([], { set(t, k, v) { if (typeof v === "string" && v.endsWith("/wrap/node_modules")) v = "/nonexistent"; t[k] = v; return true; } }); }; } });\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    openDefect: { rwf: "RWF-161", observed: familyB(5) },
+  },
+  {
+    id: "modeled.module-prototype-require-module",
+    finding: "RWF-156",
+    mechanism:
+      'a `paths` setter on `require("module").prototype`, in the entry: Node\'s own loader object, modeled',
+    redirect: ``,
+    entry: pathsSetterInEntry(`require("module").prototype`),
+    called: true,
+    base: "UNKNOWN",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "modeled.module-prototype-get-prototype-of",
+    finding: "RWF-156",
+    mechanism:
+      "a `paths` setter on `Object.getPrototypeOf(module)`, in the entry: `Module.prototype` without its name, modeled",
+    redirect: ``,
+    entry: pathsSetterInEntry(`Object.getPrototypeOf(module)`),
+    called: true,
+    base: "UNKNOWN",
+    expected: "UNKNOWN",
+  },
+  {
+    id: "modeled.module-prototype-constructor",
+    finding: "RWF-156",
+    mechanism:
+      "a `paths` setter on `module.constructor.prototype`, in the entry: `Module.prototype` through `constructor`, modeled",
+    redirect: ``,
+    entry: pathsSetterInEntry(`module.constructor.prototype`),
+    called: true,
+    base: "UNKNOWN",
+    expected: "UNKNOWN",
+  },
+];

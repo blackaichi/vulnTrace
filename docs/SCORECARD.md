@@ -307,11 +307,11 @@ field and the vocabulary are documented in
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 230 | structural — the status rows of `tests/validation/findings/` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 59 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090, RWF-098, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-139, RWF-140, RWF-143, RWF-144, RWF-146, RWF-148, RWF-156, RWF-158, RWF-160, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-32, PRM-60, PRM-67, PRM-105, PRM-106, PRM-109 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Findings recorded | 231 | structural — the status rows of `tests/validation/findings/` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 57 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090, RWF-098, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-139, RWF-140, RWF-143, RWF-144, RWF-146, RWF-148, RWF-161, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-32, PRM-60, PRM-67, PRM-105, PRM-106, PRM-109 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
 | Open in part | 12 — RWF-002, RWF-063, RWF-064, RWF-070, RWF-110, RWF-120, RWF-127, RWF-145, RWF-155, RWF-157, PRM-107, PRM-108 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
 | Recorded as fixed | 159 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
-| Documented limitation | 0 | structural — the same table | Real Node can still differ from the analyzer's answer, but the program is outside what the soundness contract claims, by a trust boundary the contract states and its Status cell cites. Neither open nor fixed. | **Not a fix**: the boundary narrows what a verdict claims. Read the contract section the row cites before relying on a verdict. |
+| Documented limitation | 3 — RWF-156, RWF-158, RWF-160 | structural — the same table | Real Node can still differ from the analyzer's answer, but the program is outside what the soundness contract claims, by a trust boundary the contract states and its Status cell cites. Neither open nor fixed. | **Not a fix**: the boundary narrows what a verdict claims. Read the contract section the row cites before relying on a verdict. |
 
 ### 8.1 Outstanding findings, in their own words
 
@@ -364,9 +364,7 @@ generator writes nothing in this table except the category.
 | RWF-144 | open | Open (backlog `BL-080`) | false NOT_AFFECTED (family B), pre-existing — see below |
 | RWF-146 | open | Open (backlog `BL-103`) | not measured live: masked in the one shape measured — see below |
 | RWF-148 | open | Open (backlog `BL-104`) | false NOT_AFFECTED (family C), pre-existing — see below |
-| RWF-156 | open | Open (decision, backlog `BL-111`; implementation `BL-113`) | false NOT_AFFECTED (family B), pre-existing — see below |
-| RWF-158 | open | Open (decision, ADR 0010's "Proposed decision — BL-111"; implementation `BL-113`) | false NOT_AFFECTED (family B) on the releases that take the route, pre-existing — see below |
-| RWF-160 | open | Open (decision, ADR 0010's "Proposed decision — BL-111"; implementation `BL-113`) | false NOT_AFFECTED (family B) on the releases that take the route, pre-existing — see below |
+| RWF-161 | open | Open (backlog `BL-122`: the trust boundary's reach is the project owner's decision) | false NOT_AFFECTED (family B), pre-existing — see below |
 | AUD-03 | open | Open | false NOT_AFFECTED — see below |
 | AUD-04 | open | Open | false NOT_AFFECTED — see below |
 | AUD-13 | open | Open | false AFFECTED — see below |
@@ -392,6 +390,9 @@ generator writes nothing in this table except the category.
 | RWF-157 | open in part | **Fixed in part** (BL-110, for the lookup list; `C-2` / `C-3` for other capabilities) — see below | false NOT_AFFECTED (family B), pre-existing — see below |
 | PRM-107 | open in part | Fixed in part (BL-092: the false NOT_AFFECTED, family B; the false AFFECTED is C-5's) | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below |
 | PRM-108 | open in part | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below | false NOT_AFFECTED — see below |
+| RWF-156 | documented limitation | Documented limitation (the trust boundary over the runtime's built-in prototypes, SOUNDNESS-CONTRACT § 1; task `BL-113`) | false NOT_AFFECTED (family B), pre-existing — see below |
+| RWF-158 | documented limitation | Documented limitation (the trust boundary over the runtime's built-in prototypes, SOUNDNESS-CONTRACT § 1; task `BL-113`) | false NOT_AFFECTED (family B) on the releases that take the route, pre-existing — see below |
+| RWF-160 | documented limitation | Documented limitation (the trust boundary over the runtime's built-in prototypes, SOUNDNESS-CONTRACT § 1; task `BL-113`) | false NOT_AFFECTED (family B) on the releases that take the route, pre-existing — see below |
 
 ## 9. Commands referenced by the documentation
 

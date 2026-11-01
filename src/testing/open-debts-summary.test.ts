@@ -72,6 +72,12 @@ describe("OPEN-DEBTS D-17's summary", () => {
     }
   });
 
+  it("names exactly the register's documented limitations (task BL-113)", () => {
+    expect(
+      ids(bullet(entry, "Documented limitations of the trust boundary")),
+    ).toEqual(register.limitation.map((row) => row.id));
+  });
+
   it("links its full record", () => {
     expect(entry).toContain("[`open-debts/D-17.md`](open-debts/D-17.md)");
   });
