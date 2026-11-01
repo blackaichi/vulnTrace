@@ -41,7 +41,7 @@ cannot be averaged into one number without destroying both. Read the
 
 | Suite | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| `npm test` (full unit/integration/e2e) | PASS — 4830 tests, 198 files | measured (deterministic) — `npm test` at `a-2-possible-edge (base b7c8f57)`, 2026-09-29 | 242 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
+| `npm test` (full unit/integration/e2e) | PASS — 4830 tests, 198 files | measured (deterministic) — `npm test` at `a-2-possible-edge (base b7c8f57)`, 2026-09-29 | 244 `*.test.ts` files exist under `src/`. | Fully offline since task `D-03` (OPEN-DEBTS D-03, CLOSED): every suite that used to query the live OSV API unconditionally now replays a recorded snapshot of real OSV answers instead. See `docs/OPEN-DEBTS.md`. |
 | `npm run test:adversarial` | PASS — 124 tests | measured (deterministic) — `npm run test:adversarial` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Two independent suites (v1, v2) built to detect overfitting. | A research/coverage signal, not a contract owner: both suites deliberately keep scenarios that disagree with the analyzer rather than fixing the analyzer to pass them. |
 | `npm run test:performance` | PASS — 3 tests | measured (deterministic in shape, environmental in value) — `npm run test:performance` at `p1-b1-unsupported-construct-decomposition (base 094b4b9)`, 2026-09-17 | Coarse catastrophic-regression smoke against generous wall-clock ceilings. | Wall-clock, so machine-dependent. It answers 'did something explode', never 'is the complexity contract intact' — that is the structural operation-count gate `src/analysis/scan-caches.f5-multiplier.test.ts`. |
 | `npm run test:validation` | 12 passed / 5 failed (all known) | measured (deterministic) — `npm run test:validation` at `d-03-hermetic-osv-validation (base a87faa2)`, 2026-09-27 | Real npm-installed packages against real advisories, replayed from a recorded OSV snapshot since D-03 (was live). | Integration evidence and a provider-movement detector across re-recordings, never a correctness oracle. Owns no invariant in the map, on purpose. |
@@ -297,17 +297,19 @@ not on whether it exists.
 
 ## 8. Known defect register (RWF)
 
-Every value below is derived from the status table in
-`tests/validation/FINDINGS.md`. A row's status is read from that
-table's Status column only, through a closed vocabulary; an
+Every value below is derived from the findings register's status
+table: one row per record file under `tests/validation/findings/`,
+tabled in the generated `tests/validation/FINDINGS.md`. A row's status
+is read from its Status column only, through a closed vocabulary; an
 unrecognised status fails generation rather than being defaulted. The
-field and the vocabulary are documented next to the table.
+field and the vocabulary are documented in
+`tests/validation/findings/README.md`.
 
 | Metric | Current | Source | Interpretation | Limitation |
 | --- | --- | --- | --- | --- |
-| Findings recorded | 230 | structural — the status table in `tests/validation/FINDINGS.md` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
-| Still open | 59 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-32, PRM-60, PRM-67, PRM-105, PRM-106, PRM-109, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090, RWF-098, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-139, RWF-140, RWF-143, RWF-144, RWF-146, RWF-148, RWF-156, RWF-158, RWF-160 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
-| Open in part | 12 — RWF-002, PRM-107, PRM-108, RWF-063, RWF-064, RWF-070, RWF-110, RWF-120, RWF-127, RWF-145, RWF-155, RWF-157 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
+| Findings recorded | 230 | structural — the status rows of `tests/validation/findings/` | One row per finding section: generation fails if a section has no row or a row has no section. | Counts rows in the register, not distinct defects in the analyzer. |
+| Still open | 59 — RWF-001, RWF-006, RWF-044, RWF-047, RWF-048, RWF-049, RWF-052, RWF-055, RWF-058, RWF-059, RWF-061, RWF-062, RWF-065, RWF-067, RWF-069, RWF-074, RWF-076, RWF-077, RWF-079, RWF-080, RWF-081, RWF-082, RWF-085, RWF-086, RWF-089, RWF-090, RWF-098, RWF-099, RWF-101, RWF-102, RWF-107, RWF-108, RWF-109, RWF-111, RWF-113, RWF-118, RWF-121, RWF-139, RWF-140, RWF-143, RWF-144, RWF-146, RWF-148, RWF-156, RWF-158, RWF-160, AUD-03, AUD-04, AUD-13, AUD-16, PRM-21, PRM-22, PRM-24, PRM-32, PRM-60, PRM-67, PRM-105, PRM-106, PRM-109 | structural — the same table | Wholly outstanding. NOT all of one kind: an open row may be a precision gap or a soundness defect, and its own Impact cell, quoted in § 8.1, says which. Read it before reading this count as precision debt. | 'Open' is a status word in a table, not a scheduled task. See `docs/OPEN-DEBTS.md`. |
+| Open in part | 12 — RWF-002, RWF-063, RWF-064, RWF-070, RWF-110, RWF-120, RWF-127, RWF-145, RWF-155, RWF-157, PRM-107, PRM-108 | structural — the same table | Partly discharged, partly outstanding: a finding only partly fixed is not fixed. Its own Status cell, quoted in § 8.1, says which part. | **Counting these as closed is the register's single most consequential misreading**, and a blocker count recorded against a finding is not an implementation task count. See `docs/OPEN-DEBTS.md` D-06. |
 | Recorded as fixed | 159 | structural — the same table | Rows whose Status cell records the finding as wholly fixed. | A fix is proven for the shapes its fixtures cover. |
 
 ### 8.1 Outstanding findings, in their own words
@@ -324,19 +326,6 @@ this table except the category.
 | RWF-047 | open | Open — classified as a CLASS-B soundness defect, both directions reproduced; deliberately NOT remediated here, because RWF-047's own record required the class to be established first and the remedy differs by class. See `docs/OPEN-DEBTS.md` D-16 | **Soundness, CLASS B (correct binding identity, wrong runtime-value semantics), BOTH directions** — classified by reproduction on `a40ce49`, not by argument. False `AFFECTED`: `AFFECTED` on a RESOLVED edge into an export the program overwrote before calling, which real `node` never enters. False `NOT_AFFECTED`: the displacement chain CLOSES — the stale attribution supplies a resolved edge where the honest answer is unresolved, removing the `unknown` blocker, orphaning the real caller, and certifying a complete Family C proof (`reachableSubgraphComplete: true`, zero unresolved edges) over an export `node` executes. NOT class A (no local text reaches an export name — asserted against a fixture exporting `patched`) and NOT class C (with the write unconditionally above the call there is exactly one determinate runtime value). 7 of 10 widened shapes reach it |
 | RWF-048 | open | Open — the section is an instrument record and states no status; its eight refusal families are recorded, not resolved — see below | **Precision** — every disagreement is a refusal toward `UNKNOWN` |
 | RWF-049 | open | Open — the section's own heading is "Not fixed": recorded only — see below | **Precision debt, not a soundness defect** — fails toward `unresolved_target` (the section's classification) |
-| AUD-03 | open | Open | false NOT_AFFECTED — see below |
-| AUD-04 | open | Open | false NOT_AFFECTED — see below |
-| AUD-13 | open | Open | false AFFECTED — see below |
-| AUD-16 | open | Open | disclosure — see below |
-| PRM-21 | open | Open | false NOT_AFFECTED — see below |
-| PRM-22 | open | Open | false NOT_AFFECTED — see below |
-| PRM-24 | open | Open | false NOT_AFFECTED — see below |
-| PRM-32 | open | Open | false NOT_AFFECTED — see below |
-| PRM-60 | open | Open | false NOT_AFFECTED — see below |
-| PRM-67 | open | Open | disclosure — see below |
-| PRM-105 | open | Open | false NOT_AFFECTED — see below |
-| PRM-106 | open | Open | false NOT_AFFECTED — see below |
-| PRM-109 | open | Open | false NOT_AFFECTED — see below |
 | RWF-052 | open | Open | record — a register entry overstates an open defect — see below |
 | RWF-055 | open | Open | record — roughly a third of the backlog's stated justifications point nowhere, same shape as D-10 but far wider — see below |
 | RWF-058 | open | Open | fabricated edge (misattributed caller; no verdict moved) — see below |
@@ -377,9 +366,20 @@ this table except the category.
 | RWF-156 | open | Open (decision, backlog `BL-111`; implementation `BL-113`) | false NOT_AFFECTED (family B), pre-existing — see below |
 | RWF-158 | open | Open (decision, ADR 0010's "Proposed decision — BL-111"; implementation `BL-113`) | false NOT_AFFECTED (family B) on the releases that take the route, pre-existing — see below |
 | RWF-160 | open | Open (decision, ADR 0010's "Proposed decision — BL-111"; implementation `BL-113`) | false NOT_AFFECTED (family B) on the releases that take the route, pre-existing — see below |
+| AUD-03 | open | Open | false NOT_AFFECTED — see below |
+| AUD-04 | open | Open | false NOT_AFFECTED — see below |
+| AUD-13 | open | Open | false AFFECTED — see below |
+| AUD-16 | open | Open | disclosure — see below |
+| PRM-21 | open | Open | false NOT_AFFECTED — see below |
+| PRM-22 | open | Open | false NOT_AFFECTED — see below |
+| PRM-24 | open | Open | false NOT_AFFECTED — see below |
+| PRM-32 | open | Open | false NOT_AFFECTED — see below |
+| PRM-60 | open | Open | false NOT_AFFECTED — see below |
+| PRM-67 | open | Open | disclosure — see below |
+| PRM-105 | open | Open | false NOT_AFFECTED — see below |
+| PRM-106 | open | Open | false NOT_AFFECTED — see below |
+| PRM-109 | open | Open | false NOT_AFFECTED — see below |
 | RWF-002 | open in part | **Bypassed for unloaded packages (VT-307d)**; the underlying reachability-scoping tradeoff remains open — see below | Precision, but broad real-world reach — real applications routinely contain constructs the call graph can't fully model |
-| PRM-107 | open in part | Fixed in part (BL-092: the false NOT_AFFECTED, family B; the false AFFECTED is C-5's) | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below |
-| PRM-108 | open in part | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below | false NOT_AFFECTED — see below |
 | RWF-063 | open in part | Fixed in part (BL-081; BL-091's re-audit, three rounds, did not certify the class: RWF-124, RWF-126, RWF-127, RWF-128 fixed in BL-091; decision backlog `BL-094`) | false NOT_AFFECTED — see below |
 | RWF-064 | open in part | Fixed in part (A-3a): deferred hooks, contexts and throws are observed; a hook only a STRUCTURED argument reaches is not — see below | a test instrument could not enforce the guarantee it exists for (mechanical admission) — see below |
 | RWF-070 | open in part | Fixed in part (BL-081: a `constructor` store onto a promise); `static [Symbol.species]` remains open (backlog `BL-046`) | false NOT_AFFECTED — see below |
@@ -389,6 +389,8 @@ this table except the category.
 | RWF-145 | open in part | **Fixed** in part (BL-099: `import X =`); a namespace and an enum open, masked (backlog `BL-102`) — see below | false NOT_AFFECTED (family C), pre-existing — see below |
 | RWF-155 | open in part | **Fixed in part** (BL-110, for the lookup list; `C-3` for other capabilities) — see below | false NOT_AFFECTED (family B), pre-existing — see below |
 | RWF-157 | open in part | **Fixed in part** (BL-110, for the lookup list; `C-2` / `C-3` for other capabilities) — see below | false NOT_AFFECTED (family B), pre-existing — see below |
+| PRM-107 | open in part | Fixed in part (BL-092: the false NOT_AFFECTED, family B; the false AFFECTED is C-5's) | false NOT_AFFECTED (family B, nested instance) and false AFFECTED (top instance) — see below |
+| PRM-108 | open in part | Fixed in part (A-6: the origin -- string, template and computed-literal keys); an unreadable computed key whose local name is not a loader-capable member of that builtin is still a false NOT_AFFECTED at the consumer (task C-4) — see below | false NOT_AFFECTED — see below |
 
 ## 9. Commands referenced by the documentation
 

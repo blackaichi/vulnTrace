@@ -44,8 +44,11 @@ export interface FindingsRegister {
   readonly fixed: readonly FindingsRegisterRow[];
 }
 
-/** Classifies the status table of the given `FINDINGS.md` text. */
+/**
+ * Classifies the status table of the given register text: a `## Status`
+ * table, then the sections (`assembleFindingsRegister`).
+ */
 export function classifyFindingsRegister(text: string): FindingsRegister;
 
-/** Classifies the committed `tests/validation/FINDINGS.md`. */
+/** Classifies the committed register, `tests/validation/findings/`. */
 export function readFindingsRegister(): FindingsRegister;

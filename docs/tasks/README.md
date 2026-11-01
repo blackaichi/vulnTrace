@@ -100,6 +100,7 @@ deleted.
 **Discovered work.** Work found while doing a task that the task does not
 require gets a backlog row (priority, dependencies, and the source
 "discovered in" plus the task's ID), rather than being folded in. A
-discovered defect is also registered in `tests/validation/FINDINGS.md`.
+discovered defect is also registered in the findings register,
+`tests/validation/findings/` (one file per finding, task `BL-119`).
 The full rule is in [`docs/WORKFLOW.md`](../WORKFLOW.md) § 2; the rest of
 the loop is in the same file.
