@@ -246,3 +246,10 @@ precision cost (corpora and `node_modules`).
   is backlog `BL-072`.
 - **RWF-101** (found here, a false `AFFECTED` through RWF-012's alias
   chase, outside the write set): registered, backlog `BL-071`, not fixed.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](E-1-export-write-set.md). PR #102, merged 2026-10-14; RWF-103 and RWF-104 are left to `BL-074` and `BL-075` (the owner's decision is pending). Closes PRM-26..30, 62, 63 (45 live shapes measured against real Node, seventeen of them found by its audit; PRM-103 was already closed by BL-064). ADR 0009 decision record "E-1's precision acceptance": 211 of 5,391 export bindings in `node_modules` lose attribution, ten adversarial-v2 holder findings go `AFFECTED` → `UNKNOWN` (ADV2-055's expectation with them). Found RWF-101 (`BL-071`), RWF-102 (`BL-073`); the precision narrowing is `BL-072`

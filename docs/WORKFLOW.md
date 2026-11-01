@@ -45,7 +45,9 @@ skipped tests; fail closed to `UNKNOWN`.
    [`docs/tasks/TEMPLATE.md`](tasks/TEMPLATE.md), or from
    [`docs/tasks/TEMPLATE-SHORT.md`](tasks/TEMPLATE-SHORT.md) when the
    specification already lives in a plan row, an ADR section or a decision
-   record; status `IN_PROGRESS`),
+   record; status `IN_PROGRESS`; written into the row's note file,
+   `docs/tasks/<ID>.md`, renamed, when the row links one:
+   [`tasks/README.md`](tasks/README.md), "Naming"),
    the task's backlog row set to `IN_PROGRESS`, and the previous task's
    row set to `MERGED`. `main` changes only through pull requests, so the
    previous task's merge is recorded here.
@@ -225,7 +227,9 @@ a needed refactor, a dependency or a prerequisite):
 3. Otherwise add a backlog row: a clear title and description, why it was
    created, its priority and dependencies, and the source "discovered in
    `<task ID>`". If it changes the order of existing tasks, update their
-   dependencies.
+   dependencies. A description over 300 characters goes into a note
+   file, `docs/tasks/<ID>.md`, which the row's `Notes` cell links
+   ([`tasks/README.md`](tasks/README.md), "Naming"; task `BL-119`).
 4. If it is a **defect** (the analyzer is wrong, a record is false, a
    guarantee is not enforced), also register it in the findings register:
    a new file, `tests/validation/findings/<ID>.md`, holding its status row

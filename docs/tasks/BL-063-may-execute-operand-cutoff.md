@@ -149,3 +149,10 @@ Appended at `READY_FOR_REVIEW` (the plan above is unchanged):
   (found by its independent audit) are registered and pinned as
   open-soundness-defect records (`tests/oracle/rwf094-may-throw-statement.test.ts`);
   their fixes are backlog `BL-064` and `BL-065`, not this task.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-063-may-execute-operand-cutoff.md). PR #98, merged 2026-10-12. Closes RWF-050, a live family-C false `NOT_AFFECTED` (13 spellings, `tests/oracle/rwf050-may-execute-operand.*`): `mayEndModuleEvaluation` uses RWF-026's MUST relation for a MAY question, so `FLAG && bail();` is not a cutoff though `if (FLAG) bail();` is. `module-model.ts` only. Deletes the RWF-050 records, and inverts the MAY "keeps authority" rows of the RWF-016..028 suites (48 tests under a prototype). Placed before E-1 (proposed): ADR 0009 § 8 makes E-1 protect those rows, a decision for the project owner (plan § 5a, "RWF-050-repro additions")

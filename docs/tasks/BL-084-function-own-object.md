@@ -193,3 +193,10 @@ In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
   taken for a read; masked; backlog `BL-087`). Accepted, measured: a
   1,000-link `a = b = … = Api` chain costs about 1 s against the base's
   0.3 s (unrealistic shape; no structural guard).
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Closes RWF-114, a live false `NOT_AFFECTED` pre-existing on the base: `arguments.callee` (and `arguments` handed on) in a sloppy function that may be an export object's value is censused as that object. `BL-086` (RWF-115) folded in on 2026-10-15 by the project owner's go: every route to a function's own object; [task file](BL-084-function-own-object.md). PR #106, merged 2026-10-15

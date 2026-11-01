@@ -251,3 +251,10 @@ In the format of `AGENTS.md` section J (`docs/WORKFLOW.md` § 5).
   V-2 and V-3 oracle reasons read `escaped_value` (the escape answers
   first; V-3's root incompleteness is isolated by a new integration case);
   the RWF-047 integration test's probe takes the call site's own edge.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Closes RWF-110, a live false `NOT_AFFECTED` pre-existing on the base (lane A, ADR 0008 § 2 and § 4): `({}).constructor.keys = f` or `install(Object)` in any module, then `Object.keys({})` anywhere, runs `f` with no edge. Needs the project owner's decision first, with a precision measurement: a function stored through a base that may be a builtin object is an escape, or every builtin call is unresolved when a module that may run can replace a builtin `BL-039` (RWF-063) folded in on 2026-10-16: RWF-110's `install(Object)` is RWF-063's parameter form, one rule closes both; [task file](BL-081-builtin-replaced-without-name.md). PR #108, merged 2026-10-18

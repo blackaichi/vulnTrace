@@ -233,3 +233,10 @@ re-audit's rounds and verdicts, and whether the class is now certified.
   re-entrant `storesOnto` path, and `isFresh` exponential in stores per
   binding; backlog `BL-093`); a JavaScript source compiled with loose class
   fields (RWF-127, not measured; in `BL-094`).
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+BL-081's audit ran ten rounds without certifying the class (each found live false `NOT_AFFECTED`s, every one pre-existing on the base and fixed on the branch). Round 10's two findings, RWF-122 (a builtin call's key read through fewer forms than its value) and RWF-123 (a `storesOnto` memo that ignored `with` bodies), were fixed after it as its auditor proposed, without a further round. Re-audit them and the class; also round 10's non-blocking items: the `unknown`-list cost (roughly quadratic when many stores sit on bases whose aliases cannot be followed: 10 s at 800), the memo key for unresolved names (a parameter named `exports` shares a bucket with the module's `exports`; no route measured), and the equivalent mutant M23 (`denotedDefinitionOf`'s value branch duplicates `definitionsDenotedBy`) [task file](BL-091-builtin-store-reaudit.md)

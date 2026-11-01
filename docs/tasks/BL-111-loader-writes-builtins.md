@@ -179,3 +179,9 @@ In the format of `AGENTS.md` § J, verdict `NEEDS_DECISION`.
   - they state that a sound (B) identifies storing builtins by identity;
   - the measured forms are described, not committed as fixtures.
 
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Needs the project owner's decision (lanes A and C). Closes RWF-156, a live false `NOT_AFFECTED` pre-existing on the base and open under every option BL-096 measured: an index or `paths` setter on `Object.prototype`, a Proxy as `Array.prototype`'s [[Prototype]], a store of `Array.prototype.constructor` whose species is a Proxy, or an `extensions` / `cache` setter (which `makeRequireFunction`'s plain stores hand the loader's registries to), receives the loader's state from `Module._resolveLookupPaths`'s `unshift` or `Module.prototype.load`'s `this.paths = …`, with no use of `module.paths` in the program. No per-use rule sees it; options to weigh: a closure-wide fact "a loaded file may define an accessor on a builtin prototype under any name, change its [[Prototype]], or store its `constructor`" widens the closure (accessors and [[Prototype]] alone are too narrow: the species route is a plain data store) (complete only as the escape row's relation, uncertified, ADR 0008 BL-094; its precision on real code to measure first: BL-096's census counts 314 of 450 packages with an escaping store), or a narrower fact over the stores real Node's loader writes can reach, measured against them

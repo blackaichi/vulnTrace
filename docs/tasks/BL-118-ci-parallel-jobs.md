@@ -165,3 +165,10 @@ branch's local gate run instead (the pull request's validation section).
 
 Not required (backlog: `Audit: no`; CI configuration and documentation
 only).
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+CI takes 7 to 11 min as one sequential job per Node release. The fast gates run once; the test suites run as parallel jobs on Node 20 and 26. Every gate of AGENTS.md § I keeps its command and runs on every pull request, and the foundation subset still runs on its own as well (F6 § 25). The config's header says `tests/validation/` needs the network (false since D-03) and implies CI runs only `npm test` (it also runs `test:foundation`)

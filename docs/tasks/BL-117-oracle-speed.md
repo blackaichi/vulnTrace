@@ -264,3 +264,10 @@ warning), which differs between any two fresh runs. `verify` now masks
 it, with a test. No other difference was found. On the final code, the
 whole-suite `verify` run passes: every result of the 10,374 the cold run
 stored matched a fresh run of the same inputs.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Tooling. Cache the loud-fixture check, the ground truth and the builtin probes, keyed by the Node binary and release, the exact script and fixture bytes, and the harness's source; `off` and `verify` modes like `VT_ORACLE_SCAN_REUSE`'s; CI runs uncached (authorized by the owner). Measured on `5c8bcc3`, machine under load: `test:oracle` 716 s wall, 1,434 tests; `builtin-admission.globals.test.ts` 670 s on its own; 9,392 synchronous real-Node runs in `runVariant`, about 1,052 s summed. No test skipped, no threshold relaxed; before and after measured as BL-089 did. A fresh-context review of the cache key before the pull request

@@ -146,3 +146,10 @@ baseline (OPEN-DEBTS D-09: `RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`,
 
 In the format of `AGENTS.md` § J (`docs/WORKFLOW.md` § 5), in exactly
 that order.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+**Premise corrected by BL-001 (RWF-053).** The original row's claim — "the notice does not exist" — is false: `README.md:80-88` has carried it since `ae82d33` (2026-09-26), before TASK-0. What actually needs fixing: README's `## Status` section does not point to it. See [task file](BL-001-readme-notice-record-correction.md), `tests/validation/FINDINGS.md` RWF-053, and `task-0-workflow-bootstrap.md`'s Corrections section. PR #75, merged 2026-09-27

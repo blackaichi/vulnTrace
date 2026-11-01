@@ -150,3 +150,10 @@ Appended at `READY_FOR_REVIEW` (the plan above is unchanged):
   (`tests/oracle/rwf096-callee-summary.test.ts`); their fixes are backlog
   `BL-066` and `BL-067`, not this task. The callee-summary body proof was
   out of this task's bounds.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-065-tagged-template-abrupt-tag.md). PR #99, merged 2026-10-12. Closes RWF-095, a live family-C false `NOT_AFFECTED` (2 open-soundness-defect records in `tests/oracle/rwf094-may-throw-statement.test.ts`): `isDefinitelyAbruptInvocation` knows only calls and constructions. `module-model.ts` only; no decision needed; small

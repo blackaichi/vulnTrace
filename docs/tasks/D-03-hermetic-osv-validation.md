@@ -265,3 +265,10 @@ OPEN-DEBTS D-09 baseline (`RWB-03`, `RWB-05`, `RWB-09b`, `VAL-002`,
 
 In the format of `AGENTS.md` § J (`docs/WORKFLOW.md` § 5), in exactly
 that order.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+**Placed ahead of A-1 by TASK-0's proposal**: every lane task reports validation differentials, and a live advisory database can move a finding between two runs of the same code. A hermetic snapshot makes those differentials attributable to the change. Must preserve D-09's five known failures case by case, or explain each movement. Test infrastructure only. `npm test` and `test:validation` are both hermetic now; CI-promotion of `test:validation` is a separate row, `BL-030` (needs a decision — the five known D-09 failures make it exit non-zero regardless of network access). [task file](D-03-hermetic-osv-validation.md). PR #76, merged 2026-09-27
