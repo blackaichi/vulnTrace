@@ -9,7 +9,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { NOTE_LIMIT } from "../../scripts/records-limits.mjs";
+import {
+  NOTE_LIMIT,
+  PROGRESS_MAX_LINES,
+} from "../../scripts/records-limits.mjs";
 
 const ROOT = path.resolve(fileURLToPath(new URL("../../", import.meta.url)));
 const TASKS = path.join(ROOT, "docs", "tasks");
@@ -87,5 +90,17 @@ describe("docs/tasks/BACKLOG.md's notes", () => {
         ).toMatch(/^## Backlog note$/m);
       }
     }
+  });
+});
+
+describe("docs/progress.md", () => {
+  it(`fits one screen: at most ${PROGRESS_MAX_LINES} lines (WORKFLOW § 6)`, () => {
+    const text = readFileSync(path.join(ROOT, "docs", "progress.md"), "utf-8");
+    const lines = text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+    expect(
+      lines,
+      "progress.md is the state, not a transcript: link the task file, the " +
+        "register or the backlog instead of restating them",
+    ).toBeLessThanOrEqual(PROGRESS_MAX_LINES);
   });
 });

@@ -402,7 +402,8 @@ VERDICT: READY_FOR_REVIEW | BLOCKED | NEEDS_DECISION
 
 ## 6. `docs/progress.md`
 
-One screen. The current objective; the implementation state in a few
+One screen: at most 60 lines, checked by
+`src/testing/records-limits.test.ts` (task `BL-119`). The current objective; the implementation state in a few
 lines (pointing to `docs/SCORECARD.md` and `docs/OPEN-DEBTS.md` for
 numbers instead of copying them); the key architectural decisions
 (pointing to the ADRs); the known limitations; the current task; the
