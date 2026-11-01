@@ -61,6 +61,11 @@ const REVIEWED = [
   // D-17's full record, moved out of OPEN-DEBTS.md by task BL-119: still
   // part of it, so still reviewed.
   "docs/open-debts/D-17.md",
+  // The project skills (task BL-120): instructions an agent follows step
+  // by step, so a path or script they name must exist.
+  ".claude/skills/task-start/SKILL.md",
+  ".claude/skills/task-finish/SKILL.md",
+  ".claude/skills/task-audit/SKILL.md",
 ];
 
 /**

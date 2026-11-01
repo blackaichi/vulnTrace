@@ -4,7 +4,7 @@ The state of the work, for a fresh session: one screen, at most 60 lines
 (`src/testing/records-limits.test.ts`; [`WORKFLOW.md`](WORKFLOW.md) § 6),
 updated by every task's last commit. A task's own account is its task file.
 
-**Last updated:** 2026-11-01, by `BL-119`.
+**Last updated:** 2026-11-01, by `BL-120`.
 
 ## Objective
 
@@ -43,11 +43,11 @@ so. `npm run test:validation` is local only: D-09's cases fail by design.
 
 ## Current task
 
-`BL-119` — records restructure ([task file](tasks/BL-119-records-restructure.md)): `READY_FOR_REVIEW`; no analyzer change.
+`BL-120` — agent tooling ([task file](tasks/BL-120-agent-tooling.md)): `READY_FOR_REVIEW`; no analyzer change. Skills `task-start`, `task-finish`, `task-audit` (`.claude/skills/`); `scripts/measure-options.mjs`.
 
 ## Next
 
-BACKLOG § 1 is the order: `BL-120`, `BL-121`, `BL-113`, then the rest.
+BACKLOG § 1 is the order: `BL-121`, `BL-113`, then the rest.
 `BL-107` awaits the owner's decision on O2e; `BL-078`, `BL-080` (P0),
 `BL-082`, `BL-083`, `BL-087` and `BL-090` need decisions. The P1 gaps
 `BL-057` and `BL-058` (small, from C-1), `BL-048`, `BL-050`, and `BL-040`,
@@ -56,4 +56,4 @@ candidates to reorder ahead of the rest of lane E.
 
 ## Recently discovered
 
-From `BL-119`: nothing in the analyzer (its task file, "Account").
+From `BL-120`: nothing in the analyzer (its task file, "Account").

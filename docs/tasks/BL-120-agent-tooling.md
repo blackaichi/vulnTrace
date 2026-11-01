@@ -2,11 +2,15 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-120
 - **Branch**: `bl-120-agent-tooling`
 - **Base SHA**: `d54511e91ccae8bb1d6139fc1a7d3a225594ecc1` (BL-119's merge, PR #125)
-- **Commits**: <!-- filled in by the last commit (READY_FOR_REVIEW) -->
+- **Commits**:
+  - `docs(tasks): BL-120 task file — agent tooling`
+  - `build(BL-120): check the branch's commit subjects (AGENTS.md § H)`
+  - `build(BL-120): measure-options — option patches measured against a base`
+  - (this commit) `docs(BL-120): skills to start, finish and audit a task; records`
 - **Superseded by**: —
 
 ## Specification
@@ -67,16 +71,16 @@ STOP conditions:
 
 ## Acceptance criteria
 
-- [ ] `.claude/skills/` holds three skills: start a task (WORKFLOW § 1.1),
+- [x] `.claude/skills/` holds three skills: start a task (WORKFLOW § 1.1),
       finish it (§ 1.6–§ 1.8 and § 5, with § 1.7's bookkeeping) and brief
       an independent audit (§ 1.5, round 0 and the rounds); each cites
       the sections it applies, and `node scripts/check-docs.mjs` reviews
       their paths and `npm run` names.
-- [ ] `node scripts/check-commit-subjects.mjs` checks every commit the
+- [x] `node scripts/check-commit-subjects.mjs` checks every commit the
       branch adds against AGENTS.md § H's subject rule (length and shape),
       exits non-zero on a violation, and is unit-tested without git; the
       finish skill runs it before pushing.
-- [ ] `node scripts/measure-options.mjs` measures any number of option
+- [x] `node scripts/measure-options.mjs` measures any number of option
       patches against a base, each in a detached worktree with
       `node_modules` copied, one after another, and reports per option:
       the oracle records flipped or drifted, the controls lost, the graph,
@@ -85,9 +89,9 @@ STOP conditions:
       given a predicate, the files and packages flagged. Its comparison
       logic is unit-tested; one end-to-end run on a small patch is
       recorded below.
-- [ ] WORKFLOW.md points to the skills and the script where it describes
+- [x] WORKFLOW.md points to the skills and the script where it describes
       the steps they carry out.
-- [ ] `node scripts/gates.mjs` passes in full, with the validation
+- [x] `node scripts/gates.mjs` passes in full, with the validation
       baseline unchanged.
 
 ## Gates and report
@@ -97,7 +101,91 @@ and verdict differentials are expected to be zero.
 
 ## Account
 
-<!-- Filled in while working. -->
+### Premises, as verified
+
+1. **True.** The four directories exist on `d54511e`. BL-094's
+   `measure.sh` ran the oracle suite, the differential and a corpus walk
+   per patch; BL-096's and BL-111's `census.mjs` counted files and
+   packages; BL-111's `results.md` tabulates files and packages flagged,
+   verdicts moved, validation proofs lost and controls lost; BL-114
+   re-measured BL-111's patches.
+2. **Partly false.** The fixed words of `openSoundnessDefectProblems`
+   ("is now ADMISSIBLE", "the defect DRIFTED") do tell a flipped record
+   from a drifted one and from a lost control, but vitest's JSON
+   reporter does not carry them: a record is asserted as
+   `expect(problems).toEqual([])`, and the report keeps only
+   `expected [ Array(1) ] to deeply equal []`. Measured on BL-111's
+   `B.patch`: the six RWF-156 records were classified as lost controls.
+   The script therefore runs the oracle suite under its own reporter,
+   `scripts/measure-options-reporter.mjs`, which keeps each failure's
+   asserted value; no test was changed.
+3. **True.** All 18 commits from `de8af14` (BL-116's first) to `d54511e`
+   pass `node scripts/check-commit-subjects.mjs`, task by task
+   (`--base`/`--head` per task); the longest is 71 code points. The
+   earlier measurement with `awk` counted bytes (an em dash is three),
+   which is why the policy counts code points. BL-096's three subjects
+   (113 to 163 characters) fail it, as they should.
+4. **True.** BL-119 is merged (PR #125).
+5. **True.** `.gitignore` ignores only `.claude/worktrees/`;
+   `.claude/settings.json` is already tracked.
+
+### What was built
+
+- **Skills** (`.claude/skills/`): `task-start` (WORKFLOW § 1.1),
+  `task-finish` (§ 1.3–§ 1.8, § 5), `task-audit` (§ 1.5: round 0, the
+  rounds' brief, after round 2). Each cites the sections it applies and
+  defers to them. The audit skill says to launch a new agent, never a
+  fork, since a fork inherits the implementation history. All three are
+  in `check-docs.mjs`'s reviewed set (12 documents now).
+- **Commit subjects**: `scripts/commit-subject-policy.mjs` (pure, with
+  `src/testing/commit-subject-policy.test.ts`) and
+  `scripts/check-commit-subjects.mjs` (`<base>..HEAD`, merges excluded).
+  The scope is the task's ID, or `tasks` with a summary starting with the
+  ID; one task per branch; the ten types history uses. It is run by the
+  finish skill, not added to AGENTS.md § I's gates (earlier history is not
+  rewritten, and no gate was asked for).
+- **`scripts/measure-options.mjs`**, with its pure comparison in
+  `scripts/measure-options-lib.mjs` (reusing `differential-lib.mjs`'s
+  `summarize`) and its reporter; `src/testing/measure-options-lib.test.ts`
+  drives both from synthetic reports, including the real message
+  `openSoundnessDefectProblems` writes.
+- **WORKFLOW.md** points to the skills in § 1.1, § 1.5 and § 1.7, and to
+  the script in § 3.
+
+### The end-to-end run
+
+`node scripts/measure-options.mjs` on BL-111's `B.patch` against
+`d54511e`, with the oracle file `tests/oracle/bl096-module-paths-read-only.test.ts`,
+the cases `RWB-07, RWB-11a, RWB-11b, ADV2-085, ADV-001`, and BL-111's
+census predicate over five packages (`semver`, `yaml`, `ajv`,
+`picomatch`, `minimatch`). About 85 s per side.
+
+| | base | `B` | BL-111's `results.md` for (B) |
+| --- | ---: | ---: | --- |
+| open records flipped | — | 6 | RWF-156's 6 records `UNKNOWN` |
+| controls lost | — | 4 (the `sound.*` cases) | 4 BL-096 `sound.*` controls lost |
+| verdicts changed (into `NOT_AFFECTED`) | — | 4 (0): `ADV2-085`, `RWB-07`, `RWB-11a`, `RWB-11b` | the same 4, 0 |
+| proof differential | — | 4 | 4 findings |
+| graph differential | — | 0 | 0 |
+| `validation` `NOT_AFFECTED` proofs lost | — | 2 of 2 (`RWB-07`, `RWB-11b`) | 2 (the same) |
+| census: files / packages flagged | unavailable | 85 of 315 / 4 of 5 | (other roots) |
+
+The census is "unavailable" on the base because its build has no
+`fileMayRedirectLoader`: the case the script reports instead of a zero.
+The first run, before the reporter, reported the six records as lost
+controls (premise 2). The flipped and lost rows above are from the
+second run, oracle only; the rest from the first.
+
+### Deviations
+
+- Premise 2 (above): a reporter of the script's own, instead of vitest's
+  JSON reporter.
+- `check-commit-subjects.mjs` takes `--head`, so a merged task's range can
+  be checked without a checkout.
+
+### Audit
+
+Not required (backlog: `Audit: no`; tooling and documentation only).
 
 ## Backlog note
 
