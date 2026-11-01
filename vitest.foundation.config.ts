@@ -12,8 +12,12 @@ import { defineConfig } from "vitest/config";
  * `npm test` — the same file, under the same `vitest.config.ts` rules, with
  * no separate copy and no duplicated assertions. Nothing here is excluded
  * from the full run, so the fast gate can never disagree with it, and CI
- * does not execute the full suite twice (F6 § 25): CI runs `npm test`,
- * which contains all of this.
+ * does not execute the full suite twice (F6 § 25). CI runs both
+ * `npm run test:foundation` and `npm test`, each as its own job on every
+ * Node release (`.github/workflows/ci.yml`, task BL-118), so these files
+ * run twice there, by design: the subset reports a broken Foundation
+ * invariant on its own. The local runner, `scripts/gates.mjs`, runs each
+ * file once (task BL-089).
  *
  * WHAT QUALIFIES. A file belongs here when its failure is an unambiguous
  * report that a named Foundation invariant broke. The authoritative list
@@ -32,11 +36,13 @@ import { defineConfig } from "vitest/config";
  * - **Adversarial suites** (`tests/adversarial/`). Deterministic, but they
  *   deliberately keep failing scenarios as a research record rather than
  *   fixing the analyzer — so their result is not an invariant.
- * - **Live validation** (`tests/validation/`). Needs the network and the
- *   real OSV database. See `LIVE_SIGNALS` in the invariant map.
+ * - **Real-world validation** (`tests/validation/`). Offline since task
+ *   D-03: it replays a recorded snapshot of real OSV answers. It is absent
+ *   because the cases OPEN-DEBTS D-09 lists are deliberately kept failing,
+ *   so its result is not an invariant. See `LIVE_SIGNALS` in the invariant
+ *   map.
  *
- * The full gate remains `npm test` plus adversarial, performance, build,
- * typecheck, lint, prettier and `validate:history`; see README.md.
+ * The full gate set is AGENTS.md § I.
  */
 export default defineConfig({
   test: {
