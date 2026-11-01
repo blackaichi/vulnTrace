@@ -3,7 +3,7 @@
 The state of the work, for a fresh session. One screen; not a transcript.
 Updated by every task's last commit ([`WORKFLOW.md`](WORKFLOW.md) § 1.7).
 
-**Last updated:** 2026-10-28, by `BL-117`.
+**Last updated:** 2026-11-01, by `BL-118`.
 
 ## Objective
 
@@ -318,19 +318,18 @@ exactly once (`BL-089`; [`WORKFLOW.md`](WORKFLOW.md) § 3).
 
 ## Current task
 
-`BL-117` — Oracle speed ([task file](tasks/BL-117-oracle-speed.md)):
-`READY_FOR_REVIEW`. Test tooling only; no analyzer change. The oracle
-harness caches real Node's answers on disk, locally
-(`src/testing/oracle/real-node-cache.ts`; CI uncached). The ambient
-builtins' admission tests run in four files, and `gates.mjs` has
-`--tier dev`. BL-116 is merged (PR #122). BL-094's O2e is still awaiting
-the owner, so `BL-107` waits.
+`BL-118` — CI's gates as parallel jobs
+([task file](tasks/BL-118-ci-parallel-jobs.md)): `READY_FOR_REVIEW`. CI
+configuration and documentation only; no analyzer change. The fast gates
+run once, on Node 20, and each test suite runs as its own job on Node 20
+and 26. The wall time went from about 10 minutes to about 5.5, and the
+oracle suite is now the critical path. BL-117 is merged (PR #123).
+BL-094's O2e is still awaiting the owner, so `BL-107` waits.
 
 ## Next
 
-The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-117`,
-the improvement tasks, in order: `BL-118` (CI in
-parallel), `BL-119` (records restructure), `BL-120` (agent tooling) and
+The order is [`tasks/BACKLOG.md`](tasks/BACKLOG.md) § 1. After `BL-118`,
+the improvement tasks, in order: `BL-119` (records restructure), `BL-120` (agent tooling) and
 `BL-121` (split `module-model.ts`). Then
 `BL-113` (implements BL-111's decision, option (C), with RWF-158 and RWF-160), `BL-115` (which
 Node releases the contract and CI cover; a decision), `BL-107` (implements O2e,
@@ -354,6 +353,10 @@ for a binding. `BL-106` (P3, precision) narrows BL-105's import-as-load
 withdrawals.
 
 ## Recently discovered
+
+From `BL-118`: nothing in the analyzer. `LIVE_SIGNALS` still said five
+validation cases are kept failing; D-09 lists six. It is corrected, and
+RWF-119, whose BL-089 fix had missed it, has an appended note.
 
 From `BL-117`: nothing in the analyzer. Its two key-review rounds found
 five holes in the new cache's key, all fixed before the pull request
