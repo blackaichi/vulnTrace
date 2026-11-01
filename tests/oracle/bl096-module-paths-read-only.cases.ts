@@ -30,6 +30,11 @@ import {
  * states its cost (`precisionCost`). The cases no rule over the list's
  * uses can see (RWF-156, backlog `BL-111`) stay open-soundness-defect
  * records (`openDefect`), never an expectation.
+ *
+ * Task BL-113 (docs/tasks/BL-113-loader-trust-boundary.md) implements
+ * BL-111's decision, the trust boundary over the runtime's built-in
+ * prototypes (SOUNDNESS-CONTRACT § 1): RWF-156 is its documented
+ * limitation, and its cases are trust-boundary cases (`boundaryCase`).
  */
 
 export {
@@ -45,6 +50,18 @@ export interface Bl096Case extends Bl092Case {
    * held as an open-soundness-defect record, never as an expectation.
    */
   readonly openDefect?: {
+    readonly rwf: string;
+    readonly observed: VerdictObservation;
+  };
+  /**
+   * A documented case of the trust boundary over the runtime's built-in
+   * prototypes (SOUNDNESS-CONTRACT § 1; task BL-113): the result the
+   * analyzer gives today, held as a trust-boundary case
+   * (`src/testing/trust-boundary-case.ts`), never as an expectation. The
+   * case's `expected` is then the verdict that is sound WITHOUT the
+   * boundary.
+   */
+  readonly boundaryCase?: {
     readonly rwf: string;
     readonly observed: VerdictObservation;
   };
@@ -548,7 +565,7 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-156", observed: familyB(6) },
+    boundaryCase: { rwf: "RWF-156", observed: familyB(6) },
   },
   {
     id: "audit2.proxy-parent-set-trap",
@@ -561,7 +578,7 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-156", observed: familyB(9) },
+    boundaryCase: { rwf: "RWF-156", observed: familyB(9) },
   },
   {
     id: "audit2.paths-setter-in-entry",
@@ -576,7 +593,7 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-156", observed: familyB(5) },
+    boundaryCase: { rwf: "RWF-156", observed: familyB(5) },
   },
   // ---------------------------------------------------------------------
   // Found by BL-096's independent audit (round 3): routes to the list that
@@ -703,7 +720,7 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-156", observed: familyB(3) },
+    boundaryCase: { rwf: "RWF-156", observed: familyB(3) },
   },
   // Found by BL-096's independent audit (round 4, CERTIFIED): RWF-156's
   // class reaches the loader's registries, through Node's own plain stores.
@@ -723,7 +740,7 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-156", observed: familyB(5) },
+    boundaryCase: { rwf: "RWF-156", observed: familyB(5) },
   },
   {
     id: "audit4.cache-setter-registry",
@@ -741,7 +758,7 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-156", observed: familyB(6) },
+    boundaryCase: { rwf: "RWF-156", observed: familyB(6) },
   },
   // ---------------------------------------------------------------------
   // Uses real Node never hands the list to user code, under every tamper

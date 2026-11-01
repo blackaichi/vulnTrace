@@ -9,6 +9,7 @@ import {
   type Verdict,
   type VerdictObservation,
 } from "../../src/testing/open-soundness-defect.js";
+import { trustBoundaryCaseProblems } from "../../src/testing/trust-boundary-case.js";
 import {
   ALL_CASES,
   TARGET_MARKER,
@@ -23,7 +24,9 @@ import {
  * the list asserts its sound verdict, and a control the decision gives up
  * states its cost. A case no rule over the list's uses can see (RWF-156,
  * backlog `BL-111`) is an open-soundness-defect record, never an
- * expectation.
+ * expectation. Task BL-113: RWF-156 is the trust boundary's documented
+ * limitation (SOUNDNESS-CONTRACT § 1), and its cases are trust-boundary
+ * cases, never an expectation either.
  */
 
 // One macrotask turn before each case (backlog BL-033).
@@ -32,7 +35,35 @@ beforeEach(async () => {
 });
 
 describe.each(ALL_CASES.map((c) => [c.id, c] as const))("%s", (_id, kase) => {
-  it(`${kase.mechanism} -- ${kase.expected}`, async () => {
+  it(`${kase.mechanism} -- ${kase.boundaryCase ? `trust boundary; sound without it: ${kase.expected}` : kase.expected}`, async () => {
+    if (kase.boundaryCase) {
+      // A documented case of the trust boundary (SOUNDNESS-CONTRACT § 1,
+      // task BL-113): fails when the analyzer starts answering soundly
+      // without the boundary (delete the record), when the result drifts
+      // (re-measure), and when the finding is no longer a documented
+      // limitation.
+      const result = await runOracleCase(oracleCase(kase));
+      expect(
+        result.variant.groundTruth.calledMarkers.has(TARGET_MARKER),
+        "real Node's ground truth",
+      ).toBe(kase.called);
+      const coverage = result.variant.scan.output?.coverage;
+      expect(coverage).toBeDefined();
+      expect(
+        trustBoundaryCaseProblems(
+          {
+            caseId: kase.id,
+            rwf: kase.boundaryCase.rwf,
+            soundWithoutBoundary: [kase.expected],
+            observed: kase.boundaryCase.observed,
+          },
+          VERDICT_DOMAIN,
+          toVerdictObservation(result.variant.scan.findings[0], coverage!),
+          loadDefectRegisters().findings,
+        ),
+      ).toEqual([]);
+      return;
+    }
     if (kase.openDefect) {
       // Fails when the defect is fixed (delete the record) and when it
       // drifts (re-measure).
