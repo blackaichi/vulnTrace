@@ -690,8 +690,16 @@ async function build() {
     entries.length === 0
       ? ""
       : ` — ${entries.map((entry) => entry.id).join(", ")}`;
-  const outstanding = [...register.open, ...register.partlyOpen];
-  const categoryLabel = { open: "open", partlyOpen: "open in part" };
+  const outstanding = [
+    ...register.open,
+    ...register.partlyOpen,
+    ...register.limitation,
+  ];
+  const categoryLabel = {
+    open: "open",
+    partlyOpen: "open in part",
+    limitation: "documented limitation",
+  };
   push(
     "## 8. Known defect register (RWF)",
     "",
@@ -733,12 +741,19 @@ async function build() {
       "Rows whose Status cell records the finding as wholly fixed.",
       "A fix is proven for the shapes its fixtures cover.",
     ]),
+    row([
+      "Documented limitation",
+      `${register.limitation.length}${ids(register.limitation)}`,
+      "structural — the same table",
+      "Real Node can still differ from the analyzer's answer, but the program is outside what the soundness contract claims, by a trust boundary the contract states and its Status cell cites. Neither open nor fixed.",
+      "**Not a fix**: the boundary narrows what a verdict claims. Read the contract section the row cites before relying on a verdict.",
+    ]),
     "",
     "### 8.1 Outstanding findings, in their own words",
     "",
-    "Every open and open-in-part row, with its Status and Impact cells",
-    "quoted verbatim from the register. The generator writes nothing in",
-    "this table except the category.",
+    "Every open, open-in-part and documented-limitation row, with its",
+    "Status and Impact cells quoted verbatim from the register. The",
+    "generator writes nothing in this table except the category.",
     "",
     row(["ID", "Category", "Status (verbatim)", "Impact (verbatim)"]),
     row(["---", "---", "---", "---"]),

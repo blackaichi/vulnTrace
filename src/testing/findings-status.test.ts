@@ -11,11 +11,15 @@
  * wording must produce.
  */
 
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
   classifyFindingsRegister,
   readFindingsRegister,
+  TRUST_BOUNDARY_SECTIONS,
 } from "../../scripts/scorecard-sources.mjs";
 
 /** A minimal FINDINGS.md: its `## Status` table, then a finding section. */
@@ -51,7 +55,7 @@ function tableText(tableLines: readonly string[], ids: readonly string[]) {
   ].join("\n");
 }
 
-type Outcome = "open" | "partlyOpen" | "fixed" | "refused";
+type Outcome = "open" | "partlyOpen" | "fixed" | "limitation" | "refused";
 
 /** Where one status cell lands, or `"refused"` when classification throws. */
 function classify(status: string, id = "RWF-900"): Outcome {
@@ -64,6 +68,7 @@ function classify(status: string, id = "RWF-900"): Outcome {
   if (register.fixed.some((row) => row.id === id)) return "fixed";
   if (register.partlyOpen.some((row) => row.id === id)) return "partlyOpen";
   if (register.open.some((row) => row.id === id)) return "open";
+  if (register.limitation.some((row) => row.id === id)) return "limitation";
   throw new Error(`${id} was parsed into no bucket at all`);
 }
 
@@ -116,6 +121,72 @@ describe("FINDINGS status classification", () => {
       expect(outcome).not.toBe("fixed");
       expect(outcome).not.toBe("refused");
       expect(["open", "partlyOpen"]).toContain(outcome);
+    });
+  });
+
+  describe("a documented limitation (task BL-113) is its own category", () => {
+    it.each([
+      "Documented limitation (trust boundary, SOUNDNESS-CONTRACT § 1; BL-113)",
+      "**Documented limitation** — SOUNDNESS-CONTRACT § 1",
+      "documented-limitation: SOUNDNESS-CONTRACT §1",
+    ])("%j → limitation, never fixed and never open", (status) => {
+      expect(classify(status)).toBe("limitation");
+    });
+
+    it.each([
+      "Documented limitation",
+      "Documented limitation (trust boundary; BL-113)",
+      "Documented limitation — see ADR 0010",
+      // A section that states no boundary (BL-113's audit, round 1, F1).
+      "Documented limitation (SOUNDNESS-CONTRACT § 99)",
+      "Documented limitation (SOUNDNESS-CONTRACT § 1, SOUNDNESS-CONTRACT § 3)",
+    ])(
+      "%j → refused: a limitation must cite the contract section that states it",
+      (status) => {
+        const text = findingsText([["RWF-977", status]]);
+        expect(() => classifyFindingsRegister(text)).toThrow(
+          /RWF-977: status value "documented limitation" must cite/,
+        );
+      },
+    );
+
+    it.each([
+      // BL-113's audit, round 1, F1: a limitation whose own cell says part
+      // of it is still open would leave the open count.
+      "Documented limitation (SOUNDNESS-CONTRACT § 1) for the prototype forms; the constructor route remains open and live",
+      "Documented limitation: not covered by SOUNDNESS-CONTRACT § 1, still open",
+      "Documented limitation (SOUNDNESS-CONTRACT § 1), fixed in part",
+    ])(
+      "%j → refused: a limitation whose own cell says part is still open",
+      (status) => {
+        const text = findingsText([["RWF-977", status]]);
+        expect(() => classifyFindingsRegister(text)).toThrow(
+          /RWF-977: status value "documented limitation" is contradicted/,
+        );
+      },
+    );
+
+    it("every boundary section a limitation may cite states its boundary in the contract", () => {
+      const contract = readFileSync(
+        path.join(
+          path.resolve(fileURLToPath(new URL("../../", import.meta.url))),
+          "docs",
+          "SOUNDNESS-CONTRACT.md",
+        ),
+        "utf-8",
+      );
+      expect(TRUST_BOUNDARY_SECTIONS.size).toBeGreaterThan(0);
+      for (const [section, heading] of TRUST_BOUNDARY_SECTIONS) {
+        const start = contract.indexOf(`\n## ${section}. `);
+        expect(start, `the contract has a § ${section}`).toBeGreaterThanOrEqual(
+          0,
+        );
+        const next = contract.indexOf("\n## ", start + 1);
+        const body = contract.slice(start, next < 0 ? undefined : next);
+        expect(body, `§ ${section} holds "${heading}"`).toContain(
+          `\n${heading}\n`,
+        );
+      }
     });
   });
 
@@ -280,7 +351,8 @@ describe("FINDINGS status classification", () => {
       expect(
         register.open.length +
           register.partlyOpen.length +
-          register.fixed.length,
+          register.fixed.length +
+          register.limitation.length,
       ).toBe(register.rows.length);
       expect(register.open.map((row) => row.id)).toContain("RWF-047");
       expect(register.fixed.map((row) => row.id)).not.toContain("RWF-047");
