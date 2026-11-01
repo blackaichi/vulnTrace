@@ -207,3 +207,10 @@ Appended at `READY_FOR_REVIEW` (the plan above is unchanged):
   asking with an unknowable count) survives as an equivalent mutant: every
   proof bottoms out in a `throw`-bodied callable that is itself a gate
   candidate.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-066-callee-summary-required-positions.md). `BL-067` folded in by the project owner on 2026-10-13. Closes RWF-096 and RWF-097. RWF-096, a live family-C false `NOT_AFFECTED` (2 open-soundness-defect records in `tests/oracle/rwf096-callee-summary.test.ts`): `callableAlwaysThrows` refuses `() => bail()` before reading its body. `module-model.ts` only; no decision needed; small. Candidate to combine with `BL-067` (same proof)

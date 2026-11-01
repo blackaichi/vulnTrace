@@ -181,3 +181,10 @@ start, except the commit list and the acceptance boxes.
   name), and the redundant cast unwrapping in `baseMayBeLoaded`
   (`valueMayBeLoaded` unwraps), each found as a mutation no test could
   catch.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-105-ts-esm-export-overwrite.md). Closes RWF-150, a live false `NOT_AFFECTED` and a fabricated `AFFECTED` edge, pre-existing on the base: in a TypeScript ES module compiled to CommonJS, `export function dec() {…} (exports as any).dec = …` (or `const e: any = exports; e.dec = …`) leaves an importer bound to the declared function; the emit reads the overwritten `decs_1.dec`. Lane E (ADR 0009): fix direction, the export write census reads `exports` / `module.exports` through `skipOuterExpressions` and aliases in a TypeScript ES module as in a CommonJS file, or withdraws the name. Reproductions in FINDINGS

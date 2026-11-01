@@ -254,3 +254,10 @@ as a deviation the project owner confirms by merging.
   exit 0.
 - **RWF-103's premise corrected:** the per-file rule withdraws 32.4% of
   `node_modules` attributions, not "nearly every TypeScript-emitted file".
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-074-load-result-dataflow.md). The owner gave the go without choosing; the task takes the recommended module-graph-aware option (b) and folds `BL-076` (RWF-106) in. Closes RWF-103, a live false `NOT_AFFECTED` pre-existing on the base. Needs the project owner's decision first (E-1's report): a per-file rule (every escaping load result withdraws the file; large precision cost on TypeScript-emitted code) or a module-graph-aware one (only a load that can reach back to this file, ADR 0009 § 4, or is unresolved). May fold into E-1

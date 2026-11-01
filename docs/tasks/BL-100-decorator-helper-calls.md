@@ -192,3 +192,10 @@ start.
   differentials are all zero, which is no evidence about decorated
   sources (OPEN-DEBTS D-12). The measured cost is `cost.legacy-method-decorator-returns-a-function`
   (both modes assumed) and the BL-095 control above.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-100-decorator-helper-calls.md). Closes RWF-142, live false `NOT_AFFECTED`s pre-existing on the base: a legacy decorator's returned setter descriptor installed by `__decorate` and run by a field store, and a TC39 field decorator's returned initializer run by `__runInitializers` on the field's value. Fix direction: a decorator's result is handed to a builtin at a non-admitted position; what it may invoke gets a possible or unknown edge

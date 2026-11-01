@@ -322,3 +322,10 @@ that as a deviation (exit 1), by design (RWF-119). Differential base
   and the timings' durations). The reuse also refuses `format: "html"`
   (its output cannot be re-rooted as data), and keeps the earlier scan's
   measured `timings`.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+**Placed first in § 1 by the project owner.** Tooling only. Measure every gate of `AGENTS.md` § I alone; run each test file exactly once across the local gate set (the foundation subset of `npm test` stays duplicated in CI, by design); cache the differential's base side under a key covering everything it reads; reuse a control's scan within an oracle run when its inputs are byte-identical; `scripts/gates.mjs` runs the set; `docs/WORKFLOW.md` § 1.5 and § 3. No test skipped, no threshold relaxed. [task file](BL-089-gate-speedup.md) PR #107, merged 2026-10-16

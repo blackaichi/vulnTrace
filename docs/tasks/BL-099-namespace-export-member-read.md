@@ -213,3 +213,10 @@ start.
   BL-102, with the enum member initializer note of round 4), RWF-146
   (BL-103), RWF-148 (a bodiless function declaration taken as a binding,
   live, BL-104).
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-099-namespace-export-member-read.md). Closes RWF-141, a live false `NOT_AFFECTED` pre-existing on the base: `class N { static get h() { return lib.parse; } … } namespace N { export let h = f; h(1); }` -- the emit reads `N.h`, the call graph resolves `h` to its initializer. Fix direction: in call resolution (`named-bindings.ts`), a use of a namespace's exported variable in its body is a member read; resolved only when the object provably holds the initializer, an unknown callee otherwise. PR #113, merged 2026-10-20

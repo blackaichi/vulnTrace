@@ -233,3 +233,10 @@ prominently, as a live false `NOT_AFFECTED` on CI's Node 20.
     through `Object.getPrototypeOf(module.exports)`, and the store made in
     another module. RWF-160's section now says its records are a sample,
     and BL-113's sweep covers them.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+The inventory (`scripts/bl111-loader-writes-options/`) is Node v22.11.0's, the only release installed where BL-111 ran. On a release with `require()` of an ES module (unflagged from v22.12, and in CI's Node 26), `Object.prototype.source` may replace a statically required ES module's source with no `import()`: a possible live false `NOT_AFFECTED` that a rule over define / [[Prototype]] / `constructor` / computed-key stores would not see, because it is a primitive store under a spelled name. Run `setup.sh`, `probe-inherited.cjs` and `gadgets.cjs` on each release and compare. PR #121, merged 2026-10-27

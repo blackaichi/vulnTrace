@@ -183,3 +183,10 @@ In the format of `AGENTS.md` section J.
   make a write fail, Annex B refusals, a memoized callee proof.
 - **RWF-098** is closed at the verdict level here rather than by `BL-068`,
   which is narrowed to its two single-write unit records and lowered to P2.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-064-may-throw-statement-cutoff.md). Closes RWF-094 under option (a), an ADR 0009 § 1 clause 4 amendment with a decision record (the owner gave the go without choosing; the recommended option was taken): five records deleted, and RWF-098's five verdict-level records closed with them. Its audit found RWF-100 (a refused whole-module write left a stale property write attributed), fixed here

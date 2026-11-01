@@ -119,3 +119,10 @@ losslessness check's output.
 ## Account
 
 Filled in while working.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Authorized by the owner: every FINDINGS record moved verbatim into its own file, append-only per file, with the index and status table generated (the scorecard and the docs-contract tests read it); AGENTS.md § B's wording updated to match. Measured on `5c8bcc3`: FINDINGS.md 1.46 MB (about 365k tokens, more than one context window holds); BACKLOG.md 172 KB, with notes up to 2,541 characters on one line; `progress.md` 551 lines against WORKFLOW § 6's one screen; D-17 about 1,100 lines

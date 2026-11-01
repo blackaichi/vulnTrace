@@ -333,3 +333,9 @@ Appended during the task; the text above is unchanged.
 
 **Discovered**: RWF-074 (backlog `BL-048`, P1).
 
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Half of A-5. Closes PRM-18. The project owner's decision of 2026-10-04: keep ADR 0008 § 4's static-member exception and A2's `const x = new C()` receiver authority, but withdraw a resolved method edge when ANY walked file may write that member (an assignment, a dynamic key, a reflective mutator), and only for a chain of plain class declarations with no shadowing field and no constructor `return`. Measured shapes in plan § 5a, "A-5 split". PR #84, merged 2026-10-05

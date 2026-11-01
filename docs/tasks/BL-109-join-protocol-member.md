@@ -179,3 +179,10 @@ start, except the status, the commit list and the acceptance boxes.
   `values`, `listenerCount` under `for await`), all reached only through
   the two rules' forms. A commit of its own, since the branch was already
   pushed.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Fixed RWF-151, RWF-152 (found by it: `toISOString`, `utf8Slice`, a stream's members, in a `__proto__` literal) and RWF-153 (found by its audit: the same members in a derived class), by the project owner's decisions of 2026-10-25 (ADR 0008, "Decision record — BL-109"): `join` is a protocol name, and every member of a literal whose `__proto__` is not proven ordinary, or of a derived class, is a protocol member. Closes RWF-151, a live false `NOT_AFFECTED` pre-existing on the base: an own `join` on an object whose chain reaches `Array.prototype.toString`, stored (`const a = []; a.join = f; String(a)`) or defined (`{ __proto__: [], join: f }`), runs on every coercion (`"" + a`, a template, `Number(a)`, `Math.max(a)`, `a == 1`, a computed key, an outer array coerced), but `join` is not in `PROTOCOL_NAMES`, so `f` gets no edge. Test the definition form and the trusted-builtin coercions too. `join` is a common member name: weigh an account limited to objects whose chain may include `Array.prototype` against the plain list entry, by measured precision. Fix direction: `join` is a protocol member (ADR 0008 § 2's row, task A-4), with its precision measured; and check the list against every implicit invocation the specification makes from an operation with no call in the program (a coercion's `ToPrimitive` and what it reaches, iteration, `await`, `JSON.stringify`), each confirmed against real Node. Adding a name to the list as amended may need the project owner's confirmation (ADR 0008's "Decision record — iterator methods and unreadable keys"). PR #117, merged 2026-10-25

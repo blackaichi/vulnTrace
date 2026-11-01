@@ -192,3 +192,9 @@ text above did not say.
   fix), and RWF-144's enumeration record takes the route the runtime has.
   23 cases pass on Node 22 and on Node 26.
 
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+[task file](BL-097-wrapper-arguments-frame.md). Closes RWF-137, a live false `NOT_AFFECTED` pre-existing on the base: `function g() { return g.caller.arguments[2]; }` called at module scope returns `module`. Fix direction: the frame-reach rule BL-074 / BL-084 apply in the export census (a function's `caller` / `arguments` read by any route, `Reflect.get` and computed keys included; V8's call sites through `Error.prepareStackTrace`, to be measured) fails closed in the loader classifier. PR #112, merged 2026-10-19

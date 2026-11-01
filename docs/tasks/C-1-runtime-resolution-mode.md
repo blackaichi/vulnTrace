@@ -224,3 +224,10 @@ In the format of `AGENTS.md` § J.
   specifier, nested named manifest, separate `@types` package) since the
   fix; the independent audit's verdict is recorded
   in the pull request.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Closes PRM-33 and RWF-083 (found by it); RWF-084 corrected (ADR 0010 § 5 did not measure the `paths` clause). By the project owner's decision of 2026-10-09 (strict C2), ADV-023, ADV2-015, ADV2-016 move `AFFECTED` → `UNKNOWN`. Found RWF-085 (`BL-056`) and, through its audits, RWF-086 (`BL-057`) and RWF-089 (`BL-058`); fixed RWF-087 and RWF-088 (audit findings 1-2). Registers `VT-INV-C-runtime-resolution`. PR #90, merged 2026-10-09

@@ -220,3 +220,10 @@ start.
   module; m.require(x)` and `globalThis.process.mainModule.require(x)` now
   assert `module_require`, the reason the spelled `module.require(x)`
   has: still closure-widening, now precise.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Closes RWF-129 and RWF-130, live false `NOT_AFFECTED`s (family A/B) pre-existing on the base, lane C (`loader-constructs.ts`): `const p = module.paths; p.shift()`, a parameter, `Array.prototype.shift.call(module.paths)`, an element or destructuring store, and `module.__proto__.require = …` redirect `require` unseen. Fix direction: any value use of `module.paths` / `require.main.paths` other than a safe-listed read is a loader capability, and `module.__proto__` is a route to `Module.prototype`. Reproductions in FINDINGS

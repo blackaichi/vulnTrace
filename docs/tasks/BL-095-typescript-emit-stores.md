@@ -230,3 +230,9 @@ start.
 - **Tooling**: `scripts/bl081-builtin-store-escape-corpus.mjs` gained
   `--typescript`, to measure the precision cost on TypeScript sources.
 
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Closes RWF-131 and RWF-132, live false `NOT_AFFECTED`s (family C) pre-existing on the base, lane A (`escape-row.ts`): `namespace D { export const … }` merged with a class derived from `util.inspect` assigns onto the class; a field or parameter property named `__proto__` changes the object's [[Prototype]] under legacy class-field emit. Fix directions in FINDINGS. BL-094's decision may subsume it (for example, reading the project's TypeScript target and emit)

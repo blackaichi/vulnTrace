@@ -210,3 +210,10 @@ turn, and the error no longer occurs; the same error also appears in
 `npm run test:validation` on the unmodified base. Recorded as backlog
 `BL-033` (a hypothesis to verify, not a correction of WORKFLOW § 3 yet).
 Also discovered: `BL-032` (the suites' finding selector exists four times).
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Every lane task must report the three differentials (AGENTS.md § G). Today each task measures them ad hoc: per-task corpus scripts (`scripts/*-corpus.mjs`) and REMEDIATION-PLAN § 9's throwaway finding dump in scratch clones. One committed tool makes lane reports comparable. **Placed ahead of A-1 by TASK-0's proposal**, after D-03. Test infrastructure only. [task file](BL-029-differential-tool.md)

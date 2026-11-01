@@ -179,3 +179,10 @@ In the format of `AGENTS.md` section J. The verdict is expected to be
   addressed; round 2 `CERTIFIED` with five non-blocking findings (RWF-151
   wider than its first record; a mechanism-based routing test for the
   certification criterion; three wording fixes), all addressed.
+
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Needs the project owner's decision. BL-081's ten audit rounds and BL-091's three each found live false `NOT_AFFECTED`s in the class; BL-091's were all an object proven the program's own that inherits an accessor, or a store the source does not show (TypeScript's emit). Options to weigh: keep point fixes with further audit rounds; prove freshness only for object literals and functions with no inheritance (no classes); or read a project's TypeScript target and JavaScript transpiler. Also open: a JavaScript source compiled with Babel's or swc's loose class fields (RWF-127, not measured), and the two emit stores of `BL-095` (RWF-131, RWF-132)

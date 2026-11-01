@@ -21,6 +21,19 @@ Start from [`TEMPLATE.md`](TEMPLATE.md), or from
 [`TEMPLATE-SHORT.md`](TEMPLATE-SHORT.md) when the specification already
 lives in a plan row, an ADR section or a decision record (task `BL-116`).
 
+**A row's note** (task `BL-119`). A `Notes` cell of
+[`BACKLOG.md`](BACKLOG.md) holds at most 300 characters
+(`scripts/records-limits.mjs`, checked by
+`src/testing/records-limits.test.ts`). A longer note lives in the task's
+file, under `## Backlog note`, and the cell links it:
+`[note](<file>#backlog-note)`. A task that has no task file yet gets a
+note file, `<ID>.md`, holding its title and that section. When such a
+task starts, its first commit writes the task file into that file and
+renames it to `<ID>-<slug>.md` (`git mv`, so its history follows), and
+the row's link follows the rename. The note stays as the file's last
+section; it is not rewritten. A note written after a task has started or
+merged is appended below it, dated.
+
 ## Workflow
 
 1. Write the task file with `Status: planned`.

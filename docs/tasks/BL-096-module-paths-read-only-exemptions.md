@@ -233,3 +233,9 @@ FINDINGS RWF-136, RWF-154, RWF-155 and RWF-157; backlog `BL-110`, which no
 longer depends on a pending decision; OPEN-DEBTS; progress. RWF-156 is not
 part of the decision (`BL-111`).
 
+## Backlog note
+
+Moved verbatim from this task's row in [`BACKLOG.md`](BACKLOG.md)
+by task `BL-119` (2026-11-01); the row links here.
+
+Needs the project owner's decision. Closes RWF-136, a live false `NOT_AFFECTED` pre-existing on the base: a module that replaces `Array.prototype.includes`, the array iterator or `join` runs with `module.paths` as `this` when the list is read through ADR 0010 § 4's admitted methods, iterated, or converted to a primitive. Options: each exemption only while no loaded file writes a builtin prototype member (with lane A's builtin-replacement facts, RWF-110), or fail closed on every use but an element or `length` read (cost: ADR 0010 § 4's precision controls). PR #118, merged 2026-10-26 (decision: option b2)
