@@ -22,6 +22,10 @@ skipped tests; fail closed to `UNKNOWN`.
 
 ### 1.1 Start
 
+The project skill `task-start` (`.claude/skills/task-start/SKILL.md`,
+task `BL-120`) carries out these steps as commands; this section stays
+the rule.
+
 1. Confirm the previous task's pull request is merged:
    `gh pr view <n> --json state,mergedAt`.
 2. `git fetch origin --prune`; fast-forward `main`; the tree is clean and
@@ -96,6 +100,9 @@ outside scope, debug leftovers, weakened tests, and comments whose premise
 the change made false.
 
 ### 1.5 Independent audit
+
+The project skill `task-audit` (`.claude/skills/task-audit/SKILL.md`,
+task `BL-120`) holds the brief for round 0 and the rounds.
 
 When the backlog row says `Audit: required`, launch a subagent with a
 fresh context and no implementation history. Give it only the task file,
@@ -200,6 +207,11 @@ commit builds and type-checks.
 Sets the backlog row and the task file to `READY_FOR_REVIEW`, records the
 commits in the task file, and updates [`docs/progress.md`](progress.md).
 It is part of the last micro-task's commit, not a commit of its own.
+
+The project skill `task-finish` (`.claude/skills/task-finish/SKILL.md`,
+task `BL-120`) carries out § 1.3 to § 1.8 and § 5 as commands. Before the
+push it runs `node scripts/check-commit-subjects.mjs`, which checks the
+subjects of the commits the branch adds against AGENTS.md § H.
 
 ### 1.8 Push, open the pull request, report, stop
 
@@ -351,6 +363,12 @@ states the mode a run used.
   corpora do not reach still need their own measurement (a per-task
   corpus script under `scripts/`, as recent task files and `FINDINGS.md`
   do).
+- A decision task that prototypes its options as patches against its
+  base measures them with `node scripts/measure-options.mjs` (task
+  `BL-120`): per option, the oracle records flipped or drifted and the
+  controls lost, the three differentials, the suites' `NOT_AFFECTED`
+  proofs lost by corpus, and, given a predicate, the files and packages
+  it flags. Its header documents the options.
 - If a suite exits non-zero with every test passing (a known vitest
   worker timeout under load), rerun it alone and report both runs.
 - Report exactly what was run and the result of each.
