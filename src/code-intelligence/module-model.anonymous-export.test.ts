@@ -5,8 +5,8 @@ import { indexSourceFile, type IndexedFunction } from "./source-index.js";
 /**
  * RWF-003: `module.exports = <function>` bound to its CONCRETE function
  * node, by source position rather than by name (see
- * `ExportBinding.localFunctionLocation` and
- * `directExportedFunctionLocation` in module-model.ts;
+ * `ExportBinding.localFunctionLocation` in module-model.ts and
+ * `directExportedFunctionLocation` in module-model.export-bindings.ts;
  * tests/validation/FINDINGS.md RWF-003).
  *
  * Every assertion here checks the *identity* the export resolves to, not

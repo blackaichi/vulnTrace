@@ -402,7 +402,7 @@ describe("RWF-004b: a conditional export assignment never manufactures a clean b
    *
    * `exports.parse` is written in BOTH branches of an `if`/`else`, each
    * from a different package. Every export-provenance fact in
-   * module-model.ts is read out of a LAST-WRITE-WINS map keyed by source
+   * the module model (module-model.*.ts) is read out of a LAST-WRITE-WINS map keyed by source
    * order, so an ungated chase forwards `wrapper.parse` to `pkg-b` alone
    * and silently asserts that `pkg-a`'s function is not what the export
    * holds. `pkg-a`'s target then resolves to a real node nothing points

@@ -24,8 +24,9 @@ import { indexSourceFile } from "./source-index.js";
  * returns is a property of its callee, not of call syntax in general.
  * RWF-016 adds exactly one narrow, PROVEN exception: a bare call to a
  * local, non-reassigned, uniquely-declared function/arrow whose own body
- * this file's text proves always throws. See module-model.ts's
- * `cannotCompleteNormally` and `resolveExactLocalCallable`.
+ * this file's text proves always throws. See `cannotCompleteNormally`
+ * (module-model.abruptness.ts) and `resolveExactLocalCallable`
+ * (module-model.local-callables.ts).
  *
  * A cyclic CommonJS `require()` can genuinely retain the earlier
  * (dangerous) export before `bail()` throws — see

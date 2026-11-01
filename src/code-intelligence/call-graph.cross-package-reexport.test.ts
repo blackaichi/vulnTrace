@@ -585,7 +585,8 @@ describe("buildCallGraph: RWF-004b keeps every existing refusal closed", () => {
     // The provenance map is last-write-wins by source order, which is
     // Node's semantics for straight-line code and nothing else. Chasing it
     // here would forward `parse` to pkg-b and silently deny that pkg-a's
-    // function is ever what the export holds -- see module-model.ts's
+    // function is ever what the export holds -- see
+    // module-model.export-provenance.ts's
     // `isDefinitelyReachedExportAssignment`.
     const root = tempProject();
     writeWrapper(

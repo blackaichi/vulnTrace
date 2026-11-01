@@ -28,7 +28,7 @@ import { buildFindingForTest } from "../testing/finding.js";
  * abrupt completion at all. Nothing prunes the statements that follow a
  * `throw`, a call that can only throw, or a class definition that cannot
  * finish. Abrupt-completion reasoning exists in this repository only in
- * module-model.ts, where RWF-016/017/018/019/020/022 use it to decide which
+ * the module model (module-model.*.ts), where RWF-016/017/018/019/020/022 use it to decide which
  * CommonJS export WRITE is authoritative -- a different question, on a
  * different graph, with a different (MUST-execute) quantifier.
  *

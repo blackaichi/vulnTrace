@@ -3545,7 +3545,8 @@ function capabilityWriteTargetReason(
  * module's top level, and `wrapper.arguments` is then its arguments
  * object), and V8's call sites (`getFunction()` is the frame's function,
  * `getThis()` its `this`). The frame names of the export census's
- * `REGISTRY_REACHING_MEMBER_NAMES` (`module-model.ts`, task BL-074), read
+ * `REGISTRY_REACHING_MEMBER_NAMES` (`module-model.loader-registry.ts`,
+ * task BL-074), read
  * here for the loader classifier.
  */
 const FRAME_REACHING_MEMBER_NAMES: ReadonlySet<string> = new Set([

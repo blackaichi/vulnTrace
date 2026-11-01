@@ -5,7 +5,7 @@ import { indexSourceFile } from "./source-index.js";
 /**
  * RWF-014: which `module.exports = X` write, if any, may define the
  * module's whole exported value — see
- * `selectAuthoritativeWholeModuleExport` in module-model.ts.
+ * `selectAuthoritativeWholeModuleExport` in module-model.export-bindings.ts.
  *
  * The unit under test is AUTHORITY SELECTION, so every assertion here is
  * about the *identity* the canonical `"default"` export resolves to, and

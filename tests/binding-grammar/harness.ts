@@ -98,7 +98,8 @@ function loudCommonJsSource(): string {
     //
     // The sweep's own numeric-export control found that
     // `module.exports = { "0": f }` is not indexed as an export at all:
-    // `module-model.ts`'s object-literal export extraction accepts an
+    // `module-model.export-bindings.ts`'s object-literal export extraction
+    // accepts an
     // IDENTIFIER property name or a COMPUTED one whose literal it can
     // read, and a plain string-literal or numeric-literal key matches
     // neither. Left as `"0": _n0`, every numeric slot in this fixture

@@ -5,8 +5,9 @@ import { indexSourceFile } from "./source-index.js";
 /**
  * RWF-015: a top-level `module.exports` write is authoritative only if
  * module evaluation DEFINITELY REACHES it — see
- * `isDefinitelyReachedModuleScopeStatement` and
- * `firstModuleEvaluationCutoff` in module-model.ts.
+ * `isDefinitelyReachedModuleScopeStatement` in
+ * module-model.export-provenance.ts and `firstModuleEvaluationCutoff` in
+ * module-model.evaluation-cutoff.ts.
  *
  * RWF-014 established that the last write in the file may define the
  * module's value when it is syntactically unconditional. That is not

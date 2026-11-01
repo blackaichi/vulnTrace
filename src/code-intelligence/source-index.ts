@@ -143,7 +143,7 @@ function hasSyntaxErrors(sourceFile: ts.SourceFile): boolean {
   return Array.isArray(diagnostics) && diagnostics.length > 0;
 }
 
-/** Shared by other code-intelligence modules that need to locate AST nodes (e.g. module-model.ts). */
+/** Shared by other code-intelligence modules that need to locate AST nodes (e.g. module-model.export-provenance.ts). */
 export function toSourceLocation(
   sourceFile: ts.SourceFile,
   node: ts.Node,
@@ -675,7 +675,7 @@ interface CommonJsExportTarget {
  * bindings and therefore roots), `commonJsExportPropertyName` in
  * commonjs-reexports.ts (re-export provenance, so a bracket re-export is
  * still recognised as foreign-origin), and `computedExportNameWrites` in
- * module-model.ts (which must treat exactly the keys NOT named here as
+ * module-model.entrypoint-roots.ts (which must treat exactly the keys NOT named here as
  * root incompleteness). A key this returns a name for is modeled; a key
  * it refuses must fail closed as incomplete.
  *
@@ -744,7 +744,7 @@ function describeCommonJsExportTarget(
   // exactly what the dot forms below publish, so they produce exactly the
   // same binding. Only keys this analyzer can name exactly qualify; a
   // dynamic key yields `undefined` here and is reported as root
-  // incompleteness by module-model.ts instead.
+  // incompleteness by module-model.entrypoint-roots.ts instead.
   if (ts.isElementAccessExpression(left)) {
     const exportedName = elementAccessExportName(left);
     return exportedName === undefined
