@@ -37,6 +37,8 @@ export {
   TARGET_MARKER,
 } from "./bl092-loader-capability-routes.cases.js";
 
+import { routeLive } from "./node-release-routes.js";
+
 export { oracleCase };
 
 /** The family-B proof the analyzer gives on the base for a case it misses. */
@@ -164,6 +166,103 @@ export const ALL_CASES: readonly Bl096Case[] = [
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
     openDefect: { rwf: "RWF-163", observed: familyB(2) },
+  },
+  {
+    id: "o3.fs-realpath-through-parameter",
+    finding: "RWF-163",
+    mechanism:
+      '`fs.realpathSync` replaced by a function handed `require("fs")` as a parameter (graceful-fs\'s shape): the receiver is not spelled as the builtin',
+    redirect:
+      `function __patch(fs) { const o = fs.realpathSync; fs.realpathSync = function (p, ...a) { return o.call(this, typeof p === "string" ? p${REWRITE} : p, ...a); }; }\n` +
+      `__patch(require("fs"));\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    openDefect: { rwf: "RWF-163", observed: familyB(2) },
+  },
+  {
+    id: "o3.path-resolve-require-esm",
+    finding: "RWF-163",
+    mechanism:
+      '`require("path").resolve` replaced before `require()` of an ES module, then restored: the lazily loaded ES module resolver keeps the replacement and resolves the module\'s `import "vuln-lib/index.js"` to the affected instance (release-dependent: `require-esm-resolver`)',
+    redirect:
+      `const __m = require("path");\n` +
+      `const __o = __m.resolve;\n` +
+      `__m.resolve = function (...a) { const r = __o.apply(this, a); return typeof r === "string" ? r${REWRITE} : r; };\n` +
+      `try { require("./e.mjs"); } catch {}\n` +
+      `__m.resolve = __o;\n`,
+    files: {
+      "node_modules/wrap/e.mjs": `import v from "vuln-lib/index.js";\nv.parse("x");\n`,
+    },
+    called: routeLive("require-esm-resolver"),
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    openDefect: { rwf: "RWF-163", observed: familyB(3) },
+  },
+  {
+    id: "o3.fs-opensync-require-esm",
+    finding: "RWF-163",
+    mechanism:
+      "`require(\"fs\").openSync` replaced before `require()` of an ES module: the ES module loader reads the source with `readFileSync(url)` and no encoding, which opens the file through `fs.openSync`, so the decoy's URL opens the affected instance's file (release-dependent: `require-esm-resolver`; BL-122's independent audit, round 2)",
+    redirect:
+      `const __f = require("fs");\n` +
+      `const __o = __f.openSync;\n` +
+      `__f.openSync = function (p, ...a) { const s = p instanceof URL ? p.href : String(p); if (s.includes("/wrap/node_modules/vuln-lib/index.js")) { const t = s${REWRITE}; return __o.call(this, p instanceof URL ? new URL(t) : t, ...a); } return __o.call(this, p, ...a); };\n` +
+      `try { require("./e.mjs"); } catch {}\n` +
+      `__f.openSync = __o;\n`,
+    files: {
+      "node_modules/wrap/e.mjs": `import v from "vuln-lib/index.js";\nv.parse("x");\n`,
+    },
+    called: routeLive("require-esm-resolver"),
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    openDefect: { rwf: "RWF-163", observed: familyB(6) },
+  },
+  {
+    id: "control.o3-require-esm-no-change",
+    finding: "RWF-163",
+    mechanism:
+      "the ES module forms' program with no replacement: `require()` of the ES module resolves `vuln-lib/index.js` to the decoy (where the release runs it)",
+    redirect: `try { require("./e.mjs"); } catch {}\n`,
+    files: {
+      "node_modules/wrap/e.mjs": `import v from "vuln-lib/index.js";\nv.parse("x");\n`,
+    },
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "o1.array-species-unspelled",
+    finding: "RWF-161",
+    mechanism:
+      "`Array[Symbol.species]` redefined on `[].constructor`: the `Array` constructor reached without its name",
+    redirect: `Object.defineProperty([].constructor, Symbol.species, { configurable: true, get() { return function () { return new Proxy([], { set(t, k, v) { if (typeof v === "string" && v.endsWith("/wrap/node_modules")) v = "/nonexistent"; t[k] = v; return true; } }); }; } });\n`,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    openDefect: { rwf: "RWF-161", observed: familyB(5) },
+  },
+  {
+    id: "o2.url-prototype-unspelled",
+    finding: "RWF-162",
+    mechanism:
+      "a `pathname` getter on `Object.getPrototypeOf(new URL(…))`: `URL.prototype` reached without its name",
+    redirect:
+      `const __p = Object.getPrototypeOf(new URL("file:///x"));\n` +
+      `const __d = Object.getOwnPropertyDescriptor(__p, "pathname");\n` +
+      `Object.defineProperty(__p, "pathname", { configurable: true, enumerable: true, set: __d.set, get() { return __d.get.call(this).replace("/wrap/node_modules/vuln-lib/", "/vuln-lib/"); } });\n`,
+    files: {
+      "node_modules/wrap/node_modules/vuln-lib/package.json": JSON.stringify({
+        name: "vuln-lib",
+        version: "99.0.0",
+        main: "index.js",
+        exports: { ".": "./index.js", "./index.js": "./index.js" },
+      }),
+    },
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    openDefect: { rwf: "RWF-162", observed: familyB(7) },
   },
   {
     id: "control.o3-path-resolve-identity",

@@ -34,7 +34,7 @@ for (const bin of binaries) {
       if (line.includes("workload ok: false")) console.error(`${version}: workload failed`);
       continue;
     }
-    const member = line.split("\t")[0];
+    const member = line.split("\t").slice(0, 2).join(" · ");
     if (!byMember.has(member)) byMember.set(member, new Set());
     byMember.get(member).add(version);
   }

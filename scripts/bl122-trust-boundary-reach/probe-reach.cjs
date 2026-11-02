@@ -130,10 +130,38 @@ for (const m of Module.builtinModules) {
 wrapObj(process, "O4 process", { data: true });
 wrapObj(globalThis, "O4 globalThis");
 
+// Three workloads, recorded apart (BL-122's independent audit, rounds 1
+// and 2: the ES module loader reads through members the CommonJS loader
+// does not): `cjs`, `require()` of an ES module (`require-esm`, where the
+// release runs it), and `import()`.
+let phase = "cjs";
+const byPhase = new Map();
+const flush = () => {
+  for (const [k, v] of hits) byPhase.set(`${phase}\t${k}`, v);
+  hits.clear();
+};
 on = true;
 const r = require(path.join(fixture, "node_modules/wrap"));
 const r2 = require(path.join(fixture, "node_modules/plain"));
 on = false;
-
-console.log(`# node ${process.version}; workload ok: ${Array.isArray(r) && r2.a === 1}`);
-for (const [k, v] of [...hits].sort(([a], [b]) => (a < b ? -1 : 1))) console.log(`${k}\t${v}`);
+flush();
+let requireEsm = "throws";
+phase = "require-esm";
+on = true;
+try {
+  requireEsm = String(require(path.join(fixture, "node_modules/esmuser/a.mjs")).default);
+} catch {}
+on = false;
+flush();
+phase = "import";
+on = true;
+import(require("url").pathToFileURL(path.join(fixture, "node_modules/esmuser/b.mjs")).href)
+  .then((m) => String(m.default), () => "throws")
+  .then((imported) => {
+    on = false;
+    flush();
+    console.log(
+      `# node ${process.version}; cjs workload ok: ${Array.isArray(r) && r2.a === 1}; require-esm: ${requireEsm}; import: ${imported}`,
+    );
+    for (const [k, v] of [...byPhase].sort(([a], [b]) => (a < b ? -1 : 1))) console.log(`${k}\t${v}`);
+  });

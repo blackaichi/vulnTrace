@@ -27,6 +27,23 @@ module.exports = function makeFixture(root) {
       `module.exports = [require("inner"), require("withexp"), require("withexp/sub"), require.resolve("plain")];\n`,
     "node_modules/wrap/node_modules/inner/package.json": { name: "inner", version: "1.0.0" },
     "node_modules/wrap/node_modules/inner/index.js": `module.exports = "inner";\n`,
+    // The ES module workloads (task BL-122's independent audit): an ES
+    // module `require()`d and one `import()`ed, each importing a CommonJS
+    // package with `exports`, an ES module package, and a relative module.
+    "node_modules/esmdep/package.json": {
+      name: "esmdep",
+      version: "1.0.0",
+      type: "module",
+      exports: { ".": "./index.js" },
+    },
+    "node_modules/esmdep/index.js": `export default "esmdep";\n`,
+    "node_modules/esmuser/package.json": { name: "esmuser", version: "1.0.0" },
+    "node_modules/esmuser/a.mjs":
+      `import w from "withexp";\nimport e from "esmdep";\nimport l from "./local-a.mjs";\nexport default [w, e, l].join();\n`,
+    "node_modules/esmuser/local-a.mjs": `export default "la";\n`,
+    "node_modules/esmuser/b.mjs":
+      `import s from "withexp/sub";\nimport e from "esmdep";\nimport l from "./local-b.mjs";\nexport default [s, e, l].join();\n`,
+    "node_modules/esmuser/local-b.mjs": `export default "lb";\n`,
   };
   for (const [rel, content] of Object.entries(files)) {
     const file = path.join(root, rel);
