@@ -22,7 +22,15 @@ export type LoaderRoute =
   /** v20's `trySelf` destructures `{ data, path }` from `false` for a module with no package scope. */
   | "try-self-scope"
   /** RWF-160: `Module.prototype.load`'s `this.paths ??= …` keeps a lookup list a new module inherits. */
-  | "inherited-paths";
+  | "inherited-paths"
+  /**
+   * RWF-163 (task BL-122): `require()` of an ES module runs the lazily
+   * loaded ES module resolver, which keeps the `path.resolve` it finds
+   * when it first loads, and reads the module's source through
+   * `fs.openSync` on the shared `fs` exports object
+   * (`scripts/bl122-trust-boundary-reach/require-esm-route.mjs`).
+   */
+  | "require-esm-resolver";
 
 interface ReleaseRange {
   /** The first release of the range: measured. */
@@ -92,6 +100,24 @@ export const RELEASE_ROUTES: Readonly<
       measured: ["24.0.0", "24.11.1", "24.12.0", "24.22.1"],
     },
     { ...LINE_26, live: false, measured: ["26.0.0", "26.12.1"] },
+  ],
+  "require-esm-resolver": [
+    { ...LINE_20, live: true, measured: ["20.19.0", "20.20.2"] },
+    // `require()` of an ES module throws ERR_REQUIRE_ESM before v22.12.0.
+    { from: "22.11.0", before: "22.12.0", live: false, measured: ["22.11.0"] },
+    {
+      from: "22.12.0",
+      before: "23.0.0",
+      live: true,
+      measured: ["22.12.0", "22.14.0", "22.15.0", "22.23.4"],
+    },
+    {
+      from: "24.0.0",
+      before: "25.0.0",
+      live: true,
+      measured: ["24.0.0", "24.11.1", "24.12.0", "24.22.1"],
+    },
+    { ...LINE_26, live: true, measured: ["26.0.0", "26.12.1"] },
   ],
   "inherited-paths": [
     { ...LINE_20, live: false, measured: ["20.19.0", "20.20.2"] },
