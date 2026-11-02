@@ -48,7 +48,7 @@ Every `NOT_AFFECTED` assumes no change to the built-in prototypes (§ 1).
 
 ## Next
 
-BACKLOG § 1 is the order: `BL-122` (the owner: the boundary's reach, RWF-161), then the rest.
+BACKLOG § 1 is the order: `BL-122` (P0; the owner: the boundary's reach, RWF-161/162), then the rest.
 `BL-107` awaits the owner's decision on O2e; `BL-078`, `BL-080` (P0),
 `BL-082`, `BL-087` and `BL-090` need decisions. The P1 gaps
 `BL-057` and `BL-058` (small, from C-1), `BL-048`, `BL-050`, and `BL-040`,
@@ -57,4 +57,4 @@ candidates to reorder ahead of the rest of lane E.
 
 ## Recently discovered
 
-From `BL-113`: RWF-161 (`BL-122`), `BL-123`, `BL-124`, `BL-125` (its task file, "Account").
+From `BL-113`: RWF-161, RWF-162 (`BL-122`), `BL-123`, `BL-124`, `BL-125` (its task file).

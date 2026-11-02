@@ -126,9 +126,8 @@ describe("FINDINGS status classification", () => {
 
   describe("a documented limitation (task BL-113) is its own category", () => {
     it.each([
-      "Documented limitation (trust boundary, SOUNDNESS-CONTRACT § 1; BL-113)",
-      "**Documented limitation** — SOUNDNESS-CONTRACT § 1",
-      "documented-limitation: SOUNDNESS-CONTRACT §1",
+      "Documented limitation (the trust boundary over the runtime's built-in prototypes, SOUNDNESS-CONTRACT § 1; task `BL-113`)",
+      "  Documented limitation (the trust boundary over the runtime's built-in prototypes, SOUNDNESS-CONTRACT § 1; task `BL-999`)  ",
     ])("%j → limitation, never fixed and never open", (status) => {
       expect(classify(status)).toBe("limitation");
     });
@@ -140,6 +139,7 @@ describe("FINDINGS status classification", () => {
       // A section that states no boundary (BL-113's audit, round 1, F1).
       "Documented limitation (SOUNDNESS-CONTRACT § 99)",
       "Documented limitation (SOUNDNESS-CONTRACT § 1, SOUNDNESS-CONTRACT § 3)",
+      "Documented limitation (the trust boundary over the runtime's built-in prototypes, SOUNDNESS-CONTRACT § 1; task `BL-113`; see SOUNDNESS-CONTRACT.md § 3)",
     ])(
       "%j → refused: a limitation must cite the contract section that states it",
       (status) => {
@@ -156,12 +156,18 @@ describe("FINDINGS status classification", () => {
       "Documented limitation (SOUNDNESS-CONTRACT § 1) for the prototype forms; the constructor route remains open and live",
       "Documented limitation: not covered by SOUNDNESS-CONTRACT § 1, still open",
       "Documented limitation (SOUNDNESS-CONTRACT § 1), fixed in part",
+      // BL-113's audit, round 2, R2-2: no shape but the closed one.
+      "Documented limitation (SOUNDNESS-CONTRACT § 1); the Array[Symbol.species] route is still live and unresolved",
+      "Documented limitation (SOUNDNESS-CONTRACT § 1) except the URL.prototype route, a live false NOT_AFFECTED",
+      "**Documented limitation** — SOUNDNESS-CONTRACT § 1",
+      "Documented limitation (the trust boundary over prototypes except URL, SOUNDNESS-CONTRACT § 1; task `BL-113`)",
+      "Documented limitation (the trust boundary over the live prototypes, SOUNDNESS-CONTRACT § 1; task `BL-113`)",
     ])(
       "%j → refused: a limitation whose own cell says part is still open",
       (status) => {
         const text = findingsText([["RWF-977", status]]);
         expect(() => classifyFindingsRegister(text)).toThrow(
-          /RWF-977: status value "documented limitation" is contradicted/,
+          /RWF-977: status value "documented limitation" must take exactly the shape/,
         );
       },
     );

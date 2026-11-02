@@ -46,8 +46,9 @@ export interface Bl096Case extends Bl092Case {
   /** The entry's source, when the case's tamper runs there. */
   readonly entry?: string;
   /**
-   * A case left open (RWF-156): the wrong result the analyzer gives today,
-   * held as an open-soundness-defect record, never as an expectation.
+   * A case left open: the wrong result the analyzer gives today, held as an
+   * open-soundness-defect record, never as an expectation. (RWF-156's cases
+   * were; since task BL-113 they are `boundaryCase`s.)
    */
   readonly openDefect?: {
     readonly rwf: string;
@@ -64,6 +65,12 @@ export interface Bl096Case extends Bl092Case {
   readonly boundaryCase?: {
     readonly rwf: string;
     readonly observed: VerdictObservation;
+    /**
+     * The id of the case in the same suite that runs this program WITHOUT
+     * the change to the built-in prototype, where real Node does not call
+     * the target (`src/testing/trust-boundary-case.ts`).
+     */
+    readonly control: string;
   };
 }
 
@@ -565,7 +572,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-156", observed: familyB(6) },
+    boundaryCase: {
+      rwf: "RWF-156",
+      observed: familyB(6),
+      control: "control.boundary-drop-only",
+    },
   },
   {
     id: "audit2.proxy-parent-set-trap",
@@ -578,7 +589,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-156", observed: familyB(9) },
+    boundaryCase: {
+      rwf: "RWF-156",
+      observed: familyB(9),
+      control: "control.boundary-drop-only",
+    },
   },
   {
     id: "audit2.paths-setter-in-entry",
@@ -593,7 +608,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-156", observed: familyB(5) },
+    boundaryCase: {
+      rwf: "RWF-156",
+      observed: familyB(5),
+      control: "control.boundary-entry-drop-only",
+    },
   },
   // ---------------------------------------------------------------------
   // Found by BL-096's independent audit (round 3): routes to the list that
@@ -720,7 +739,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-156", observed: familyB(3) },
+    boundaryCase: {
+      rwf: "RWF-156",
+      observed: familyB(3),
+      control: "control.boundary-species-class-only",
+    },
   },
   // Found by BL-096's independent audit (round 4, CERTIFIED): RWF-156's
   // class reaches the loader's registries, through Node's own plain stores.
@@ -740,7 +763,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-156", observed: familyB(5) },
+    boundaryCase: {
+      rwf: "RWF-156",
+      observed: familyB(5),
+      control: "control.boundary-helper-only",
+    },
   },
   {
     id: "audit4.cache-setter-registry",
@@ -758,7 +785,56 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-156", observed: familyB(6) },
+    boundaryCase: {
+      rwf: "RWF-156",
+      observed: familyB(6),
+      control: "control.boundary-helper-only",
+    },
+  },
+  // Task BL-113: each RWF-156 case's program WITHOUT its change to the
+  // built-in prototype (the trust-boundary cases' controls): real Node
+  // does not call the target.
+  {
+    id: "control.boundary-drop-only",
+    finding: "RWF-156",
+    mechanism:
+      "the drop helper defined, no change to a built-in prototype: Node resolves `vuln-lib/index.js` to the decoy",
+    redirect: DROP,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.boundary-entry-drop-only",
+    finding: "RWF-156",
+    mechanism:
+      "the entry defines the drop helper and loads `wrap`, no setter: Node resolves `vuln-lib/index.js` to the decoy",
+    redirect: ``,
+    entry: DROP + `require("wrap");\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.boundary-species-class-only",
+    finding: "RWF-156",
+    mechanism:
+      "the species class declared, `Array.prototype.constructor` left alone: Node resolves `vuln-lib/index.js` to the decoy",
+    redirect: `class C { static get [Symbol.species]() { return function () { return new Proxy([], { set(t, k, v) { if (typeof v === "string" && v.endsWith("/wrap/node_modules")) v = "/nonexistent"; t[k] = v; return true; } }); }; } }\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.boundary-helper-only",
+    finding: "RWF-156",
+    mechanism:
+      "the drop helper defined and `./helper.js` loaded, no setter: Node resolves `vuln-lib/index.js` to the decoy",
+    redirect: DROP + `require("./helper.js");\n`,
+    files: { "node_modules/wrap/helper.js": `exports.h = 1;\n` },
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
   },
   // ---------------------------------------------------------------------
   // Uses real Node never hands the list to user code, under every tamper

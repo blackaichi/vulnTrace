@@ -115,7 +115,11 @@ export const ALL_CASES: readonly Bl114Case[] = [
     called: () => routeLive("require-esm-source"),
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-158", observed: familyB(0) },
+    boundaryCase: {
+      rwf: "RWF-158",
+      observed: familyB(0),
+      control: "control.require-esm-no-store",
+    },
   },
   {
     id: "require-esm.source-unspelled-prototype",
@@ -129,7 +133,11 @@ export const ALL_CASES: readonly Bl114Case[] = [
     called: () => routeLive("require-esm-source"),
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-158", observed: familyB(0) },
+    boundaryCase: {
+      rwf: "RWF-158",
+      observed: familyB(0),
+      control: "control.require-esm-no-store",
+    },
   },
   {
     id: "control.require-esm-no-store",
@@ -157,7 +165,11 @@ export const ALL_CASES: readonly Bl114Case[] = [
     called: () => routeLive("try-self-scope"),
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-156", observed: familyB(9) },
+    boundaryCase: {
+      rwf: "RWF-156",
+      observed: familyB(9),
+      control: "control.try-self-no-store",
+    },
   },
   {
     id: "control.try-self-no-store",
@@ -185,7 +197,11 @@ export const ALL_CASES: readonly Bl114Case[] = [
     called: () => routeLive("inherited-paths"),
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-160", observed: familyB(3) },
+    boundaryCase: {
+      rwf: "RWF-160",
+      observed: familyB(3),
+      control: "control.inherited-paths-no-store",
+    },
   },
   {
     id: "inherited-paths.unspelled-prototype",
@@ -197,7 +213,11 @@ export const ALL_CASES: readonly Bl114Case[] = [
     called: () => routeLive("inherited-paths"),
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-160", observed: familyB(3) },
+    boundaryCase: {
+      rwf: "RWF-160",
+      observed: familyB(3),
+      control: "control.inherited-paths-no-store",
+    },
   },
   {
     id: "inherited-paths.define",
@@ -211,7 +231,11 @@ export const ALL_CASES: readonly Bl114Case[] = [
     called: () => routeLive("inherited-paths"),
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    boundaryCase: { rwf: "RWF-160", observed: familyB(4) },
+    boundaryCase: {
+      rwf: "RWF-160",
+      observed: familyB(4),
+      control: "control.inherited-paths-no-store",
+    },
   },
   {
     id: "control.inherited-paths-no-store",

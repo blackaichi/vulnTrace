@@ -65,6 +65,16 @@ function familyB(unknownEdges: number): VerdictObservation {
   };
 }
 
+/** The decoy `vuln-lib@99.0.0` with an `exports` field (RWF-162). */
+const DECOY_WITH_EXPORTS: Readonly<Record<string, string>> = {
+  "node_modules/wrap/node_modules/vuln-lib/package.json": JSON.stringify({
+    name: "vuln-lib",
+    version: "99.0.0",
+    main: "index.js",
+    exports: { ".": "./index.js", "./index.js": "./index.js" },
+  }),
+};
+
 export const ALL_CASES: readonly Bl096Case[] = [
   {
     id: "outside.array-species-own",
@@ -76,6 +86,31 @@ export const ALL_CASES: readonly Bl096Case[] = [
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
     openDefect: { rwf: "RWF-161", observed: familyB(5) },
+  },
+  {
+    id: "outside.url-prototype-pathname",
+    finding: "RWF-162",
+    mechanism:
+      "a `pathname` getter on `URL.prototype` (Node's own builtin prototype, not an intrinsic): the decoy declares `exports`, so Node's CommonJS loader resolves it through `fileURLToPath`, which reads the getter's path",
+    redirect:
+      `const __d = Object.getOwnPropertyDescriptor(URL.prototype, "pathname");\n` +
+      `Object.defineProperty(URL.prototype, "pathname", { configurable: true, enumerable: true, set: __d.set, get() { return __d.get.call(this).replace("/wrap/node_modules/vuln-lib/", "/vuln-lib/"); } });\n`,
+    files: DECOY_WITH_EXPORTS,
+    called: true,
+    base: "NOT_AFFECTED",
+    expected: "UNKNOWN",
+    openDefect: { rwf: "RWF-162", observed: familyB(5) },
+  },
+  {
+    id: "control.url-exports-no-change",
+    finding: "RWF-162",
+    mechanism:
+      "the same decoy with `exports`, no change: Node resolves `vuln-lib/index.js` to the decoy",
+    redirect: ``,
+    files: DECOY_WITH_EXPORTS,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
   },
   {
     id: "modeled.module-prototype-require-module",

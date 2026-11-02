@@ -2,11 +2,17 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-113
 - **Branch**: `bl-113-loader-trust-boundary`
 - **Base SHA**: `03449a179829099fc4d11d6d94f871dc832668b6` (BL-121's merge, PR #127)
-- **Commits**: <!-- filled in by the last commit (READY_FOR_REVIEW) -->
+- **Commits**:
+  - `docs(tasks): BL-113 task file — the built-in prototype trust boundary`
+  - `feat(BL-113): the built-in prototype trust boundary, contract and scope`
+  - `build(BL-113): a documented-limitation status and trust-boundary cases`
+  - `test(BL-113): RWF-156/158/160 as trust-boundary cases; RWF-161`
+  - `docs(BL-113): records — rows re-examined, discovered work, account`
+  - (this commit) `fix(BL-113): audit round 2: RWF-162, closed limitation cell, controls`
 - **Superseded by**: —
 
 ## Specification
@@ -90,30 +96,30 @@ than a text entry; a verdict moves.
 
 ## Acceptance criteria
 
-- [ ] SOUNDNESS-CONTRACT § 1 states the boundary: what a `NOT_AFFECTED`
+- [x] SOUNDNESS-CONTRACT § 1 states the boundary: what a `NOT_AFFECTED`
       assumes, the objects it covers (the ECMAScript intrinsic prototype
       objects) and what it does not cover, with the decision it comes
       from.
-- [ ] `SUPPORTED_MODEL_EXCLUSIONS` carries the boundary as one text
+- [x] `SUPPORTED_MODEL_EXCLUSIONS` carries the boundary as one text
       entry, and a named test fails when the entry is removed or drifts
       from the contract's wording.
-- [ ] The register has a status value for a documented limitation whose
+- [x] The register has a status value for a documented limitation whose
       category is never counted as fixed nor as open, and the scorecard
       reports it on its own.
-- [ ] RWF-156, RWF-158 and RWF-160 carry appended status notes and the
+- [x] RWF-156, RWF-158 and RWF-160 carry appended status notes and the
       documented-limitation status.
-- [ ] Their twelve open-soundness-defect records are kept as documented
+- [x] Their twelve open-soundness-defect records are kept as documented
       boundary cases: real Node's ground truth still asserted, the
       analyzer's exact result still compared (drift fails), the sound
       verdict outside the boundary stated, and no wrong verdict pinned as
       expected.
-- [ ] `BL-082`, `BL-083`, `BL-090` and `BL-115` are re-examined, each
+- [x] `BL-082`, `BL-083`, `BL-090` and `BL-115` are re-examined, each
       with its reason recorded in its row's note.
-- [ ] The redundancy of BL-075, BL-081, BL-091 and BL-110's rules under
+- [x] The redundancy of BL-075, BL-081, BL-091 and BL-110's rules under
       the boundary is measured and reported; no rule is withdrawn.
-- [ ] The live route outside the boundary (premise 4) is registered: a
+- [x] The live route outside the boundary (premise 4) is registered: a
       finding, an open-soundness-defect record and a backlog row.
-- [ ] Graph, proof and verdict differentials are all zero.
+- [x] Graph, proof and verdict differentials are all zero.
 
 ## Gates and report
 
@@ -253,6 +259,45 @@ attribution or `AFFECTED` records, so none moves (backlog `BL-123`, after
     Fixed: "modeled only in part".
   - F8: RWF-161's list of constructors with an own `Symbol.species` was
     incomplete. Fixed: RWF-161 and `BL-122` list all six, unmeasured.
+- **Round 2** (a fresh context; the first run was cut short, stopped by
+  the implementer, and run again; it does not count): **`BLOCKED`**. It
+  confirmed F1 to F8's fixes (F1 in part), the twelve conversions, and
+  that nothing conditions an edge, an attribution or an `AFFECTED` on the
+  boundary. Five findings. By WORKFLOW § 1.5 there is no third round:
+  - **R2-1, spilled (pre-existing):** a live false `NOT_AFFECTED` through
+    a `pathname` getter on `URL.prototype`, Node's own builtin prototype,
+    outside the boundary as worded. Reproduced as
+    `outside.url-prototype-pathname` (real Node calls the target; the
+    analyzer answers `NOT_AFFECTED`, family B), with its control. Spilled
+    as RWF-162: a findings record, an open-soundness-defect record, and
+    backlog `BL-122` raised to `P0`. The contract, the ADR 0010 note and
+    `BL-122` no longer say these objects are handled soundly.
+  - **R2-2, fixed:** a limitation cell could still say a route is live.
+    A cell must now take exactly one closed shape
+    (`LIMITATION_CELL`), whose boundary name may not say a defect
+    remains; a `SOUNDNESS-CONTRACT.md § n` citation counts too. Tests:
+    the auditor's three cells and two more, refused
+    (`findings-status.test.ts`).
+  - **R2-3, fixed:** nothing tied a trust-boundary case's wrong answer to
+    its prototype change. Every case now names a control, the same
+    program without the change, where real Node does not call the target
+    (four new controls in `bl096-module-paths-read-only`; BL-114's three
+    existing ones). Tests: `trust-boundary-case.test.ts` ("REJECTS a
+    control where real Node calls the target too"). Mutation: the species
+    case's control pointed at a case where Node calls the target, caught
+    by `audit3.species-constructor-store`.
+  - **R2-4, fixed:** D-17's "both lists" wording; it names the three
+    lists and their checks.
+  - **R2-5, fixed:** a stale field comment in the bl096 cases file.
+
+  Round 2's fixes are not audited again (WORKFLOW § 1.5); the pull
+  request names them under "Needs human review".
+
+  **Deviation (AGENTS.md § H):** round 2's fixes are their own commit,
+  the last one, not folded into the micro-task commits they touch. The
+  branch was pushed when a usage limit stopped the session after round 1,
+  and folding would have needed a force-push, which no rebase instruction
+  allowed.
 
 ## Backlog note
 

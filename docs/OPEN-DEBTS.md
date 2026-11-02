@@ -722,19 +722,21 @@ maps every open finding to its § 1 row.
   `RWF-070` (its species member), `RWF-098` (its unit records), `RWF-099`,
   `RWF-101`, `RWF-102`, `RWF-107`, `RWF-108`, `RWF-109`, `RWF-111`,
   `RWF-113`, `RWF-118`, `RWF-121`, `RWF-139`, `RWF-140`, `RWF-143`,
-  `RWF-144`, `RWF-145`, `RWF-146`, `RWF-148`, `RWF-155`, `RWF-157` and
-  `RWF-161`.
+  `RWF-144`, `RWF-145`, `RWF-146`, `RWF-148`, `RWF-155`, `RWF-157`,
+  `RWF-161` and `RWF-162`.
 - Documented limitations of the trust boundary, which left the list
   (SOUNDNESS-CONTRACT § 1, the project owner's decision of 2026-10-27;
   task `BL-113`): `RWF-156`, `RWF-158` and `RWF-160`. They are counted on
   their own in SCORECARD § 8, neither open nor fixed.
-- Among both lists are live false `NOT_AFFECTED`s, so the soundness
-  contract still does not hold on `main`, and criterion 3 of § 3 is
-  still unmet.
+- Among the two open lists are live false `NOT_AFFECTED`s, so the
+  soundness contract still does not hold on `main`, and criterion 3 of
+  § 3 is still unmet. The documented limitations are not among them: the
+  contract claims nothing about their programs.
 
-Both lists are checked against the register by
-`src/testing/open-debts-summary.test.ts`: an ID that stops being open fails
-it, and the task that fixes it updates this entry. Every open finding, in
+The three lists are checked against the register by
+`src/testing/open-debts-summary.test.ts`: an ID in an open list that stops
+being open fails it, the documented limitations must be exactly the
+register's, and the task that changes one updates this entry. Every open finding, in
 its own words, is in [`SCORECARD.md`](SCORECARD.md) § 8.
 
 ## 2. Target intelligence is not analyzer uncertainty

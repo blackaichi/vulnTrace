@@ -904,12 +904,18 @@ Two of the record's premises measured otherwise:
   target and the analyzer answers `NOT_AFFECTED` (RWF-161). It is in the
   reach this record left undecided, so it is an open defect, and backlog
   `BL-122` brings the reach to the owner with it.
-- **Node's own loader objects need no boundary.** The same `paths` setter
-  on `Module.prototype` (by `require("module").prototype`,
-  `Object.getPrototypeOf(module)` or `module.constructor.prototype`) is
-  already `UNKNOWN` with the analyzer
-  (`tests/oracle/bl113-trust-boundary.cases.ts`). Worded over the
-  intrinsic prototypes, the boundary leaves them modeled.
+- **`Module.prototype` needs no boundary; `URL.prototype` does or is a
+  defect.** The same `paths` setter on Node's own `Module.prototype` (by
+  `require("module").prototype`, `Object.getPrototypeOf(module)` or
+  `module.constructor.prototype`) is already `UNKNOWN` with the analyzer
+  (`tests/oracle/bl113-trust-boundary.cases.ts`). Node's other builtin
+  prototypes are not: BL-113's independent audit (round 2) measured a
+  `pathname` getter on `URL.prototype` redirecting a package resolved
+  through `exports` (real Node calls the target; the analyzer answers
+  `NOT_AFFECTED`: RWF-162). Worded over the intrinsic prototypes, the
+  boundary leaves it an open defect; under the decision's broader
+  reading ("Node's builtin prototypes") it would be the boundary's.
+  Backlog `BL-122` brings the reading to the owner.
 
 Two smaller corrections, for the record's "What it changes" list: the
 open-soundness-defect records were in `bl096-module-paths-read-only` and

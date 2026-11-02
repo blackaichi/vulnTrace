@@ -134,8 +134,10 @@ declared model's exclusions, in these words:
   release to the next. RWF-156, RWF-158 and RWF-160 are the boundary's
   documented cases (`tests/validation/findings/`, status "documented
   limitation").
-- **What it does not cover.** Every other object stays inside the model
-  and is analyzed as before:
+- **What it does not cover.** Every other object stays inside the
+  contract's claim, analyzed as before. That is no claim that each is
+  handled soundly: a false `NOT_AFFECTED` through one of them is an open
+  defect, recorded as such. They are:
   - Node's own loader objects: `Module`, `Module.prototype`, `require`,
     `module.paths`, `require.cache`, `require.extensions`;
   - Node's other builtin prototypes, which are not ECMAScript intrinsics:
@@ -150,7 +152,7 @@ declared model's exclusions, in these words:
   Whether the boundary reaches any of these is not decided (ADR 0010's
   decision record, "Not decided here"). A false `NOT_AFFECTED` through one
   of them is an open defect, not a case of this boundary (RWF-161:
-  `Array[Symbol.species]`).
+  `Array[Symbol.species]`; RWF-162: a getter on `URL.prototype`).
 - **What it is not.** It narrows what a `NOT_AFFECTED` claims, and nothing
   else. An `AFFECTED` path, a call edge and an export attribution are
   held to their own rules unchanged: an edge or an attribution that is
