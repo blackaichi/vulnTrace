@@ -723,7 +723,7 @@ maps every open finding to its § 1 row.
   `RWF-101`, `RWF-102`, `RWF-107`, `RWF-108`, `RWF-109`, `RWF-111`,
   `RWF-113`, `RWF-118`, `RWF-121`, `RWF-139`, `RWF-140`, `RWF-143`,
   `RWF-144`, `RWF-145`, `RWF-146`, `RWF-148`, `RWF-155`, `RWF-157`,
-  `RWF-161` and `RWF-162`.
+  `RWF-161`, `RWF-162` and `RWF-163` (task `BL-122`).
 - Documented limitations of the trust boundary, which left the list
   (SOUNDNESS-CONTRACT § 1, the project owner's decision of 2026-10-27;
   task `BL-113`): `RWF-156`, `RWF-158` and `RWF-160`. They are counted on

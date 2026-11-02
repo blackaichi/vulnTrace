@@ -923,3 +923,226 @@ open-soundness-defect records were in `bl096-module-paths-read-only` and
 `bl111-loader-inherited-reads`); and the scope disclosure is carried by
 the HTML report only, as every other exclusion is (the JSON result carries
 none: lane D's `D-1`).
+
+## Proposed decision — BL-122: the trust boundary's reach (PROPOSED — requires project-owner decision)
+
+Recorded by task
+[`BL-122`](../tasks/BL-122-trust-boundary-reach.md). This section is
+appended. It changes no earlier section, and nothing in it is
+implemented: SOUNDNESS-CONTRACT § 1 and the disclosure are unchanged on
+the branch. The inventory, the patches and the measurements are in
+`scripts/bl122-trust-boundary-reach/` (`results.md`). Base `58a5f32`;
+real Node v22.11.0, the inventory on 13 releases from v20.19.0 to
+v26.12.1.
+
+### The questions
+
+"Decision record — BL-111" left three things open, and BL-113 brought
+them back:
+
+1. **The reach.** The boundary covers the ECMAScript intrinsic
+   prototypes. Does it also cover a builtin constructor's own properties
+   (RWF-161), Node's own builtin prototypes (RWF-162), a builtin module's
+   exports object, or a global?
+2. **Node's other prototypes.** The decision said "Node's builtin
+   prototypes"; BL-113 took the narrower reading.
+3. **Beyond `NOT_AFFECTED`.** Does the boundary also condition an
+   `AFFECTED` path, a call edge or an export attribution?
+
+### What was measured
+
+- **What the loaders touch.** Every configurable member of four kinds of
+  builtin object was replaced by a recording wrapper, and three load
+  workloads run, each recorded apart: CommonJS loads, `require()` of an
+  ES module and `import()` (`scripts/bl122-trust-boundary-reach/results.md`
+  § 1; every member by workload and release in `reach-releases.md`). The
+  kinds: (O1) a builtin constructor's own properties; (O2) Node's own
+  builtin prototypes and constructors; (O3) a builtin module's exports
+  object (`process` and `console` are ones); (O4) the namespaces and
+  `globalThis`'s own members. In summary:
+  - **CommonJS loads** touch `Array[Symbol.species]` (O1);
+    `URL.prototype`'s accessors and `Buffer.isEncoding` (O2);
+    `fs.readFileSync`, `fs.realpathSync`, `path`'s functions and
+    `process.mainModule` (O3); no global (O4).
+  - **`require()` of an ES module** (from v20.19.0 and v22.12.0) also
+    touches `fs.openSync`, `readSync` and `closeSync`, `process.env`,
+    `util/types`' predicates (O3); more of `URL.prototype` (`hash` and
+    `search`, set too) and `Buffer.allocUnsafe` (O2); and, on some
+    releases, `JSON.parse` and global constructors called as functions
+    (O4).
+  - **`import()`** also touches `Promise[Symbol.species]` (O1),
+    `EventEmitter.prototype`'s methods (O2), `fs/promises.readFile` and
+    `process`'s event members (O3).
+
+  The first inventory ran the CommonJS workload only; BL-122's
+  independent audit (rounds 1 and 2) found the ES module loader's
+  members, and the inventory was extended.
+- **Live routes, end to end.** Real Node calls the target (for
+  `fs.readFileSync`: the decoy runs the affected instance's source) and
+  the analyzer answers `NOT_AFFECTED` (family B) on the base, in 14
+  oracle records, on v22.11.0, v20.20.2 and v26.12.1: RWF-161 (O1, also
+  through `[].constructor`), RWF-162 (O2, also through
+  `Object.getPrototypeOf(new URL(…))`) and **RWF-163, new** (O3, ten
+  forms: `path.resolve` assigned, defined, through `path/posix`, from a
+  sibling module, and before `require()` of an ES module;
+  `fs.realpathSync` assigned, through `Reflect.set` and through a
+  parameter; `fs.readFileSync` assigned; `fs.openSync` before `require()`
+  of an ES module). The two ES module forms are live on every release
+  measured where `require()` of an ES module runs (not v22.11.0).
+- **Not measured end to end:** the other touched members. `import()`'s
+  are not live false `NOT_AFFECTED`s today (the analyzer widens the
+  closure on `import()`); the rest of `require()` of an ES module's
+  (`fs.readSync`, `Buffer.allocUnsafe`, the `URL.prototype` setters,
+  `process.env`, `JSON.parse`, the globals) are candidates.
+- **Two closure-wide rules, as patches** (measured before the unspelled
+  and ES module forms were added; under each patch the ES module
+  `path.resolve` form behaves as the spelled forms do — BL-122's audit,
+  round 2):
+
+| | (R-A) every escaping store (BL-111's A) | (R-S) stores onto a spelled builtin object | (W-…) widen the boundary |
+| --- | ---: | ---: | ---: |
+| the live records | `UNKNOWN` | `UNKNOWN`, but **3 still `NOT_AFFECTED`** (the unspelled forms) | documented limitation, for the members a (W-…) option covers |
+| sound | **not as prototyped** (storing builtins by name, BL-111's audit); the sound class | **no**, by construction | by declaration |
+| oracle controls lost | 37 | 3 | 0 |
+| packages flagged (of 208) | 77.4 % | 6.7 % | see "What a widened boundary excludes" |
+| corpus verdicts moved, into `NOT_AFFECTED` | 5, 0 | 0 | 0 |
+| validation `NOT_AFFECTED` proofs lost (of 4) | 2 (`RWB-07`, `RWB-11b`) | 0 | 0 |
+
+A sound rule must see a store onto one of these objects through any
+receiver: graceful-fs's shape hands `require("fs")` to a function as a
+parameter. The analyzer cannot tell such a receiver from any other object
+it did not create, so a sound rule over the stores that reach these
+objects is (R-A)'s class, which "Decision record — BL-111" declined for
+the prototypes on the same measurement. (R-S) is cheap because it sees
+only the spelled forms. This is an inference from the two measurements;
+no sound detector was built.
+
+### What a widened boundary excludes
+
+A boundary is a statement of what a verdict claims, not a detector, so
+its cost is not in the corpus differential: it is which programs every
+`NOT_AFFECTED` stops claiming anything about. SOUNDNESS-CONTRACT § 1
+calls any write to a covered object, under any key, "a change".
+BL-122's independent audit (round 1) measured in real Node that ordinary
+programs write to these objects:
+
+- `process.on(…)` writes `process._eventsCount`, an own property of the
+  `process` builtin's exports object; `process.exitCode = …` and
+  `process.title = …` are writes too;
+- `Error.stackTraceLimit = …` and `Error.prepareStackTrace = …` write a
+  builtin constructor's own property (most of (R-S)'s census hits: vite,
+  vitest, prettier, `@babel/types`, typescript-eslint);
+- `console.log = …` writes the `console` builtin's exports object
+  (`require("console") === console`);
+- loading graceful-fs replaces `fs.close`, `fs.closeSync`, `process.cwd`
+  and `process.chdir`, with or without `gracefulify`.
+
+### Options for the reach
+
+- **(W-members).** The boundary covers a change to a member of a builtin
+  object that Node's own loaders call or read. As measured, that is the
+  list of `reach-releases.md`: 55 distinct members across the three load
+  forms (45 without `import()`), among them `fs.closeSync`, `process.env`, `JSON.parse` and the
+  global constructors the ES module loader calls, and it differs by
+  release and by load form. Everything else stays inside the claim. It
+  claims the most of the widened options: `process.on`, `console.log`
+  and `Error`'s hooks stay inside. But it is release- and load-dependent
+  (BL-111's objection to (B), met here as a duty to re-run the inventory
+  per release, backlog `BL-115`), its members are named by Node's
+  internals rather than by anything a user can see, and it still excludes
+  graceful-fs (`fs.closeSync`).
+- **(W-loader).** The boundary covers whole kinds: the prototypes and own
+  properties of the runtime's builtin constructors, ECMAScript's and
+  Node's own (O1, O2), and the exports objects of Node's builtin modules
+  (O3, `process` and `console` included). It needs no member list, but
+  it excludes every program in "What a widened boundary excludes", and
+  the builtin-replacement forms of RWF-110 and RWF-120 (`Object.keys`,
+  O1) that BL-081's and BL-091's rules exist for. It leaves the globals
+  inside the claim, although the ES module loader calls some of them
+  (`JSON.parse`, `globalThis.String` and others) on some releases; that
+  none of them can choose a load was not measured.
+- **(W-all).** The boundary covers every builtin object: the four kinds
+  and the intrinsic prototypes. It claims the least, needs no list, and
+  covers every touched member, measured or not.
+- **(R).** Keep the boundary as it is and close RWF-161, RWF-162 and
+  RWF-163 with a closure-wide rule of (R-A)'s class, implemented by
+  identity (BL-111's lesson). Its measured cost is a lower bound: 77.4 %
+  of packages and 2 of the 4 real-world proofs.
+
+**No option is recommended** (the task's STOP condition 3): the sound
+rule costs half of the real-world proofs, as it did for BL-111, and every
+widened boundary either depends on a release-specific list of Node's
+internals (W-members) or excludes ordinary programs (W-loader, W-all).
+For the owner's weighing:
+
+- "Decision record — BL-111" chose a boundary over a rule because a rule
+  was costly and release-dependent. The same reasoning picks (W-loader)
+  or (W-all) here, which are release-independent; it rules out
+  (W-members), which is not.
+- Of those two, (W-loader) leaves the globals inside the claim on an
+  unmeasured premise, so it would need the ES module loader's global
+  calls measured end to end before it is stated; (W-all) needs nothing
+  further.
+- The cost of either is the claim: a `NOT_AFFECTED` then says nothing
+  about a program that sets `Error.stackTraceLimit` or calls
+  `process.on`, unless SOUNDNESS-CONTRACT § 1's "a change" is narrowed
+  (for example, to replacing or redefining a member that holds a
+  function or an accessor, which `process.on`'s bookkeeping and
+  `Error.stackTraceLimit` are not, and graceful-fs's `fs.closeSync` is).
+  Narrowing "a change" is itself a contract decision, for the same
+  amendment.
+
+Under every (W-…) option, **Node's loader objects stay modeled and
+inside the claim**: the `module` builtin's exports object, `Module`,
+`Module.prototype`, `require` and its registries. The amended text must
+say so explicitly, since `Module` is a builtin constructor and the
+`module` builtin a builtin module.
+
+(R-S) is not offered as a fix. With a widened boundary, a fail-closed rule
+over the stores onto covered objects that the analyzer does see spelled
+would be an explainability choice, not a soundness one: a visible
+`fs.realpathSync = …` would answer `UNKNOWN` instead of a `NOT_AFFECTED`
+the contract claims nothing about. It is a separate decision (backlog
+`BL-127`).
+
+**What a widened boundary also changes.** The result's scope disclosure
+names "loader monkey-patching originating in code this scan never
+analyzed" as an exclusion, which implies the analyzer models loader
+monkey-patching in code it did analyze. Under (W-…) a change to a covered
+object is outside the claim wherever it originates, and that exclusion's
+wording has to say so (an output text change, lane D's `D-1`).
+
+### Beyond `NOT_AFFECTED`
+
+The boundary narrows what a `NOT_AFFECTED` claims. The open findings
+whose forms change a builtin object, by what each is and what a boundary
+that also conditioned edges, attributions or `AFFECTED` would do:
+
+| finding | object | what is wrong | boundary over `NOT_AFFECTED` only | also over edges, attributions, `AFFECTED` |
+| --- | --- | --- | --- | --- |
+| RWF-102, RWF-113 | `Object.prototype` (intrinsic) | an attribution (no false `NOT_AFFECTED` measured) | stays a defect | covered |
+| RWF-110, RWF-120 | a constructor's own member (`Object.keys`) | a missing edge, a false `NOT_AFFECTED` (family C) | the false `NOT_AFFECTED` covered under (W-loader) and (W-all), not under (W-members); the missing edge stays a defect | covered under (W-loader) and (W-all) |
+| RWF-111 | `Object.defineProperty`, `Object.assign` (O1), `Reflect.set` (O4) | an attribution | stays a defect | covered for O1 under (W-loader) and (W-all), for `Reflect.set` under (W-all); not under (W-members) |
+| RWF-121 | `globalThis.setTimeout` (O4) | a false `AFFECTED` | stays a defect | covered only under (W-all) |
+
+**Lean: condition `NOT_AFFECTED` only.** AGENTS.md § E counts a
+fabricated edge as a defect whatever verdict it reaches, and an
+`AFFECTED` is a claim the result makes: conditioning them would let a
+wrong positive answer stand as the contract's. The cost is the defects
+above staying open (under (W-members), RWF-110's and RWF-120's false
+`NOT_AFFECTED`s too, as today). Backlog `BL-123` records the decided
+coverage per form.
+
+### What any option leaves open
+
+- **Loads not run:** ESM hooks, workers, `--import` and
+  `import.meta.resolve` (BL-111's and BL-114's open items).
+- **Touched members not tried end to end** (above). Under (R) or
+  (W-members) each is a possible open defect until tried.
+
+If a (W-…) option is accepted, backlog `BL-126` amends SOUNDNESS-CONTRACT
+§ 1, `BUILTIN_PROTOTYPE_TRUST_BOUNDARY` and its test, moves RWF-161,
+RWF-162 and RWF-163 to the documented limitation and their records to
+trust-boundary cases, and restates the exclusion above. If (R) is
+accepted, `BL-126` implements it by identity, with an oracle sweep and a
+certification audit.

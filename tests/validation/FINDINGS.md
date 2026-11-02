@@ -423,7 +423,9 @@ Every record's status row, in id order. A status is read from the
 - [`RWF-159`](findings/RWF-159.md): RWF-159 — BL-111's inherited-read records assert v22.11.0's ground truth on every release
 - [`RWF-160`](findings/RWF-160.md): RWF-160 — A `paths` stored on `Object.prototype` becomes every later module's lookup list
 - [`RWF-161`](findings/RWF-161.md): RWF-161 — A species defined on the `Array` constructor reaches Node's loader outside the trust boundary
+  - RWF-161 — BL-122: the other species measured; an unspelled form
 - [`RWF-162`](findings/RWF-162.md): RWF-162 — A getter on `URL.prototype` redirects a package resolved through `exports`
+  - RWF-162 — BL-122: an unspelled form; Node's other prototypes measured
 - [`RWF-163`](findings/RWF-163.md): RWF-163 — Replacing a member of `require("path")` or `require("fs")` redirects Node's loader
 - [`AUD-01`](findings/AUD-01.md): AUD-01 — A function-valued argument to an ambient builtin (setTimeout, new Promise, process.nextTick, Array.from, …) gets no call-graph edge
 - [`AUD-02`](findings/AUD-02.md): AUD-02 — A package's own `exports.x()` / `module.exports.x()` self-call gets no call-graph edge
