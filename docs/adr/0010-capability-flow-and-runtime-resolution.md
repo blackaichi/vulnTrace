@@ -1146,3 +1146,35 @@ RWF-162 and RWF-163 to the documented limitation and their records to
 trust-boundary cases, and restates the exclusion above. If (R) is
 accepted, `BL-126` implements it by identity, with an oracle sweep and a
 certification audit.
+
+## Note — task BL-128: the reach inventory corrected, and its call sites (2026-11-02)
+
+Recorded for the owner's pending decision on "Proposed decision —
+BL-122". It changes no decision and does not edit that section. Task
+BL-128 (`docs/tasks/BL-128-loader-member-routes.md`) set out to try end
+to end the touched members BL-122 did not; it recorded where Node's
+loaders touch each one instead, and left the end-to-end tries to backlog
+`BL-129` (`scripts/bl128-loader-member-routes/results.md`).
+
+What changes the section's inputs:
+
+- **The inventory counted the probe's own calls** (RWF-164, fixed).
+  `path.join`, `url.pathToFileURL` and `globalThis.String` were the
+  probe's, not the loaders'. "(W-members)" lists 52 distinct members, not
+  55 (43, not 45, without `import()`), and "(W-loader)"'s example of a
+  global the ES module loader calls, `globalThis.String`, is not one.
+- **The globals the loaders do call are `cjs-module-lexer`'s**, on every
+  release measured: `JSON.parse` and `eval` decode a reexport's string,
+  `Array` and `Set` hold the lexer's state, `Promise` and `RegExp` run at
+  its initialisation. From Node's source, a lexed reexport is resolved and
+  read for its names and not run, so (W-loader)'s unmeasured premise,
+  that no global it leaves inside the claim can choose a load, rests on
+  that reading. It is not tried end to end (`BL-129`).
+- **For (R)**, the O1, O2 and O3 members whose value is a path, a URL or
+  a source the loader loads are listed by call site (results § 2 (a)):
+  `URL.prototype`'s `href`, `pathname`, `toString` and its `search` and
+  `hash` setters, `Buffer.allocUnsafe` and `allocUnsafeSlow`,
+  `fs.readSync`, `fs/promises.readFile`, and `path`'s `dirname`,
+  `toNamespacedPath`, `posix`, `sep`, `isAbsolute` and `basename`. Each
+  is a possible open defect until tried.
+- BL-122's measured routes (RWF-161, RWF-162, RWF-163) are unchanged.
