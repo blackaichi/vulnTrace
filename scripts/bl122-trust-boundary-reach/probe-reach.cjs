@@ -140,28 +140,45 @@ const flush = () => {
   for (const [k, v] of hits) byPhase.set(`${phase}\t${k}`, v);
   hits.clear();
 };
+// Task BL-128: the probe's own work -- computing the workload's paths and
+// URL, stringifying a result, and chaining on `import()`'s promise with
+// `.then` (which reads `Promise[Symbol.species]`) -- happens outside the
+// recording window, so that only Node's own touches are recorded. Before
+// BL-128 it ran inside, and the table listed `path.join`,
+// `url.pathToFileURL`, `URL.prototype.href`, `globalThis.String` and
+// `Promise[Symbol.species]` partly or wholly for the probe's own calls.
+const wrapDir = path.join(fixture, "node_modules/wrap");
+const plainDir = path.join(fixture, "node_modules/plain");
+const esmA = path.join(fixture, "node_modules/esmuser/a.mjs");
+const esmB = require("url").pathToFileURL(path.join(fixture, "node_modules/esmuser/b.mjs")).href;
 on = true;
-const r = require(path.join(fixture, "node_modules/wrap"));
-const r2 = require(path.join(fixture, "node_modules/plain"));
+const r = require(wrapDir);
+const r2 = require(plainDir);
 on = false;
 flush();
 let requireEsm = "throws";
 phase = "require-esm";
+let esmResult;
 on = true;
 try {
-  requireEsm = String(require(path.join(fixture, "node_modules/esmuser/a.mjs")).default);
+  esmResult = require(esmA);
 } catch {}
 on = false;
+if (esmResult) requireEsm = String(esmResult.default);
 flush();
 phase = "import";
-on = true;
-import(require("url").pathToFileURL(path.join(fixture, "node_modules/esmuser/b.mjs")).href)
-  .then((m) => String(m.default), () => "throws")
-  .then((imported) => {
-    on = false;
-    flush();
-    console.log(
-      `# node ${process.version}; cjs workload ok: ${Array.isArray(r) && r2.a === 1}; require-esm: ${requireEsm}; import: ${imported}`,
-    );
-    for (const [k, v] of [...byPhase].sort(([a], [b]) => (a < b ? -1 : 1))) console.log(`${k}\t${v}`);
-  });
+(async () => {
+  let imported;
+  on = true;
+  try {
+    // `await`, not `.then`: no species lookup on the promise.
+    imported = await import(esmB);
+  } catch {}
+  on = false;
+  flush();
+  const importResult = imported ? String(imported.default) : "throws";
+  console.log(
+    `# node ${process.version}; cjs workload ok: ${Array.isArray(r) && r2.a === 1}; require-esm: ${requireEsm}; import: ${importResult}`,
+  );
+  for (const [k, v] of [...byPhase].sort(([a], [b]) => (a < b ? -1 : 1))) console.log(`${k}\t${v}`);
+})();

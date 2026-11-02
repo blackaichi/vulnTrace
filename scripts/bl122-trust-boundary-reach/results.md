@@ -162,3 +162,18 @@ git checkout -- src
 Under a patch, a failing open-soundness-defect record is a case whose
 verdict moved to `UNKNOWN`, and a failing control is a proof the rule
 gives up.
+
+## Correction — BL-128
+
+Task `BL-128` found that `probe-reach.cjs` recorded its own calls: it
+built its workload's paths (`path.join`, `url.pathToFileURL`), stringified
+its results (`String(…)`) and chained `.then` on `import()`'s promise
+inside the recording window. With that work moved outside it, eight rows
+of `reach-releases.md` are gone (regenerated there, every other row
+unchanged): `path.join` in all three workloads, `path.normalize` under
+`require-esm` and `import`, `url.pathToFileURL` under `import`, and
+`globalThis.String` under `require-esm` and `import`. § 1's summary table
+above therefore overstates: its `cjs` O3 cell's `join`, and its O4 row's
+`globalThis.String`, are the probe's. The O4 members the ES module loader
+does call are `cjs-module-lexer`'s
+(`../bl128-loader-member-routes/results.md` § 2 (b)). RWF-164.
