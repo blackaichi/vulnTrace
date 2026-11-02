@@ -4,7 +4,7 @@ The state of the work, for a fresh session: one screen, at most 60 lines
 (`src/testing/records-limits.test.ts`; [`WORKFLOW.md`](WORKFLOW.md) § 6),
 updated by every task's last commit. A task's own account is its task file.
 
-**Last updated:** 2026-11-02, by `BL-122`.
+**Last updated:** 2026-11-02, by `BL-128`.
 
 ## Objective
 
@@ -44,11 +44,11 @@ Every `NOT_AFFECTED` assumes no change to the built-in prototypes (§ 1).
 
 ## Current task
 
-`BL-122` — the trust boundary's reach ([task file](tasks/BL-122-trust-boundary-reach.md)): `READY_FOR_REVIEW`, verdict `NEEDS_DECISION` (ADR 0010, "Proposed decision — BL-122"); no analyzer change. New: RWF-163, a live false `NOT_AFFECTED` through `require("path")` / `require("fs")`.
+`BL-128` — the loader-touched members, by call site ([task file](tasks/BL-128-loader-member-routes.md)): `READY_FOR_REVIEW`; no analyzer change. Narrowed by the owner: BL-122's inventory corrected (RWF-164, fixed) and each member classified by call site; the end-to-end tries are `BL-129`.
 
 ## Next
 
-BACKLOG § 1 is the order: `BL-126` (P0) implements the owner's decision on `BL-122` (RWF-161/162/163), then the rest.
+BACKLOG § 1 is the order: `BL-126` (P0) implements the owner's decision on `BL-122` (RWF-161/162/163; ADR 0010's "Note — task BL-128" corrects its inputs), then `BL-129`, then the rest.
 `BL-107` awaits the owner's decision on O2e; `BL-078`, `BL-080` (P0),
 `BL-082`, `BL-087` and `BL-090` need decisions. The P1 gaps
 `BL-057` and `BL-058` (small, from C-1), `BL-048`, `BL-050`, and `BL-040`,
@@ -57,4 +57,4 @@ candidates to reorder ahead of the rest of lane E.
 
 ## Recently discovered
 
-From `BL-122`: RWF-163 (`BL-122`, `BL-126`), `BL-126`, `BL-127`, `BL-128` (its task file).
+From `BL-128`: RWF-164 (fixed), `BL-129`.

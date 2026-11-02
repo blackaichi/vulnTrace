@@ -2,11 +2,14 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW
 - **Backlog ID**: BL-128
 - **Branch**: `bl-128-loader-member-routes`
 - **Base SHA**: `f4408fe00d55c1b43803e665d14491c0fb9b08b3` (BL-122's merge, PR #129)
-- **Commits**: <!-- filled in by the last commit -->
+- **Commits**:
+  - `docs(tasks): BL-128 task file — loader-touched members end to end`
+  - `fix(BL-128): correct BL-122's reach inventory (RWF-164)`
+  - (this commit) `docs(BL-128): loader-touched members by call site; records`
 - **Superseded by**: —
 
 ## Specification
@@ -89,3 +92,57 @@ No analyzer change: the graph, proof and verdict differentials are
 expected to be 0. The validation baseline is unchanged.
 
 ## Account
+
+Measured on the base `f4408fe`, no change to `src/`.
+
+- **The inventory's probe artifacts** (premise 1: false). With the probe's
+  own work moved outside its recording window
+  (`scripts/bl122-trust-boundary-reach/probe-reach.cjs`), its table,
+  regenerated on the same thirteen releases, loses exactly eight rows and
+  no other row changes: `path.join` (`cjs`, `require-esm`, `import`),
+  `path.normalize` (`require-esm`, `import`), `url.pathToFileURL`
+  (`import`), `globalThis.String` (`require-esm`, `import`). 52 distinct
+  members, not 55; 43, not 45, without `import()`. Registered as RWF-164
+  (fixed here); ADR 0010 gets a note, its proposed section is not edited;
+  BL-122's `results.md` gets an appended correction.
+- **Call sites** (premises 2 and 3). `scripts/bl128-loader-member-routes/callsites.cjs`
+  records, per call, the first two stack frames outside itself, on all
+  thirteen releases and both ES module workloads; it changes no value.
+  The classification is `scripts/bl128-loader-member-routes/results.md`
+  § 2: (a) the value is a path, a URL or a source the loader loads
+  (`URL.prototype` members, `Buffer.allocUnsafe` / `allocUnsafeSlow`,
+  `fs.readSync`, `fs/promises.readFile`, `path`'s `dirname`,
+  `toNamespacedPath`, `posix`, `sep`, `isAbsolute`, `basename`); (b)
+  `cjs-module-lexer` only — every global (O4) the loaders call; (c) a
+  check, a format or bookkeeping (`process.env` is
+  `WATCH_REPORT_DEPENDENCIES` on every release); (d) call site not
+  recorded.
+- **Premise 4** (`import()` widens the closure) was not measured: no
+  analyzer run was made (Corrections).
+- `node scripts/next-id.mjs` printed RWF-903 and later BL-130: it counts
+  mentions (the synthetic RWF-900 range, and this task's own citations of
+  RWF-164 and BL-129) as reservations, backlog `BL-125`'s defect. The
+  register's highest ids were RWF-163 and BL-128, so this task took
+  RWF-164 and BL-129.
+- No independent audit: the row says `no`.
+
+## Corrections
+
+**2026-11-02 — scope narrowed by the project owner.** Writing the
+end-to-end attempts (a script changing each member in BL-092's decoy
+setup) was stopped partway by a safety filter, and was not resumed. The
+project owner chose to narrow this task to what was measured: the
+inventory's correction and the call-site classification, recorded as not
+tried end to end, with the end-to-end tries moved to a new backlog row,
+`BL-129`. Against the acceptance criteria above:
+
+- criterion 1 (each member classified as live, tried and not live, or
+  reaching no load choice): **in part** — classified by call site
+  (results § 2), not by an end-to-end try;
+- criterion 2 (artifacts corrected and registered): **yes** (RWF-164);
+- criterion 3 (oracle cases for live routes): **no** — no route was
+  tried (`BL-129`);
+- criterion 4 (release dependence in `node-release-routes.ts`): **no** —
+  no new route (`BL-129`);
+- criterion 5 (records; the answer for (W-loader) and (R)): **yes**, the
+  answer stated as unmeasured (ADR 0010, "Note — task BL-128").
