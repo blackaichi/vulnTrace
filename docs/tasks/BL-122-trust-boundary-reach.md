@@ -2,11 +2,16 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: READY_FOR_REVIEW (report verdict `NEEDS_DECISION`: the project
+  owner decides ADR 0010's "Proposed decision — BL-122")
 - **Backlog ID**: BL-122
 - **Branch**: `bl-122-trust-boundary-reach`
 - **Base SHA**: `58a5f3263587c6dbc56fea7c12b87553f0f6f3b2` (BL-113's merge, PR #128)
-- **Commits**: filled in by the last commit
+- **Commits**:
+  - `docs(tasks): BL-122 task file — the trust boundary's reach`
+  - `test(BL-122): loader reach inventory; RWF-163 as open-defect cases`
+  - `test(BL-122): closure-wide rules measured; unspelled forms as cases`
+  - (this commit) `docs(BL-122): ADR 0010 proposed decision on the boundary's reach`
 - **Superseded by**: —
 
 ## Project context
@@ -154,17 +159,17 @@ analyzer behaviour in `src/`.
 
 ## Acceptance criteria
 
-- [ ] The inventory lists, for every installed release, the members of the
+- [x] The inventory lists, for every installed release, the members of the
       four kinds of object Node's loader touches, and each touched kind
       that can redirect a load has a real-Node oracle case and a control.
-- [ ] Each option is a patch applicable to the base, measured as above
+- [x] Each option is a patch applicable to the base, measured as above
       and reported separately.
-- [ ] ADR 0010 carries an appended PROPOSED section that answers the
+- [x] ADR 0010 carries an appended PROPOSED section that answers the
       reach, Node's other prototypes and the beyond-`NOT_AFFECTED`
       question.
-- [ ] RWF-161 and RWF-162 are updated by appends, and RWF-163 is
+- [x] RWF-161 and RWF-162 are updated by appends, and RWF-163 is
       registered with an open-soundness-defect record per live case.
-- [ ] `src/` (outside tests) and SOUNDNESS-CONTRACT are unchanged on the
+- [x] `src/` (outside tests) and SOUNDNESS-CONTRACT are unchanged on the
       branch.
 
 ## Gates
@@ -176,6 +181,82 @@ baseline is D-09's six.
 ## Report
 
 In the format of `AGENTS.md` § J, verdict `NEEDS_DECISION`.
+
+## Corrections
+
+**2026-11-02.**
+
+- **"Measured before this commit" measured the CommonJS loader only.**
+  Its member list (and "globals: none") holds for CommonJS loads. The
+  independent audit found that the ES module loader reads through more
+  members (round 1: the lazily loaded resolver's `path.resolve`; round 2:
+  `fs.openSync` and the rest), and the inventory was extended to three
+  workloads (`scripts/bl122-trust-boundary-reach/results.md` § 1,
+  `reach-releases.md`). `process.mainModule` is read on the `process`
+  builtin's exports object (O3), not as a global.
+- **"Every replacement makes real Node call the target"**: for
+  `fs.readFileSync`, the decoy runs the affected instance's source under
+  the decoy's own module identity.
+- **The recommendation changed twice**, on the audit's findings: from
+  (W-loader) to (W-members) after round 1 (a boundary over whole kinds
+  excludes `process.on`, `Error.stackTraceLimit`, `console.log` and
+  graceful-fs programs), and to no forced recommendation after round 2
+  (the member list (W-members) needs is 55 members, release- and
+  load-dependent, and includes `fs.closeSync`): STOP condition 3.
+
+## Account
+
+**Premises.** "Four kinds of object": measured, each touched except the
+namespaces on CommonJS loads; the ES module loader calls some globals on
+some releases. "The other species may be routes": `Promise`'s is read on
+`import()` only, which the analyzer already answers `UNKNOWN` for; the
+others are never read. "`Buffer.prototype` and `EventEmitter.prototype`
+are not measured": the CommonJS loader touches neither; the ES module
+loader touches both. "A closure-wide rule over those objects is costly":
+measured, (R-A) 77.4 % of packages and 2 of 4 validation proofs; a rule
+over spelled receivers (R-S) is cheap and unsound by construction.
+
+**Measured** (`scripts/bl122-trust-boundary-reach/results.md`): the
+inventory on 13 releases; 12 open-soundness-defect records (RWF-161,
+RWF-162, RWF-163) and 3 controls in
+`tests/oracle/bl122-trust-boundary-reach.*` (with BL-113's two, 14
+records), passing on Node 22.11.0,
+20.20.2 and 26.12.1, two of them release-dependent (route
+`require-esm-resolver`, `tests/oracle/node-release-routes.ts`); two rule
+prototypes with `scripts/measure-options.mjs`.
+
+**Independent audit.** Round 0 does not apply (no fix, no rule).
+
+- **Round 1: `BLOCKED`**, six findings, none a defect the branch
+  introduced: (1) the lean (W-loader) excludes ordinary programs; (2)
+  "the narrowest boundary" was false; (3) the (W-all) bullet misplaced
+  RWF-110/120/121; (4) Node's loader objects not excluded explicitly;
+  (5) RWF-163's "Not measured" was wrong: the ES module resolver is
+  reached (reproduced, a live false `NOT_AFFECTED` on Node 20.19+,
+  22.12+, 24, 26); (6) labels and counts. All fixed: the ADR section
+  rewritten, the ES module form added as a release-dependent record.
+- **Round 2: `BLOCKED`**, four findings: (1) a live false `NOT_AFFECTED`
+  through `fs.openSync` before `require()` of an ES module, pre-existing
+  (spilled: `src/` is unchanged), which the then-lean (W-members) did not
+  list; (2) "narrowest" still claimed; (3) "only `Array[Symbol.species]`"
+  and RWF-161's "'Not measured' answered" overclaimed (`import()` reads
+  `Promise[Symbol.species]`); (4) the ES module form had no control.
+  Fixed, not audited again (WORKFLOW § 1.5): the `openSync` form is an
+  open-soundness-defect record of RWF-163 (P0, backlog `BL-122` /
+  `BL-126`), the control `control.o3-require-esm-no-change` added, the
+  inventory extended to the ES module workloads, RWF-161's and RWF-162's
+  notes and the ADR corrected, and no option is recommended.
+
+**Deviations.** The option measurements ran with `--base c7e8852` (the
+base plus this task's cases, no `src/` change) rather than the merge
+base, so the base side included the new records. `node scripts/next-id.mjs
+RWF` printed `RWF-902` (backlog `BL-125`); the register's next id was
+`RWF-163`. The project owner was told the session's effort was low for a
+design task and answered "continue".
+
+**Discovered.** `BL-126` (implement the decision, P0), `BL-127` (fail
+closed on a visible store, P4), `BL-128` (try the remaining touched
+members end to end, P1).
 
 ## Backlog note
 

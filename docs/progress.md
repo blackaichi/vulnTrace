@@ -4,7 +4,7 @@ The state of the work, for a fresh session: one screen, at most 60 lines
 (`src/testing/records-limits.test.ts`; [`WORKFLOW.md`](WORKFLOW.md) § 6),
 updated by every task's last commit. A task's own account is its task file.
 
-**Last updated:** 2026-11-01, by `BL-113`.
+**Last updated:** 2026-11-02, by `BL-122`.
 
 ## Objective
 
@@ -44,11 +44,11 @@ Every `NOT_AFFECTED` assumes no change to the built-in prototypes (§ 1).
 
 ## Current task
 
-`BL-113` — the trust boundary over the runtime's built-in prototypes ([task file](tasks/BL-113-loader-trust-boundary.md)): `READY_FOR_REVIEW`; SOUNDNESS-CONTRACT § 1 amended, no analyzer change. RWF-156/158/160 are its documented limitation.
+`BL-122` — the trust boundary's reach ([task file](tasks/BL-122-trust-boundary-reach.md)): `READY_FOR_REVIEW`, verdict `NEEDS_DECISION` (ADR 0010, "Proposed decision — BL-122"); no analyzer change. New: RWF-163, a live false `NOT_AFFECTED` through `require("path")` / `require("fs")`.
 
 ## Next
 
-BACKLOG § 1 is the order: `BL-122` (P0; the owner: the boundary's reach, RWF-161/162), then the rest.
+BACKLOG § 1 is the order: `BL-126` (P0) implements the owner's decision on `BL-122` (RWF-161/162/163), then the rest.
 `BL-107` awaits the owner's decision on O2e; `BL-078`, `BL-080` (P0),
 `BL-082`, `BL-087` and `BL-090` need decisions. The P1 gaps
 `BL-057` and `BL-058` (small, from C-1), `BL-048`, `BL-050`, and `BL-040`,
@@ -57,4 +57,4 @@ candidates to reorder ahead of the rest of lane E.
 
 ## Recently discovered
 
-From `BL-113`: RWF-161, RWF-162 (`BL-122`), `BL-123`, `BL-124`, `BL-125` (its task file).
+From `BL-122`: RWF-163 (`BL-122`, `BL-126`), `BL-126`, `BL-127`, `BL-128` (its task file).
