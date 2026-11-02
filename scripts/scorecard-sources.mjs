@@ -278,9 +278,9 @@ export const FINDINGS_STATUS_HEADER = Object.freeze([
  *   open (nothing in the contract is left to do) nor fixed (nothing was
  *   fixed), and it is counted on its own. Its cell must cite a contract
  *   section that states a boundary (`SOUNDNESS-CONTRACT § <n>`, one of
- *   `TRUST_BOUNDARY_SECTIONS`), and must not say that any of it is still
- *   open (the same `INCOMPLETE_FIX` words a `fixed` cell may not use), or
- *   the row is refused: the value is not a way to set a defect aside.
+ *   `TRUST_BOUNDARY_SECTIONS`), take exactly `LIMITATION_CELL`'s shape,
+ *   and say nothing that leaves part of it open, or the row is refused:
+ *   the value is not a way to set a defect aside.
  *
  * The two scoped entries (`bypassed for unloaded packages`, `fixed for
  * variable bindings`) are existing rows' qualified values (RWF-002,
@@ -312,12 +312,30 @@ export const TRUST_BOUNDARY_SECTIONS = new Map([
   ["1", "### The trust boundary: the runtime's built-in prototypes"],
 ]);
 
-/** Every `SOUNDNESS-CONTRACT § <n>` a cell cites, as section numbers. */
+/** Every `SOUNDNESS-CONTRACT[.md] § <n>` a cell cites, as section numbers. */
 function contractCitations(cell) {
-  return [...cell.matchAll(/SOUNDNESS-CONTRACT\s+§\s*(\d+)/g)].map(
+  return [...cell.matchAll(/SOUNDNESS-CONTRACT(?:\.md)?\s*§\s*(\d+)/g)].map(
     (match) => match[1],
   );
 }
+
+/**
+ * The one shape a documented limitation's cell may take (BL-113's audit,
+ * round 2, R2-2): the value, then in parentheses the boundary's name, the
+ * contract section that states it and the task that applied it -- and
+ * nothing else, so the cell cannot add that some part is still live:
+ *
+ *   Documented limitation (the trust boundary over <what>, SOUNDNESS-CONTRACT § <n>; task `<ID>`)
+ *
+ * `<what>` is plain words: no parentheses, semicolons, `§`, or a word that
+ * says a defect remains (`LIMITATION_REMAINS`).
+ */
+const LIMITATION_CELL =
+  /^Documented limitation \(the trust boundary over ([^();§`]+), SOUNDNESS-CONTRACT § (\d+); task `[A-Z]+-\d+[a-z]?`\)$/;
+
+/** Words a limitation's boundary name may not use: they say a defect is left. */
+const LIMITATION_REMAINS =
+  /\b(?:open|live|remains?|remaining|outstanding|unresolved|except|not\s+covered|NOT_AFFECTED|AFFECTED|UNKNOWN|defect|partial(?:ly)?|in\s+part)\b/i;
 
 /** Commentary that contradicts a `fixed` value. Used only to refuse. */
 const INCOMPLETE_FIX =
@@ -474,14 +492,19 @@ export function classifyFindingsRegister(text) {
       );
       continue;
     }
+    const shape = LIMITATION_CELL.exec(status.trim());
     if (
       category === "limitation" &&
-      INCOMPLETE_FIX.test(status.replace(/[*_]/g, ""))
+      (INCOMPLETE_FIX.test(status.replace(/[*_]/g, "")) ||
+        shape === null ||
+        LIMITATION_REMAINS.test(shape[1]))
     ) {
       problems.push(
-        `${id}: status value "documented limitation" is contradicted by its ` +
-          "own cell, which says part of it is still open -- use an open or " +
-          `open-in-part value (cell: ${JSON.stringify(status)})`,
+        `${id}: status value "documented limitation" must take exactly the ` +
+          "shape `Documented limitation (the trust boundary over <what>, " +
+          "SOUNDNESS-CONTRACT § <n>; task `<ID>`)` and must not say that any " +
+          "of it is still open or live -- use an open or open-in-part value " +
+          `(cell: ${JSON.stringify(status)})`,
       );
       continue;
     }

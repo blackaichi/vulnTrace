@@ -27,7 +27,15 @@ import type { OutcomeDomain } from "./open-soundness-defect.js";
  * - `observed` -- the exact result the analyzer gives today, which only
  *   the boundary's assumption keeps from being a defect; never called an
  *   expectation;
- * - `rwf` -- the finding recorded as the boundary's documented limitation.
+ * - `rwf` -- the finding recorded as the boundary's documented limitation;
+ * - `control` -- the case that runs the same program WITHOUT the change to
+ *   the built-in prototype, where real Node does not call the target. It
+ *   ties the case's wrong answer to the change the boundary is about
+ *   (BL-113's audit, round 2, R2-3): a reproduction made false by
+ *   something else, with an unrelated prototype store added, has no such
+ *   control. That the control's program is the case's minus the change is
+ *   for review; that real Node does not call the target there is asserted
+ *   by the control's own run.
  *
  * {@link trustBoundaryCaseProblems} requires `observed` to be OUTSIDE
  * `soundWithoutBoundary` (otherwise the analyzer handles the program
@@ -55,6 +63,8 @@ export interface TrustBoundaryCase<Pattern, Outcome> {
   readonly soundWithoutBoundary: readonly Pattern[];
   /** The analyzer's exact result today. */
   readonly observed: Outcome;
+  /** The same program without the prototype change, and real Node's answer there. */
+  readonly control: { readonly caseId: string; readonly called: boolean };
 }
 
 function escapeRegExp(text: string): string {
@@ -120,6 +130,16 @@ export function trustBoundaryCaseProblems<Pattern, Outcome>(
   if (sound(record.observed)) {
     problems.push(
       `${label}: observed ${JSON.stringify(record.observed)} is sound WITHOUT the boundary, so the boundary is not what this case rests on -- delete the record and assert the verdict`,
+    );
+  }
+  if (record.control.caseId === "" || record.control.caseId === record.caseId) {
+    problems.push(
+      `${label}: control must name another case: the same program without the change to the built-in prototype`,
+    );
+  }
+  if (record.control.called) {
+    problems.push(
+      `${label}: real Node calls the target in the control ${record.control.caseId} too, so the change to the built-in prototype is not what this case rests on`,
     );
   }
   for (const p of limitationReferenceProblems(record.rwf, findings)) {

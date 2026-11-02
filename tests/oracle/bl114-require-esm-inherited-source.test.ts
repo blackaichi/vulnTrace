@@ -50,6 +50,12 @@ describe.each(ALL_CASES.map((c) => [c.id, c] as const))("%s", (_id, kase) => {
       ).toBe(called);
       const coverage = result.variant.scan.output?.coverage;
       expect(coverage).toBeDefined();
+      const ctrl = ALL_CASES.find((c) => c.id === kase.boundaryCase!.control);
+      if (ctrl === undefined) {
+        throw new Error(
+          `${kase.id}: no control case ${kase.boundaryCase.control}`,
+        );
+      }
       expect(
         trustBoundaryCaseProblems(
           {
@@ -57,6 +63,10 @@ describe.each(ALL_CASES.map((c) => [c.id, c] as const))("%s", (_id, kase) => {
             rwf: kase.boundaryCase.rwf,
             soundWithoutBoundary: [kase.expected],
             observed: kase.boundaryCase.observed,
+            control: {
+              caseId: kase.boundaryCase.control,
+              called: ctrl.called(),
+            },
           },
           VERDICT_DOMAIN,
           toVerdictObservation(result.variant.scan.findings[0], coverage!),

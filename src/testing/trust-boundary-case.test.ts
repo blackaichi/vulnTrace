@@ -39,7 +39,10 @@ function register(rows: readonly (readonly [string, string])[]): string {
 }
 
 const FINDINGS = register([
-  ["RWF-900", "Documented limitation (trust boundary, SOUNDNESS-CONTRACT § 1)"],
+  [
+    "RWF-900",
+    "Documented limitation (the trust boundary over the runtime's built-in prototypes, SOUNDNESS-CONTRACT § 1; task `BL-113`)",
+  ],
   ["RWF-901", "Open"],
   ["RWF-902", "Fixed"],
 ]);
@@ -57,6 +60,7 @@ const VALID: TrustBoundaryCase<Verdict, VerdictObservation> = {
   rwf: "RWF-900",
   soundWithoutBoundary: ["UNKNOWN"],
   observed: OBSERVED,
+  control: { caseId: "self-test.control", called: false },
 };
 
 function problems(
@@ -80,6 +84,23 @@ describe("trust-boundary case: the mechanism rejects what it must", () => {
     const found = problems(record);
     expect(found).toHaveLength(1);
     expect(found[0]).toMatch(/is sound WITHOUT the boundary/);
+  });
+
+  it("REJECTS a control where real Node calls the target too (R2-3)", () => {
+    expect(
+      problems({
+        ...VALID,
+        control: { caseId: "self-test.control", called: true },
+      }),
+    ).toEqual([expect.stringMatching(/calls the target in the control/)]);
+  });
+
+  it("REJECTS a missing or self-referencing control", () => {
+    for (const caseId of ["", "self-test"]) {
+      expect(
+        problems({ ...VALID, control: { caseId, called: false } }),
+      ).toEqual([expect.stringMatching(/control must name another case/)]);
+    }
   });
 
   it("REJECTS an empty soundWithoutBoundary", () => {
