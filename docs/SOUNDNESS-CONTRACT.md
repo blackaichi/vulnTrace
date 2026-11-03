@@ -92,78 +92,126 @@ proved is `UNKNOWN`, and the cost of that is precision — which is third in
 the priority order, behind soundness and explainability
 ([`ARCHITECTURE.md` § 2](ARCHITECTURE.md)).
 
-### The trust boundary: the runtime's built-in prototypes
+### The trust boundary: the runtime's built-in objects
 
-*(Project-owner decision of 2026-10-27,
+*(Project-owner decisions of 2026-10-27,
 [ADR 0010](adr/0010-capability-flow-and-runtime-resolution.md), "Decision
-record — BL-111": option (C). Amended into this section by task
-[`BL-113`](tasks/BL-113-loader-trust-boundary.md).)*
+record — BL-111": option (C), over the built-in prototypes; and of
+2026-11-03, ADR 0010, "Decision record — BL-122": option (W-all), over
+every built-in object. Amended into this section by tasks
+[`BL-113`](tasks/BL-113-loader-trust-boundary.md) and
+[`BL-126`](tasks/BL-126-trust-boundary-all-builtins.md).)*
 
 Every `NOT_AFFECTED`, whichever family proves it, **assumes that the
-program makes no change to the runtime's built-in prototype objects**: no
-prototype pollution of the runtime. The verdict claims nothing about a
-program that makes one. The scope disclosure states it as one of the
-declared model's exclusions, in these words:
+program makes no change to the runtime's built-in objects**: no prototype
+pollution and no monkey-patching of the runtime. The verdict claims
+nothing about a program that makes one. The scope disclosure states it as
+one of the declared model's exclusions, in these words:
 
-> any change to the runtime's built-in prototype objects (Object.prototype,
-> Array.prototype and the other ECMAScript intrinsic prototypes) made by
-> any code the program runs, whether prototype pollution, a polyfill, a
-> shim or a freeze
+> any change to the runtime's built-in objects made by any code the
+> program runs, whether prototype pollution, a polyfill, a shim, a
+> monkey-patch or a freeze: the ECMAScript intrinsics (Object.prototype,
+> Array and the other standard constructors with their prototypes and
+> own properties, JSON, Math, the global object), Node's own constructors
+> and prototypes (URL, Buffer, EventEmitter), the exports of Node's
+> builtin modules (fs, path, process, console) and the objects the
+> runtime holds in them; Node's module loader objects (Module,
+> Module.prototype, module objects, require and its registries) are not
+> covered and stay inside the declared model
 
-- **The objects.** The ECMAScript intrinsic prototype objects: the
-  `prototype` of every standard built-in constructor (`Object.prototype`,
-  `Function.prototype`, `Array.prototype`, `String.prototype`,
-  `RegExp.prototype`, `Promise.prototype`, the typed arrays' and the
-  others), and the other prototype objects ECMA-262 defines as intrinsics
-  (`%IteratorPrototype%`, `%ArrayIteratorPrototype%` and the like).
+- **The objects.** A built-in object is one of the following, and
+  nothing else; Node's loader objects (below) are none of them:
+  - the ECMAScript intrinsics: every standard built-in constructor and
+    function (`Object`, `Array`, `Promise`, `Error`, `Object.keys`, …)
+    with its own properties (`Array[Symbol.species]`,
+    `Error.stackTraceLimit`); every intrinsic prototype
+    (`Object.prototype`, `Array.prototype`, `%IteratorPrototype%`, …);
+    the namespace objects (`JSON`, `Math`, `Reflect`, `Atomics`, `Intl`);
+    and the global object with its own members (`globalThis.setTimeout`);
+  - Node's own constructors and prototypes, which are not ECMAScript
+    intrinsics, with their own properties: `URL` and `URL.prototype`,
+    `Buffer` and `Buffer.prototype`, `EventEmitter` and
+    `EventEmitter.prototype`, and the like;
+  - the exports object of every Node builtin module, whatever specifier
+    or route returns it (`fs`, `node:path`, `path/posix`, `fs/promises`,
+    `util/types`, …); `process` and `console` are ones;
+  - the objects the runtime creates and holds in any of these, such as
+    `process.env`, `process.argv`, `fs.constants` and `path.posix`. (This
+    item is task BL-126's reading of the decision, which names the kinds
+    above, for the project owner's review: ADR 0010, "Decision record —
+    BL-122", "Read by BL-126".)
+
+  Not built-in objects: an object the program creates, including by
+  calling a builtin (`new URL(…)`, `Buffer.from(…)`,
+  `Object.create(null)`), whose [[Prototype]], when that is one, still
+  is; and the objects the loader creates for the program's own modules —
+  a module's `exports` object (the CommonJS top-level `this`), an ES
+  module's namespace object and its `import.meta`. A change to those is
+  inside the claim.
 - **A change.** Adding, assigning, redefining or deleting a property of
   one of them, under any key, data or accessor (`constructor` and
   symbol-keyed members included); or changing its [[Prototype]] or its
-  extensibility. By any route that reaches the object: its name,
-  `({}).__proto__`, `Object.getPrototypeOf`, a builtin called indirectly,
-  another module. Whatever its purpose: a polyfill, a shim (core-js, a
-  `String.prototype` getter) and hardening (`Object.freeze(Object.prototype)`)
-  are changes too, so a `NOT_AFFECTED` claims nothing about a program that
-  makes one.
-- **Why.** Node's own loader runs JavaScript over objects that inherit
-  from these prototypes. An inherited setter receives the arrays and
-  registries it writes; an inherited `paths` or `source` is read as the
-  loader's own state; a species reached through `constructor` builds its
-  arrays. A later `require` then loads what the change chose, with no use
-  of any loader state in the program, on routes that differ from one Node
-  release to the next. RWF-156, RWF-158 and RWF-160 are the boundary's
-  documented cases (`tests/validation/findings/`, status "documented
+  extensibility. Not narrowed by key, value or purpose: replacing
+  `fs.realpathSync` with a wrapper that changes nothing, assigning
+  `console.log`, setting `Error.stackTraceLimit`, `process.exitCode` or a
+  key of `process.env`, calling `process.on(…)` (which writes `process`'s
+  own event bookkeeping), adding a property to the global object (a UMD
+  bundle's `root.X = …`, a `globalThis.fetch` polyfill, a sloppy-mode
+  implicit global), a polyfill, a shim (core-js, a `String.prototype`
+  getter) and hardening
+  (`Object.freeze(Object.prototype)`) are all changes, so a
+  `NOT_AFFECTED` claims nothing about a program that makes one. By any
+  route that reaches the object: its name, an alias, a parameter
+  (graceful-fs's shape), `({}).__proto__`, `Object.getPrototypeOf`,
+  `[].constructor`, `Reflect.set`, a builtin called indirectly, another
+  module. Whether "a change" should be narrowed is a separate, open
+  question (backlog `BL-131`).
+- **Why.** Node's own loaders run JavaScript over these objects. They
+  call `path.resolve`, `fs.realpathSync`, `fs.readFileSync` and
+  `fs.openSync` on the same exports objects a program's `require("path")`
+  and `require("fs")` return; they read `URL.prototype`'s accessors;
+  their arrays honour `Array[Symbol.species]`; their objects inherit from
+  the intrinsic prototypes, so an inherited setter receives the arrays
+  and registries they write and an inherited `paths` or `source` is read
+  as their own state. A change then chooses the file a later load reads,
+  or the source it runs, with no use of any loader state in the program.
+  Which members the loaders touch differs from one Node release and one
+  load form to the next (ADR 0010, "Proposed decision — BL-122", "What
+  was measured"), so the boundary covers the objects, not a list of
+  members. RWF-156, RWF-158, RWF-160, RWF-161, RWF-162 and RWF-163 are
+  its documented cases (`tests/validation/findings/`, status "documented
   limitation").
-- **What it does not cover.** Every other object stays inside the
-  contract's claim, analyzed as before. That is no claim that each is
-  handled soundly: a false `NOT_AFFECTED` through one of them is an open
-  defect, recorded as such. They are:
-  - Node's own loader objects: `Module`, `Module.prototype`, `require`,
-    `module.paths`, `require.cache`, `require.extensions`;
-  - Node's other builtin prototypes, which are not ECMAScript intrinsics:
-    `URL.prototype`, `Buffer.prototype`, `EventEmitter.prototype` and the
-    like. (The decision record says "Node's builtin prototypes"; this
-    section takes the narrower reading, so it claims more, not less.)
-  - builtin objects that are not intrinsic prototypes: a global such as
-    `globalThis.setTimeout`, `JSON` or `Math`; a builtin module's exports
-    object, such as `fs`'s; a builtin constructor's own properties, such
-    as `Object.defineProperty` or `Array[Symbol.species]`.
+- **What it does not cover: Node's module loader objects.** Although
+  `Module` is a builtin constructor and `module` a builtin module, these
+  stay inside the contract's claim, analyzed as before, as loader
+  capabilities (ADR 0010):
+  - the `module` builtin's exports object, `Module` (also
+    `module.constructor`), with its own properties (`Module._load`,
+    `Module._resolveFilename`, `Module._extensions`, `Module._cache`,
+    `Module.globalPaths`, …), and `Module.prototype`;
+  - every module object (`module`, `require.main`, an entry of
+    `require.cache`, the object `process.mainModule` holds) and its
+    lookup list `module.paths`;
+  - every `require` function with its own properties (`require.cache`,
+    `require.extensions`, `require.resolve`, `require.main`).
 
-  Whether the boundary reaches any of these is not decided (ADR 0010's
-  decision record, "Not decided here"). A false `NOT_AFFECTED` through one
-  of them is an open defect, not a case of this boundary (RWF-161:
-  `Array[Symbol.species]`; RWF-162: a getter on `URL.prototype`).
+  A store onto `process.mainModule` itself changes `process`, a built-in
+  object; a change to the module object it holds changes a loader
+  object. That these objects stay inside the claim is no statement that
+  each is handled soundly: a false `NOT_AFFECTED` through one of them is
+  an open defect, recorded as such (for example RWF-165: a module's
+  lookup list changed through `process.mainModule.children`).
 - **What it is not.** It narrows what a `NOT_AFFECTED` claims, and nothing
   else. An `AFFECTED` path, a call edge and an export attribution are
   held to their own rules unchanged: an edge or an attribution that is
   wrong under such a change is still a defect (AGENTS.md § E), whatever
-  verdict it reaches. Whether the boundary should condition them too is
-  not decided (backlog `BL-122`). It is not an analyzer rule either, and
-  no analyzer rule was withdrawn for it: a change to a built-in prototype
-  that the analyzer sees still withdraws every proof it withdrew before. Which Node releases the contract covers is a
-  separate, open question (backlog `BL-115`).
+  verdict it reaches. It is not an analyzer rule either, and no analyzer
+  rule was withdrawn for it: a change to a built-in object that the
+  analyzer sees still withdraws every proof it withdrew before. Which
+  Node releases the contract covers is a separate, open question
+  (backlog `BL-115`).
 
-The disclosure's single source is `BUILTIN_PROTOTYPE_TRUST_BOUNDARY`, one
+The disclosure's single source is `BUILTIN_OBJECT_TRUST_BOUNDARY`, one
 entry of `SUPPORTED_MODEL_EXCLUSIONS` (`src/domain/evidence.ts`);
 `src/domain/evidence.trust-boundary.test.ts` holds this section's quoted
 words and that entry to the same text.

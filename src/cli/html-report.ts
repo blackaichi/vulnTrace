@@ -919,7 +919,7 @@ function renderScope(): string {
     `<ul class="exclusions">${SUPPORTED_MODEL_EXCLUSIONS.map(
       (exclusion) => `<li>${text(exclusion)}</li>`,
     ).join("")}</ul>` +
-    `<p class="note">In-source loader and runtime capabilities are <em>not</em> in that list: those are modelled, and encountering one withdraws a negative proof entirely rather than weakening it. The one exception is the trust boundary over the runtime's built-in prototypes: such a change is modelled only in part, and code the scan analyzes can make it.</p>` +
+    `<p class="note">In-source loader and runtime capabilities are <em>not</em> in that list: those are modelled, and encountering one withdraws a negative proof entirely rather than weakening it. The one exception is the trust boundary over the runtime's built-in objects: a program that changes one is outside what every NOT_AFFECTED claims, wherever the change originates, including code the scan analyzes. A change the analyzer recognises still withdraws the proofs it withdrew before, but most changes the analyzer sees do not (a visible replacement of fs.realpathSync is one). Node's module loader objects are not built-in objects in this sense: a change to one that the scan analyzes is analyzed as a loader capability, and a route the analyzer misses is an open defect.</p>` +
     `</section>`
   );
 }

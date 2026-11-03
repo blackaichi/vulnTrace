@@ -52,7 +52,8 @@ export type {
 export {
   SUPPORTED_MODEL_EXCLUSIONS,
   SUPPORTED_MODEL_STATEMENT,
-  BUILTIN_PROTOTYPE_TRUST_BOUNDARY,
+  BUILTIN_OBJECT_TRUST_BOUNDARY,
+  LOADER_OBJECT_EXCLUSION,
 } from "./evidence.js";
 export type {
   KnownPackageRoots,
