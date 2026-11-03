@@ -4,7 +4,7 @@ The state of the work, for a fresh session: one screen, at most 60 lines
 (`src/testing/records-limits.test.ts`; [`WORKFLOW.md`](WORKFLOW.md) § 6),
 updated by every task's last commit. A task's own account is its task file.
 
-**Last updated:** 2026-11-03, by `BL-129`.
+**Last updated:** 2026-11-03, by `BL-126`.
 
 ## Objective
 
@@ -30,7 +30,7 @@ one task at a time. Then capability work (P1-B) resumes (OPEN-DEBTS § 4).
 **Until the remediation closes, treat every `NOT_AFFECTED` as `UNKNOWN`.**
 OPEN-DEBTS § 3 criterion 3 is false on `main` (D-16, D-17); the README says
 so. `npm run test:validation` is local only: D-09's cases fail by design.
-Every `NOT_AFFECTED` assumes no change to the built-in prototypes (§ 1).
+Every `NOT_AFFECTED` assumes no change to any built-in object (§ 1).
 
 ## Key decisions
 
@@ -40,21 +40,21 @@ Every `NOT_AFFECTED` assumes no change to the built-in prototypes (§ 1).
   (capability flow, C), 0011 (corroboration, V); the owner's decisions in
   REMEDIATION-PLAN § 6.1 and the ADRs' decision records. On 2026-10-27
   (`BL-116`): BL-111's option (C), the trust boundary (`BL-113`); at most
-  two audit rounds (WORKFLOW § 1.5); `BL-116` to `BL-121` first.
+  two audit rounds (WORKFLOW § 1.5); `BL-116` to `BL-121` first; on
+  2026-11-03, BL-122's (W-all) (`BL-126`).
 
 ## Current task
 
-`BL-129` — the loader-touched members, end to end ([task file](tasks/BL-129-loader-member-tries.md)): `CANCELLED`. The end-to-end tries were stopped by a safety filter, as BL-128's were; the owner then chose (W-all) for BL-122, which covers those members by declaration.
+`BL-126` — the trust boundary over every built-in object ([task file](tasks/BL-126-trust-boundary-all-builtins.md)): `READY_FOR_REVIEW`; no analyzer rule changed. RWF-161/162/163 are documented limitations; the audit spilled RWF-165 (`BL-132`, P0).
 
 ## Next
 
-BACKLOG § 1 is the order: `BL-126` (P0) implements the owner's decision on `BL-122`: (W-all), "a change" not narrowed, `NOT_AFFECTED` only (RWF-161/162/163; BL-126 records it in ADR 0010), then the rest.
+BACKLOG § 1 is the order: `BL-132` (P0, RWF-165), then the rest; `BL-123`, `BL-127` and `BL-131` follow from the decision.
 `BL-107` awaits the owner's decision on O2e; `BL-078`, `BL-080` (P0),
-`BL-082`, `BL-087` and `BL-090` need decisions. The P1 gaps
-`BL-057` and `BL-058` (small, from C-1), `BL-048`, `BL-050`, and `BL-040`,
-`BL-043` and `BL-051` (live family-A false `NOT_AFFECTED`s) are
+`BL-082`, `BL-087` and `BL-090` need decisions. The P1 gaps `BL-057`,
+`BL-058`, `BL-048`, `BL-050`, `BL-040`, `BL-043` and `BL-051` are
 candidates to reorder ahead of the rest of lane E.
 
 ## Recently discovered
 
-From `BL-129`: `BL-131`. From `BL-128`: RWF-164 (fixed), `BL-129`.
+From `BL-126`: RWF-165, `BL-132`. From `BL-129`: `BL-131`. From `BL-128`: RWF-164 (fixed), `BL-129`.

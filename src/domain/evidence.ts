@@ -102,10 +102,12 @@ declare const confirmedUnreachableTargetBrand: unique symbol;
  * modeled -- they
  * widen the closure and make it incomplete, which withdraws this evidence
  * entirely rather than weakening it. A change to the runtime's built-in
- * prototypes is modeled only in part (a form the analyzer sees still
- * withdraws the proof); beyond what it sees, the contract's trust boundary
- * ({@link BUILTIN_PROTOTYPE_TRUST_BOUNDARY}) places the program outside
- * the claim.
+ * objects is different: a program that makes one is outside the claim
+ * whether or not the analyzer sees the change (the contract's trust
+ * boundary, {@link BUILTIN_OBJECT_TRUST_BOUNDARY}). A change it recognises
+ * still withdraws the proofs it withdrew before; most changes it sees do
+ * not (a visible `require("fs").realpathSync = ...` keeps the proof;
+ * backlog BL-127).
  *
  * It proves PACKAGE-LOAD absence only. It says nothing about which symbols
  * inside a package that IS loaded are reachable, so it can never justify a
@@ -308,35 +310,68 @@ export interface Evidence {
 }
 
 /**
- * THE TRUST BOUNDARY over the runtime's built-in prototypes
+ * THE TRUST BOUNDARY over the runtime's built-in objects
  * (docs/SOUNDNESS-CONTRACT.md § 1, "The trust boundary"; the project
- * owner's decision of 2026-10-27, ADR 0010 "Decision record -- BL-111";
- * task BL-113).
+ * owner's decisions of 2026-10-27, ADR 0010 "Decision record -- BL-111",
+ * over the built-in prototypes, task BL-113; and of 2026-11-03, ADR 0010
+ * "Decision record -- BL-122", option (W-all), over every built-in
+ * object, task BL-126).
  *
- * Every NOT_AFFECTED assumes the program makes no change to the ECMAScript
- * intrinsic prototype objects (Object.prototype, Array.prototype, ...),
- * whatever its purpose: a polyfill, a shim or a freeze is a change too. It
- * narrows what a NOT_AFFECTED claims and nothing else: edges, attributions
- * and AFFECTED paths are held to their own rules.
+ * Every NOT_AFFECTED assumes the program makes no change to any object the
+ * runtime itself provides: the ECMAScript intrinsics (constructors with
+ * their own properties, prototypes, namespaces, the global object), Node's
+ * own constructors and prototypes (`URL`, `Buffer`, ...), the exports of
+ * Node's builtin modules (`fs`, `path`, `process`, `console`, ...) and the
+ * objects the runtime holds in them (`process.env`, ...). Whatever the
+ * change's key, value or purpose: a polyfill, a shim, a wrapper that
+ * changes nothing, a freeze and `process.on(...)`'s own bookkeeping are
+ * changes too ("a change" is not narrowed; backlog BL-131). It narrows
+ * what a NOT_AFFECTED claims and nothing else: edges, attributions and
+ * AFFECTED paths are held to their own rules.
  * Unlike the other exclusions, the change is made by code the scan DOES
- * analyze: Node's own loader runs JavaScript over objects that inherit from
- * those prototypes, so a change to them can redirect a later load with no
- * loader use in the program, on routes that differ by Node release
- * (RWF-156, RWF-158, RWF-160, the boundary's documented cases).
+ * analyze: Node's own loaders call members of these objects (`path.resolve`,
+ * `fs.realpathSync`, `URL.prototype`'s accessors, ...) and run over objects
+ * that inherit from them, so a change can redirect a later load with no
+ * loader use in the program, on routes that differ by Node release and
+ * load form (RWF-156, RWF-158, RWF-160, RWF-161, RWF-162, RWF-163, the
+ * boundary's documented cases).
  *
- * It covers the intrinsic prototypes ONLY. Node's own loader objects
- * (`Module.prototype`, `require.cache`, ...), Node's other builtin
- * prototypes (`URL.prototype`, `Buffer.prototype`, ...) and builtin
- * objects that are not intrinsic prototypes (globals, a builtin module's
- * exports, a builtin constructor's own properties such as
- * `Array[Symbol.species]`) stay inside the model: whether the boundary
- * reaches them is not decided.
+ * It does NOT cover Node's module loader objects -- `Module` (the `module`
+ * builtin's exports) with its own properties, `Module.prototype`, module
+ * objects and `module.paths`, `require` with `require.cache` and
+ * `require.extensions`: those stay inside the claim, analyzed as loader
+ * capabilities (a route the analyzer misses is an open defect, not a case
+ * of this boundary), and a change to one that the scan never analyzed is
+ * the separate exclusion {@link LOADER_OBJECT_EXCLUSION}. Nor does it
+ * cover an object the program, or the loader for the program, creates: a
+ * module's `exports` object, `import.meta`, a namespace object, an
+ * instance made by calling a builtin.
  *
  * The contract quotes this text verbatim, and
  * `evidence.trust-boundary.test.ts` holds the two together.
  */
-export const BUILTIN_PROTOTYPE_TRUST_BOUNDARY =
-  "any change to the runtime's built-in prototype objects (Object.prototype, Array.prototype and the other ECMAScript intrinsic prototypes) made by any code the program runs, whether prototype pollution, a polyfill, a shim or a freeze";
+export const BUILTIN_OBJECT_TRUST_BOUNDARY =
+  "any change to the runtime's built-in objects made by any code the program runs, whether prototype pollution, a polyfill, a shim, a monkey-patch or a freeze: the ECMAScript intrinsics (Object.prototype, Array and the other standard constructors with their prototypes and own properties, JSON, Math, the global object), Node's own constructors and prototypes (URL, Buffer, EventEmitter), the exports of Node's builtin modules (fs, path, process, console) and the objects the runtime holds in them; Node's module loader objects (Module, Module.prototype, module objects, require and its registries) are not covered and stay inside the declared model";
+
+/**
+ * Monkey-patching of, or hooks registered on, Node's MODULE LOADER by code
+ * the scan never analyzed. A change to `Module`, `Module.prototype`, a
+ * module object, `module.paths`, `require` or its registries, and a hook
+ * registered with `module.register` / `module.registerHooks`, are analyzed
+ * as loader capabilities in the code the scan analyzes -- which is no
+ * statement that each route is handled: a false NOT_AFFECTED through one
+ * the analyzer misses is an open defect (RWF-165, RWF-140, ...). Only what
+ * the scan cannot see is excluded here. A change to any other built-in
+ * object (`fs`, `path`, `URL.prototype`, a global, ...) is not "loader
+ * monkey-patching" in this sense: a program that makes one is outside what
+ * every NOT_AFFECTED claims, wherever the change originates
+ * ({@link BUILTIN_OBJECT_TRUST_BOUNDARY}). Restated by task BL-126 from
+ * "loader monkey-patching originating in code this scan never analyzed",
+ * which implied the analyzer modeled monkey-patching of any object the
+ * loader uses (ADR 0010, "Proposed decision -- BL-122"; RWF-163).
+ */
+export const LOADER_OBJECT_EXCLUSION =
+  "monkey-patching of Node's module loader objects (Module, Module.prototype, module objects, require and its registries), or loader hooks registered with module.register or module.registerHooks, originating in code this scan never analyzed";
 
 /**
  * VulnTrace's DECLARED SUPPORTED MODULE-LOADING MODEL: the enumerated
@@ -357,18 +392,19 @@ export const BUILTIN_PROTOTYPE_TRUST_BOUNDARY =
  * loader/runtime capabilities are deliberately NOT in this list -- those
  * ARE modeled, and they withdraw a proof entirely (by making the closure
  * incomplete) rather than sitting outside it -- with ONE exception, the
- * trust boundary {@link BUILTIN_PROTOTYPE_TRUST_BOUNDARY}: a change to the
- * built-in prototypes is modeled only in part, and the boundary covers the
- * rest.
+ * trust boundary {@link BUILTIN_OBJECT_TRUST_BOUNDARY}: a program that
+ * changes a built-in object is outside the claim whether or not the
+ * analyzer sees the change (a change it recognises still withdraws the
+ * proofs it withdrew before; most it sees do not, backlog BL-127).
  */
 export const SUPPORTED_MODEL_EXCLUSIONS: readonly string[] = [
   "NODE_OPTIONS",
   "an externally supplied --require preload",
   "an external --loader / ESM hook",
   "native addon behavior",
-  "loader monkey-patching originating in code this scan never analyzed",
+  LOADER_OBJECT_EXCLUSION,
   "execution that begins somewhere other than the configured entrypoints",
-  BUILTIN_PROTOTYPE_TRUST_BOUNDARY,
+  BUILTIN_OBJECT_TRUST_BOUNDARY,
 ];
 
 /**

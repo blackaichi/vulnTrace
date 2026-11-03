@@ -362,6 +362,27 @@ describe("supported-model disclosure", () => {
     expect(SUPPORTED_MODEL_EXCLUSIONS.length).toBeGreaterThan(0);
   });
 
+  it("states the trust boundary over the built-in objects as narrowing NOT_AFFECTED only (task BL-126)", () => {
+    // SOUNDNESS-CONTRACT § 1: the boundary conditions NOT_AFFECTED only,
+    // and Node's module loader objects stay inside the claim, analyzed as
+    // loader capabilities (with no claim that every route is handled).
+    const html = renderHtmlReport(scanOutput({ findings: ALL_FINDINGS }));
+    expect(html.replace(/&#39;|&#x27;|&apos;/g, "'")).toContain(
+      "trust boundary over the runtime's built-in objects: a program that changes one is outside what every NOT_AFFECTED claims, wherever the change originates",
+    );
+    expect(html).toContain("a route the analyzer misses is an open defect");
+    expect(html).not.toMatch(/outside every claim/);
+    expect(html).not.toMatch(/is a modelled loader capability/);
+    // A visible change does NOT always withdraw the proof: a spelled
+    // `require("fs").realpathSync = …` still gives NOT_AFFECTED
+    // (tests/oracle/bl122-trust-boundary-reach.cases.ts,
+    // `o3.fs-realpath-assign`; backlog BL-127). The note must not imply a
+    // NOT_AFFECTED means the scanned code makes no visible change (BL-126's
+    // audit, round 2, M1).
+    expect(html).not.toMatch(/a change the analyzer sees still withdraws/);
+    expect(html).toContain("most changes the analyzer sees do not");
+  });
+
   it("never claims a NOT_AFFECTED package can't execute", () => {
     const html = renderHtmlReport(scanOutput({ findings: ALL_FINDINGS }));
 

@@ -1178,3 +1178,88 @@ What changes the section's inputs:
   `toNamespacedPath`, `posix`, `sep`, `isAbsolute` and `basename`. Each
   is a possible open defect until tried.
 - BL-122's measured routes (RWF-161, RWF-162, RWF-163) are unchanged.
+
+## Decision record — BL-122: the trust boundary's reach (project owner, 2026-11-03)
+
+Decided by the project owner on 2026-11-03, from "Proposed decision —
+BL-122" and "Note — task BL-128" above, after task `BL-129`'s end-to-end
+tries were stopped (its task file, Corrections). Recorded by task
+[`BL-126`](../tasks/BL-126-trust-boundary-all-builtins.md). This section is
+appended. Every earlier section, including the proposed decision it
+answers, is unchanged.
+
+**Decision: option (W-all).** The trust boundary covers every built-in
+object of the runtime: the ECMAScript intrinsic prototypes (as "Decision
+record — BL-111"), a builtin constructor's own properties (O1), Node's own
+builtin prototypes and constructors (O2), the exports object of every
+builtin module, `process` and `console` included (O3), and the namespaces
+and the global object's own members (O4). Two further choices, on the
+proposed decision's open points:
+
+- **"A change" is not narrowed.** SOUNDNESS-CONTRACT § 1's "a change"
+  stays any write under any key, any redefinition or deletion, and any
+  change of [[Prototype]] or extensibility. A `NOT_AFFECTED` therefore
+  claims nothing about a program that calls `process.on(…)`, sets
+  `Error.stackTraceLimit` or assigns `console.log` ("What a widened
+  boundary excludes"). Whether to narrow it is backlog `BL-131`, measured
+  first.
+- **The boundary conditions `NOT_AFFECTED` only** (the proposed
+  decision's lean, "Beyond `NOT_AFFECTED`"). An `AFFECTED` path, a call
+  edge and an export attribution keep their own rules; RWF-102, RWF-111,
+  RWF-113 and RWF-121 stay defects, and the false `NOT_AFFECTED`s of
+  RWF-110 and RWF-120 are covered (backlog `BL-123` records the coverage
+  per form). BL-126's independent audit (round 2) found one more whose
+  reproduced false `NOT_AFFECTED` rests on a change to a built-in object,
+  RWF-143 (`C.prototype.Buffer = f` with `C.prototype` inheriting from the
+  global object runs the global `Buffer` accessor's setter); its edge
+  defect stays open as theirs do, and `BL-123` records it too.
+
+**Node's module loader objects stay inside the claim**, as the proposed
+decision required of every (W-…) option: `Module` (the `module` builtin's
+exports object) with its own properties, `Module.prototype`, module
+objects and `module.paths`, `require` and its registries. A change to one
+is a loader capability, analyzed as before.
+
+**Why** (the recorder's summary of the proposed decision's weighing; the owner's choice as recorded gives no reason of its own): a sound rule over the stores that
+reach these objects is (R-A)'s class, which costs 2 of the 4 real-world
+`NOT_AFFECTED` proofs and flags 77.4 % of the packages measured;
+(W-members) depends on a release- and load-specific list of Node's
+internals; (W-loader) leaves the globals inside the claim on a premise
+`BL-129` could not measure. (W-all) needs no list and covers every member
+the loaders touch, measured or not.
+
+**What it changes, and who does it.** Backlog `BL-126`:
+
+- amends SOUNDNESS-CONTRACT § 1, "The trust boundary: the runtime's
+  built-in objects", and its disclosure, `BUILTIN_OBJECT_TRUST_BOUNDARY`
+  (`src/domain/evidence.ts`, renamed from
+  `BUILTIN_PROTOTYPE_TRUST_BOUNDARY`), and its test;
+- restates the scope disclosure's "loader monkey-patching originating in
+  code this scan never analyzed" as `LOADER_OBJECT_EXCLUSION`, over the
+  loader objects only (the proposed decision's "What a widened boundary
+  also changes");
+- moves RWF-161, RWF-162 and RWF-163 to the boundary's documented
+  limitation, and their 14 open-soundness-defect records to trust-boundary
+  cases, each with a control that runs the program without the change.
+
+**Read by BL-126, for the owner's review.** The decision names objects by
+kind; the amended text also counts as built-in the objects the runtime
+creates and holds in them (`process.env`, `process.argv`, `fs.constants`,
+`path.posix`), so that a member's value is covered as well as the member
+("covers every touched member", of which `process.env` is one). It is the
+reading that claims less. The list of kinds is exhaustive: an object the
+program creates, including by calling a builtin (`new URL(…)`), is the
+program's own, and so are the objects the loader creates for the
+program's own modules (a module's `exports` object, an ES module's
+namespace object and `import.meta`), which stay inside the claim (BL-126's
+independent audit, round 1, B2). With "a change" not narrowed, adding a
+property to the global object (a UMD bundle's `root.X = …`, a
+`globalThis.fetch` polyfill, a sloppy-mode implicit global) also puts a
+program outside every `NOT_AFFECTED`, which "What a widened boundary
+excludes" does not list (the same audit, I2). Narrowing any of these is
+`BL-131`'s question.
+
+**Not decided here:** which Node releases the contract covers (`BL-115`);
+whether a store the analyzer sees onto a covered object should fail
+closed to `UNKNOWN` (`BL-127`, explainability). No analyzer rule is
+withdrawn.

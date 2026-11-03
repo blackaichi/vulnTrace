@@ -309,7 +309,7 @@ export const FINDINGS_STATUS_VOCABULARY = new Map([
  * boundary fails there.
  */
 export const TRUST_BOUNDARY_SECTIONS = new Map([
-  ["1", "### The trust boundary: the runtime's built-in prototypes"],
+  ["1", "### The trust boundary: the runtime's built-in objects"],
 ]);
 
 /** Every `SOUNDNESS-CONTRACT[.md] § <n>` a cell cites, as section numbers. */
