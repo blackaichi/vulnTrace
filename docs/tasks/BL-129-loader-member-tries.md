@@ -2,12 +2,14 @@
 
 ## Status
 
-- **Status**: IN_PROGRESS
+- **Status**: CANCELLED
 - **Backlog ID**: BL-129
 - **Branch**: `bl-129-loader-member-tries`
 - **Base SHA**: `1512b65830baaa5a8e02b6cedecfca08ac67c890` (BL-128's merge, PR #130)
-- **Commits**: <!-- filled in by the last commit (READY_FOR_REVIEW) -->
-- **Superseded by**: —
+- **Commits**:
+  - `docs(tasks): BL-129 task file — loader-touched members end to end`
+  - (this commit) `docs(BL-129): cancelled; the owner chose (W-all) for BL-122`
+- **Superseded by**: [`BL-126`](BACKLOG.md), under the owner's choice of (W-all)
 
 ## Specification
 
@@ -72,4 +74,26 @@ expected to be 0. The validation baseline is unchanged.
 
 ## Account
 
-<!-- Filled in while working. -->
+Nothing was measured. No member was tried end to end, no analyzer run was
+made, and nothing outside `docs/` changed. The premises above stay
+unverified.
+
+## Corrections
+
+**2026-11-03 — cancelled by the project owner.** Writing the end-to-end
+attempts was stopped at its start by a safety filter, as BL-128's
+attempt was (BL-128's task file, Corrections). The project owner then
+chose, for ADR 0010's "Proposed decision — BL-122": (W-all), with SOUNDNESS-CONTRACT
+§ 1's "a change" not narrowed, and the boundary conditioning
+`NOT_AFFECTED` only. Under (W-all) every member this task was to try is
+covered by declaration, so the question it answers for (W-loader) and
+(R) no longer decides anything; the task is cancelled and `BL-126`
+implements the decision (it records the decision in ADR 0010).
+
+Against the acceptance criteria: none is met; all four are withdrawn
+with the task. BL-128's call-site classification
+(`scripts/bl128-loader-member-routes/results.md` § 2) stays the record
+of these members, untried end to end.
+
+Discovered: `BL-131` (P2), the owner's follow-up on whether to narrow
+"a change" once (W-all) is in place.
