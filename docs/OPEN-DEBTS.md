@@ -718,11 +718,14 @@ maps every open finding to its § 1 row.
   `PRM-105`, `PRM-106`, `PRM-109`; open in part: `PRM-107`, `PRM-108`.
   Every other `AUD` and `PRM` finding is recorded fixed.
 - The remediation tasks found more of the same family. Those still open,
-  as the full record's last progress note left its list (task `BL-113`):
+  as the full record's last progress notes left the list (tasks `BL-113`
+  and `BL-122`), and as task `BL-126` changed it (three moved to the
+  documented limitations below, one added):
   `RWF-070` (its species member), `RWF-098` (its unit records), `RWF-099`,
   `RWF-101`, `RWF-102`, `RWF-107`, `RWF-108`, `RWF-109`, `RWF-111`,
   `RWF-113`, `RWF-118`, `RWF-121`, `RWF-139`, `RWF-140`, `RWF-143`,
-  `RWF-144`, `RWF-145`, `RWF-146`, `RWF-148`, `RWF-155` and `RWF-157`.
+  `RWF-144`, `RWF-145`, `RWF-146`, `RWF-148`, `RWF-155`, `RWF-157` and
+  `RWF-165`.
 - Documented limitations of the trust boundary, which left the list
   (SOUNDNESS-CONTRACT § 1): `RWF-156`, `RWF-158` and `RWF-160` (the
   project owner's decision of 2026-10-27, task `BL-113`), and `RWF-161`,
