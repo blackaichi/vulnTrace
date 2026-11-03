@@ -56,7 +56,7 @@ export interface Bl096Case extends Bl092Case {
   };
   /**
    * A documented case of the trust boundary over the runtime's built-in
-   * prototypes (SOUNDNESS-CONTRACT § 1; task BL-113): the result the
+   * objects (SOUNDNESS-CONTRACT § 1; tasks BL-113 and BL-126): the result the
    * analyzer gives today, held as a trust-boundary case
    * (`src/testing/trust-boundary-case.ts`), never as an expectation. The
    * case's `expected` is then the verdict that is sound WITHOUT the
@@ -67,7 +67,7 @@ export interface Bl096Case extends Bl092Case {
     readonly observed: VerdictObservation;
     /**
      * The id of the case in the same suite that runs this program WITHOUT
-     * the change to the built-in prototype, where real Node does not call
+     * the change to the built-in object, where real Node does not call
      * the target (`src/testing/trust-boundary-case.ts`).
      */
     readonly control: string;

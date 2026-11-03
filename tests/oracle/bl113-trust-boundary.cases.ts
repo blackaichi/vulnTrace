@@ -6,20 +6,20 @@ import {
 
 /**
  * Task BL-113 (docs/tasks/BL-113-loader-trust-boundary.md): the edges of
- * the trust boundary over the runtime's built-in prototypes
- * (SOUNDNESS-CONTRACT § 1), against real Node.
- *
- * The boundary covers the ECMAScript intrinsic prototypes only; the
- * project owner left its reach beyond them undecided (ADR 0010, "Decision
- * record -- BL-111"). These cases measure the two sides of that edge with
+ * the trust boundary (SOUNDNESS-CONTRACT § 1), against real Node, with
  * RWF-156's mechanism, a change Node's own loader acts on by inheritance:
  *
  * - `outside.*`: a change to a builtin object that is NOT an intrinsic
- *   prototype, which the analyzer misses (RWF-161, an open defect: an
- *   open-soundness-defect record, never an expectation);
- * - `modeled.*`: the same change onto Node's own `Module.prototype`, which
- *   the analyzer already answers `UNKNOWN` for, so the boundary need not
- *   reach it.
+ *   prototype, outside the boundary as BL-113 worded it (RWF-161, RWF-162,
+ *   then open defects). Task BL-126: the project owner widened the
+ *   boundary to every built-in object (ADR 0010, "Decision record --
+ *   BL-122", option (W-all)), so these are trust-boundary cases
+ *   (`boundaryCase`), never an expectation; the case's `expected` is the
+ *   verdict that is sound WITHOUT the boundary;
+ * - `modeled.*`: the same change onto Node's own `Module.prototype`, a
+ *   module loader object, which stays inside the claim under (W-all), and
+ *   which the analyzer already answers `UNKNOWN` for;
+ * - `control.*`: the same program without the change.
  *
  * THE SETUP is BL-092's and BL-096's (see their cases files): the decoy
  * `wrap/node_modules/vuln-lib@99.0.0`, the affected top-level
@@ -85,7 +85,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-161", observed: familyB(5) },
+    boundaryCase: {
+      rwf: "RWF-161",
+      observed: familyB(5),
+      control: "control.no-change",
+    },
   },
   {
     id: "outside.url-prototype-pathname",
@@ -99,7 +103,21 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-162", observed: familyB(5) },
+    boundaryCase: {
+      rwf: "RWF-162",
+      observed: familyB(5),
+      control: "control.url-exports-no-change",
+    },
+  },
+  {
+    id: "control.no-change",
+    finding: "RWF-161",
+    mechanism:
+      "the setup with no change to any built-in object: Node loads the decoy (task BL-126)",
+    redirect: ``,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
   },
   {
     id: "control.url-exports-no-change",

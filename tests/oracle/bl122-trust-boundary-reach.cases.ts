@@ -8,9 +8,19 @@ import {
  * Task BL-122 (docs/tasks/BL-122-trust-boundary-reach.md): the builtin
  * objects OUTSIDE the ECMAScript intrinsic prototypes that Node's own
  * loader touches after startup, against real Node -- the measurement the
- * project owner's decision on the trust boundary's reach rests on
- * (SOUNDNESS-CONTRACT § 1; ADR 0010, "Decision record -- BL-111", "Not
- * decided here").
+ * project owner's decision on the trust boundary's reach rested on.
+ *
+ * Task BL-126: the owner chose (W-all) (ADR 0010, "Decision record --
+ * BL-122"), so every object below is a built-in object the boundary
+ * covers (SOUNDNESS-CONTRACT § 1, "The trust boundary: the runtime's
+ * built-in objects"). RWF-161, RWF-162 and RWF-163 are its documented
+ * limitation, and each case that changes such an object is a
+ * trust-boundary case (`boundaryCase`, `src/testing/trust-boundary-case.ts`),
+ * never an expectation: its `expected` is the verdict that is sound
+ * WITHOUT the boundary. Each names a control that runs the same program
+ * WITHOUT the change (`control.*-read-only`, `control.no-change`,
+ * `control.url-exports-no-change`, `control.o3-require-esm-no-change`),
+ * where real Node does not call the target.
  *
  * `scripts/bl122-trust-boundary-reach/probe-reach.cjs` inventories which
  * members of those objects the loader touches on a load workload. Each
@@ -19,17 +29,22 @@ import {
  * instance instead of `wrap`'s decoy (or runs its source), and records
  * what the analyzer answers. The kinds of object, as the probe names them:
  *
- * - `o1.*` a builtin constructor's own property (RWF-161's
+ * - `o1.*` a builtin constructor's own property (RWF-161's spelled
  *   `Array[Symbol.species]` is `tests/oracle/bl113-trust-boundary.cases.ts`'s);
- * - `o2.*` Node's own builtin prototypes (RWF-162's `URL.prototype` is
- *   BL-113's);
+ * - `o2.*` Node's own builtin prototypes (RWF-162's spelled
+ *   `URL.prototype` is BL-113's);
  * - `o3.*` a builtin module's exports object: Node's CommonJS loader calls
  *   `path` and `fs` through the same exports objects a program's
  *   `require("path")` / `require("fs")` returns;
- * - `control.*` the same program with a change that redirects nothing.
+ * - `control.*` the same program without the change, or (`*-identity`)
+ *   with a store that redirects nothing. Under (W-all), with "a change"
+ *   not narrowed, an identity store is itself a change, so the identity
+ *   controls are no boundary case's control (task BL-126); they still
+ *   assert their sound verdict, as real Node does not call the target.
  *
  * THE SETUP is BL-092's and BL-096's (see their cases files). Measured on
- * the base (`58a5f32`, BL-113's merge) with real Node v22.11.0.
+ * the base (`58a5f32`, BL-113's merge) with real Node v22.11.0; the
+ * observations re-measured unchanged by BL-126 on `85195065`.
  */
 
 export {
@@ -73,6 +88,24 @@ function rewriteArgument(object: string, member: string): string {
   );
 }
 
+/**
+ * `<object>.<member>` read and kept, never stored: the program of the
+ * wrapper cases WITHOUT the change (task BL-126's controls).
+ */
+function readOnly(object: string, member: string): string {
+  return `const __m = ${object};\nconst __o = __m.${member};\nvoid __o;\n`;
+}
+
+/** The decoy `vuln-lib@99.0.0` with an `exports` field (RWF-162). */
+const DECOY_WITH_EXPORTS: Readonly<Record<string, string>> = {
+  "node_modules/wrap/node_modules/vuln-lib/package.json": JSON.stringify({
+    name: "vuln-lib",
+    version: "99.0.0",
+    main: "index.js",
+    exports: { ".": "./index.js", "./index.js": "./index.js" },
+  }),
+};
+
 /** An identity wrapper on `<object>.<member>`: a store that redirects nothing. */
 function identityWrapper(object: string, member: string): string {
   return (
@@ -92,7 +125,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(2) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(2),
+      control: "control.o3-path-resolve-read-only",
+    },
   },
   {
     id: "o3.path-resolve-define",
@@ -105,7 +142,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(3) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(3),
+      control: "control.o3-path-resolve-read-only",
+    },
   },
   {
     id: "o3.path-posix-subpath",
@@ -116,7 +157,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(2) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(2),
+      control: "control.o3-path-posix-read-only",
+    },
   },
   {
     id: "o3.path-resolve-sibling-module",
@@ -130,7 +175,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(2) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(2),
+      control: "control.o3-path-resolve-sibling-read-only",
+    },
   },
   {
     id: "o3.fs-realpath-assign",
@@ -141,7 +190,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(2) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(2),
+      control: "control.o3-fs-realpath-read-only",
+    },
   },
   {
     id: "o3.fs-realpath-reflect-set",
@@ -154,7 +207,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(3) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(3),
+      control: "control.o3-fs-realpath-read-only",
+    },
   },
   {
     id: "o3.fs-readfile-assign",
@@ -165,7 +222,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(2) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(2),
+      control: "control.o3-fs-readfile-read-only",
+    },
   },
   {
     id: "o3.fs-realpath-through-parameter",
@@ -178,7 +239,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(2) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(2),
+      control: "control.o3-fs-realpath-parameter-read-only",
+    },
   },
   {
     id: "o3.path-resolve-require-esm",
@@ -197,7 +262,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: routeLive("require-esm-resolver"),
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(3) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(3),
+      control: "control.o3-require-esm-no-change",
+    },
   },
   {
     id: "o3.fs-opensync-require-esm",
@@ -216,7 +285,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: routeLive("require-esm-resolver"),
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-163", observed: familyB(6) },
+    boundaryCase: {
+      rwf: "RWF-163",
+      observed: familyB(6),
+      control: "control.o3-require-esm-no-change",
+    },
   },
   {
     id: "control.o3-require-esm-no-change",
@@ -240,7 +313,11 @@ export const ALL_CASES: readonly Bl096Case[] = [
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-161", observed: familyB(5) },
+    boundaryCase: {
+      rwf: "RWF-161",
+      observed: familyB(5),
+      control: "control.no-change",
+    },
   },
   {
     id: "o2.url-prototype-unspelled",
@@ -251,18 +328,15 @@ export const ALL_CASES: readonly Bl096Case[] = [
       `const __p = Object.getPrototypeOf(new URL("file:///x"));\n` +
       `const __d = Object.getOwnPropertyDescriptor(__p, "pathname");\n` +
       `Object.defineProperty(__p, "pathname", { configurable: true, enumerable: true, set: __d.set, get() { return __d.get.call(this).replace("/wrap/node_modules/vuln-lib/", "/vuln-lib/"); } });\n`,
-    files: {
-      "node_modules/wrap/node_modules/vuln-lib/package.json": JSON.stringify({
-        name: "vuln-lib",
-        version: "99.0.0",
-        main: "index.js",
-        exports: { ".": "./index.js", "./index.js": "./index.js" },
-      }),
-    },
+    files: DECOY_WITH_EXPORTS,
     called: true,
     base: "NOT_AFFECTED",
     expected: "UNKNOWN",
-    openDefect: { rwf: "RWF-162", observed: familyB(7) },
+    boundaryCase: {
+      rwf: "RWF-162",
+      observed: familyB(7),
+      control: "control.url-exports-no-change",
+    },
   },
   {
     id: "control.o3-path-resolve-identity",
@@ -280,6 +354,97 @@ export const ALL_CASES: readonly Bl096Case[] = [
     mechanism:
       '`require("fs").realpathSync` replaced by a wrapper that changes nothing: Node loads the decoy',
     redirect: identityWrapper(`require("fs")`, "realpathSync"),
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  // ---------------------------------------------------------------------
+  // Task BL-126: the boundary cases' controls -- each the same program
+  // WITHOUT the change to the built-in object (the member read, never
+  // stored), where real Node loads the decoy.
+  // ---------------------------------------------------------------------
+  {
+    id: "control.o3-path-resolve-read-only",
+    finding: "RWF-163",
+    mechanism:
+      '`require("path").resolve` read and kept, nothing stored: Node loads the decoy',
+    redirect: readOnly(`require("path")`, "resolve"),
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.o3-path-posix-read-only",
+    finding: "RWF-163",
+    mechanism:
+      '`require("path/posix").resolve` read and kept, nothing stored: Node loads the decoy',
+    redirect: readOnly(`require("path/posix")`, "resolve"),
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.o3-path-resolve-sibling-read-only",
+    finding: "RWF-163",
+    mechanism:
+      '`require("path").resolve` read and kept by another module of `wrap`, loaded first, nothing stored: Node loads the decoy',
+    redirect: `require("./patch");\n`,
+    files: {
+      "node_modules/wrap/patch.js": readOnly(`require("path")`, "resolve"),
+    },
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.o3-fs-realpath-read-only",
+    finding: "RWF-163",
+    mechanism:
+      '`require("fs").realpathSync` read and kept, nothing stored: Node loads the decoy',
+    redirect: readOnly(`require("fs")`, "realpathSync"),
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.o3-fs-readfile-read-only",
+    finding: "RWF-163",
+    mechanism:
+      '`require("fs").readFileSync` read and kept, nothing stored: Node loads the decoy',
+    redirect: readOnly(`require("fs")`, "readFileSync"),
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.o3-fs-realpath-parameter-read-only",
+    finding: "RWF-163",
+    mechanism:
+      '`fs.realpathSync` read by a function handed `require("fs")` as a parameter, nothing stored: Node loads the decoy',
+    redirect:
+      `function __patch(fs) { const o = fs.realpathSync; void o; }\n` +
+      `__patch(require("fs"));\n`,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.no-change",
+    finding: "RWF-161",
+    mechanism:
+      "the setup with no change to any built-in object: Node loads the decoy",
+    redirect: ``,
+    called: false,
+    base: "NOT_AFFECTED",
+    expected: "NOT_AFFECTED",
+  },
+  {
+    id: "control.url-exports-no-change",
+    finding: "RWF-162",
+    mechanism:
+      "the decoy with `exports`, no change: Node resolves `vuln-lib/index.js` to the decoy",
+    redirect: ``,
+    files: DECOY_WITH_EXPORTS,
     called: false,
     base: "NOT_AFFECTED",
     expected: "NOT_AFFECTED",

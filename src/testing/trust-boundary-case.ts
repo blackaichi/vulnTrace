@@ -10,7 +10,7 @@ import type { OutcomeDomain } from "./open-soundness-defect.js";
  * TRUST-BOUNDARY CASES -- the record a reproduction test uses for a
  * program the soundness contract's trust boundary places outside what a
  * verdict claims (task BL-113; docs/SOUNDNESS-CONTRACT.md § 1, "The trust
- * boundary: the runtime's built-in prototypes").
+ * boundary: the runtime's built-in objects"; widened by task BL-126).
  *
  * WHY THIS EXISTS. Such a program is reproduced against real Node: real
  * Node may reach the target while the analyzer answers `NOT_AFFECTED`. Its
@@ -29,10 +29,10 @@ import type { OutcomeDomain } from "./open-soundness-defect.js";
  *   expectation;
  * - `rwf` -- the finding recorded as the boundary's documented limitation;
  * - `control` -- the case that runs the same program WITHOUT the change to
- *   the built-in prototype, where real Node does not call the target. It
+ *   the built-in object, where real Node does not call the target. It
  *   ties the case's wrong answer to the change the boundary is about
  *   (BL-113's audit, round 2, R2-3): a reproduction made false by
- *   something else, with an unrelated prototype store added, has no such
+ *   something else, with an unrelated built-in object store added, has no such
  *   control. That the control's program is the case's minus the change is
  *   for review; that real Node does not call the target there is asserted
  *   by the control's own run.
@@ -63,7 +63,7 @@ export interface TrustBoundaryCase<Pattern, Outcome> {
   readonly soundWithoutBoundary: readonly Pattern[];
   /** The analyzer's exact result today. */
   readonly observed: Outcome;
-  /** The same program without the prototype change, and real Node's answer there. */
+  /** The same program without the change to the built-in object, and real Node's answer there. */
   readonly control: { readonly caseId: string; readonly called: boolean };
 }
 
@@ -134,12 +134,12 @@ export function trustBoundaryCaseProblems<Pattern, Outcome>(
   }
   if (record.control.caseId === "" || record.control.caseId === record.caseId) {
     problems.push(
-      `${label}: control must name another case: the same program without the change to the built-in prototype`,
+      `${label}: control must name another case: the same program without the change to the built-in object`,
     );
   }
   if (record.control.called) {
     problems.push(
-      `${label}: real Node calls the target in the control ${record.control.caseId} too, so the change to the built-in prototype is not what this case rests on`,
+      `${label}: real Node calls the target in the control ${record.control.caseId} too, so the change to the built-in object is not what this case rests on`,
     );
   }
   for (const p of limitationReferenceProblems(record.rwf, findings)) {
